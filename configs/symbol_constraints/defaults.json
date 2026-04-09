@@ -1,0 +1,8 @@
+{
+  "version": "1.0",
+  "symbols": {},
+  "defaults": {
+    "max_position_size": 1.0,
+    "min_confidence": 0.5
+  }
+}
