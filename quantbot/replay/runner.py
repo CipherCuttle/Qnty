@@ -17,6 +17,7 @@ class ReplayReceipt:
     first_timestamp: str
     last_timestamp: str
     total_volume: float
+    signal_count: int = 0
     receipt_hash: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -28,6 +29,7 @@ class ReplayReceipt:
                 "first_timestamp": self.first_timestamp,
                 "last_timestamp": self.last_timestamp,
                 "total_volume": self.total_volume,
+                "signal_count": self.signal_count,
             },
             separators=(",", ":"),
             sort_keys=True,
@@ -42,6 +44,7 @@ class ReplayReceipt:
             "first_timestamp": self.first_timestamp,
             "last_timestamp": self.last_timestamp,
             "total_volume": self.total_volume,
+            "signal_count": self.signal_count,
             "receipt_hash": self.receipt_hash,
         }
 
@@ -49,16 +52,18 @@ class ReplayReceipt:
 class ReplayRunner:
     """Iterate bars and emit a deterministic summary receipt.
 
-    No strategy logic, no signals, no trading.
+    No trading, no order placement.
     """
 
-    def __init__(self, bars: list[Bar]):
-        """Initialize runner with bars.
+    def __init__(self, bars: list[Bar], strategy=None):
+        """Initialize runner with bars and optional strategy.
 
         Args:
             bars: List of Bars to replay.
+            strategy: Optional strategy object implementing on_bar(bar) -> Signal|None.
         """
         self.bars = bars
+        self.strategy = strategy
 
     def iter_bars(self) -> Iterator[Bar]:
         """Iterate bars in order.
@@ -71,6 +76,9 @@ class ReplayRunner:
     def run(self) -> ReplayReceipt:
         """Run replay and produce deterministic receipt.
 
+        If a strategy is set, it is called on each bar and signals are counted.
+        Without a strategy, signal_count is 0.
+
         Returns:
             ReplayReceipt with bar summary and hash.
         """
@@ -80,10 +88,18 @@ class ReplayRunner:
 
         total_volume = sum(bar.volume for bar in self.bars)
 
+        signal_count = 0
+        if self.strategy is not None:
+            for bar in self.bars:
+                sig = self.strategy.on_bar(bar)
+                if sig is not None:
+                    signal_count += 1
+
         return ReplayReceipt(
             bar_count=len(self.bars),
             bar_hash=bar_hash,
             first_timestamp=self.bars[0].timestamp if self.bars else "",
             last_timestamp=self.bars[-1].timestamp if self.bars else "",
             total_volume=total_volume,
+            signal_count=signal_count,
         )

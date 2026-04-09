@@ -1,11 +1,11 @@
 """Minimal end-to-end replay runner for Gate45.
 
 Orchestrates: manifest verification -> CSV bar loading -> replay -> receipt emission.
-No strategy logic, no live trading.
+No live trading.
 """
 
-import json
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from quantbot.core.determinism import canonical_json_dumps, sha256_file
 from quantbot.data.loaders import load_bars_from_csv
@@ -13,10 +13,19 @@ from quantbot.data.manifest import ManifestVerifier
 from quantbot.replay.runner import ReplayRunner
 
 
+@runtime_checkable
+class Strategy(Protocol):
+    """Protocol for strategies used in replay runs."""
+
+    def on_bar(self, bar) -> "Signal | None":
+        ...
+
+
 def run_replay(
     manifest_path: Path,
     csv_path: Path,
     output_dir: Path,
+    strategy: Strategy | None = None,
     emit_sha256: bool = False,
 ) -> Path:
     """Run deterministic replay from manifest-verified CSV.
@@ -24,7 +33,7 @@ def run_replay(
     Steps:
         1. Verify all files in manifest.
         2. Load bars from CSV.
-        3. Run replay (no-op traversal).
+        3. Run replay with optional strategy.
         4. Emit receipt JSON.
         5. Optionally emit SHA256 sidecar.
 
@@ -32,6 +41,7 @@ def run_replay(
         manifest_path: Path to manifest JSON file.
         csv_path: Path to bars CSV file.
         output_dir: Directory for output files.
+        strategy: Optional strategy implementing on_bar(bar) -> Signal|None.
         emit_sha256: If True, write .sha256 sidecar alongside receipt.
 
     Returns:
@@ -50,8 +60,8 @@ def run_replay(
     # Step 2: load bars
     bars = load_bars_from_csv(csv_path)
 
-    # Step 3: run replay (no-op traversal)
-    runner = ReplayRunner(bars)
+    # Step 3: run replay with optional strategy
+    runner = ReplayRunner(bars, strategy=strategy)
     receipt = runner.run()
 
     # Step 4: emit receipt JSON
