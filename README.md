@@ -1,11 +1,11 @@
-# Gate45 / QuantBot
+# Qnty / QuantBot
 
 Cleanroom quantitative trading framework (paper mode only).
 
 ## Structure
 
 ```
-Gate45/
+Qnty/
 ├── quantbot/
 │   ├── core/       # Bus, determinism, receipts
 │   ├── protocols/  # Interface protocols
@@ -21,5 +21,5 @@ Use `canonical_json_dumps` and `sha256_file` from `quantbot.core.determinism` fo
 ## Testing
 
 ```bash
-pytest Gate45/tests/test_determinism_smoke.py -v
+pytest tests/
 ```

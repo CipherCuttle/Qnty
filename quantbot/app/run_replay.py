@@ -1,4 +1,4 @@
-"""Minimal end-to-end replay runner for Gate45.
+"""Minimal end-to-end replay runner for Qnty.
 
 Orchestrates: manifest verification -> CSV bar loading -> replay -> receipt emission.
 No live trading.

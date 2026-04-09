@@ -1,0 +1,23 @@
+project_id: "gate45-562d5b8a"
+name: "Qnty"
+archetype: "quant-research"
+repo_root: "/home/swirky/DevHub/repos/Qnty"
+created_at: "2026-04-09T19:45:25.164Z"
+updated_at: "2026-04-09T19:45:25.164Z"
+status: "experimental"
+
+primary_goals:
+  - "preserve auditability"
+  - "avoid false positives"
+  - "keep evidence and verdicts clear"
+
+anti_goals:
+  - "validation theater"
+  - "unclear provenance"
+  - "treating infra as proof"
+
+notes:
+  short_description: "A falsification-first research system where infrastructure progress is not treated as proof of edge."
+  current_phase: "lazy_bootstrap"
+  owner_mode: "solo_builder_vibe_coding"
+  preferred_workflow: "plan_changeset_verify_verdict"
