@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Iterator
 
 from quantbot.data.types import Bar
+from quantbot.version import ENGINE_VERSION
 
 
 @dataclass
@@ -17,7 +18,7 @@ class ReplayReceipt:
     first_timestamp: str
     last_timestamp: str
     total_volume: float
-    engine_version: str = "1.0"
+    engine_version: str = ENGINE_VERSION
     input_digest: str = ""
     signal_count: int = 0
     output_digest: str = field(init=False)

@@ -37,6 +37,7 @@ def test_replay_receipt_has_expected_fields():
     assert receipt.first_timestamp == "2024-01-02T09:00:00"
     assert receipt.last_timestamp == "2024-01-02T16:00:00"
     assert receipt.total_volume == 14000.0  # Sum of all volumes
+    assert receipt.engine_version == "0.1.0"
     assert len(receipt.bar_hash) == 64  # SHA-256 hex
     assert len(receipt.output_digest) == 64  # SHA-256 hex
 
