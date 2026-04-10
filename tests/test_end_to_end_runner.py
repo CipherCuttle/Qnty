@@ -35,7 +35,7 @@ def test_replay_determinism() -> None:
         data = json.loads(path1.read_text())
         assert data["bar_count"] == 8
         assert data["bar_hash"]  # non-empty
-        assert data["receipt_hash"]  # non-empty
+        assert data["output_digest"]  # non-empty
         assert data["first_timestamp"] == "2024-01-02T09:00:00"
         assert data["last_timestamp"] == "2024-01-02T16:00:00"
 

@@ -18,8 +18,8 @@ def test_replay_runner_produces_deterministic_receipt():
     receipt1 = runner.run()
     receipt2 = runner.run()
 
-    # Receipt hash must be identical across runs
-    assert receipt1.receipt_hash == receipt2.receipt_hash
+    # Output digest must be identical across runs
+    assert receipt1.output_digest == receipt2.output_digest
     assert receipt1.bar_hash == receipt2.bar_hash
     assert receipt1.bar_count == receipt2.bar_count
 
@@ -38,7 +38,7 @@ def test_replay_receipt_has_expected_fields():
     assert receipt.last_timestamp == "2024-01-02T16:00:00"
     assert receipt.total_volume == 14000.0  # Sum of all volumes
     assert len(receipt.bar_hash) == 64  # SHA-256 hex
-    assert len(receipt.receipt_hash) == 64  # SHA-256 hex
+    assert len(receipt.output_digest) == 64  # SHA-256 hex
 
 
 def test_replay_receipt_to_dict():
@@ -52,7 +52,7 @@ def test_replay_receipt_to_dict():
     d = receipt.to_dict()
     assert "bar_count" in d
     assert "bar_hash" in d
-    assert "receipt_hash" in d
+    assert "output_digest" in d
     assert "first_timestamp" in d
     assert "last_timestamp" in d
     assert "total_volume" in d

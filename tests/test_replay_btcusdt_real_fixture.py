@@ -25,7 +25,7 @@ def test_replay_btcusdt_receipt_produced() -> None:
         data = json.loads(receipt_path.read_text())
         assert data["bar_count"] == 2190
         assert data["bar_hash"]
-        assert data["receipt_hash"]
+        assert data["output_digest"]
         assert data["first_timestamp"] == "2023-01-01 00:00:00+00:00"
         assert data["last_timestamp"] == "2024-12-30 16:00:00+00:00"
 

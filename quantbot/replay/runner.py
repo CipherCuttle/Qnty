@@ -17,24 +17,25 @@ class ReplayReceipt:
     first_timestamp: str
     last_timestamp: str
     total_volume: float
+    engine_version: str = "1.0"
+    input_digest: str = ""
     signal_count: int = 0
-    receipt_hash: str = field(init=False)
+    output_digest: str = field(init=False)
 
     def __post_init__(self) -> None:
-        """Compute deterministic receipt hash."""
-        canonical = json.dumps(
-            {
-                "bar_count": self.bar_count,
-                "bar_hash": self.bar_hash,
-                "first_timestamp": self.first_timestamp,
-                "last_timestamp": self.last_timestamp,
-                "total_volume": self.total_volume,
-                "signal_count": self.signal_count,
-            },
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        self.receipt_hash = hashlib.sha256(canonical.encode()).hexdigest()
+        """Compute deterministic output digest from receipt fields (excluding output_digest)."""
+        receipt_for_hash = {
+            "bar_count": self.bar_count,
+            "bar_hash": self.bar_hash,
+            "first_timestamp": self.first_timestamp,
+            "last_timestamp": self.last_timestamp,
+            "total_volume": self.total_volume,
+            "engine_version": self.engine_version,
+            "input_digest": self.input_digest,
+            "signal_count": self.signal_count,
+        }
+        canonical = json.dumps(receipt_for_hash, separators=(",", ":"), sort_keys=True)
+        self.output_digest = hashlib.sha256(canonical.encode()).hexdigest()
 
     def to_dict(self) -> dict:
         """Serialize receipt to dict."""
@@ -44,8 +45,10 @@ class ReplayReceipt:
             "first_timestamp": self.first_timestamp,
             "last_timestamp": self.last_timestamp,
             "total_volume": self.total_volume,
+            "engine_version": self.engine_version,
+            "input_digest": self.input_digest,
             "signal_count": self.signal_count,
-            "receipt_hash": self.receipt_hash,
+            "output_digest": self.output_digest,
         }
 
 
@@ -85,6 +88,7 @@ class ReplayRunner:
         bar_dicts = [bar.to_dict() for bar in self.bars]
         bar_json = json.dumps(bar_dicts, separators=(",", ":"), sort_keys=True)
         bar_hash = hashlib.sha256(bar_json.encode()).hexdigest()
+        input_digest = hashlib.sha256(bar_json.encode()).hexdigest()
 
         total_volume = sum(bar.volume for bar in self.bars)
 
@@ -101,5 +105,6 @@ class ReplayRunner:
             first_timestamp=self.bars[0].timestamp if self.bars else "",
             last_timestamp=self.bars[-1].timestamp if self.bars else "",
             total_volume=total_volume,
+            input_digest=input_digest,
             signal_count=signal_count,
         )
