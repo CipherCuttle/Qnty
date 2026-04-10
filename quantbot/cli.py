@@ -5,10 +5,12 @@ import sys
 from pathlib import Path
 
 from quantbot.app.run_replay import run_replay
+from quantbot.version import ENGINE_VERSION
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="qnty", description="Qnty replay runner")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {ENGINE_VERSION}")
     parser.add_argument("--manifest", required=True, type=Path, help="Path to manifest JSON")
     parser.add_argument("--csv", required=True, type=Path, help="Path to bars CSV")
     parser.add_argument("--out", required=True, type=Path, help="Output directory")
