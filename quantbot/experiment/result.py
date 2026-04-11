@@ -70,3 +70,29 @@ class ExperimentResult:
     def write_json(self, path: Path) -> None:
         """Write result as deterministic JSON to disk."""
         path.write_text(self.to_json(), encoding="utf-8")
+
+
+@dataclass
+class WalkForwardSplitResult:
+    """Summary of a single walk-forward split's execution."""
+
+    split_index: int
+    train_bar_count: int
+    test_bar_count: int
+    signal_count: int
+    long_count: int
+    short_count: int
+    flat_count: int
+    receipt_path: str | None  # None if no receipt written
+    artifact_path: str | None
+
+
+@dataclass
+class WalkForwardExperimentResult:
+    """Summary of a walk-forward experiment across multiple splits."""
+
+    experiment_name: str
+    split_count: int
+    splits: list[WalkForwardSplitResult]  # per-split summaries
+    total_bar_count: int
+    total_signal_count: int
