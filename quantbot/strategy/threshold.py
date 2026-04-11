@@ -63,3 +63,16 @@ class ThresholdStrategy:
             )
 
         return None
+
+
+# Auto-register with experiment system (imported lazily to avoid circular deps)
+def _register() -> None:
+    """Register ThresholdStrategy with experiment runner registry."""
+    try:
+        from quantbot.experiment.runner import _register_strategy
+        _register_strategy(ThresholdStrategy)
+    except ImportError:
+        pass
+
+
+_register()
