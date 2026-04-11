@@ -62,13 +62,19 @@ class TestExperimentResult:
             long_count=3,
             short_count=2,
             flat_count=0,
+            engine_version="0.1.0",
         )
         d = result.to_dict()
         assert d["bar_count"] == 2190
         assert d["signal_count"] == 5
         assert d["long_count"] == 3
         assert d["short_count"] == 2
-        assert d["spec"]["experiment_name"] == "test-exp"
+        assert d["experiment_name"] == "test-exp"
+        assert d["strategy_name"] == "ThresholdStrategy"
+        assert d["strategy_params"]["threshold"] == 16500.0
+        assert d["fixture_name"] == "BTCUSDT_8h"
+        assert d["engine_version"] == "0.1.0"
+        assert d["receipt_digest"] == "abc123"
 
 
 class TestRunExperiment:
@@ -171,3 +177,65 @@ class TestRunExperiment:
             assert result.long_count >= 0
             assert result.short_count >= 0
             assert result.flat_count >= 0
+
+    def test_run_experiment_produces_result_artifact(self) -> None:
+        """run_experiment writes experiment_result.json with correct fields."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "exp_run"
+            spec = ExperimentSpec(
+                experiment_name="btc-result-artifact",
+                strategy_name="ThresholdStrategy",
+                strategy_params={"threshold": 16500.0},
+                fixture_name="BTCUSDT_8h",
+            )
+            result = run_experiment(
+                spec=spec,
+                manifest_path=BTCUSDT_MANIFEST_PATH,
+                csv_path=BTCUSDT_CSV_PATH,
+                output_dir=out,
+            )
+            artifact_path = out / "experiment_result.json"
+            assert artifact_path.exists(), "experiment_result.json not found"
+
+            data = json.loads(artifact_path.read_text())
+            assert data["experiment_name"] == "btc-result-artifact"
+            assert data["strategy_name"] == "ThresholdStrategy"
+            assert data["strategy_params"]["threshold"] == 16500.0
+            assert data["fixture_name"] == "BTCUSDT_8h"
+            assert data["engine_version"] == "0.1.0"
+            assert data["receipt_digest"] == result.receipt_digest
+            assert data["bar_count"] == 2190
+            assert data["signal_count"] >= 0
+            assert data["first_timestamp"] == "2023-01-01 00:00:00+00:00"
+            assert data["last_timestamp"] == "2024-12-30 16:00:00+00:00"
+            assert "long_count" in data
+            assert "short_count" in data
+            assert "flat_count" in data
+            assert "receipt_path" not in data
+
+    def test_run_experiment_result_artifact_deterministic(self) -> None:
+        """Two identical experiment runs produce byte-identical experiment_result.json."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out1 = Path(tmpdir) / "run1"
+            out2 = Path(tmpdir) / "run2"
+            spec = ExperimentSpec(
+                experiment_name="btc-deterministic-artifact",
+                strategy_name="ThresholdStrategy",
+                strategy_params={"threshold": 16500.0},
+                fixture_name="BTCUSDT_8h",
+            )
+            run_experiment(
+                spec=spec,
+                manifest_path=BTCUSDT_MANIFEST_PATH,
+                csv_path=BTCUSDT_CSV_PATH,
+                output_dir=out1,
+            )
+            run_experiment(
+                spec=spec,
+                manifest_path=BTCUSDT_MANIFEST_PATH,
+                csv_path=BTCUSDT_CSV_PATH,
+                output_dir=out2,
+            )
+            artifact1 = (out1 / "experiment_result.json").read_bytes()
+            artifact2 = (out2 / "experiment_result.json").read_bytes()
+            assert artifact1 == artifact2, "experiment_result.json not byte-identical across runs"

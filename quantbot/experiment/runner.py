@@ -12,6 +12,7 @@ from quantbot.data.manifest import ManifestVerifier
 from quantbot.experiment.result import ExperimentResult
 from quantbot.experiment.spec import ExperimentSpec
 from quantbot.replay.runner import ReplayRunner
+from quantbot.version import ENGINE_VERSION
 
 
 # Strategy class registry - minimal factory
@@ -140,7 +141,7 @@ def run_experiment(
         strategy_for_count, bars
     )
 
-    return ExperimentResult(
+    result = ExperimentResult(
         spec=spec,
         receipt_path=receipt_path,
         receipt_digest=receipt_digest,
@@ -151,4 +152,10 @@ def run_experiment(
         long_count=long_count,
         short_count=short_count,
         flat_count=flat_count,
+        engine_version=ENGINE_VERSION,
     )
+
+    # Write deterministic result artifact
+    result.write_json(output_dir / "experiment_result.json")
+
+    return result
