@@ -165,3 +165,25 @@ class TestExperimentCliEndToEnd:
 
         assert result.returncode == 1
         assert "Invalid param format" in result.stderr
+
+    def test_experiment_cli_prints_result_path(self, tmp_path):
+        """CLI stdout contains the experiment_result.json path."""
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "quantbot.experiment_cli",
+                "--fixture", "btcusdt-8h",
+                "--strategy", "ThresholdStrategy",
+                "--param", "threshold=16500.0",
+                "--out", str(out_dir),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0
+        expected_result_path = str(out_dir / "experiment_result.json")
+        assert expected_result_path in result.stdout

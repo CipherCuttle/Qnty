@@ -141,9 +141,11 @@ def run_experiment(
         strategy_for_count, bars
     )
 
+    result_path = output_dir / "experiment_result.json"
     result = ExperimentResult(
         spec=spec,
         receipt_path=receipt_path,
+        result_path=result_path,
         receipt_digest=receipt_digest,
         bar_count=receipt.bar_count,
         signal_count=receipt.signal_count,
@@ -156,6 +158,6 @@ def run_experiment(
     )
 
     # Write deterministic result artifact
-    result.write_json(output_dir / "experiment_result.json")
+    result.write_json(result_path)
 
     return result

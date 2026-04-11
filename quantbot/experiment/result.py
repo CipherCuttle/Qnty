@@ -34,6 +34,7 @@ class ExperimentResult:
 
     spec: ExperimentSpec
     receipt_path: Path
+    result_path: Path
     receipt_digest: str
     bar_count: int
     signal_count: int

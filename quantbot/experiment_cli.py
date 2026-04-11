@@ -144,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     # Print result summary
     print(f"experiment: {result.spec.experiment_name}")
     print(f"receipt: {result.receipt_path}")
+    print(f"result: {result.result_path}")
     print(f"bars: {result.bar_count}  signals: {result.signal_count}")
     print(f"long: {result.long_count}  short: {result.short_count}  flat: {result.flat_count}")
     print(f"digest: {result.receipt_digest}")
