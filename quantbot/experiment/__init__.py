@@ -7,9 +7,12 @@ Paper mode only - no real trading, no profitability claims.
 from quantbot.experiment.spec import ExperimentSpec
 from quantbot.experiment.result import ExperimentResult
 from quantbot.experiment.runner import run_experiment
+from quantbot.experiment.walkforward import WalkForwardSplit, build_walkforward_splits
 
 __all__ = [
     "ExperimentSpec",
     "ExperimentResult",
     "run_experiment",
+    "WalkForwardSplit",
+    "build_walkforward_splits",
 ]
