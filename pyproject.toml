@@ -12,6 +12,7 @@ dependencies = []
 
 [project.scripts]
 qnty-replay = "quantbot.cli:main"
+qnty-experiment = "quantbot.experiment_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
