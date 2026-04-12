@@ -85,6 +85,8 @@ class WalkForwardSplitResult:
     flat_count: int
     receipt_path: str | None  # None if no receipt written
     artifact_path: str | None
+    first_timestamp: str = ""
+    last_timestamp: str = ""
 
 
 @dataclass
@@ -96,3 +98,68 @@ class WalkForwardExperimentResult:
     splits: list[WalkForwardSplitResult]  # per-split summaries
     total_bar_count: int
     total_signal_count: int
+    strategy_name: str = ""
+    strategy_params: dict = None
+    fixture_name: str = ""
+    engine_version: str = ""
+
+    def __post_init__(self) -> None:
+        if self.strategy_params is None:
+            self.strategy_params = {}
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to deterministic dict for canonical JSON output."""
+        # Aggregate signal counts across all splits
+        aggregate_signal_count = sum(s.signal_count for s in self.splits)
+        aggregate_long_count = sum(s.long_count for s in self.splits)
+        aggregate_short_count = sum(s.short_count for s in self.splits)
+        aggregate_flat_count = sum(s.flat_count for s in self.splits)
+
+        # Find earliest and latest timestamps across all splits
+        first_timestamp = ""
+        last_timestamp = ""
+        for split in self.splits:
+            if split.first_timestamp:
+                if not first_timestamp or split.first_timestamp < first_timestamp:
+                    first_timestamp = split.first_timestamp
+                if not last_timestamp or split.last_timestamp > last_timestamp:
+                    last_timestamp = split.last_timestamp
+
+        split_results = [
+            {
+                "split_index": s.split_index,
+                "test_bar_count": s.test_bar_count,
+                "train_bar_count": s.train_bar_count,
+                "signal_count": s.signal_count,
+                "long_count": s.long_count,
+                "short_count": s.short_count,
+                "flat_count": s.flat_count,
+                "first_timestamp": s.first_timestamp,
+                "last_timestamp": s.last_timestamp,
+            }
+            for s in self.splits
+        ]
+
+        return {
+            "experiment_name": self.experiment_name,
+            "strategy_name": self.strategy_name,
+            "strategy_params": self.strategy_params,
+            "fixture_name": self.fixture_name,
+            "engine_version": self.engine_version,
+            "split_count": self.split_count,
+            "aggregate_signal_count": aggregate_signal_count,
+            "aggregate_long_count": aggregate_long_count,
+            "aggregate_short_count": aggregate_short_count,
+            "aggregate_flat_count": aggregate_flat_count,
+            "first_timestamp": first_timestamp,
+            "last_timestamp": last_timestamp,
+            "split_results": split_results,
+        }
+
+    def to_json(self) -> str:
+        """Serialize to deterministic canonical JSON string."""
+        return canonical_json_dumps(self.to_dict())
+
+    def write_json(self, path: Path) -> None:
+        """Write result as deterministic JSON to disk."""
+        path.write_text(self.to_json(), encoding="utf-8")

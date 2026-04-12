@@ -16,6 +16,7 @@ from quantbot.experiment.result import (
 from quantbot.experiment.spec import ExperimentSpec
 from quantbot.experiment.walkforward import WalkForwardSplit, build_walkforward_splits
 from quantbot.experiment.runner import run_experiment
+from quantbot.version import ENGINE_VERSION
 
 
 def _write_split_csv(bars: list[Bar], output_path: Path) -> None:
@@ -149,6 +150,11 @@ def run_walkforward_experiment(
             long_count = 0
             short_count = 0
             flat_count = 0
+            first_ts = ""
+            last_ts = ""
+        else:
+            first_ts = result.first_timestamp
+            last_ts = result.last_timestamp
 
         # Collect per-split summary
         split_result = WalkForwardSplitResult(
@@ -161,16 +167,28 @@ def run_walkforward_experiment(
             flat_count=flat_count,
             receipt_path=receipt_path_str,
             artifact_path=artifact_path_str,
+            first_timestamp=first_ts,
+            last_timestamp=last_ts,
         )
         split_results.append(split_result)
         total_bar_count += test_bar_count
         total_signal_count += signal_count
 
-    # Step 4: return summary
-    return WalkForwardExperimentResult(
+    # Step 4: build result and write JSON artifact
+    wf_result = WalkForwardExperimentResult(
         experiment_name=spec.experiment_name,
         split_count=len(split_results),
         splits=split_results,
         total_bar_count=total_bar_count,
         total_signal_count=total_signal_count,
+        strategy_name=spec.strategy_name,
+        strategy_params=spec.strategy_params,
+        fixture_name=spec.fixture_name,
+        engine_version=ENGINE_VERSION,
     )
+
+    # Write deterministic walkforward_result.json
+    wf_json_path = output_dir / "walkforward_result.json"
+    wf_result.write_json(wf_json_path)
+
+    return wf_result

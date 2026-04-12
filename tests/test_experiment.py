@@ -53,6 +53,7 @@ class TestExperimentResult:
         )
         result = ExperimentResult(
             spec=spec,
+            result_path=Path("/tmp/result.json"),
             receipt_path=Path("/tmp/receipt.json"),
             receipt_digest="abc123",
             bar_count=2190,

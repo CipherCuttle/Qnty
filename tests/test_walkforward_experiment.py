@@ -128,6 +128,55 @@ class TestRunWalkForwardExperiment:
                     digest2 = Path(split2.receipt_path).read_text()
                     assert digest1 == digest2
 
+    def test_walkforward_result_json_byte_identical(self) -> None:
+        """walkforward_result.json is byte-identical across two runs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out1 = Path(tmpdir) / "run1"
+            out2 = Path(tmpdir) / "run2"
+            spec = ExperimentSpec(
+                experiment_name="btc-wf-json-det",
+                strategy_name="ThresholdStrategy",
+                strategy_params={"threshold": 16500.0, "symbol": "BTCUSDT"},
+                fixture_name="BTCUSDT_8h",
+            )
+            run_walkforward_experiment(
+                spec=spec,
+                manifest_path=BTCUSDT_MANIFEST_PATH,
+                csv_path=BTCUSDT_CSV_PATH,
+                output_dir=out1,
+                train_size=100,
+                test_size=50,
+                step_size=50,
+            )
+            run_walkforward_experiment(
+                spec=spec,
+                manifest_path=BTCUSDT_MANIFEST_PATH,
+                csv_path=BTCUSDT_CSV_PATH,
+                output_dir=out2,
+                train_size=100,
+                test_size=50,
+                step_size=50,
+            )
+
+            json1_path = out1 / "walkforward_result.json"
+            json2_path = out2 / "walkforward_result.json"
+
+            assert json1_path.exists(), "walkforward_result.json not written"
+            assert json2_path.exists(), "walkforward_result.json not written"
+
+            json1_bytes = json1_path.read_bytes()
+            json2_bytes = json2_path.read_bytes()
+            assert json1_bytes == json2_bytes, (
+                "walkforward_result.json differs between runs"
+            )
+
+            # Also verify receipts are identical
+            for idx in range(41):
+                receipt1 = out1 / f"split_{idx:03d}" / "receipt.json"
+                receipt2 = out2 / f"split_{idx:03d}" / "receipt.json"
+                if receipt1.exists() and receipt2.exists():
+                    assert receipt1.read_bytes() == receipt2.read_bytes()
+
     def test_split_directories_named_deterministically(self) -> None:
         """Split directories are named split_000, split_001, etc."""
         with tempfile.TemporaryDirectory() as tmpdir:
