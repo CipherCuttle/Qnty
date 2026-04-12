@@ -148,6 +148,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"bars: {result.bar_count}  signals: {result.signal_count}")
     print(f"long: {result.long_count}  short: {result.short_count}  flat: {result.flat_count}")
     print(f"digest: {result.receipt_digest}")
+    # Print gate verdict
+    verdict = result.gate_verdict
+    if verdict.status == "PASS":
+        print("gate: PASS")
+    else:
+        reasons_str = ", ".join(verdict.reasons) if verdict.reasons else "unknown"
+        print(f"gate: FAIL reasons=[{reasons_str}]")
 
     return 0
 

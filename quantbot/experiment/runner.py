@@ -9,6 +9,7 @@ from typing import Any
 from quantbot.core.determinism import sha256_file
 from quantbot.data.loaders import load_bars_from_csv
 from quantbot.data.manifest import ManifestVerifier
+from quantbot.experiment.gates import gate_experiment_result
 from quantbot.experiment.result import ExperimentResult
 from quantbot.experiment.spec import ExperimentSpec
 from quantbot.replay.runner import ReplayRunner
@@ -159,5 +160,8 @@ def run_experiment(
 
     # Write deterministic result artifact
     result.write_json(result_path)
+
+    # Run gate checks and attach verdict
+    result.gate_verdict = gate_experiment_result(result)
 
     return result

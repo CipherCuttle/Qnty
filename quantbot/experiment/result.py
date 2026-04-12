@@ -3,12 +3,17 @@
 Paper mode only - no real trading, no profitability claims.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from quantbot.core.determinism import canonical_json_dumps
 from quantbot.experiment.spec import ExperimentSpec
+
+if TYPE_CHECKING:
+    from quantbot.experiment.gates import GateVerdict
 
 
 @dataclass
@@ -44,6 +49,7 @@ class ExperimentResult:
     short_count: int = 0
     flat_count: int = 0
     engine_version: str = ""
+    gate_verdict: Optional[GateVerdict] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize result to dict."""
@@ -102,6 +108,7 @@ class WalkForwardExperimentResult:
     strategy_params: dict = None
     fixture_name: str = ""
     engine_version: str = ""
+    gate_verdict: Optional[GateVerdict] = None
 
     def __post_init__(self) -> None:
         if self.strategy_params is None:

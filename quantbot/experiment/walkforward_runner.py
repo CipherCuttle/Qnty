@@ -8,6 +8,7 @@ from pathlib import Path
 
 from quantbot.data.loaders import load_bars_from_csv
 from quantbot.data.types import Bar
+from quantbot.experiment.gates import gate_walkforward_result
 from quantbot.experiment.result import (
     ExperimentResult,
     WalkForwardExperimentResult,
@@ -190,5 +191,8 @@ def run_walkforward_experiment(
     # Write deterministic walkforward_result.json
     wf_json_path = output_dir / "walkforward_result.json"
     wf_result.write_json(wf_json_path)
+
+    # Run gate checks and attach verdict
+    wf_result.gate_verdict = gate_walkforward_result(wf_result)
 
     return wf_result

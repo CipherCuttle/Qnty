@@ -161,6 +161,13 @@ def main(argv: list[str] | None = None) -> int:
     # Print result summary
     print(f"Walk-forward experiment complete.")
     print(f"Result: {args.out / 'walkforward_result.json'}")
+    # Print gate verdict
+    verdict = result.gate_verdict
+    if verdict.status == "PASS":
+        print("gate: PASS")
+    else:
+        reasons_str = ", ".join(verdict.reasons) if verdict.reasons else "unknown"
+        print(f"gate: FAIL reasons=[{reasons_str}]")
 
     return 0
 
