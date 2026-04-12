@@ -51,9 +51,19 @@ class ExperimentResult:
     engine_version: str = ""
     gate_verdict: Optional[GateVerdict] = None
 
+    def _gate_verdict_to_dict(self) -> dict[str, Any]:
+        """Serialize gate_verdict to dict, or None if not set."""
+        if self.gate_verdict is None:
+            return None
+        return {
+            "status": self.gate_verdict.status,
+            "reasons": self.gate_verdict.reasons,
+            "checked": self.gate_verdict.checked,
+        }
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize result to dict."""
-        return {
+        d = {
             "experiment_name": self.spec.experiment_name,
             "strategy_name": self.spec.strategy_name,
             "strategy_params": self.spec.strategy_params,
@@ -67,7 +77,9 @@ class ExperimentResult:
             "long_count": self.long_count,
             "short_count": self.short_count,
             "flat_count": self.flat_count,
+            "gate_verdict": self._gate_verdict_to_dict(),
         }
+        return d
 
     def to_json(self) -> str:
         """Serialize result to deterministic canonical JSON string."""
@@ -113,6 +125,16 @@ class WalkForwardExperimentResult:
     def __post_init__(self) -> None:
         if self.strategy_params is None:
             self.strategy_params = {}
+
+    def _gate_verdict_to_dict(self) -> dict[str, Any]:
+        """Serialize gate_verdict to dict, or None if not set."""
+        if self.gate_verdict is None:
+            return None
+        return {
+            "status": self.gate_verdict.status,
+            "reasons": self.gate_verdict.reasons,
+            "checked": self.gate_verdict.checked,
+        }
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to deterministic dict for canonical JSON output."""
@@ -161,6 +183,7 @@ class WalkForwardExperimentResult:
             "first_timestamp": first_timestamp,
             "last_timestamp": last_timestamp,
             "split_results": split_results,
+            "gate_verdict": self._gate_verdict_to_dict(),
         }
 
     def to_json(self) -> str:

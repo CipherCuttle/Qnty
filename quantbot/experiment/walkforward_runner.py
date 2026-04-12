@@ -188,11 +188,11 @@ def run_walkforward_experiment(
         engine_version=ENGINE_VERSION,
     )
 
-    # Write deterministic walkforward_result.json
-    wf_json_path = output_dir / "walkforward_result.json"
-    wf_result.write_json(wf_json_path)
-
     # Run gate checks and attach verdict
     wf_result.gate_verdict = gate_walkforward_result(wf_result)
+
+    # Write deterministic walkforward_result.json (now includes gate_verdict)
+    wf_json_path = output_dir / "walkforward_result.json"
+    wf_result.write_json(wf_json_path)
 
     return wf_result

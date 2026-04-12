@@ -212,6 +212,7 @@ class TestRunExperiment:
             assert "long_count" in data
             assert "short_count" in data
             assert "flat_count" in data
+            assert "gate_verdict" in data
             assert "receipt_path" not in data
 
     def test_run_experiment_result_artifact_deterministic(self) -> None:

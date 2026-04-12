@@ -201,6 +201,35 @@ class TestRunWalkForwardExperiment:
                 expected_dir = out / f"split_{idx:03d}"
                 assert expected_dir.exists()
 
+    def test_walkforward_result_includes_gate_verdict(self) -> None:
+        """walkforward_result.json includes gate_verdict field."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "wf_experiment"
+            spec = ExperimentSpec(
+                experiment_name="btc-wf-gate",
+                strategy_name="ThresholdStrategy",
+                strategy_params={"threshold": 16500.0, "symbol": "BTCUSDT"},
+                fixture_name="BTCUSDT_8h",
+            )
+            result = run_walkforward_experiment(
+                spec=spec,
+                manifest_path=BTCUSDT_MANIFEST_PATH,
+                csv_path=BTCUSDT_CSV_PATH,
+                output_dir=out,
+                train_size=100,
+                test_size=50,
+                step_size=50,
+            )
+            wf_json_path = out / "walkforward_result.json"
+            data = json.loads(wf_json_path.read_text())
+            assert "gate_verdict" in data
+            assert data["gate_verdict"] is not None
+            assert "status" in data["gate_verdict"]
+            assert "reasons" in data["gate_verdict"]
+            assert "checked" in data["gate_verdict"]
+
 
 class TestWalkForwardExperimentResult:
     """Tests for WalkForwardExperimentResult dataclass."""

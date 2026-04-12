@@ -158,10 +158,10 @@ def run_experiment(
         engine_version=ENGINE_VERSION,
     )
 
-    # Write deterministic result artifact
-    result.write_json(result_path)
-
     # Run gate checks and attach verdict
     result.gate_verdict = gate_experiment_result(result)
+
+    # Write deterministic result artifact (now includes gate_verdict)
+    result.write_json(result_path)
 
     return result
