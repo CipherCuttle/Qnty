@@ -10,6 +10,7 @@ from quantbot.experiment.runner import run_experiment
 from quantbot.experiment.walkforward import WalkForwardSplit, build_walkforward_splits
 from quantbot.experiment.walkforward_runner import run_walkforward_experiment
 from quantbot.experiment.gates import GateVerdict, gate_experiment_result, gate_walkforward_result
+from quantbot.experiment.index import IndexedExperiment, index_experiment_artifacts
 
 __all__ = [
     "ExperimentSpec",
@@ -23,4 +24,6 @@ __all__ = [
     "GateVerdict",
     "gate_experiment_result",
     "gate_walkforward_result",
+    "IndexedExperiment",
+    "index_experiment_artifacts",
 ]
