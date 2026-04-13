@@ -197,6 +197,8 @@ def run_walkforward_experiment(
         variant_id=wf_variant_id,
         trial_count=spec.trial_count,
         engine_version=ENGINE_VERSION,
+        fee_bps=spec.fee_bps,
+        slippage_bps=spec.slippage_bps,
     )
 
     # Run gate checks and attach verdict

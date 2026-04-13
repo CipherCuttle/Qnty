@@ -156,6 +156,34 @@ class TestIndexExperimentArtifacts:
             assert indexed[0].variant_id is None
             assert indexed[0].trial_count is None
 
+    def test_index_handles_legacy_artifact_missing_cost_fields(self) -> None:
+        """Indexing a legacy artifact without fee_bps/slippage_bps defaults to 0.0."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy_path = Path(tmpdir) / "experiment_result.json"
+            legacy_data = {
+                "experiment_name": "legacy-exp",
+                "strategy_name": "ThresholdStrategy",
+                "strategy_params": {},
+                "fixture_name": "BTCUSDT_8h",
+                "engine_version": "0.1.0",
+                "receipt_digest": "abc123",
+                "bar_count": 100,
+                "signal_count": 5,
+                "first_timestamp": "2023-01-01T00:00:00+00:00",
+                "last_timestamp": "2023-01-02T00:00:00+00:00",
+                "long_count": 2,
+                "short_count": 3,
+                "flat_count": 0,
+                "gate_verdict": None,
+            }
+            legacy_path.write_text(json.dumps(legacy_data), encoding="utf-8")
+
+            indexed = index_experiment_artifacts([legacy_path])
+            assert len(indexed) == 1
+            assert indexed[0].experiment_name == "legacy-exp"
+            assert indexed[0].fee_bps == 0.0
+            assert indexed[0].slippage_bps == 0.0
+
 
 class TestIndexedExperiment:
     """Tests for IndexedExperiment summary shape."""

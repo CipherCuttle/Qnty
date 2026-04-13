@@ -47,6 +47,8 @@ class IndexedExperiment:
     family_id: Optional[str] = None
     variant_id: Optional[str] = None
     trial_count: Optional[int] = None
+    fee_bps: float = 0.0
+    slippage_bps: float = 0.0
 
     def gate_passed(self) -> bool:
         """Return True if gate status is PASS."""
@@ -130,6 +132,8 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
                 family_id=data.get("family_id"),
                 variant_id=data.get("variant_id"),
                 trial_count=data.get("trial_count"),
+                fee_bps=data.get("fee_bps", 0.0),
+                slippage_bps=data.get("slippage_bps", 0.0),
             )
             results.append(indexed)
 
@@ -148,6 +152,8 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
                 family_id=data.get("family_id"),
                 variant_id=data.get("variant_id"),
                 trial_count=data.get("trial_count"),
+                fee_bps=data.get("fee_bps", 0.0),
+                slippage_bps=data.get("slippage_bps", 0.0),
             )
             results.append(indexed)
 

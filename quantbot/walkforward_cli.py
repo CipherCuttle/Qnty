@@ -109,6 +109,18 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Cumulative trial count for this family at creation time (default: 1)",
     )
+    parser.add_argument(
+        "--fee-bps",
+        type=float,
+        default=0.0,
+        help="Assumed fee in basis points (default: 0.0)",
+    )
+    parser.add_argument(
+        "--slippage-bps",
+        type=float,
+        default=0.0,
+        help="Assumed slippage in basis points (default: 0.0)",
+    )
 
     try:
         args = parser.parse_args(argv)
@@ -162,6 +174,8 @@ def main(argv: list[str] | None = None) -> int:
         family_id=family_id,
         variant_id=variant_id,
         trial_count=trial_count,
+        fee_bps=args.fee_bps,
+        slippage_bps=args.slippage_bps,
     )
 
     # Run walk-forward experiment

@@ -50,6 +50,8 @@ class ExperimentResult:
     flat_count: int = 0
     engine_version: str = ""
     gate_verdict: Optional[GateVerdict] = None
+    fee_bps: float = 0.0
+    slippage_bps: float = 0.0
 
     def _gate_verdict_to_dict(self) -> dict[str, Any]:
         """Serialize gate_verdict to dict, or None if not set."""
@@ -81,6 +83,8 @@ class ExperimentResult:
             "short_count": self.short_count,
             "flat_count": self.flat_count,
             "gate_verdict": self._gate_verdict_to_dict(),
+            "fee_bps": self.fee_bps,
+            "slippage_bps": self.slippage_bps,
         }
         return d
 
@@ -127,6 +131,8 @@ class WalkForwardExperimentResult:
     trial_count: int = 1
     engine_version: str = ""
     gate_verdict: Optional[GateVerdict] = None
+    fee_bps: float = 0.0
+    slippage_bps: float = 0.0
 
     def __post_init__(self) -> None:
         if self.strategy_params is None:
@@ -193,6 +199,8 @@ class WalkForwardExperimentResult:
             "last_timestamp": last_timestamp,
             "split_results": split_results,
             "gate_verdict": self._gate_verdict_to_dict(),
+            "fee_bps": self.fee_bps,
+            "slippage_bps": self.slippage_bps,
         }
 
     def to_json(self) -> str:

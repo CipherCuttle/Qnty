@@ -248,6 +248,21 @@ class TestWalkForwardExperimentResult:
         assert result.total_signal_count == 0
         assert result.splits == []
 
+    def test_walkforward_result_contains_cost_fields(self) -> None:
+        """WalkForwardExperimentResult.to_dict() includes fee_bps and slippage_bps."""
+        result = WalkForwardExperimentResult(
+            experiment_name="wf-cost-test",
+            split_count=1,
+            splits=[],
+            total_bar_count=100,
+            total_signal_count=5,
+            fee_bps=10.0,
+            slippage_bps=3.0,
+        )
+        d = result.to_dict()
+        assert d["fee_bps"] == 10.0
+        assert d["slippage_bps"] == 3.0
+
 
 class TestWalkForwardSplitResult:
     """Tests for WalkForwardSplitResult dataclass."""

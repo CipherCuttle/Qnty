@@ -21,6 +21,7 @@ def _format_row(exp: IndexedExperiment) -> str:
         f"{exp.experiment_name} | {exp.strategy_name} | {exp.family_id or 'N/A'} | "
         f"{exp.variant_id or 'N/A'} | {exp.trial_count or 0} | "
         f"{exp.gate_status or 'N/A'} | {exp.split_count} | {exp.signal_count} | "
+        f"{exp.fee_bps} | {exp.slippage_bps} | "
         f"{exp.result_type} | {exp.artifact_path}"
     )
 
@@ -125,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
                 "family_id": e.family_id,
                 "variant_id": e.variant_id,
                 "trial_count": e.trial_count,
+                "fee_bps": e.fee_bps,
+                "slippage_bps": e.slippage_bps,
             }
             for e in indexed
         ]
@@ -133,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         # Header
         print(
             "experiment_name | strategy_name | family_id | variant_id | trial_count | "
-            "gate_status | split_count | signal_count | result_type | artifact_path"
+            "gate_status | split_count | signal_count | fee_bps | slippage_bps | result_type | artifact_path"
         )
         # Rows
         for exp in indexed:

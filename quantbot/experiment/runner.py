@@ -156,6 +156,8 @@ def run_experiment(
         short_count=short_count,
         flat_count=flat_count,
         engine_version=ENGINE_VERSION,
+        fee_bps=spec.fee_bps,
+        slippage_bps=spec.slippage_bps,
     )
 
     # Run gate checks and attach verdict

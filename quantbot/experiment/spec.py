@@ -35,10 +35,16 @@ class ExperimentSpec:
     family_id: str = ""
     variant_id: str = ""
     trial_count: int = 1
+    fee_bps: float = 0.0
+    slippage_bps: float = 0.0
 
     def __post_init__(self) -> None:
         if self.trial_count < 1:
             raise ValueError(f"trial_count must be >= 1, got {self.trial_count}")
+        if self.fee_bps < 0:
+            raise ValueError("fee_bps must be non-negative")
+        if self.slippage_bps < 0:
+            raise ValueError("slippage_bps must be non-negative")
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize spec to dict."""
@@ -52,4 +58,6 @@ class ExperimentSpec:
             "family_id": self.family_id,
             "variant_id": self.variant_id,
             "trial_count": self.trial_count,
+            "fee_bps": self.fee_bps,
+            "slippage_bps": self.slippage_bps,
         }

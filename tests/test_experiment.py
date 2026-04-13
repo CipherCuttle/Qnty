@@ -78,6 +78,45 @@ class TestExperimentSpec:
                 strategy_name="ThresholdStrategy",
                 trial_count=-1,
             )
+    
+        def test_spec_accepts_non_negative_fee_and_slippage(self) -> None:
+            """ExperimentSpec accepts non-negative fee_bps and slippage_bps."""
+            spec = ExperimentSpec(
+                experiment_name="test-exp",
+                strategy_name="ThresholdStrategy",
+                fee_bps=5.0,
+                slippage_bps=2.0,
+            )
+            assert spec.fee_bps == 5.0
+            assert spec.slippage_bps == 2.0
+    
+        def test_spec_rejects_negative_fee_bps(self) -> None:
+            """ExperimentSpec raises ValueError for negative fee_bps."""
+            with pytest.raises(ValueError, match="fee_bps must be non-negative"):
+                ExperimentSpec(
+                    experiment_name="test-exp",
+                    strategy_name="ThresholdStrategy",
+                    fee_bps=-1.0,
+                )
+    
+        def test_spec_rejects_negative_slippage_bps(self) -> None:
+            """ExperimentSpec raises ValueError for negative slippage_bps."""
+            with pytest.raises(ValueError, match="slippage_bps must be non-negative"):
+                ExperimentSpec(
+                    experiment_name="test-exp",
+                    strategy_name="ThresholdStrategy",
+                    slippage_bps=-1.0,
+                )
+    
+        def test_spec_rejects_negative_both(self) -> None:
+            """ExperimentSpec raises ValueError when both fee_bps and slippage_bps are negative."""
+            with pytest.raises(ValueError):
+                ExperimentSpec(
+                    experiment_name="test-exp",
+                    strategy_name="ThresholdStrategy",
+                    fee_bps=-1.0,
+                    slippage_bps=-2.0,
+                )
 
 
 class TestExperimentResult:
@@ -122,6 +161,34 @@ class TestExperimentResult:
         assert d["family_id"] == "family-1"
         assert d["variant_id"] == "var-a"
         assert d["trial_count"] == 3
+
+    def test_experiment_result_contains_cost_fields(self) -> None:
+        """ExperimentResult.to_dict() includes fee_bps and slippage_bps."""
+        spec = ExperimentSpec(
+            experiment_name="test-exp",
+            strategy_name="ThresholdStrategy",
+            fee_bps=10.0,
+            slippage_bps=3.0,
+        )
+        result = ExperimentResult(
+            spec=spec,
+            result_path=Path("/tmp/result.json"),
+            receipt_path=Path("/tmp/receipt.json"),
+            receipt_digest="abc123",
+            bar_count=100,
+            signal_count=5,
+            first_timestamp="2023-01-01T00:00:00+00:00",
+            last_timestamp="2023-01-02T00:00:00+00:00",
+            long_count=3,
+            short_count=2,
+            flat_count=0,
+            engine_version="0.1.0",
+            fee_bps=10.0,
+            slippage_bps=3.0,
+        )
+        d = result.to_dict()
+        assert d["fee_bps"] == 10.0
+        assert d["slippage_bps"] == 3.0
 
 
 class TestRunExperiment:
