@@ -11,7 +11,9 @@ from pathlib import Path
 import pytest
 
 from quantbot.experiment.index import (
+    EligibilityResult,
     IndexedExperiment,
+    evaluate_eligibility,
     index_experiment_artifacts,
 )
 from quantbot.experiment.spec import ExperimentSpec
@@ -276,3 +278,134 @@ class TestIndexedExperiment:
             # Sort by signal_count (descending)
             sorted_idx = sorted(indexed, key=lambda x: x.signal_count, reverse=True)
             assert sorted_idx[0].signal_count >= sorted_idx[1].signal_count
+
+
+class TestEvaluateEligibility:
+    """Tests for evaluate_eligibility() eligibility checks."""
+
+    def _base_artifact(self) -> dict:
+        """Return a fully valid artifact dict."""
+        return {
+            "family_id": "test-family",
+            "variant_id": "v1",
+            "trial_count": 100,
+            "fee_bps": 10,
+            "slippage_bps": 5,
+            "gate_verdict": {"status": "PASS"},
+        }
+
+    def test_eligible_with_all_required_fields(self) -> None:
+        """All required fields + gate PASS => eligible_for_review=True, no reasons."""
+        artifact = self._base_artifact()
+        result = evaluate_eligibility(artifact)
+        assert isinstance(result, EligibilityResult)
+        assert result.eligible_for_review is True
+        assert result.ineligibility_reasons == []
+
+    def test_missing_family_id(self) -> None:
+        """Empty family_id => ineligible with 'missing family_id' reason."""
+        artifact = self._base_artifact()
+        artifact["family_id"] = ""
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert "missing family_id" in result.ineligibility_reasons
+
+    def test_absent_family_id(self) -> None:
+        """Absent family_id key => ineligible with 'missing family_id' reason."""
+        artifact = self._base_artifact()
+        del artifact["family_id"]
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert "missing family_id" in result.ineligibility_reasons
+
+    def test_missing_variant_id(self) -> None:
+        """Empty variant_id => ineligible with 'missing variant_id' reason."""
+        artifact = self._base_artifact()
+        artifact["variant_id"] = ""
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert "missing variant_id" in result.ineligibility_reasons
+
+    def test_absent_variant_id(self) -> None:
+        """Absent variant_id key => ineligible with 'missing variant_id' reason."""
+        artifact = self._base_artifact()
+        del artifact["variant_id"]
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert "missing variant_id" in result.ineligibility_reasons
+
+    def test_missing_trial_count(self) -> None:
+        """trial_count=None => ineligible with 'missing trial_count' reason."""
+        artifact = self._base_artifact()
+        artifact["trial_count"] = None
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert "missing trial_count" in result.ineligibility_reasons
+
+    def test_absent_trial_count(self) -> None:
+        """Absent trial_count key => ineligible with 'missing trial_count' reason."""
+        artifact = self._base_artifact()
+        del artifact["trial_count"]
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert "missing trial_count" in result.ineligibility_reasons
+
+    def test_missing_fee_bps(self) -> None:
+        """fee_bps=None => ineligible with 'missing cost assumptions' reason."""
+        artifact = self._base_artifact()
+        artifact["fee_bps"] = None
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert any("missing cost assumptions" in r for r in result.ineligibility_reasons)
+
+    def test_missing_slippage_bps(self) -> None:
+        """slippage_bps=None => ineligible with 'missing cost assumptions' reason."""
+        artifact = self._base_artifact()
+        artifact["slippage_bps"] = None
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert any("missing cost assumptions" in r for r in result.ineligibility_reasons)
+
+    def test_missing_both_cost_fields(self) -> None:
+        """Both fee_bps and slippage_bps None => single 'missing cost assumptions' reason."""
+        artifact = self._base_artifact()
+        artifact["fee_bps"] = None
+        artifact["slippage_bps"] = None
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        cost_reasons = [r for r in result.ineligibility_reasons if "missing cost assumptions" in r]
+        assert len(cost_reasons) == 1
+
+    def test_gate_fail(self) -> None:
+        """gate_status='FAIL' => ineligible with 'gate_status != PASS' reason."""
+        artifact = self._base_artifact()
+        artifact["gate_verdict"] = {"status": "FAIL"}
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert any("gate_status != PASS" in r for r in result.ineligibility_reasons)
+
+    def test_gate_missing(self) -> None:
+        """Absent gate_verdict => ineligible with 'gate_status != PASS' reason."""
+        artifact = self._base_artifact()
+        del artifact["gate_verdict"]
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert any("gate_status != PASS" in r for r in result.ineligibility_reasons)
+
+    def test_multiple_failures_accumulate(self) -> None:
+        """Multiple missing fields accumulate all reasons."""
+        artifact = {
+            "family_id": "",
+            "variant_id": "",
+            "trial_count": None,
+            "fee_bps": None,
+            "slippage_bps": None,
+            "gate_verdict": {"status": "FAIL"},
+        }
+        result = evaluate_eligibility(artifact)
+        assert result.eligible_for_review is False
+        assert "missing family_id" in result.ineligibility_reasons
+        assert "missing variant_id" in result.ineligibility_reasons
+        assert "missing trial_count" in result.ineligibility_reasons
+        assert any("missing cost assumptions" in r for r in result.ineligibility_reasons)
+        assert any("gate_status != PASS" in r for r in result.ineligibility_reasons)

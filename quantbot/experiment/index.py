@@ -10,7 +10,20 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
+
+
+@dataclass
+class EligibilityResult:
+    """Result of eligibility evaluation for research review.
+
+    Attributes:
+        eligible_for_review: True if the artifact meets all eligibility criteria.
+        ineligibility_reasons: List of reasons why the artifact is not eligible.
+    """
+
+    eligible_for_review: bool
+    ineligibility_reasons: list[str]
 
 
 @dataclass
@@ -33,6 +46,10 @@ class IndexedExperiment:
         family_id: Trial family identifier, or None if not present in artifact.
         variant_id: Variant identifier, or None if not present in artifact.
         trial_count: Cumulative trial count, or None if not present in artifact.
+        fee_bps: Trading fee in basis points.
+        slippage_bps: Slippage assumption in basis points.
+        eligible_for_review: True if artifact meets eligibility criteria for research review.
+        ineligibility_reasons: List of reasons for ineligibility (empty if eligible).
     """
 
     experiment_name: str
@@ -49,6 +66,12 @@ class IndexedExperiment:
     trial_count: Optional[int] = None
     fee_bps: float = 0.0
     slippage_bps: float = 0.0
+    eligible_for_review: bool = False
+    ineligibility_reasons: list[str] = None
+
+    def __post_init__(self) -> None:
+        if self.ineligibility_reasons is None:
+            self.ineligibility_reasons = []
 
     def gate_passed(self) -> bool:
         """Return True if gate status is PASS."""
@@ -77,6 +100,52 @@ def _extract_gate_status(data: dict) -> Optional[str]:
     if gate is None:
         return None
     return gate.get("status")
+
+
+def evaluate_eligibility(artifact_data: dict[str, Any]) -> EligibilityResult:
+    """Evaluate whether an artifact is eligible for research review.
+
+    Checks for required fields: family_id, variant_id, trial_count, cost assumptions,
+    and a passing gate status.
+
+    Args:
+        artifact_data: The parsed artifact JSON data.
+
+    Returns:
+        EligibilityResult with eligible status and list of ineligibility reasons.
+    """
+    reasons: list[str] = []
+
+    # Check family_id
+    family_id = artifact_data.get("family_id") or artifact_data.get("spec", {}).get("family_id")
+    if not family_id:
+        reasons.append("missing family_id")
+
+    # Check variant_id
+    variant_id = artifact_data.get("variant_id") or artifact_data.get("spec", {}).get("variant_id")
+    if not variant_id:
+        reasons.append("missing variant_id")
+
+    # Check trial_count
+    trial_count = artifact_data.get("trial_count")
+    if trial_count is None:
+        reasons.append("missing trial_count")
+
+    # Check cost assumptions (fee_bps and slippage_bps)
+    fee_bps = artifact_data.get("fee_bps")
+    slippage_bps = artifact_data.get("slippage_bps")
+    if fee_bps is None or slippage_bps is None:
+        reasons.append("missing cost assumptions (fee_bps or slippage_bps)")
+
+    # Check gate_status
+    gate_status = artifact_data.get("gate_verdict", {}).get("status") if isinstance(artifact_data.get("gate_verdict"), dict) else None
+    if gate_status != "PASS":
+        reasons.append(f"gate_status != PASS (got: {gate_status})")
+
+    return EligibilityResult(
+        eligible_for_review=len(reasons) == 0,
+        ineligibility_reasons=reasons
+    )
 
 
 def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
@@ -119,6 +188,7 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
 
         if filename == "experiment_result.json":
             data = _load_experiment_result(artifact_path)
+            eligibility = evaluate_eligibility(data)
             indexed = IndexedExperiment(
                 experiment_name=data.get("experiment_name", ""),
                 strategy_name=data.get("strategy_name", ""),
@@ -134,11 +204,14 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
                 trial_count=data.get("trial_count"),
                 fee_bps=data.get("fee_bps", 0.0),
                 slippage_bps=data.get("slippage_bps", 0.0),
+                eligible_for_review=eligibility.eligible_for_review,
+                ineligibility_reasons=eligibility.ineligibility_reasons,
             )
             results.append(indexed)
 
         elif filename == "walkforward_result.json":
             data = _load_walkforward_result(artifact_path)
+            eligibility = evaluate_eligibility(data)
             indexed = IndexedExperiment(
                 experiment_name=data.get("experiment_name", ""),
                 strategy_name=data.get("strategy_name", ""),
@@ -154,6 +227,8 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
                 trial_count=data.get("trial_count"),
                 fee_bps=data.get("fee_bps", 0.0),
                 slippage_bps=data.get("slippage_bps", 0.0),
+                eligible_for_review=eligibility.eligible_for_review,
+                ineligibility_reasons=eligibility.ineligibility_reasons,
             )
             results.append(indexed)
 
