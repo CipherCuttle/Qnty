@@ -21,6 +21,9 @@ class ExperimentSpec:
         fixture_name: Name of the data fixture used (e.g. "BTCUSDT_8h").
         description: Optional one-line description.
         notes: Optional free-text notes (no profitability claims).
+        family_id: Hypothesis/search family identifier. Defaults to experiment_name.
+        variant_id: Exact tested variant inside the family. Defaults to experiment_name.
+        trial_count: Cumulative tries consumed for this family at creation time. Default 1.
     """
 
     experiment_name: str
@@ -29,6 +32,13 @@ class ExperimentSpec:
     fixture_name: str = ""
     description: str = ""
     notes: str = ""
+    family_id: str = ""
+    variant_id: str = ""
+    trial_count: int = 1
+
+    def __post_init__(self) -> None:
+        if self.trial_count < 1:
+            raise ValueError(f"trial_count must be >= 1, got {self.trial_count}")
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize spec to dict."""
@@ -39,4 +49,7 @@ class ExperimentSpec:
             "fixture_name": self.fixture_name,
             "description": self.description,
             "notes": self.notes,
+            "family_id": self.family_id,
+            "variant_id": self.variant_id,
+            "trial_count": self.trial_count,
         }

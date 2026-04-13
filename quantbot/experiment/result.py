@@ -68,6 +68,9 @@ class ExperimentResult:
             "strategy_name": self.spec.strategy_name,
             "strategy_params": self.spec.strategy_params,
             "fixture_name": self.spec.fixture_name,
+            "family_id": self.spec.family_id,
+            "variant_id": self.spec.variant_id,
+            "trial_count": self.spec.trial_count,
             "engine_version": self.engine_version,
             "receipt_digest": self.receipt_digest,
             "bar_count": self.bar_count,
@@ -119,6 +122,9 @@ class WalkForwardExperimentResult:
     strategy_name: str = ""
     strategy_params: dict = None
     fixture_name: str = ""
+    family_id: str = ""
+    variant_id: str = ""
+    trial_count: int = 1
     engine_version: str = ""
     gate_verdict: Optional[GateVerdict] = None
 
@@ -174,6 +180,9 @@ class WalkForwardExperimentResult:
             "strategy_name": self.strategy_name,
             "strategy_params": self.strategy_params,
             "fixture_name": self.fixture_name,
+            "family_id": self.family_id,
+            "variant_id": self.variant_id,
+            "trial_count": self.trial_count,
             "engine_version": self.engine_version,
             "split_count": self.split_count,
             "aggregate_signal_count": aggregate_signal_count,

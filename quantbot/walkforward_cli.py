@@ -93,6 +93,22 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Output directory for experiment artifacts",
     )
+    parser.add_argument(
+        "--family-id",
+        default=None,
+        help="Trial family identifier (default: experiment_name)",
+    )
+    parser.add_argument(
+        "--variant-id",
+        default=None,
+        help="Variant identifier within the family (default: experiment_name)",
+    )
+    parser.add_argument(
+        "--trial-count",
+        type=int,
+        default=None,
+        help="Cumulative trial count for this family at creation time (default: 1)",
+    )
 
     try:
         args = parser.parse_args(argv)
@@ -130,6 +146,11 @@ def main(argv: list[str] | None = None) -> int:
     # Build experiment name
     experiment_name = f"{args.strategy}_{args.fixture}_wf"
 
+    # Trial-family metadata: defaults to experiment_name for ids, 1 for trial_count
+    family_id = args.family_id if args.family_id is not None else experiment_name
+    variant_id = args.variant_id if args.variant_id is not None else experiment_name
+    trial_count = args.trial_count if args.trial_count is not None else 1
+
     # Build spec
     spec = ExperimentSpec(
         experiment_name=experiment_name,
@@ -138,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
         fixture_name=args.fixture,
         description="",
         notes="Paper mode - no profitability claims.",
+        family_id=family_id,
+        variant_id=variant_id,
+        trial_count=trial_count,
     )
 
     # Run walk-forward experiment

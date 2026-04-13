@@ -115,6 +115,8 @@ def run_walkforward_experiment(
         split_manifest_path.write_text(json.dumps(split_manifest), encoding="utf-8")
 
         # Build split-specific spec
+        # Use variant_id as base for split-specific variant (falls back to experiment_name)
+        base_variant = spec.variant_id if spec.variant_id else spec.experiment_name
         split_spec = ExperimentSpec(
             experiment_name=f"{spec.experiment_name}_split_{idx:03d}",
             strategy_name=spec.strategy_name,
@@ -127,6 +129,9 @@ def run_walkforward_experiment(
             fixture_name=spec.fixture_name,
             description=f"{spec.description} [split {idx}]",
             notes=spec.notes,
+            family_id=spec.family_id if spec.family_id else spec.experiment_name,
+            variant_id=f"{base_variant}_split_{idx:03d}",
+            trial_count=spec.trial_count,
         )
 
         # Run experiment for this split on the sliced bars
@@ -176,6 +181,9 @@ def run_walkforward_experiment(
         total_signal_count += signal_count
 
     # Step 4: build result and write JSON artifact
+    # Default family_id/variant_id to experiment_name if not set (for backward compat)
+    wf_family_id = spec.family_id if spec.family_id else spec.experiment_name
+    wf_variant_id = spec.variant_id if spec.variant_id else spec.experiment_name
     wf_result = WalkForwardExperimentResult(
         experiment_name=spec.experiment_name,
         split_count=len(split_results),
@@ -185,6 +193,9 @@ def run_walkforward_experiment(
         strategy_name=spec.strategy_name,
         strategy_params=spec.strategy_params,
         fixture_name=spec.fixture_name,
+        family_id=wf_family_id,
+        variant_id=wf_variant_id,
+        trial_count=spec.trial_count,
         engine_version=ENGINE_VERSION,
     )
 

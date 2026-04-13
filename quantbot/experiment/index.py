@@ -30,6 +30,9 @@ class IndexedExperiment:
         receipt_digest: SHA256 digest of the receipt, or None if not present.
         artifact_path: Path to the source artifact file.
         result_type: "single" for experiment_result.json, "walkforward" for walkforward_result.json.
+        family_id: Trial family identifier, or None if not present in artifact.
+        variant_id: Variant identifier, or None if not present in artifact.
+        trial_count: Cumulative trial count, or None if not present in artifact.
     """
 
     experiment_name: str
@@ -41,6 +44,9 @@ class IndexedExperiment:
     receipt_digest: Optional[str]
     artifact_path: Path
     result_type: Literal["single", "walkforward"]
+    family_id: Optional[str] = None
+    variant_id: Optional[str] = None
+    trial_count: Optional[int] = None
 
     def gate_passed(self) -> bool:
         """Return True if gate status is PASS."""
@@ -121,6 +127,9 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
                 receipt_digest=data.get("receipt_digest"),
                 artifact_path=artifact_path,
                 result_type="single",
+                family_id=data.get("family_id"),
+                variant_id=data.get("variant_id"),
+                trial_count=data.get("trial_count"),
             )
             results.append(indexed)
 
@@ -136,6 +145,9 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
                 receipt_digest=None,  # Walk-forward results don't expose a single receipt digest
                 artifact_path=artifact_path,
                 result_type="walkforward",
+                family_id=data.get("family_id"),
+                variant_id=data.get("variant_id"),
+                trial_count=data.get("trial_count"),
             )
             results.append(indexed)
 

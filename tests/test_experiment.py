@@ -39,6 +39,46 @@ class TestExperimentSpec:
         assert d["strategy_params"]["threshold"] == 16500.0
         assert d["fixture_name"] == "BTCUSDT_8h"
 
+    def test_spec_trial_family_fields(self) -> None:
+        """ExperimentSpec includes family_id, variant_id, trial_count."""
+        spec = ExperimentSpec(
+            experiment_name="test-exp",
+            strategy_name="ThresholdStrategy",
+            family_id="my-family",
+            variant_id="variant-v1",
+            trial_count=5,
+        )
+        d = spec.to_dict()
+        assert d["family_id"] == "my-family"
+        assert d["variant_id"] == "variant-v1"
+        assert d["trial_count"] == 5
+
+    def test_spec_trial_count_defaults_to_one(self) -> None:
+        """ExperimentSpec defaults trial_count to 1."""
+        spec = ExperimentSpec(
+            experiment_name="test-exp",
+            strategy_name="ThresholdStrategy",
+        )
+        assert spec.trial_count == 1
+
+    def test_spec_rejects_trial_count_zero(self) -> None:
+        """ExperimentSpec raises ValueError when trial_count < 1."""
+        with pytest.raises(ValueError, match="trial_count must be >= 1"):
+            ExperimentSpec(
+                experiment_name="test-exp",
+                strategy_name="ThresholdStrategy",
+                trial_count=0,
+            )
+
+    def test_spec_rejects_negative_trial_count(self) -> None:
+        """ExperimentSpec raises ValueError for negative trial_count."""
+        with pytest.raises(ValueError, match="trial_count must be >= 1"):
+            ExperimentSpec(
+                experiment_name="test-exp",
+                strategy_name="ThresholdStrategy",
+                trial_count=-1,
+            )
+
 
 class TestExperimentResult:
     """Tests for ExperimentResult dataclass."""
@@ -50,6 +90,9 @@ class TestExperimentResult:
             strategy_name="ThresholdStrategy",
             strategy_params={"threshold": 16500.0},
             fixture_name="BTCUSDT_8h",
+            family_id="family-1",
+            variant_id="var-a",
+            trial_count=3,
         )
         result = ExperimentResult(
             spec=spec,
@@ -76,6 +119,9 @@ class TestExperimentResult:
         assert d["fixture_name"] == "BTCUSDT_8h"
         assert d["engine_version"] == "0.1.0"
         assert d["receipt_digest"] == "abc123"
+        assert d["family_id"] == "family-1"
+        assert d["variant_id"] == "var-a"
+        assert d["trial_count"] == 3
 
 
 class TestRunExperiment:
@@ -214,6 +260,40 @@ class TestRunExperiment:
             assert "flat_count" in data
             assert "gate_verdict" in data
             assert "receipt_path" not in data
+            # Verify new trial-family fields are present
+            assert "family_id" in data
+            assert "variant_id" in data
+            assert "trial_count" in data
+            # Defaults are empty strings for ids, 1 for trial_count (CLI layer fills experiment_name)
+            assert data["family_id"] == ""
+            assert data["variant_id"] == ""
+            assert data["trial_count"] == 1
+
+    def test_run_experiment_with_trial_family_metadata(self) -> None:
+        """run_experiment writes explicit family_id, variant_id, trial_count to artifact."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "exp_run"
+            spec = ExperimentSpec(
+                experiment_name="btc-trial-family",
+                strategy_name="ThresholdStrategy",
+                strategy_params={"threshold": 16500.0},
+                fixture_name="BTCUSDT_8h",
+                family_id="threshold-family",
+                variant_id="threshold_16500_v7",
+                trial_count=4,
+            )
+            result = run_experiment(
+                spec=spec,
+                manifest_path=BTCUSDT_MANIFEST_PATH,
+                csv_path=BTCUSDT_CSV_PATH,
+                output_dir=out,
+            )
+            artifact_path = out / "experiment_result.json"
+            assert artifact_path.exists()
+            data = json.loads(artifact_path.read_text())
+            assert data["family_id"] == "threshold-family"
+            assert data["variant_id"] == "threshold_16500_v7"
+            assert data["trial_count"] == 4
 
     def test_run_experiment_result_artifact_deterministic(self) -> None:
         """Two identical experiment runs produce byte-identical experiment_result.json."""

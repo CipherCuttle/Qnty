@@ -4,6 +4,7 @@ Requires PYTHONHASHSEED=0 for deterministic dict ordering.
 Paper mode only - no real trading.
 """
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -56,6 +57,10 @@ class TestIndexExperimentArtifacts:
             assert indexed[0].result_type == "walkforward"
             assert indexed[0].split_count > 0
             assert indexed[0].signal_count >= 0
+            # Verify new trial-family fields are present
+            assert indexed[0].family_id is not None
+            assert indexed[0].variant_id is not None
+            assert indexed[0].trial_count is not None
 
     def test_indexes_walkforward_result(self) -> None:
         """Can index a walkforward_result.json artifact."""
@@ -119,6 +124,37 @@ class TestIndexExperimentArtifacts:
             bad_file.write_text("{}", encoding="utf-8")
             with pytest.raises(ValueError, match="Unrecognized experiment artifact"):
                 index_experiment_artifacts([bad_file])
+
+    def test_indexes_legacy_artifact_missing_trial_fields(self) -> None:
+        """Indexing a legacy artifact without family_id/variant_id/trial_count fields does not break."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Write a legacy artifact without trial-family fields
+            legacy_path = Path(tmpdir) / "experiment_result.json"
+            legacy_data = {
+                "experiment_name": "legacy-exp",
+                "strategy_name": "ThresholdStrategy",
+                "strategy_params": {},
+                "fixture_name": "BTCUSDT_8h",
+                "engine_version": "0.1.0",
+                "receipt_digest": "abc123",
+                "bar_count": 100,
+                "signal_count": 5,
+                "first_timestamp": "2023-01-01T00:00:00+00:00",
+                "last_timestamp": "2023-01-02T00:00:00+00:00",
+                "long_count": 2,
+                "short_count": 3,
+                "flat_count": 0,
+                "gate_verdict": None,
+            }
+            legacy_path.write_text(json.dumps(legacy_data), encoding="utf-8")
+
+            indexed = index_experiment_artifacts([legacy_path])
+            assert len(indexed) == 1
+            assert indexed[0].experiment_name == "legacy-exp"
+            # Legacy artifacts map missing fields to None
+            assert indexed[0].family_id is None
+            assert indexed[0].variant_id is None
+            assert indexed[0].trial_count is None
 
 
 class TestIndexedExperiment:

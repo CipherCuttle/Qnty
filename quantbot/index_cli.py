@@ -18,7 +18,8 @@ from quantbot.experiment.index import IndexedExperiment, index_experiment_artifa
 def _format_row(exp: IndexedExperiment) -> str:
     """Format a single indexed experiment as a compact text row."""
     return (
-        f"{exp.experiment_name} | {exp.strategy_name} | {exp.fixture_name} | "
+        f"{exp.experiment_name} | {exp.strategy_name} | {exp.family_id or 'N/A'} | "
+        f"{exp.variant_id or 'N/A'} | {exp.trial_count or 0} | "
         f"{exp.gate_status or 'N/A'} | {exp.split_count} | {exp.signal_count} | "
         f"{exp.result_type} | {exp.artifact_path}"
     )
@@ -40,6 +41,11 @@ def main(argv: list[str] | None = None) -> int:
         "--json",
         action="store_true",
         help="Output machine-readable JSON array.",
+    )
+    parser.add_argument(
+        "--by-family",
+        action="store_true",
+        help="Group artifacts by family_id and emit a compact summary.",
     )
 
     try:
@@ -69,8 +75,42 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # Output
-    if args.json:
-        # Machine-readable JSON: list of dicts
+    if args.by_family:
+        # Group by family_id
+        families: dict[str, list[IndexedExperiment]] = {}
+        for exp in indexed:
+            fid = exp.family_id or ""
+            if fid not in families:
+                families[fid] = []
+            families[fid].append(exp)
+
+        # Build summary per family
+        summaries = []
+        for fid, exps in sorted(families.items()):
+            pass_count = sum(1 for e in exps if e.gate_status == "PASS")
+            fail_count = sum(1 for e in exps if e.gate_status == "FAIL")
+            max_trial = max((e.trial_count for e in exps if e.trial_count is not None), default=0)
+            summaries.append({
+                "family_id": fid,
+                "artifact_count": len(exps),
+                "max_trial_count": max_trial,
+                "pass_count": pass_count,
+                "fail_count": fail_count,
+            })
+
+        if args.json:
+            print(json.dumps(summaries, indent=2))
+        else:
+            print(
+                "family_id | artifact_count | max_trial_count | pass_count | fail_count"
+            )
+            for s in summaries:
+                print(
+                    f"{s['family_id']} | {s['artifact_count']} | "
+                    f"{s['max_trial_count']} | {s['pass_count']} | {s['fail_count']}"
+                )
+    elif args.json:
+        # Machine-readable JSON: list of dicts with new fields
         records = [
             {
                 "experiment_name": e.experiment_name,
@@ -82,6 +122,9 @@ def main(argv: list[str] | None = None) -> int:
                 "receipt_digest": e.receipt_digest,
                 "artifact_path": str(e.artifact_path),
                 "result_type": e.result_type,
+                "family_id": e.family_id,
+                "variant_id": e.variant_id,
+                "trial_count": e.trial_count,
             }
             for e in indexed
         ]
@@ -89,8 +132,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         # Header
         print(
-            "experiment_name | strategy_name | fixture_name | gate_status | "
-            "split_count | signal_count | result_type | artifact_path"
+            "experiment_name | strategy_name | family_id | variant_id | trial_count | "
+            "gate_status | split_count | signal_count | result_type | artifact_path"
         )
         # Rows
         for exp in indexed:
