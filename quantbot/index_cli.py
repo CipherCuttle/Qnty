@@ -49,6 +49,30 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Group artifacts by family_id and emit a compact summary.",
     )
+    parser.add_argument(
+        "--sort-by",
+        choices=["family_id", "eligible_count", "pass_count", "fail_count", "max_trial_count", "artifact_count"],
+        default="family_id",
+        help="Sort family summaries by this field. Default: family_id.",
+    )
+    filter_group = parser.add_mutually_exclusive_group()
+    filter_group.add_argument(
+        "--eligible-only",
+        action="store_true",
+        help="Show only families with eligible_count > 0.",
+    )
+    filter_group.add_argument(
+        "--ineligible-only",
+        action="store_true",
+        help="Show only families with eligible_count == 0.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        default=None,
+        help="Show only top N families after sort and filter.",
+    )
 
     try:
         args = parser.parse_args(argv)
@@ -88,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # Build summary per family
         summaries = []
-        for fid, exps in sorted(families.items()):
+        for fid, exps in families.items():
             pass_count = sum(1 for e in exps if e.gate_status == "PASS")
             fail_count = sum(1 for e in exps if e.gate_status == "FAIL")
             eligible_count = sum(1 for e in exps if e.eligible_for_review)
@@ -101,6 +125,21 @@ def main(argv: list[str] | None = None) -> int:
                 "fail_count": fail_count,
                 "eligible_count": eligible_count,
             })
+
+        # Sort summaries
+        numeric_sort_fields = {"eligible_count", "pass_count", "fail_count", "max_trial_count", "artifact_count"}
+        reverse_sort = args.sort_by in numeric_sort_fields
+        summaries.sort(key=lambda s: s[args.sort_by], reverse=reverse_sort)
+
+        # Apply filters
+        if args.eligible_only:
+            summaries = [s for s in summaries if s["eligible_count"] > 0]
+        elif args.ineligible_only:
+            summaries = [s for s in summaries if s["eligible_count"] == 0]
+
+        # Apply limit
+        if args.limit is not None:
+            summaries = summaries[:args.limit]
 
         if args.json:
             print(json.dumps(summaries, indent=2))
