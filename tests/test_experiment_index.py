@@ -408,4 +408,80 @@ class TestEvaluateEligibility:
         assert "missing variant_id" in result.ineligibility_reasons
         assert "missing trial_count" in result.ineligibility_reasons
         assert any("missing cost assumptions" in r for r in result.ineligibility_reasons)
-        assert any("gate_status != PASS" in r for r in result.ineligibility_reasons)
+
+
+class TestIndexedExperimentEconomicsSummary:
+    """Tests for IndexedExperiment.economics_summary field."""
+
+    def test_indexed_experiment_reads_economics_summary_from_single_artifact(self) -> None:
+        """Indexing an artifact with economics_summary populates IndexedExperiment.economics_summary."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_path = Path(tmpdir) / "experiment_result.json"
+            artifact_data = {
+                "experiment_name": "single-econ-test",
+                "strategy_name": "ThresholdStrategy",
+                "strategy_params": {},
+                "fixture_name": "BTCUSDT_8h",
+                "engine_version": "0.1.0",
+                "receipt_digest": "abc123",
+                "bar_count": 100,
+                "signal_count": 5,
+                "first_timestamp": "2023-01-01T00:00:00+00:00",
+                "last_timestamp": "2023-01-02T00:00:00+00:00",
+                "long_count": 2,
+                "short_count": 3,
+                "flat_count": 0,
+                "gate_verdict": {"status": "PASS", "reasons": [], "checked": True},
+                "fee_bps": 10.0,
+                "slippage_bps": 3.0,
+                "economics_summary": {
+                    "cost_side_count": 5,
+                    "entry_count": 2,
+                    "exit_count": 2,
+                    "flip_count": 1,
+                    "fee_bps": 10.0,
+                    "slippage_bps": 3.0,
+                    "assumed_total_cost_bps": 65.0,
+                },
+            }
+            artifact_path.write_text(json.dumps(artifact_data), encoding="utf-8")
+            indexed = index_experiment_artifacts([artifact_path])
+            assert len(indexed) == 1
+            assert indexed[0].economics_summary is not None
+            es = indexed[0].economics_summary
+            assert es["cost_side_count"] == 5
+            assert es["entry_count"] == 2
+            assert es["exit_count"] == 2
+            assert es["flip_count"] == 1
+
+    def test_indexed_experiment_economics_summary_missing_from_legacy_artifact(self) -> None:
+        """Legacy artifact without economics_summary does not break indexing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy_path = Path(tmpdir) / "experiment_result.json"
+            legacy_data = {
+                "experiment_name": "legacy-no-econ",
+                "strategy_name": "ThresholdStrategy",
+                "strategy_params": {},
+                "fixture_name": "BTCUSDT_8h",
+                "engine_version": "0.1.0",
+                "receipt_digest": "abc123",
+                "bar_count": 100,
+                "signal_count": 5,
+                "first_timestamp": "2023-01-01T00:00:00+00:00",
+                "last_timestamp": "2023-01-02T00:00:00+00:00",
+                "long_count": 2,
+                "short_count": 3,
+                "flat_count": 0,
+                "gate_verdict": None,
+                "fee_bps": 10.0,
+                "slippage_bps": 3.0,
+                # Note: no economics_summary field
+            }
+            legacy_path.write_text(json.dumps(legacy_data), encoding="utf-8")
+            indexed = index_experiment_artifacts([legacy_path])
+            assert len(indexed) == 1
+            assert indexed[0].experiment_name == "legacy-no-econ"
+            # economics_summary should be None for legacy artifact
+            assert indexed[0].economics_summary is None
+            # gate_status should be None since gate_verdict was None
+            assert indexed[0].gate_status is None

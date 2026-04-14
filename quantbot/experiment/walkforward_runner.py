@@ -148,6 +148,7 @@ def run_walkforward_experiment(
             long_count = result.long_count
             short_count = result.short_count
             flat_count = result.flat_count
+            split_economics = result.economics_summary
         except Exception:
             # If experiment fails, record empty results
             receipt_path_str = None
@@ -158,6 +159,7 @@ def run_walkforward_experiment(
             flat_count = 0
             first_ts = ""
             last_ts = ""
+            split_economics = None
         else:
             first_ts = result.first_timestamp
             last_ts = result.last_timestamp
@@ -175,6 +177,7 @@ def run_walkforward_experiment(
             artifact_path=artifact_path_str,
             first_timestamp=first_ts,
             last_timestamp=last_ts,
+            economics_summary=split_economics,
         )
         split_results.append(split_result)
         total_bar_count += test_bar_count
@@ -200,6 +203,9 @@ def run_walkforward_experiment(
         fee_bps=spec.fee_bps,
         slippage_bps=spec.slippage_bps,
     )
+
+    # Aggregate economics from splits
+    wf_result.economics_summary = wf_result.aggregate_economics_summary()
 
     # Run gate checks and attach verdict
     wf_result.gate_verdict = gate_walkforward_result(wf_result)

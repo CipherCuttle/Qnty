@@ -387,4 +387,323 @@ class TestRunExperiment:
             )
             artifact1 = (out1 / "experiment_result.json").read_bytes()
             artifact2 = (out2 / "experiment_result.json").read_bytes()
-            assert artifact1 == artifact2, "experiment_result.json not byte-identical across runs"
+            assert artifact1 == artifact2
+
+    def test_run_experiment_economics_summary_in_artifact(self) -> None:
+        """run_experiment writes economics_summary to experiment_result.json."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "exp_run"
+            spec = ExperimentSpec(
+                experiment_name="btc-econ-test",
+                strategy_name="ThresholdStrategy",
+                strategy_params={"threshold": 16500.0, "symbol": "BTCUSDT"},
+                fixture_name="BTCUSDT_8h",
+                fee_bps=10.0,
+                slippage_bps=3.0,
+            )
+            result = run_experiment(
+                spec=spec,
+                manifest_path=BTCUSDT_MANIFEST_PATH,
+                csv_path=BTCUSDT_CSV_PATH,
+                output_dir=out,
+            )
+            artifact_path = out / "experiment_result.json"
+            assert artifact_path.exists()
+            data = json.loads(artifact_path.read_text())
+            assert "economics_summary" in data
+            assert data["economics_summary"] is not None
+            # Verify fields are correct types
+            es = data["economics_summary"]
+            assert isinstance(es["cost_side_count"], int)
+            assert isinstance(es["entry_count"], int)
+            assert isinstance(es["exit_count"], int)
+            assert isinstance(es["flip_count"], int)
+            assert isinstance(es["fee_bps"], (int, float))
+            assert isinstance(es["slippage_bps"], (int, float))
+            assert isinstance(es["assumed_total_cost_bps"], (int, float))
+
+
+class TestEconomicsSummary:
+    """Tests for EconomicsSummary dataclass."""
+
+    def test_economics_summary_to_dict(self) -> None:
+        """EconomicsSummary serializes to dict correctly."""
+        from quantbot.experiment.result import EconomicsSummary
+
+        summary = EconomicsSummary(
+            cost_side_count=5,
+            entry_count=2,
+            exit_count=2,
+            flip_count=1,
+            fee_bps=10.0,
+            slippage_bps=3.0,
+            assumed_total_cost_bps=65.0,
+        )
+        d = summary.to_dict()
+        assert d["cost_side_count"] == 5
+        assert d["entry_count"] == 2
+        assert d["exit_count"] == 2
+        assert d["flip_count"] == 1
+        assert d["fee_bps"] == 10.0
+        assert d["slippage_bps"] == 3.0
+        assert d["assumed_total_cost_bps"] == 65.0
+
+    def test_economics_summary_default_values(self) -> None:
+        """EconomicsSummary defaults to zeros."""
+        from quantbot.experiment.result import EconomicsSummary
+
+        summary = EconomicsSummary()
+        assert summary.cost_side_count == 0
+        assert summary.entry_count == 0
+        assert summary.exit_count == 0
+        assert summary.flip_count == 0
+        assert summary.fee_bps == 0.0
+        assert summary.slippage_bps == 0.0
+        assert summary.assumed_total_cost_bps == 0.0
+
+
+class TestComputeEconomicsSummary:
+    """Tests for _compute_economics_summary event accounting logic."""
+
+    def test_flat_to_long_is_entry(self) -> None:
+        """Signal from flat to long counts as entry."""
+        from quantbot.experiment.runner import _compute_economics_summary
+
+        class MockSignal:
+            def __init__(self, direction):
+                self.direction = direction
+
+        class MockStrategy:
+            def __init__(self, signals):
+                self._signals = signals
+                self._idx = 0
+
+            def on_bar(self, bar):
+                if self._idx < len(self._signals):
+                    sig = self._signals[self._idx]
+                    self._idx += 1
+                    return sig
+                return None
+
+        bars = [{"timestamp": f"2024-01-{i+1:02d}"} for i in range(5)]
+        # flat -> long = 1 entry, position stays open (no exit)
+        signals = [MockSignal("flat"), MockSignal("long"), MockSignal("long"), MockSignal("long"), MockSignal("long")]
+        strategy = MockStrategy(signals)
+        result = _compute_economics_summary(strategy, bars, 10.0, 3.0)
+        assert result.entry_count == 1
+        assert result.exit_count == 0
+        assert result.flip_count == 0
+        assert result.cost_side_count == 1
+
+    def test_flat_to_short_is_entry(self) -> None:
+        """Signal from flat to short counts as entry."""
+        from quantbot.experiment.runner import _compute_economics_summary
+
+        class MockSignal:
+            def __init__(self, direction):
+                self.direction = direction
+
+        class MockStrategy:
+            def __init__(self, signals):
+                self._signals = signals
+                self._idx = 0
+
+            def on_bar(self, bar):
+                if self._idx < len(self._signals):
+                    sig = self._signals[self._idx]
+                    self._idx += 1
+                    return sig
+                return None
+
+        bars = [{"timestamp": f"2024-01-{i+1:02d}"} for i in range(5)]
+        # flat -> short = 1 entry, position stays open
+        signals = [MockSignal("flat"), MockSignal("short"), MockSignal("short"), MockSignal("short"), MockSignal("short")]
+        strategy = MockStrategy(signals)
+        result = _compute_economics_summary(strategy, bars, 10.0, 3.0)
+        assert result.entry_count == 1
+        assert result.exit_count == 0
+        assert result.flip_count == 0
+        assert result.cost_side_count == 1
+
+    def test_long_to_flat_is_exit(self) -> None:
+        """Signal from long to flat counts as exit."""
+        from quantbot.experiment.runner import _compute_economics_summary
+
+        class MockSignal:
+            def __init__(self, direction):
+                self.direction = direction
+
+        class MockStrategy:
+            def __init__(self, signals):
+                self._signals = signals
+                self._idx = 0
+
+            def on_bar(self, bar):
+                if self._idx < len(self._signals):
+                    sig = self._signals[self._idx]
+                    self._idx += 1
+                    return sig
+                return None
+
+        bars = [{"timestamp": f"2024-01-{i+1:02d}"} for i in range(5)]
+        # long -> flat = 1 entry (first long from flat) + 1 exit (last flat) = 2 cost sides
+        signals = [MockSignal("long"), MockSignal("long"), MockSignal("long"), MockSignal("long"), MockSignal("flat")]
+        strategy = MockStrategy(signals)
+        result = _compute_economics_summary(strategy, bars, 10.0, 3.0)
+        assert result.entry_count == 1  # first long from flat
+        assert result.exit_count == 1  # flat closes position
+        assert result.flip_count == 0
+        assert result.cost_side_count == 2
+
+    def test_short_to_flat_is_exit(self) -> None:
+        """Signal from short to flat counts as exit."""
+        from quantbot.experiment.runner import _compute_economics_summary
+
+        class MockSignal:
+            def __init__(self, direction):
+                self.direction = direction
+
+        class MockStrategy:
+            def __init__(self, signals):
+                self._signals = signals
+                self._idx = 0
+
+            def on_bar(self, bar):
+                if self._idx < len(self._signals):
+                    sig = self._signals[self._idx]
+                    self._idx += 1
+                    return sig
+                return None
+
+        bars = [{"timestamp": f"2024-01-{i+1:02d}"} for i in range(5)]
+        # short -> flat = 1 entry (first short from flat) + 1 exit (last flat) = 2 cost sides
+        signals = [MockSignal("short"), MockSignal("short"), MockSignal("short"), MockSignal("short"), MockSignal("flat")]
+        strategy = MockStrategy(signals)
+        result = _compute_economics_summary(strategy, bars, 10.0, 3.0)
+        assert result.entry_count == 1  # first short from flat
+        assert result.exit_count == 1  # flat closes position
+        assert result.flip_count == 0
+        assert result.cost_side_count == 2
+
+    def test_long_to_short_is_flip(self) -> None:
+        """Signal from long to short counts as flip (exit + entry)."""
+        from quantbot.experiment.runner import _compute_economics_summary
+
+        class MockSignal:
+            def __init__(self, direction):
+                self.direction = direction
+
+        class MockStrategy:
+            def __init__(self, signals):
+                self._signals = signals
+                self._idx = 0
+
+            def on_bar(self, bar):
+                if self._idx < len(self._signals):
+                    sig = self._signals[self._idx]
+                    self._idx += 1
+                    return sig
+                return None
+
+        bars = [{"timestamp": f"2024-01-{i+1:02d}"} for i in range(5)]
+        # long -> short = 1 entry (first long) + 1 flip (long->short) = 2 cost sides
+        signals = [MockSignal("long"), MockSignal("short"), MockSignal("short"), MockSignal("short"), MockSignal("short")]
+        strategy = MockStrategy(signals)
+        result = _compute_economics_summary(strategy, bars, 10.0, 3.0)
+        assert result.flip_count == 1  # long->short is a flip
+        assert result.entry_count == 1  # first long from flat
+        assert result.exit_count == 0
+        assert result.cost_side_count == 2
+
+    def test_short_to_long_is_flip(self) -> None:
+        """Signal from short to long counts as flip (exit + entry)."""
+        from quantbot.experiment.runner import _compute_economics_summary
+
+        class MockSignal:
+            def __init__(self, direction):
+                self.direction = direction
+
+        class MockStrategy:
+            def __init__(self, signals):
+                self._signals = signals
+                self._idx = 0
+
+            def on_bar(self, bar):
+                if self._idx < len(self._signals):
+                    sig = self._signals[self._idx]
+                    self._idx += 1
+                    return sig
+                return None
+
+        bars = [{"timestamp": f"2024-01-{i+1:02d}"} for i in range(5)]
+        # short -> long = 1 entry (first short) + 1 flip (short->long) = 2 cost sides
+        signals = [MockSignal("short"), MockSignal("long"), MockSignal("long"), MockSignal("long"), MockSignal("long")]
+        strategy = MockStrategy(signals)
+        result = _compute_economics_summary(strategy, bars, 10.0, 3.0)
+        assert result.flip_count == 1  # short->long is a flip
+        assert result.entry_count == 1  # first short from flat
+        assert result.exit_count == 0
+        assert result.cost_side_count == 2
+
+    def test_cost_side_count_formula(self) -> None:
+        """cost_side_count = entry_count + exit_count + flip_count."""
+        from quantbot.experiment.runner import _compute_economics_summary
+
+        class MockSignal:
+            def __init__(self, direction):
+                self.direction = direction
+
+        class MockStrategy:
+            def __init__(self, signals):
+                self._signals = signals
+                self._idx = 0
+
+            def on_bar(self, bar):
+                if self._idx < len(self._signals):
+                    sig = self._signals[self._idx]
+                    self._idx += 1
+                    return sig
+                return None
+
+        bars = [{"timestamp": f"2024-01-{i+1:02d}"} for i in range(10)]
+        # flat -> long (1 entry) -> flat (1 exit) -> short (1 entry) -> flat (1 exit) = 2 entries, 2 exits
+        signals = [
+            MockSignal("flat"), MockSignal("long"), MockSignal("flat"),
+            MockSignal("short"), MockSignal("flat"), None, None, None, None, None
+        ]
+        strategy = MockStrategy(signals)
+        result = _compute_economics_summary(strategy, bars, 10.0, 3.0)
+        assert result.entry_count == 2
+        assert result.exit_count == 2
+        assert result.cost_side_count == result.entry_count + result.exit_count + result.flip_count
+
+    def test_assumed_total_cost_bps_formula(self) -> None:
+        """assumed_total_cost_bps = cost_side_count * (fee_bps + slippage_bps)."""
+        from quantbot.experiment.runner import _compute_economics_summary
+
+        class MockSignal:
+            def __init__(self, direction):
+                self.direction = direction
+
+        class MockStrategy:
+            def __init__(self, signals):
+                self._signals = signals
+                self._idx = 0
+
+            def on_bar(self, bar):
+                if self._idx < len(self._signals):
+                    sig = self._signals[self._idx]
+                    self._idx += 1
+                    return sig
+                return None
+
+        bars = [{"timestamp": f"2024-01-{i+1:02d}"} for i in range(5)]
+        signals = [MockSignal("flat"), MockSignal("long"), None, None, None]
+        strategy = MockStrategy(signals)
+        fee_bps = 10.0
+        slippage_bps = 3.0
+        result = _compute_economics_summary(strategy, bars, fee_bps, slippage_bps)
+        expected_cost = result.cost_side_count * (fee_bps + slippage_bps)
+        assert result.assumed_total_cost_bps == expected_cost
+        assert result.fee_bps == fee_bps
+        assert result.slippage_bps == slippage_bps

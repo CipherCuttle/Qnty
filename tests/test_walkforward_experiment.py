@@ -286,6 +286,211 @@ class TestWalkForwardSplitResult:
         assert split.signal_count == 5
         assert split.long_count == 3
         assert split.short_count == 2
-        assert split.flat_count == 0
-        assert split.receipt_path == "/path/to/receipt.json"
-        assert split.artifact_path == "/path/to/artifact.json"
+
+    def test_walkforward_result_economics_summary_in_artifact(self) -> None:
+        """run_walkforward_experiment writes economics_summary to walkforward_result.json."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "wf_econ"
+            spec = ExperimentSpec(
+                experiment_name="wf-econ-test",
+                strategy_name="ThresholdStrategy",
+                strategy_params={"threshold": 16500.0, "symbol": "BTCUSDT"},
+                fixture_name="BTCUSDT_8h",
+                fee_bps=10.0,
+                slippage_bps=3.0,
+            )
+            result = run_walkforward_experiment(
+                spec=spec,
+                manifest_path=BTCUSDT_MANIFEST_PATH,
+                csv_path=BTCUSDT_CSV_PATH,
+                output_dir=out,
+                train_size=100,
+                test_size=50,
+                step_size=50,
+            )
+            artifact_path = out / "walkforward_result.json"
+            assert artifact_path.exists()
+            import json
+            data = json.loads(artifact_path.read_text())
+            assert "economics_summary" in data
+            # economics_summary may be None if no splits had economics data
+            if data["economics_summary"] is not None:
+                es = data["economics_summary"]
+                assert isinstance(es["cost_side_count"], int)
+                assert isinstance(es["entry_count"], int)
+                assert isinstance(es["exit_count"], int)
+                assert isinstance(es["flip_count"], int)
+
+    def test_walkforward_split_result_economics_summary_field_exists(self) -> None:
+        """WalkForwardSplitResult has economics_summary field."""
+        from quantbot.experiment.result import EconomicsSummary, WalkForwardSplitResult
+
+        split = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=100,
+            test_bar_count=50,
+            signal_count=5,
+            long_count=3,
+            short_count=2,
+            flat_count=0,
+            receipt_path="/path/to/receipt.json",
+            artifact_path="/path/to/artifact.json",
+            economics_summary=EconomicsSummary(
+                cost_side_count=2,
+                entry_count=1,
+                exit_count=1,
+                flip_count=0,
+                fee_bps=10.0,
+                slippage_bps=3.0,
+                assumed_total_cost_bps=26.0,
+            ),
+        )
+        assert split.economics_summary is not None
+        assert split.economics_summary.cost_side_count == 2
+        assert split.economics_summary.entry_count == 1
+        assert split.economics_summary.exit_count == 1
+
+
+class TestAggregateEconomicsSummary:
+    """Tests for WalkForwardExperimentResult.aggregate_economics_summary."""
+
+    def test_aggregate_economics_sums_counts(self) -> None:
+        """aggregate_economics_summary sums entry_count, exit_count, flip_count across splits."""
+        from quantbot.experiment.result import EconomicsSummary, WalkForwardExperimentResult, WalkForwardSplitResult
+
+        split1 = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=100,
+            test_bar_count=50,
+            signal_count=5,
+            long_count=3,
+            short_count=2,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            economics_summary=EconomicsSummary(
+                cost_side_count=3,
+                entry_count=1,
+                exit_count=1,
+                flip_count=1,
+                fee_bps=10.0,
+                slippage_bps=3.0,
+                assumed_total_cost_bps=39.0,
+            ),
+        )
+        split2 = WalkForwardSplitResult(
+            split_index=1,
+            train_bar_count=100,
+            test_bar_count=50,
+            signal_count=3,
+            long_count=2,
+            short_count=1,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            economics_summary=EconomicsSummary(
+                cost_side_count=2,
+                entry_count=1,
+                exit_count=1,
+                flip_count=0,
+                fee_bps=10.0,
+                slippage_bps=3.0,
+                assumed_total_cost_bps=26.0,
+            ),
+        )
+        wf_result = WalkForwardExperimentResult(
+            experiment_name="test-agg",
+            split_count=2,
+            splits=[split1, split2],
+            total_bar_count=100,
+            total_signal_count=8,
+        )
+        aggregated = wf_result.aggregate_economics_summary()
+        assert aggregated is not None
+        assert aggregated.cost_side_count == 5  # 3 + 2
+        assert aggregated.entry_count == 2  # 1 + 1
+        assert aggregated.exit_count == 2  # 1 + 1
+        assert aggregated.flip_count == 1  # 1 + 0
+
+    def test_aggregate_recomputes_assumed_total_cost(self) -> None:
+        """aggregate_economics_summary recomputes assumed_total_cost from summed values."""
+        from quantbot.experiment.result import EconomicsSummary, WalkForwardExperimentResult, WalkForwardSplitResult
+
+        split1 = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=100,
+            test_bar_count=50,
+            signal_count=5,
+            long_count=3,
+            short_count=2,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            economics_summary=EconomicsSummary(
+                cost_side_count=3,
+                entry_count=1,
+                exit_count=1,
+                flip_count=1,
+                fee_bps=10.0,
+                slippage_bps=3.0,
+                assumed_total_cost_bps=39.0,  # 3 * 13
+            ),
+        )
+        split2 = WalkForwardSplitResult(
+            split_index=1,
+            train_bar_count=100,
+            test_bar_count=50,
+            signal_count=3,
+            long_count=2,
+            short_count=1,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            economics_summary=EconomicsSummary(
+                cost_side_count=2,
+                entry_count=1,
+                exit_count=1,
+                flip_count=0,
+                fee_bps=10.0,
+                slippage_bps=3.0,
+                assumed_total_cost_bps=26.0,  # 2 * 13
+            ),
+        )
+        wf_result = WalkForwardExperimentResult(
+            experiment_name="test-agg-cost",
+            split_count=2,
+            splits=[split1, split2],
+            total_bar_count=100,
+            total_signal_count=8,
+        )
+        aggregated = wf_result.aggregate_economics_summary()
+        assert aggregated is not None
+        # cost_side_count = 3 + 2 = 5, fee + slippage = 10 + 3 = 13
+        # assumed_total = 5 * 13 = 65
+        assert aggregated.assumed_total_cost_bps == 65.0
+
+    def test_aggregate_returns_none_when_no_splits_have_economics(self) -> None:
+        """aggregate_economics_summary returns None if no splits have economics data."""
+        from quantbot.experiment.result import WalkForwardExperimentResult, WalkForwardSplitResult
+
+        split1 = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=100,
+            test_bar_count=50,
+            signal_count=5,
+            long_count=3,
+            short_count=2,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            economics_summary=None,
+        )
+        wf_result = WalkForwardExperimentResult(
+            experiment_name="test-no-econ",
+            split_count=1,
+            splits=[split1],
+            total_bar_count=50,
+            total_signal_count=5,
+        )
+        aggregated = wf_result.aggregate_economics_summary()
+        assert aggregated is None

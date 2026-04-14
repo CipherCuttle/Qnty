@@ -18,11 +18,21 @@ from quantbot.experiment.index import IndexedExperiment, index_experiment_artifa
 def _format_row(exp: IndexedExperiment) -> str:
     """Format a single indexed experiment as a compact text row."""
     eligible_indicator = "✓" if exp.eligible_for_review else "✗"
+    # Format economics summary if present
+    econ = exp.economics_summary
+    if econ:
+        cost_sides = econ.get("cost_side_count", 0) if econ else 0
+        entries = econ.get("entry_count", 0) if econ else 0
+        exits = econ.get("exit_count", 0) if econ else 0
+        flips = econ.get("flip_count", 0) if econ else 0
+        econ_str = f"cs={cost_sides} e={entries} x={exits} f={flips}"
+    else:
+        econ_str = "N/A"
     return (
         f"{exp.experiment_name} | {exp.strategy_name} | {exp.family_id or 'N/A'} | "
         f"{exp.variant_id or 'N/A'} | {exp.trial_count or 0} | "
         f"{exp.gate_status or 'N/A'} | {exp.split_count} | {exp.signal_count} | "
-        f"{exp.fee_bps} | {exp.slippage_bps} | "
+        f"{exp.fee_bps} | {exp.slippage_bps} | {econ_str} | "
         f"{exp.result_type} | {eligible_indicator} | {exp.artifact_path}"
     )
 
@@ -171,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
                 "trial_count": e.trial_count,
                 "fee_bps": e.fee_bps,
                 "slippage_bps": e.slippage_bps,
+                "economics_summary": e.economics_summary,
                 "eligible_for_review": e.eligible_for_review,
                 "ineligibility_reasons": e.ineligibility_reasons,
             }
@@ -181,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         # Header
         print(
             "experiment_name | strategy_name | family_id | variant_id | trial_count | "
-            "gate_status | split_count | signal_count | fee_bps | slippage_bps | result_type | eligible | artifact_path"
+            "gate_status | split_count | signal_count | fee_bps | slippage_bps | economics | result_type | eligible | artifact_path"
         )
         # Rows
         for exp in indexed:

@@ -76,6 +76,80 @@ def _count_signals_by_direction(strategy, bars) -> tuple[int, int, int]:
     return long_count, short_count, flat_count
 
 
+def _compute_economics_summary(strategy, bars, fee_bps: float, slippage_bps: float):
+    """Compute event accounting from position transitions.
+
+    Tracks explicit position transitions that incur costs:
+    - entry: position opens (None -> long/short)
+    - exit: position closes (long/short -> None)
+    - flip: position reverses (long -> short or short -> long)
+
+    A flip counts as exit + entry (2 cost-bearing events).
+
+    Args:
+        strategy: Strategy instance with on_bar method.
+        bars: List of bars to process.
+        fee_bps: Fee in basis points.
+        slippage_bps: Slippage in basis points.
+
+    Returns:
+        EconomicsSummary with event counts and cost estimates.
+    """
+    from quantbot.experiment.result import EconomicsSummary
+
+    entry_count = 0
+    exit_count = 0
+    flip_count = 0
+    prev_direction = None  # None, "long", or "short"
+
+    for bar in bars:
+        sig = strategy.on_bar(bar)
+        if sig is None:
+            # Signal is flat/neutral
+            if prev_direction is not None:
+                # Position was open, now closed
+                exit_count += 1
+                prev_direction = None
+        else:
+            direction = getattr(sig, "direction", None)
+            if direction is None or direction == "flat":
+                # Signal is flat/neutral
+                if prev_direction is not None:
+                    # Position was open, now closed
+                    exit_count += 1
+                    prev_direction = None
+            elif direction == "long":
+                if prev_direction is None:
+                    # Entry from flat
+                    entry_count += 1
+                elif prev_direction == "short":
+                    # Flip from short to long
+                    flip_count += 1
+                prev_direction = "long"
+            elif direction == "short":
+                if prev_direction is None:
+                    # Entry from flat
+                    entry_count += 1
+                elif prev_direction == "long":
+                    # Flip from long to short
+                    flip_count += 1
+                prev_direction = "short"
+
+    # cost_side_count = entries + exits (flips count as 2 since they are exit+entry)
+    cost_side_count = entry_count + exit_count + flip_count
+    assumed_total_cost_bps = cost_side_count * (fee_bps + slippage_bps)
+
+    return EconomicsSummary(
+        cost_side_count=cost_side_count,
+        entry_count=entry_count,
+        exit_count=exit_count,
+        flip_count=flip_count,
+        fee_bps=fee_bps,
+        slippage_bps=slippage_bps,
+        assumed_total_cost_bps=assumed_total_cost_bps,
+    )
+
+
 def run_experiment(
     spec: ExperimentSpec,
     manifest_path: Path,
@@ -142,6 +216,12 @@ def run_experiment(
         strategy_for_count, bars
     )
 
+    # Step 7: compute event accounting for economics
+    strategy_for_economics = _build_strategy(spec.strategy_name, spec.strategy_params)
+    economics_summary = _compute_economics_summary(
+        strategy_for_economics, bars, spec.fee_bps, spec.slippage_bps
+    )
+
     result_path = output_dir / "experiment_result.json"
     result = ExperimentResult(
         spec=spec,
@@ -158,6 +238,7 @@ def run_experiment(
         engine_version=ENGINE_VERSION,
         fee_bps=spec.fee_bps,
         slippage_bps=spec.slippage_bps,
+        economics_summary=economics_summary,
     )
 
     # Run gate checks and attach verdict
