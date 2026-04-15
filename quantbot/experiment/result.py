@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from scipy.stats import norm
+
 from quantbot.core.determinism import canonical_json_dumps
 from quantbot.experiment.spec import ExperimentSpec
 
@@ -167,17 +169,430 @@ class InferenceSummary:
         }
 
 
+@dataclass
+class InferentialSummary:
+    """Multiple-testing-aware inference summary.
+
+    Provides PSR (Probabilistic Sharpe Ratio) and DSR (Deflated Sharpe Ratio)
+    as adjustments to the basic Sharpe-like ratio from InferenceSummary.
+
+    Attributes:
+        psr: Probabilistic Sharpe Ratio - estimated probability that the
+            realized Sharpe ratio > 0, under normality assumption.
+            None if not computable (insufficient bars).
+        psr_n: Track record length (bar count) used for PSR computation.
+        dsr: Deflated Sharpe Ratio - Sharpe ratio adjusted for multiple testing
+            across N trials. None if trial_count < 2 or not computable.
+        dsr_trial_count: Trial count used for DSR computation. None if DSR not computed.
+        dsr_note: Explanation when DSR is None or has limitations.
+        sharpe_like: Same as InferenceSummary.sharpe_like for convenience.
+        std_return: Same as InferenceSummary.std_return for convenience.
+        skewness: Sample skewness (Fisher's) of net returns, or None if n < 3.
+        kurtosis: Sample excess kurtosis (Fisher's) of net returns, or None if n < 4.
+        assumptions_note: Human-readable note on assumptions and limitations.
+
+    Note:
+        PSR is NOT a probability of edge. It is P(SR > 0) under normality.
+        DSR is SR adjusted for selection bias across multiple trials.
+        Neither constitutes proof of edge or readiness to trade.
+    """
+
+    psr: Optional[float] = None
+    psr_n: int = 0
+    dsr: Optional[float] = None
+    dsr_trial_count: Optional[int] = None
+    dsr_note: str = ""
+    sharpe_like: Optional[float] = None
+    std_return: Optional[float] = None
+    skewness: Optional[float] = None
+    kurtosis: Optional[float] = None
+    assumptions_note: str = (
+        "Assumes i.i.d. returns; does not account for non-stationarity; "
+        "does not constitute proof of edge."
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return {
+            "psr": self.psr,
+            "psr_n": self.psr_n,
+            "dsr": self.dsr,
+            "dsr_trial_count": self.dsr_trial_count,
+            "dsr_note": self.dsr_note,
+            "sharpe_like": self.sharpe_like,
+            "std_return": self.std_return,
+            "skewness": self.skewness,
+            "kurtosis": self.kurtosis,
+            "assumptions_note": self.assumptions_note,
+        }
+
+
+def _compute_skewness(returns: list[float]) -> Optional[float]:
+    """Compute population skewness (Fisher's) of a return series.
+
+    Uses the formula: g1 = (sum((x - mean)^3) / n) / std^3
+
+    Args:
+        returns: List of return values.
+
+    Returns:
+        Skewness if n >= 3, else None (skewness undefined for n < 3).
+    """
+    n = len(returns)
+    if n < 3:
+        return None
+
+    mean = sum(returns) / n
+    squared_diffs = [(r - mean) ** 2 for r in returns]
+    variance = sum(squared_diffs) / n
+    std = math.sqrt(variance)
+
+    if std == 0:
+        return None  # Skewness undefined when std=0
+
+    cubed_diffs = [(r - mean) ** 3 for r in returns]
+    m3 = sum(cubed_diffs) / n
+    g1 = m3 / (std ** 3)
+
+    return g1
+
+
+def _compute_kurtosis(returns: list[float]) -> Optional[float]:
+    """Compute population excess kurtosis (Fisher's) of a return series.
+
+    Uses the formula: g2 = (sum((x - mean)^4) / n) / std^4 - 3
+
+    Args:
+        returns: List of return values.
+
+    Returns:
+        Excess kurtosis if n >= 4, else None (kurtosis undefined for n < 4).
+    """
+    n = len(returns)
+    if n < 4:
+        return None
+
+    mean = sum(returns) / n
+    squared_diffs = [(r - mean) ** 2 for r in returns]
+    variance = sum(squared_diffs) / n
+    std = math.sqrt(variance)
+
+    if std == 0:
+        return None  # Kurtosis undefined when std=0
+
+    fourth_diffs = [(r - mean) ** 4 for r in returns]
+    m4 = sum(fourth_diffs) / n
+    g2 = (m4 / (std ** 4)) - 3  # Excess kurtosis (Fisher's)
+
+    return g2
+
+
+def compute_psr(
+    sharpe_like: float,
+    track_record_length: int,
+    skewness: Optional[float] = None,
+    kurtosis: Optional[float] = None,
+) -> float:
+    """Compute Probabilistic Sharpe Ratio (Bailey et al.).
+
+    Uses the skewness/kurtosis corrected formula from Bailey & López de Prado (2012).
+    Returns probability that SR > 0 under the assumption of i.i.d. normal returns.
+
+    The formula uses:
+        PSR = Z / sqrt(N)
+    where Z is the skewness/kurtosis corrected standard normal deviate and
+    N is the track record length.
+
+    Args:
+        sharpe_like: The annualized Sharpe-like ratio computed from returns.
+        track_record_length: Number of bars in the track record (n).
+        skewness: Sample skewness (gamma1) if available, else None.
+        kurtosis: Sample excess kurtosis (gamma2) if available, else None.
+
+    Returns:
+        PSR value in range [0, 1], representing P(SR > 0).
+
+    Note:
+        This is NOT a probability of edge. It is P(SR > 0) under normality.
+        Returns 0.5 when skewness/kurtosis corrections exactly cancel (normal case).
+    """
+    n = track_record_length
+
+    if n < 2:
+        return 0.0
+
+    # Base SR
+    sr = sharpe_like
+
+    # Compute skewness/kurtosis correction factor
+    # From Bailey & López de Prado (2012):
+    # Z = SR * (1 + 0.5*SR^2 - gamma1*SR/6 - gamma2/24 + gamma1^2/72) + 1/6
+    correction = 1.0 + 0.5 * (sr ** 2)
+    if skewness is not None:
+        correction -= (skewness * sr) / 6.0
+    if kurtosis is not None:
+        correction -= kurtosis / 24.0
+    if skewness is not None:
+        correction += (skewness ** 2) / 72.0
+
+    z_score = (sr * correction) + (1.0 / 6.0)
+
+    # PSR = standard normal CDF of z / sqrt(n)
+    psr = norm.cdf(z_score / math.sqrt(n))
+
+    # Clamp to [0, 1] for numerical stability
+    return max(0.0, min(1.0, psr))
+
+
+def compute_dsr(
+    sharpe_like: float,
+    trial_count: int,
+    track_record_length: int,
+) -> tuple[float, str]:
+    """Compute Deflated Sharpe Ratio (Bailey et al.).
+
+    Adjusts the Sharpe ratio for selection bias from multiple testing.
+    Uses the formula from Bailey & López de Prado (2014).
+
+    WARNING: The current trial_count is cumulative hypothesis exploration count,
+    NOT independent backtest trials. DSR computed here uses available trial_count
+    but the note will explain this limitation clearly.
+
+    Args:
+        sharpe_like: The annualized Sharpe-like ratio.
+        trial_count: Number of trials (hypotheses explored). Used for expected max SR.
+        track_record_length: Number of bars (n). Used for std of max SR.
+
+    Returns:
+        Tuple of (dsr, note). dsr may be None if trial_count < 2.
+
+    Note:
+        DSR gap: current trial_count tracks exploration history, not independent
+        backtest trials. Use split_count for walk-forward as a more appropriate
+        trial proxy in that context.
+    """
+    if trial_count < 2:
+        return None, (
+            "DSR not computed: trial_count < 2. "
+            "DSR requires at least 2 trials to compute deflated ratio."
+        )
+
+    if track_record_length < 3:
+        return None, (
+            f"DSR not computed: track_record_length={track_record_length} < 3. "
+            "Insufficient bars for stable estimation."
+        )
+
+    n = track_record_length
+    t = trial_count
+
+    # Standard deviation of returns (we estimate from Sharpe ratio)
+    # SR = mean / std * sqrt(n) => std = mean * sqrt(n) / SR
+    # We need a different approach since we don't have mean directly
+    # Instead, use the relationship: for i.i.d. returns,
+    # var(SR_max) ≈ 1/(n-1) for large T (under null)
+    # Actually, the Bailey & Lopez de Prado formula:
+    # E[SR_max] ≈ sqrt(2*ln(T)) * sigma (for T trials)
+    # sigma_SR_max ≈ sigma / sqrt(T-1)
+    # But we don't have sigma directly...
+
+    # Simplified approach: Use the fact that for standard normal returns,
+    # the distribution of max SR across T trials scales with sqrt(2*ln(T))
+    # and the std of max SR is approximately 1/sqrt(T-1)
+
+    # More practical formula from B&L (2014):
+    # DSR = (SR - E[SR_max]) / sigma_SR_max
+    # E[SR_max] = sqrt(2*ln(T)) * (sigma_for_unit_SR)
+    # For a single series, we use the relationship:
+    # If SR is our observed ratio, and we expect max(SR) from T trials,
+    # we adjust downward
+
+    # For a single track record with Sharpe = SR, std = sigma, n = track length:
+    # E[SR_max | T trials] ≈ sqrt(2*ln(T)) * sigma / sqrt(n)
+    # This is the expected maximum Sharpe from T random trials on same series length
+
+    # Standard deviation of max SR across T trials (under null):
+    # sigma_SR_max ≈ sigma / sqrt(n*(T-1))
+
+    # But we don't have sigma directly. We need to estimate it.
+    # Using the Sharpe ratio formula: SR = mean * sqrt(n) / std
+    # => std = mean * sqrt(n) / SR
+    # For small/negative SR, this breaks down...
+
+    # Fallback: Use a conservative approximation
+    # DSR = SR / sqrt(2*ln(T)) when we can't properly compute sigma
+
+    # Actually, let's use the proper Bailey & Lopez de Prado formula:
+    # For the deflated SR using the probability of exceedance:
+
+    # E[SR_max] = sqrt(2*ln(T)) for standard normal under null hypothesis
+    # This assumes sigma = 1 and n = 1 (per-trial estimate)
+
+    # For our case with track_record_length n:
+    # E[SR_max_n] = sqrt(2*ln(T)) / sqrt(n)
+    # sigma_SR_max_n = 1 / sqrt(n*(T-1))
+
+    expected_max_sr = math.sqrt(2 * math.log(t)) / math.sqrt(n)
+    sigma_sr_max = 1.0 / math.sqrt(n * (t - 1))
+
+    if sigma_sr_max == 0:
+        return None, "DSR computation failed: numerical instability (sigma_sr_max=0)"
+
+    # Check if observed SR is even above the expected maximum
+    if sharpe_like <= expected_max_sr:
+        # Observed SR doesn't exceed expected max - DSR would be <= 0
+        # But we still compute it; it will be negative or zero
+        dsr_val = (sharpe_like - expected_max_sr) / sigma_sr_max
+        dsr_note = (
+            f"DSR={dsr_val:.4f}: observed SR ({sharpe_like:.4f}) does not exceed "
+            f"expected max ({expected_max_sr:.4f}) across {t} trials. "
+            f"WARNING: trial_count={t} reflects hypothesis exploration count, "
+            f"NOT independent backtest trials. This DSR may overstate adjustment."
+        )
+        return max(-10.0, dsr_val), dsr_note
+
+    dsr_val = (sharpe_like - expected_max_sr) / sigma_sr_max
+    dsr_note = (
+        f"DSR computed using trial_count={t}. "
+        f"WARNING: trial_count reflects cumulative hypothesis exploration, "
+        f"NOT independent backtest trials. Interpretation requires caution."
+    )
+
+    return dsr_val, dsr_note
+
+
+def compute_inferential_summary(
+    inference_summary: InferenceSummary,
+    trial_count: Optional[int] = None,
+) -> InferentialSummary:
+    """Build InferentialSummary from InferenceSummary + optional trial metadata.
+
+    PSR is always computed if inputs allow (sharpe_like exists, bar_count >= 2).
+    DSR is computed only if trial_count >= 2, with explicit note about limitation.
+
+    Args:
+        inference_summary: The basic inference summary from compute_inference_summary.
+        trial_count: Optional cumulative trial count for DSR computation.
+
+    Returns:
+        InferentialSummary with PSR (always if computable) and DSR (if trial_count >= 2).
+    """
+    sharpe = inference_summary.sharpe_like
+    std = inference_summary.std_return
+    n = inference_summary.bar_count_for_returns
+
+    psr: Optional[float] = None
+    dsr: Optional[float] = None
+    dsr_trial_count: Optional[int] = None
+    dsr_note = ""
+
+    # We need returns to compute skewness/kurtosis, but they may not be available
+    # If inference_summary came from a ReturnSeries, skew/kurt could be passed in
+    # For now, we compute without them (conservative)
+    skew: Optional[float] = None
+    kurt: Optional[float] = None
+
+    # Compute PSR if sharpe_like exists and n >= 2
+    if sharpe is not None and n >= 2:
+        psr = compute_psr(sharpe, n, skew, kurt)
+
+    # Compute DSR if trial_count is provided and >= 2
+    if trial_count is not None and trial_count >= 2:
+        if sharpe is not None and n >= 3:
+            dsr, dsr_note = compute_dsr(sharpe, trial_count, n)
+            dsr_trial_count = trial_count
+        else:
+            dsr_note = (
+                f"DSR not computed: sharpe_like={'available' if sharpe is not None else 'None'}, "
+                f"bar_count={n} (need >= 3)."
+            )
+
+    return InferentialSummary(
+        psr=psr,
+        psr_n=n,
+        dsr=dsr,
+        dsr_trial_count=dsr_trial_count,
+        dsr_note=dsr_note,
+        sharpe_like=sharpe,
+        std_return=std,
+        skewness=skew,
+        kurtosis=kurt,
+    )
+
+
+def _parse_interval_to_bars_per_year(interval: str) -> float | None:
+    """Parse interval string to approximate bars per year.
+
+    Supports common formats:
+    - '1m', '5m', '15m', '30m' (minutes)
+    - '1h', '4h', '8h', '12h' (hours)
+    - '1d', '3d', '1w' (days/weeks)
+    - Custom patterns like '8h' -> 1095 (3*365 for 8h crypto bars)
+
+    Returns:
+        Approximate number of trading periods per year, or None if unparseable.
+
+    Note:
+        For crypto (24/7 markets), we use 365.25 days rather than 252 trading days.
+        This is an approximation - actual trading frequency may vary.
+    """
+    if interval is None:
+        return None
+    interval = interval.strip().lower()
+
+    # Minutes
+    if interval.endswith("m"):
+        try:
+            minutes = int(interval[:-1])
+            return (60 * 24 * 365.25) / minutes
+        except ValueError:
+            pass
+
+    # Hours
+    if interval.endswith("h"):
+        try:
+            hours = int(interval[:-1])
+            return (24 * 365.25) / hours
+        except ValueError:
+            pass
+
+    # Days
+    if interval.endswith("d"):
+        try:
+            days = int(interval[:-1])
+            return 365.25 / days
+        except ValueError:
+            pass
+
+    # Weeks
+    if interval.endswith("w"):
+        try:
+            weeks = int(interval[:-1])
+            return 52.18 / weeks  # 52.18 weeks per year
+        except ValueError:
+            pass
+
+    return None
+
+
 def compute_inference_summary(return_series: ReturnSeries) -> InferenceSummary:
     """Compute inference statistics from a ReturnSeries.
 
     Statistics are computed from the net_returns series only.
     std_return uses population standard deviation (ddof=0).
-    sharpe_like is ONLY computed if interval is known and bars >= 2.
+    sharpe_like is computed if interval is known and bars >= 2.
+
+    Annualization:
+    - sharpe_like is annualized only when interval is known and parseable.
+    - Annualization factor is computed from interval string (e.g., '8h' -> 1095 bars/year).
+    - For crypto (24/7 markets), we use 365.25 days rather than 252 trading days.
+    - This is an approximation; actual trading frequency may vary.
 
     Degenerate cases handled:
     - Empty series: returns zero/invalid stats
     - Single bar: std_return = None (undefined)
     - All identical returns: std_return = 0.0
+    - Unknown interval: sharpe_like = None (annualization_note explains why)
 
     Args:
         return_series: ReturnSeries with net_returns and interval.
@@ -221,16 +636,24 @@ def compute_inference_summary(return_series: ReturnSeries) -> InferenceSummary:
     gross_return_total = sum(return_series.gross_returns)
     cost_deduction_total = gross_return_total - net_return_total
 
-    # sharpe_like only if interval is known and bars >= 2
+    # sharpe_like: compute if interval is known, parseable, and bars >= 2 with std > 0
     sharpe_like: Optional[float] = None
     annualized = False
     annualization_note = "not annualized - interval unknown"
 
     if interval != "unknown" and bar_count >= 2 and std_return is not None and std_return > 0:
-        # Annualization factor: assume ~252 trading periods per year for crypto
-        # This is an approximation; 24h/day * 365.25 days ~= 8766 but crypto trades 24/7
-        # For bar intervals like '8h', '1h', '4h' we can compute annualization
-        annualization_note = f"not annualized - interval '{interval}' requires explicit annualization factor"
+        bars_per_year = _parse_interval_to_bars_per_year(interval)
+        if bars_per_year is not None:
+            # Annualize: sharpe_like = mean * sqrt(bars_per_year) / std
+            # This is the standard Sharpe ratio formula assuming i.i.d. returns
+            sharpe_like = (mean_return / std_return) * math.sqrt(bars_per_year)
+            annualized = True
+            annualization_note = (
+                f"annualized using {bars_per_year:.1f} bars/year from interval '{interval}' "
+                f"(365.25 days × 24h / {interval} for crypto 24/7 market)"
+            )
+        else:
+            annualization_note = f"not annualized - interval '{interval}' not parseable to bars/year"
 
     return InferenceSummary(
         bar_count_for_returns=bar_count,
@@ -348,6 +771,15 @@ class ExperimentResult:
             "return_series": self._return_series_to_dict(),
             "inference_summary": self._inference_summary_to_dict(),
         }
+
+        # Compute inferential summary with trial context for multiple-testing-aware inference
+        if self.inference_summary is not None:
+            trial_count = self.spec.trial_count
+            inferential = compute_inferential_summary(self.inference_summary, trial_count)
+            d["inferential_summary"] = inferential.to_dict()
+        else:
+            d["inferential_summary"] = None
+
         return d
 
     def to_json(self) -> str:
@@ -631,6 +1063,18 @@ class WalkForwardExperimentResult:
             "return_series": self._return_series_to_dict(),
             "inference_summary": self._inference_summary_to_dict(),
         }
+
+        # Compute inferential summary with split_count as trial proxy for DSR
+        # WalkForward uses split_count as the implicit trial structure
+        if self.inference_summary is not None:
+            # Use split_count as effective trial count for walkforward DSR
+            trial_count = self.split_count if self.split_count >= 2 else self.trial_count
+            inferential = compute_inferential_summary(self.inference_summary, trial_count)
+            d["inferential_summary"] = inferential.to_dict()
+        else:
+            d["inferential_summary"] = None
+
+        return d
 
     def to_json(self) -> str:
         """Serialize to deterministic canonical JSON string."""

@@ -43,6 +43,7 @@ def run_walkforward_experiment(
     train_size: int,
     test_size: int,
     step_size: int | None = None,
+    interval: str | None = None,
 ) -> WalkForwardExperimentResult:
     """
     Run experiment across walk-forward splits.
@@ -63,6 +64,7 @@ def run_walkforward_experiment(
         train_size: Number of bars in each training window.
         test_size: Number of bars in each test window.
         step_size: Step to advance between splits. Defaults to test_size.
+        interval: Bar interval string (e.g., '8h', '1d') if known. Defaults to None.
 
     Returns:
         WalkForwardExperimentResult with per-split summaries.
@@ -109,7 +111,7 @@ def run_walkforward_experiment(
             "version": 1,
             "bars_file": "split_bars.csv",
             "symbol": spec.strategy_params.get("symbol", "UNKNOWN"),
-            "interval": "unknown",
+            "interval": interval if interval else "unknown",
         }
         split_manifest_path = split_dir / "manifest.json"
         split_manifest_path.write_text(json.dumps(split_manifest), encoding="utf-8")
@@ -141,6 +143,7 @@ def run_walkforward_experiment(
                 manifest_path=split_manifest_path,
                 csv_path=split_csv_path,
                 output_dir=split_dir,
+                interval=interval,
             )
             receipt_path_str = str(result.receipt_path)
             artifact_path_str = str(split_dir / "experiment_result.json")
@@ -169,6 +172,9 @@ def run_walkforward_experiment(
             last_ts = result.last_timestamp
 
         # Collect per-split summary
+        # Compute inference_summary for this split's return_series
+        split_inference = result.inference_summary if 'result' in locals() else None
+
         split_result = WalkForwardSplitResult(
             split_index=idx,
             train_bar_count=wf_split.train_end - wf_split.train_start,
@@ -184,6 +190,7 @@ def run_walkforward_experiment(
             economics_summary=split_economics,
             return_summary=split_returns,
             return_series=split_return_series,
+            inference_summary=split_inference,
         )
         split_results.append(split_result)
         total_bar_count += test_bar_count
@@ -215,6 +222,9 @@ def run_walkforward_experiment(
 
     # Aggregate returns from splits
     wf_result.return_summary = wf_result.aggregate_return_summary()
+
+    # Aggregate inference from splits (inherits interval from split return_series)
+    wf_result.inference_summary = wf_result.aggregate_inference_summary()
 
     # Run gate checks and attach verdict
     wf_result.gate_verdict = gate_walkforward_result(wf_result)

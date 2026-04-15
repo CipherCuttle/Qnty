@@ -43,20 +43,35 @@ def _format_row(exp: IndexedExperiment) -> str:
         mean = inf.get("mean_return", 0.0)
         std = inf.get("std_return")
         bars = inf.get("bar_count_for_returns", 0)
-        annualized = inf.get("annualized", False)
         interval = inf.get("interval", "unknown")
-        if std is not None:
+        sharpe_like = inf.get("sharpe_like")
+        if sharpe_like is not None:
+            inf_str = f"μ={mean:.6f} σ={std:.6f} n={bars} [{interval}] sharpe={sharpe_like:.4f}*"
+        elif std is not None:
             inf_str = f"μ={mean:.6f} σ={std:.6f} n={bars} [{interval}]"
         else:
             inf_str = f"μ={mean:.6f} n={bars} [{interval}]"
     else:
         inf_str = "N/A"
+    # Format inferential summary (PSR/DSR) if present
+    inf_summary = exp.inferential_summary
+    if inf_summary:
+        psr = inf_summary.get("psr")
+        dsr = inf_summary.get("dsr")
+        if psr is not None and dsr is not None:
+            inf_meta_str = f"PSR={psr:.4f} DSR={dsr:.4f}"
+        elif psr is not None:
+            inf_meta_str = f"PSR={psr:.4f} DSR=N/A"
+        else:
+            inf_meta_str = "PSR=N/A DSR=N/A"
+    else:
+        inf_meta_str = "N/A"
     return (
         f"{exp.experiment_name} | {exp.strategy_name} | {exp.family_id or 'N/A'} | "
         f"{exp.variant_id or 'N/A'} | {exp.trial_count or 0} | "
         f"{exp.gate_status or 'N/A'} | {exp.split_count} | {exp.signal_count} | "
         f"{exp.fee_bps} | {exp.slippage_bps} | {econ_str} | {ret_str} | {inf_str} | "
-        f"{exp.result_type} | {eligible_indicator} | {exp.artifact_path}"
+        f"{inf_meta_str} | {exp.result_type} | {eligible_indicator} | {exp.artifact_path}"
     )
 
 
@@ -233,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
                     "net_return_total": ret.get("net_return_total"),
                     "cost_deduction_total": ret.get("cost_deduction_total"),
                     "inference_summary": inf,
+                    "inferential_summary": e.inferential_summary,
                     "artifact_path": str(e.artifact_path),
                 })
             print(json.dumps({"review_summary": records, "count": len(records)}, indent=2))
@@ -277,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
                 "economics_summary": e.economics_summary,
                 "return_summary": e.return_summary,
                 "inference_summary": e.inference_summary,
+                "inferential_summary": e.inferential_summary,
                 "eligible_for_review": e.eligible_for_review,
                 "ineligibility_reasons": e.ineligibility_reasons,
             }
@@ -287,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
         # Header
         print(
             "experiment_name | strategy_name | family_id | variant_id | trial_count | "
-            "gate_status | split_count | signal_count | fee_bps | slippage_bps | economics | returns | inference | result_type | eligible | artifact_path"
+            "gate_status | split_count | signal_count | fee_bps | slippage_bps | economics | returns | inference | psr_dsr | result_type | eligible | artifact_path"
         )
         # Rows
         for exp in indexed:

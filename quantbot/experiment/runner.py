@@ -19,6 +19,12 @@ from quantbot.version import ENGINE_VERSION
 # Strategy class registry - minimal factory
 _STRATEGY_REGISTRY: dict[str, type] = {}
 
+# Fixture interval map: fixture alias → bar interval string
+# Intervals are reliably known from fixture naming (e.g., btcusdt-8h means 8h bars)
+_FIXTURE_INTERVAL_MAP: dict[str, str] = {
+    "btcusdt-8h": "8h",
+}
+
 
 def _register_strategy(cls: type) -> type:
     """Decorator to register a strategy class in the registry."""
@@ -150,7 +156,7 @@ def _compute_economics_summary(strategy, bars, fee_bps: float, slippage_bps: flo
     )
 
 
-def _compute_return_summary(strategy, bars, economics_summary):
+def _compute_return_summary(strategy, bars, economics_summary, interval: str = "unknown"):
     """Compute gross and net return series from position state and bar close changes.
 
     Derives position state deterministically from signals:
@@ -271,7 +277,7 @@ def _compute_return_summary(strategy, bars, economics_summary):
         gross_returns=gross_returns,
         net_returns=net_returns,
         bar_timestamps=bar_timestamps,
-        interval="unknown",  # Interval not reliably determinable here
+        interval=interval,
     )
 
     return return_summary, return_series
@@ -282,6 +288,7 @@ def run_experiment(
     manifest_path: Path,
     csv_path: Path,
     output_dir: Path,
+    interval: str | None = None,
 ) -> ExperimentResult:
     """Run a deterministic experiment from spec through receipt.
 
@@ -298,6 +305,7 @@ def run_experiment(
         manifest_path: Path to manifest JSON file.
         csv_path: Path to bars CSV file.
         output_dir: Directory for output files.
+        interval: Bar interval string (e.g., '8h', '1d') if known. Defaults to None.
 
     Returns:
         ExperimentResult with spec, receipt path, and summary counts.
@@ -352,8 +360,12 @@ def run_experiment(
     # Step 8: compute return series from position state and bar close changes
     strategy_for_returns = _build_strategy(spec.strategy_name, spec.strategy_params)
     return_summary, return_series = _compute_return_summary(
-        strategy_for_returns, bars, economics_summary
+        strategy_for_returns, bars, economics_summary, interval=interval
     )
+
+    # Step 9: compute inference summary from return series
+    from quantbot.experiment.result import compute_inference_summary
+    inference_summary = compute_inference_summary(return_series)
 
     result_path = output_dir / "experiment_result.json"
     result = ExperimentResult(
@@ -374,6 +386,7 @@ def run_experiment(
         economics_summary=economics_summary,
         return_summary=return_summary,
         return_series=return_series,
+        inference_summary=inference_summary,
     )
 
     # Run gate checks and attach verdict

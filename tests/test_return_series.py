@@ -1238,8 +1238,8 @@ class TestComputeInferenceSummary:
         assert inf.sharpe_like is None
         assert "interval unknown" in inf.annualization_note
 
-    def test_interval_known_still_no_annualization(self) -> None:
-        """Even with known interval, sharpe_like stays None (explicit choice)."""
+    def test_interval_known_annualizes_and_computes_sharpe(self) -> None:
+        """Known interval now annualizes and computes sharpe_like."""
         rs = ReturnSeries(
             gross_returns=[0.01, 0.02],
             net_returns=[0.009, 0.018],
@@ -1248,9 +1248,10 @@ class TestComputeInferenceSummary:
         )
         inf = compute_inference_summary(rs)
         assert inf.interval == "8h"
-        # sharpe_like is None because we explicitly do not annualize without explicit factor
-        assert inf.sharpe_like is None
-        assert inf.annualized is False
+        # sharpe_like is now computed because interval is known and parseable
+        assert inf.sharpe_like is not None
+        assert inf.annualized is True
+        assert "annualized" in inf.annualization_note
 
 
 class TestExperimentResultInferenceSummary:
@@ -1437,8 +1438,8 @@ class TestWalkForwardInferenceSummary:
         expected_mean = (0.009 + 0.018 + 0.028) / 3
         assert abs(aggregated.mean_return - expected_mean) < 0.0001
         assert aggregated.interval == "8h"
-        assert aggregated.annualized is False
-        assert aggregated.sharpe_like is None
+        assert aggregated.annualized is True  # Now annualizes with known interval
+        assert aggregated.sharpe_like is not None  # Now computed
 
     def test_aggregate_inference_summary_returns_none_when_no_series(self) -> None:
         """aggregate_inference_summary returns None when no splits have return_series."""
@@ -1625,4 +1626,426 @@ class TestLegacyArtifactsBackwardCompatibilityInference:
 
             assert len(indexed) == 1
             assert indexed[0].experiment_name == "legacy-wf"
+            assert indexed[0].inference_summary is None
+
+
+class TestIntervalPropagation:
+    """Tests for interval propagation through the experiment pipeline."""
+
+    def test_compute_return_summary_uses_provided_interval(self) -> None:
+        """_compute_return_summary uses the interval parameter."""
+        from unittest.mock import MagicMock
+        from quantbot.data.types import Bar
+        from quantbot.experiment.result import EconomicsSummary
+
+        # Mock strategy that emits long signals
+        mock = MagicMock()
+        signal_list = ["long", "long", "long", "long"]
+        idx = [0]
+
+        def on_bar(bar):
+            nonlocal idx
+            if idx[0] >= len(signal_list):
+                return None
+            direction = signal_list[idx[0]]
+            idx[0] += 1
+            if direction == "flat":
+                return None
+            m = MagicMock()
+            m.direction = direction
+            return m
+
+        mock.on_bar = MagicMock(side_effect=on_bar)
+
+        # Create bars
+        bars = []
+        for i, close in enumerate([100.0, 102.0, 101.0, 103.0]):
+            bar = MagicMock(spec=Bar)
+            bar.close = close
+            bar.open = close
+            bar.high = close
+            bar.low = close
+            bar.volume = 0
+            bar.timestamp = f"2023-01-{i+1:02d}T00:00:00+00:00"
+            bars.append(bar)
+
+        economics = EconomicsSummary(
+            cost_side_count=1,
+            entry_count=1,
+            exit_count=0,
+            flip_count=0,
+            fee_bps=0.0,
+            slippage_bps=0.0,
+            assumed_total_cost_bps=0.0,
+        )
+
+        # Call with explicit interval
+        from quantbot.experiment.runner import _compute_return_summary
+        _, return_series = _compute_return_summary(mock, bars, economics, interval="8h")
+
+        assert return_series.interval == "8h"
+
+    def test_compute_return_summary_defaults_to_unknown(self) -> None:
+        """_compute_return_summary defaults to 'unknown' when no interval provided."""
+        from unittest.mock import MagicMock
+        from quantbot.data.types import Bar
+        from quantbot.experiment.result import EconomicsSummary
+
+        # Mock strategy that emits long signals
+        mock = MagicMock()
+        signal_list = ["long", "long", "long", "long"]
+        idx = [0]
+
+        def on_bar(bar):
+            nonlocal idx
+            if idx[0] >= len(signal_list):
+                return None
+            direction = signal_list[idx[0]]
+            idx[0] += 1
+            if direction == "flat":
+                return None
+            m = MagicMock()
+            m.direction = direction
+            return m
+
+        mock.on_bar = MagicMock(side_effect=on_bar)
+
+        # Create bars
+        bars = []
+        for i, close in enumerate([100.0, 102.0, 101.0, 103.0]):
+            bar = MagicMock(spec=Bar)
+            bar.close = close
+            bar.open = close
+            bar.high = close
+            bar.low = close
+            bar.volume = 0
+            bar.timestamp = f"2023-01-{i+1:02d}T00:00:00+00:00"
+            bars.append(bar)
+
+        economics = EconomicsSummary(
+            cost_side_count=1,
+            entry_count=1,
+            exit_count=0,
+            flip_count=0,
+            fee_bps=0.0,
+            slippage_bps=0.0,
+            assumed_total_cost_bps=0.0,
+        )
+
+        # Call without interval parameter (default)
+        from quantbot.experiment.runner import _compute_return_summary
+        _, return_series = _compute_return_summary(mock, bars, economics)
+
+        assert return_series.interval == "unknown"
+
+
+class TestAnnualization:
+    """Tests for annualization behavior in compute_inference_summary."""
+
+    def test_annualization_8h_interval_computes_sharpe(self) -> None:
+        """Known 8h interval produces sharpe_like when bars >= 2 and std > 0."""
+        from quantbot.experiment.result import ReturnSeries, compute_inference_summary
+
+        # Create a return series with known interval
+        rs = ReturnSeries(
+            gross_returns=[0.01, 0.02, 0.015, -0.01],
+            net_returns=[0.009, 0.018, 0.013, -0.012],
+            bar_timestamps=["2023-01-01T00:00:00Z"] * 4,
+            interval="8h",
+        )
+
+        inf = compute_inference_summary(rs)
+
+        assert inf.interval == "8h"
+        assert inf.annualized is True
+        assert inf.sharpe_like is not None
+        assert "annualized" in inf.annualization_note
+        assert "8h" in inf.annualization_note
+
+    def test_annualization_1d_interval_computes_sharpe(self) -> None:
+        """Known 1d interval produces sharpe_like."""
+        from quantbot.experiment.result import ReturnSeries, compute_inference_summary
+
+        rs = ReturnSeries(
+            gross_returns=[0.01, 0.02],
+            net_returns=[0.009, 0.018],
+            bar_timestamps=["2023-01-01T00:00:00Z"] * 2,
+            interval="1d",
+        )
+
+        inf = compute_inference_summary(rs)
+
+        assert inf.interval == "1d"
+        assert inf.annualized is True
+        assert inf.sharpe_like is not None
+
+    def test_unknown_interval_no_annualization(self) -> None:
+        """Unknown interval does NOT produce sharpe_like."""
+        from quantbot.experiment.result import ReturnSeries, compute_inference_summary
+
+        rs = ReturnSeries(
+            gross_returns=[0.01, 0.02, 0.015, -0.01],
+            net_returns=[0.009, 0.018, 0.013, -0.012],
+            bar_timestamps=["2023-01-01T00:00:00Z"] * 4,
+            interval="unknown",
+        )
+
+        inf = compute_inference_summary(rs)
+
+        assert inf.interval == "unknown"
+        assert inf.annualized is False
+        assert inf.sharpe_like is None
+        assert "interval unknown" in inf.annualization_note
+
+    def test_single_bar_no_sharpe_regardless_of_interval(self) -> None:
+        """Single bar cannot compute sharpe even with known interval."""
+        from quantbot.experiment.result import ReturnSeries, compute_inference_summary
+
+        rs = ReturnSeries(
+            gross_returns=[0.01],
+            net_returns=[0.009],
+            bar_timestamps=["2023-01-01T00:00:00Z"],
+            interval="8h",
+        )
+
+        inf = compute_inference_summary(rs)
+
+        assert inf.interval == "8h"
+        assert inf.std_return is None  # std undefined for single bar
+        assert inf.sharpe_like is None
+
+    def test_zero_std_no_sharpe_regardless_of_interval(self) -> None:
+        """Zero std cannot compute sharpe."""
+        from quantbot.experiment.result import ReturnSeries, compute_inference_summary
+
+        rs = ReturnSeries(
+            gross_returns=[0.01, 0.01, 0.01, 0.01],
+            net_returns=[0.009, 0.009, 0.009, 0.009],
+            bar_timestamps=["2023-01-01T00:00:00Z"] * 4,
+            interval="8h",
+        )
+
+        inf = compute_inference_summary(rs)
+
+        assert inf.interval == "8h"
+        assert inf.std_return == 0.0
+        assert inf.sharpe_like is None  # Cannot divide by zero std
+
+
+class TestParseIntervalToBarsPerYear:
+    """Tests for _parse_interval_to_bars_per_year function."""
+
+    def test_8h_interval(self) -> None:
+        """8h interval parses to ~1095 bars/year."""
+        from quantbot.experiment.result import _parse_interval_to_bars_per_year
+
+        bars = _parse_interval_to_bars_per_year("8h")
+        assert bars is not None
+        assert abs(bars - 1095.75) < 0.1  # 24*365.25/8
+
+    def test_1h_interval(self) -> None:
+        """1h interval parses to ~8766 bars/year."""
+        from quantbot.experiment.result import _parse_interval_to_bars_per_year
+
+        bars = _parse_interval_to_bars_per_year("1h")
+        assert bars is not None
+        assert abs(bars - 8766.0) < 0.1  # 24*365.25
+
+    def test_1d_interval(self) -> None:
+        """1d interval parses to ~365.25 bars/year."""
+        from quantbot.experiment.result import _parse_interval_to_bars_per_year
+
+        bars = _parse_interval_to_bars_per_year("1d")
+        assert bars is not None
+        assert abs(bars - 365.25) < 0.1
+
+    def test_4h_interval(self) -> None:
+        """4h interval parses to ~2191.5 bars/year."""
+        from quantbot.experiment.result import _parse_interval_to_bars_per_year
+
+        bars = _parse_interval_to_bars_per_year("4h")
+        assert bars is not None
+        assert abs(bars - 2191.5) < 0.1  # 24*365.25/4
+
+    def test_unknown_format_returns_none(self) -> None:
+        """Unparseable interval returns None."""
+        from quantbot.experiment.result import _parse_interval_to_bars_per_year
+
+        bars = _parse_interval_to_bars_per_year("unknown")
+        assert bars is None
+
+        bars = _parse_interval_to_bars_per_year("random")
+        assert bars is None
+
+
+class TestWalkForwardIntervalInheritance:
+    """Tests for interval inheritance in walk-forward experiments."""
+
+    def test_aggregate_inference_summary_inherits_interval(self) -> None:
+        """aggregate_inference_summary uses first known interval from splits."""
+        from quantbot.experiment.result import (
+            ReturnSeries,
+            WalkForwardExperimentResult,
+            WalkForwardSplitResult,
+        )
+
+        split1 = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=100,
+            test_bar_count=50,
+            signal_count=5,
+            long_count=3,
+            short_count=2,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            return_series=ReturnSeries(
+                gross_returns=[0.01, 0.02],
+                net_returns=[0.009, 0.018],
+                bar_timestamps=["2023-01-01T00:00:00Z"] * 2,
+                interval="8h",
+            ),
+        )
+        split2 = WalkForwardSplitResult(
+            split_index=1,
+            train_bar_count=100,
+            test_bar_count=50,
+            signal_count=5,
+            long_count=2,
+            short_count=3,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            return_series=ReturnSeries(
+                gross_returns=[0.03],
+                net_returns=[0.028],
+                bar_timestamps=["2023-01-03T00:00:00Z"],
+                interval="8h",
+            ),
+        )
+
+        result = WalkForwardExperimentResult(
+            experiment_name="wf-test",
+            split_count=2,
+            splits=[split1, split2],
+            total_bar_count=100,
+            total_signal_count=10,
+        )
+
+        aggregated = result.aggregate_inference_summary()
+
+        assert aggregated is not None
+        assert aggregated.interval == "8h"
+        assert aggregated.annualized is True  # Now that interval is known
+
+    def test_aggregate_inference_summary_unknown_when_all_unknown(self) -> None:
+        """aggregate_inference_summary stays unknown when all splits unknown."""
+        from quantbot.experiment.result import (
+            ReturnSeries,
+            WalkForwardExperimentResult,
+            WalkForwardSplitResult,
+        )
+
+        split1 = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=100,
+            test_bar_count=50,
+            signal_count=5,
+            long_count=3,
+            short_count=2,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            return_series=ReturnSeries(
+                gross_returns=[0.01, 0.02],
+                net_returns=[0.009, 0.018],
+                bar_timestamps=["2023-01-01T00:00:00Z"] * 2,
+                interval="unknown",
+            ),
+        )
+
+        result = WalkForwardExperimentResult(
+            experiment_name="wf-test",
+            split_count=1,
+            splits=[split1],
+            total_bar_count=50,
+            total_signal_count=5,
+        )
+
+        aggregated = result.aggregate_inference_summary()
+
+        assert aggregated is not None
+        assert aggregated.interval == "unknown"
+        assert aggregated.annualized is False
+        assert aggregated.sharpe_like is None
+
+
+class TestLegacyArtifactsIntervalHandling:
+    """Tests for graceful handling of legacy artifacts missing interval."""
+
+    def test_legacy_artifact_missing_inference_summary(self) -> None:
+        """Indexing a legacy artifact without inference_summary does not break."""
+        import tempfile
+        from quantbot.experiment.index import index_experiment_artifacts
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy_path = Path(tmpdir) / "experiment_result.json"
+            legacy_data = {
+                "experiment_name": "legacy-exp",
+                "strategy_name": "ThresholdStrategy",
+                "strategy_params": {},
+                "fixture_name": "BTCUSDT_8h",
+                "engine_version": "0.1.0",
+                "receipt_digest": "abc123",
+                "bar_count": 100,
+                "signal_count": 5,
+                "first_timestamp": "2023-01-01T00:00:00+00:00",
+                "last_timestamp": "2023-01-02T00:00:00+00:00",
+                "long_count": 2,
+                "short_count": 3,
+                "flat_count": 0,
+                "gate_verdict": None,
+                "fee_bps": 10.0,
+                "slippage_bps": 3.0,
+                # No inference_summary field
+            }
+            legacy_path.write_text(json.dumps(legacy_data), encoding="utf-8")
+
+            indexed = index_experiment_artifacts([legacy_path])
+
+            assert len(indexed) == 1
+            assert indexed[0].experiment_name == "legacy-exp"
+            assert indexed[0].inference_summary is None
+
+    def test_legacy_artifact_with_null_inference_summary(self) -> None:
+        """Indexing an artifact with null inference_summary does not break."""
+        import tempfile
+        from quantbot.experiment.index import index_experiment_artifacts
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy_path = Path(tmpdir) / "experiment_result.json"
+            legacy_data = {
+                "experiment_name": "legacy-exp",
+                "strategy_name": "ThresholdStrategy",
+                "strategy_params": {},
+                "fixture_name": "BTCUSDT_8h",
+                "engine_version": "0.1.0",
+                "receipt_digest": "abc123",
+                "bar_count": 100,
+                "signal_count": 5,
+                "first_timestamp": "2023-01-01T00:00:00+00:00",
+                "last_timestamp": "2023-01-02T00:00:00+00:00",
+                "long_count": 2,
+                "short_count": 3,
+                "flat_count": 0,
+                "gate_verdict": None,
+                "fee_bps": 10.0,
+                "slippage_bps": 3.0,
+                "inference_summary": None,
+            }
+            legacy_path.write_text(json.dumps(legacy_data), encoding="utf-8")
+
+            indexed = index_experiment_artifacts([legacy_path])
+
+            assert len(indexed) == 1
             assert indexed[0].inference_summary is None

@@ -17,11 +17,12 @@ from quantbot.experiment import ExperimentSpec, run_walkforward_experiment
 from quantbot.version import ENGINE_VERSION
 
 
-# Fixture alias → (manifest_path, csv_path)
-_FIXTURE_MAP: dict[str, tuple[Path, Path]] = {
+# Fixture alias → (manifest_path, csv_path, interval)
+_FIXTURE_MAP: dict[str, tuple[Path, Path, str]] = {
     "btcusdt-8h": (
         Path(__file__).parent.parent / "tests" / "fixtures" / "BTCUSDT_manifest.json",
         Path(__file__).parent.parent / "tests" / "fixtures" / "BTCUSDT_8h.csv",
+        "8h",
     ),
 }
 
@@ -135,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    manifest_path, csv_path = _FIXTURE_MAP[args.fixture]
+    manifest_path, csv_path, fixture_interval = _FIXTURE_MAP[args.fixture]
 
     # Validate fixture files exist
     if not manifest_path.exists():
@@ -188,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
             train_size=args.train_size,
             test_size=args.test_size,
             step_size=args.step_size,
+            interval=fixture_interval,
         )
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
