@@ -5,6 +5,7 @@ Paper mode only - no real trading, no profitability claims.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -50,6 +51,202 @@ class EconomicsSummary:
 
 
 @dataclass
+class ReturnSummary:
+    """Return series summary for an experiment.
+
+    Computes deterministic gross and net returns from bar-to-bar close changes
+    under derived position state. Costs are applied as basis points of notional
+    on each cost-bearing event (entry, exit, flip).
+
+    Attributes:
+        gross_return_total: Cumulative gross return (product of 1 + bar returns).
+        net_return_total: Gross return minus event-based costs.
+        cost_deduction_total: Total cost deducted in return terms.
+        bars_held: Number of bars with non-flat position.
+        winning_bars: Number of bars with positive return.
+        losing_bars: Number of bars with negative return.
+    """
+
+    gross_return_total: float = 0.0
+    net_return_total: float = 0.0
+    cost_deduction_total: float = 0.0
+    bars_held: int = 0
+    winning_bars: int = 0
+    losing_bars: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return {
+            "gross_return_total": self.gross_return_total,
+            "net_return_total": self.net_return_total,
+            "cost_deduction_total": self.cost_deduction_total,
+            "bars_held": self.bars_held,
+            "winning_bars": self.winning_bars,
+            "losing_bars": self.losing_bars,
+        }
+
+
+@dataclass
+class ReturnSeries:
+    """Per-bar return series for an experiment.
+
+    Preserves the full per-bar gross and net return sequence for later
+    honest inference. Interval may be 'unknown' if not reliably determined
+    from the data source.
+
+    Attributes:
+        gross_returns: Per-bar gross return series (1-element per bar held).
+        net_returns: Per-bar net return series (gross minus cost per bar).
+        bar_timestamps: ISO timestamp for each bar in the series.
+        interval: Bar interval string (e.g., '8h', '1d') or 'unknown'.
+    """
+
+    gross_returns: list[float] = field(default_factory=list)
+    net_returns: list[float] = field(default_factory=list)
+    bar_timestamps: list[str] = field(default_factory=list)
+    interval: str = "unknown"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return {
+            "gross_returns": self.gross_returns,
+            "net_returns": self.net_returns,
+            "bar_timestamps": self.bar_timestamps,
+            "interval": self.interval,
+        }
+
+
+@dataclass
+class InferenceSummary:
+    """Inferential summary statistics computed from a per-bar return series.
+
+    All statistics are computed directly from the preserved net_returns series.
+    Annualization is EXPLICITLY DISABLED unless the bar interval is known and
+    documented. sharpe_like will be None unless annualized is True.
+
+    Attributes:
+        bar_count_for_returns: Length of the net_returns series (bars held).
+        mean_return: Mean of net_returns series.
+        std_return: Standard deviation of net_returns series (population).
+                     None if bar_count < 2 (std undefined for single observation).
+        gross_return_total: Sum/gross total from series computation.
+        net_return_total: Sum/net total from series computation.
+        cost_deduction_total: gross - net total.
+        sharpe_like: Sharpe-ratio-like statistic ONLY if interval is known.
+                    None otherwise (interval unknown = cannot annualize).
+        annualized: False unless interval is known and annualization was applied.
+        interval: 'unknown' or the actual bar interval string.
+        annualization_note: Human-readable note explaining why not annualized,
+                           or what annualization was applied.
+    """
+
+    bar_count_for_returns: int = 0
+    mean_return: float = 0.0
+    std_return: Optional[float] = None
+    gross_return_total: float = 0.0
+    net_return_total: float = 0.0
+    cost_deduction_total: float = 0.0
+    sharpe_like: Optional[float] = None
+    annualized: bool = False
+    interval: str = "unknown"
+    annualization_note: str = "not annualized - interval unknown"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return {
+            "bar_count_for_returns": self.bar_count_for_returns,
+            "mean_return": self.mean_return,
+            "std_return": self.std_return,
+            "gross_return_total": self.gross_return_total,
+            "net_return_total": self.net_return_total,
+            "cost_deduction_total": self.cost_deduction_total,
+            "sharpe_like": self.sharpe_like,
+            "annualized": self.annualized,
+            "interval": self.interval,
+            "annualization_note": self.annualization_note,
+        }
+
+
+def compute_inference_summary(return_series: ReturnSeries) -> InferenceSummary:
+    """Compute inference statistics from a ReturnSeries.
+
+    Statistics are computed from the net_returns series only.
+    std_return uses population standard deviation (ddof=0).
+    sharpe_like is ONLY computed if interval is known and bars >= 2.
+
+    Degenerate cases handled:
+    - Empty series: returns zero/invalid stats
+    - Single bar: std_return = None (undefined)
+    - All identical returns: std_return = 0.0
+
+    Args:
+        return_series: ReturnSeries with net_returns and interval.
+
+    Returns:
+        InferenceSummary with computed statistics.
+    """
+    net_returns = return_series.net_returns
+    bar_count = len(net_returns)
+    interval = return_series.interval
+
+    if bar_count == 0:
+        return InferenceSummary(
+            bar_count_for_returns=0,
+            mean_return=0.0,
+            std_return=None,
+            gross_return_total=0.0,
+            net_return_total=0.0,
+            cost_deduction_total=0.0,
+            sharpe_like=None,
+            annualized=False,
+            interval=interval,
+            annualization_note="not annualized - empty return series",
+        )
+
+    # Compute mean
+    mean_return = sum(net_returns) / bar_count
+
+    # Compute population std (ddof=0)
+    std_return: Optional[float] = None
+    if bar_count >= 2:
+        squared_diffs = [(r - mean_return) ** 2 for r in net_returns]
+        variance = sum(squared_diffs) / bar_count
+        std_return = math.sqrt(variance)
+    else:
+        # Single bar - std undefined
+        std_return = None
+
+    # Compute totals from series (not pre-computed)
+    net_return_total = sum(net_returns)
+    gross_return_total = sum(return_series.gross_returns)
+    cost_deduction_total = gross_return_total - net_return_total
+
+    # sharpe_like only if interval is known and bars >= 2
+    sharpe_like: Optional[float] = None
+    annualized = False
+    annualization_note = "not annualized - interval unknown"
+
+    if interval != "unknown" and bar_count >= 2 and std_return is not None and std_return > 0:
+        # Annualization factor: assume ~252 trading periods per year for crypto
+        # This is an approximation; 24h/day * 365.25 days ~= 8766 but crypto trades 24/7
+        # For bar intervals like '8h', '1h', '4h' we can compute annualization
+        annualization_note = f"not annualized - interval '{interval}' requires explicit annualization factor"
+
+    return InferenceSummary(
+        bar_count_for_returns=bar_count,
+        mean_return=mean_return,
+        std_return=std_return,
+        gross_return_total=gross_return_total,
+        net_return_total=net_return_total,
+        cost_deduction_total=cost_deduction_total,
+        sharpe_like=sharpe_like,
+        annualized=annualized,
+        interval=interval,
+        annualization_note=annualization_note,
+    )
+
+
+@dataclass
 class ExperimentResult:
     """Result of a single deterministic experiment run.
 
@@ -86,6 +283,9 @@ class ExperimentResult:
     fee_bps: float = 0.0
     slippage_bps: float = 0.0
     economics_summary: Optional[EconomicsSummary] = None
+    return_summary: Optional[ReturnSummary] = None
+    return_series: Optional[ReturnSeries] = None
+    inference_summary: Optional[InferenceSummary] = None
 
     def _gate_verdict_to_dict(self) -> dict[str, Any]:
         """Serialize gate_verdict to dict, or None if not set."""
@@ -102,6 +302,24 @@ class ExperimentResult:
         if self.economics_summary is None:
             return None
         return self.economics_summary.to_dict()
+
+    def _return_summary_to_dict(self) -> dict[str, Any] | None:
+        """Serialize return_summary to dict, or None if not set."""
+        if self.return_summary is None:
+            return None
+        return self.return_summary.to_dict()
+
+    def _return_series_to_dict(self) -> dict[str, Any] | None:
+        """Serialize return_series to dict, or None if not set."""
+        if self.return_series is None:
+            return None
+        return self.return_series.to_dict()
+
+    def _inference_summary_to_dict(self) -> dict[str, Any] | None:
+        """Serialize inference_summary to dict, or None if not set."""
+        if self.inference_summary is None:
+            return None
+        return self.inference_summary.to_dict()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize result to dict."""
@@ -126,6 +344,9 @@ class ExperimentResult:
             "fee_bps": self.fee_bps,
             "slippage_bps": self.slippage_bps,
             "economics_summary": self._economics_summary_to_dict(),
+            "return_summary": self._return_summary_to_dict(),
+            "return_series": self._return_series_to_dict(),
+            "inference_summary": self._inference_summary_to_dict(),
         }
         return d
 
@@ -154,6 +375,9 @@ class WalkForwardSplitResult:
     first_timestamp: str = ""
     last_timestamp: str = ""
     economics_summary: Optional[EconomicsSummary] = None
+    return_summary: Optional[ReturnSummary] = None
+    return_series: Optional[ReturnSeries] = None
+    inference_summary: Optional[InferenceSummary] = None
 
 
 @dataclass
@@ -176,6 +400,9 @@ class WalkForwardExperimentResult:
     fee_bps: float = 0.0
     slippage_bps: float = 0.0
     economics_summary: Optional[EconomicsSummary] = None
+    return_summary: Optional[ReturnSummary] = None
+    return_series: Optional[ReturnSeries] = None
+    inference_summary: Optional[InferenceSummary] = None
 
     def __post_init__(self) -> None:
         if self.strategy_params is None:
@@ -196,6 +423,59 @@ class WalkForwardExperimentResult:
         if self.economics_summary is None:
             return None
         return self.economics_summary.to_dict()
+
+    def _return_summary_to_dict(self) -> dict[str, Any] | None:
+        """Serialize return_summary to dict, or None if not set."""
+        if self.return_summary is None:
+            return None
+        return self.return_summary.to_dict()
+
+    def _return_series_to_dict(self) -> dict[str, Any] | None:
+        """Serialize return_series to dict, or None if not set."""
+        if self.return_series is None:
+            return None
+        return self.return_series.to_dict()
+
+    def _inference_summary_to_dict(self) -> dict[str, Any] | None:
+        """Serialize inference_summary to dict, or None if not set."""
+        if self.inference_summary is None:
+            return None
+        return self.inference_summary.to_dict()
+
+    def aggregate_inference_summary(self) -> InferenceSummary | None:
+        """Aggregate inference summaries from all splits.
+
+        Computes aggregate statistics by concatenating all split net_returns
+        series and recomputing statistics. This preserves the semantics of
+        computing from a single combined series rather than averaging means.
+
+        Returns:
+            Aggregated InferenceSummary, or None if no splits have return_series.
+        """
+        all_gross_returns: list[float] = []
+        all_net_returns: list[float] = []
+        interval = "unknown"
+        has_series = False
+
+        for split in self.splits:
+            if split.return_series is not None:
+                has_series = True
+                all_gross_returns.extend(split.return_series.gross_returns)
+                all_net_returns.extend(split.return_series.net_returns)
+                if split.return_series.interval != "unknown":
+                    interval = split.return_series.interval
+
+        if not has_series:
+            return None
+
+        # Build a combined ReturnSeries and compute
+        combined = ReturnSeries(
+            gross_returns=all_gross_returns,
+            net_returns=all_net_returns,
+            bar_timestamps=[],  # Not needed for summary stats
+            interval=interval,
+        )
+        return compute_inference_summary(combined)
 
     def aggregate_economics_summary(self) -> EconomicsSummary | None:
         """Aggregate economics summaries from all splits.
@@ -242,6 +522,45 @@ class WalkForwardExperimentResult:
             assumed_total_cost_bps=assumed_total,
         )
 
+    def aggregate_return_summary(self) -> ReturnSummary | None:
+        """Aggregate return summaries from all splits.
+
+        Sums gross_return_total, net_return_total, cost_deduction_total.
+        Sums bars_held, winning_bars, losing_bars.
+
+        Returns:
+            Aggregated ReturnSummary, or None if no splits have return data.
+        """
+        total_gross = 0.0
+        total_net = 0.0
+        total_cost = 0.0
+        total_bars_held = 0
+        total_winning = 0
+        total_losing = 0
+        has_returns = False
+
+        for split in self.splits:
+            if split.return_summary is not None:
+                has_returns = True
+                total_gross += split.return_summary.gross_return_total
+                total_net += split.return_summary.net_return_total
+                total_cost += split.return_summary.cost_deduction_total
+                total_bars_held += split.return_summary.bars_held
+                total_winning += split.return_summary.winning_bars
+                total_losing += split.return_summary.losing_bars
+
+        if not has_returns:
+            return None
+
+        return ReturnSummary(
+            gross_return_total=total_gross,
+            net_return_total=total_net,
+            cost_deduction_total=total_cost,
+            bars_held=total_bars_held,
+            winning_bars=total_winning,
+            losing_bars=total_losing,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to deterministic dict for canonical JSON output."""
         # Aggregate signal counts across all splits
@@ -274,6 +593,15 @@ class WalkForwardExperimentResult:
                 "economics_summary": (
                     s.economics_summary.to_dict() if s.economics_summary else None
                 ),
+                "return_summary": (
+                    s.return_summary.to_dict() if s.return_summary else None
+                ),
+                "return_series": (
+                    s.return_series.to_dict() if s.return_series else None
+                ),
+                "inference_summary": (
+                    s.inference_summary.to_dict() if s.inference_summary else None
+                ),
             }
             for s in self.splits
         ]
@@ -299,6 +627,9 @@ class WalkForwardExperimentResult:
             "fee_bps": self.fee_bps,
             "slippage_bps": self.slippage_bps,
             "economics_summary": self._economics_summary_to_dict(),
+            "return_summary": self._return_summary_to_dict(),
+            "return_series": self._return_series_to_dict(),
+            "inference_summary": self._inference_summary_to_dict(),
         }
 
     def to_json(self) -> str:
