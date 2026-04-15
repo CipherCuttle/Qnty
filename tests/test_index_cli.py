@@ -447,3 +447,273 @@ class TestIndexCliByFamilyTriage:
             _sys.stdout = old_stdout
 
         assert result == 1
+
+class TestIndexCliReviewSummary:
+    """Tests for --review-summary mode."""
+
+    def _capture_output(self, *cli_args):
+        """Run CLI with args, capture stdout, return (exit_code, output)."""
+        import io
+        import sys as _sys
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            result = main(list(cli_args))
+        finally:
+            output = _sys.stdout.getvalue()
+            _sys.stdout = old_stdout
+        return result, output
+
+    def test_only_eligible_artifacts_appear(self, tmp_path):
+        """Review-summary text mode shows only eligible artifacts."""
+        # Write two directories with proper walkforward_result.json files
+        dir_a = tmp_path / "exp_a"
+        dir_b = tmp_path / "exp_b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+
+        artifact_a = dir_a / "walkforward_result.json"
+        artifact_b = dir_b / "walkforward_result.json"
+
+        eligible_data = {
+            "experiment_name": "eligible-exp",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": "family-eligible",
+            "variant_id": "var-1",
+            "trial_count": 2,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 3,
+            "aggregate_signal_count": 50,
+            "return_summary": {"gross_return_total": 0.05, "net_return_total": 0.03, "cost_deduction_total": 0.02},
+        }
+        ineligible_data = {
+            "experiment_name": "ineligible-exp",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": None,  # missing - makes ineligible
+            "variant_id": "var-1",
+            "trial_count": 2,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 3,
+            "aggregate_signal_count": 50,
+        }
+
+        import json
+        artifact_a.write_text(json.dumps(eligible_data))
+        artifact_b.write_text(json.dumps(ineligible_data))
+
+        result, output = self._capture_output("--review-summary", str(dir_a), str(dir_b))
+
+        assert result == 0
+        assert "eligible-exp" in output
+        assert "ineligible-exp" not in output
+
+    def test_json_output_shape_is_stable(self, tmp_path):
+        """JSON output has review_summary array, count, and expected record fields."""
+        artifact = tmp_path / "walkforward_result.json"
+        data = {
+            "experiment_name": "shape-test",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": "shape-family",
+            "variant_id": "var-x",
+            "trial_count": 3,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 2,
+            "aggregate_signal_count": 30,
+            "return_summary": {
+                "gross_return_total": 0.12,
+                "net_return_total": 0.08,
+                "cost_deduction_total": 0.04,
+            },
+        }
+        import json
+        artifact.write_text(json.dumps(data))
+
+        result, output = self._capture_output("--review-summary", "--json", str(artifact))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert "review_summary" in parsed
+        assert "count" in parsed
+        assert parsed["count"] == 1
+
+        record = parsed["review_summary"][0]
+        expected_fields = [
+            "experiment_name", "family_id", "variant_id", "result_type",
+            "gate_status", "trial_count", "fee_bps", "slippage_bps",
+            "signal_count", "split_count", "gross_return_total",
+            "net_return_total", "cost_deduction_total", "artifact_path",
+        ]
+        for field in expected_fields:
+            assert field in record, f"Missing field: {field}"
+
+        assert record["experiment_name"] == "shape-test"
+        assert record["family_id"] == "shape-family"
+        assert record["variant_id"] == "var-x"
+        assert record["trial_count"] == 3
+        assert record["gate_status"] == "PASS"
+        assert record["gross_return_total"] == 0.12
+        assert record["net_return_total"] == 0.08
+        assert record["cost_deduction_total"] == 0.04
+
+    def test_text_output_is_compact_and_operator_facing(self, tmp_path):
+        """Text output is compact, operator-facing, and contains key fields."""
+        artifact = tmp_path / "walkforward_result.json"
+        data = {
+            "experiment_name": "text-review-test",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": "text-family",
+            "variant_id": "var-text",
+            "trial_count": 4,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 5,
+            "aggregate_signal_count": 100,
+            "return_summary": {
+                "gross_return_total": 0.25,
+                "net_return_total": 0.18,
+                "cost_deduction_total": 0.07,
+            },
+        }
+        import json
+        artifact.write_text(json.dumps(data))
+
+        result, output = self._capture_output("--review-summary", str(artifact))
+
+        assert result == 0
+        lines = output.strip().split("\n")
+        assert len(lines) >= 2  # header + at least one data line
+        header = lines[0]
+        # Header should contain key field names
+        assert "experiment_name" in header
+        assert "family_id" in header
+        assert "variant_id" in header
+        assert "gate_status" in header
+        assert "trial_count" in header
+        data_line = lines[1]
+        assert "text-review-test" in data_line
+        assert "text-family" in data_line
+        assert "var-text" in data_line
+
+    def test_no_eligible_artifacts_text_mode(self, tmp_path):
+        """Text mode shows clean message when no eligible artifacts exist."""
+        artifact = tmp_path / "walkforward_result.json"
+        # Create an ineligible artifact (missing family_id)
+        data = {
+            "experiment_name": "ineligible-only",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "variant_id": "var-1",
+            "trial_count": 2,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 1,
+            "aggregate_signal_count": 10,
+        }
+        import json
+        artifact.write_text(json.dumps(data))
+
+        result, output = self._capture_output("--review-summary", str(artifact))
+
+        assert result == 0
+        assert "No eligible artifacts for review." in output
+
+    def test_no_eligible_artifacts_json_mode(self, tmp_path):
+        """JSON mode outputs empty review_summary array with count=0."""
+        artifact = tmp_path / "walkforward_result.json"
+        # Create an ineligible artifact (missing family_id)
+        data = {
+            "experiment_name": "ineligible-json",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "variant_id": "var-1",
+            "trial_count": 2,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 1,
+            "aggregate_signal_count": 10,
+        }
+        import json
+        artifact.write_text(json.dumps(data))
+
+        result, output = self._capture_output("--review-summary", "--json", str(artifact))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert parsed["review_summary"] == []
+        assert parsed["count"] == 0
+
+    def test_legacy_artifact_missing_return_summary(self, tmp_path):
+        """Artifacts without return_summary do not break review-summary mode."""
+        artifact = tmp_path / "walkforward_result.json"
+        data = {
+            "experiment_name": "legacy-exp",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": "legacy-family",
+            "variant_id": "var-legacy",
+            "trial_count": 1,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 1,
+            "aggregate_signal_count": 5,
+            # No return_summary - this is a legacy artifact
+        }
+        import json
+        artifact.write_text(json.dumps(data))
+
+        result, output = self._capture_output("--review-summary", "--json", str(artifact))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert parsed["count"] == 1
+        record = parsed["review_summary"][0]
+        assert record["experiment_name"] == "legacy-exp"
+        # Return fields should be None when return_summary is absent
+        assert record["gross_return_total"] is None
+        assert record["net_return_total"] is None
+        assert record["cost_deduction_total"] is None
+
+    def test_legacy_artifact_missing_economics_and_return(self, tmp_path):
+        """Artifacts without both economics_summary and return_summary are handled."""
+        artifact = tmp_path / "walkforward_result.json"
+        data = {
+            "experiment_name": "bare-bones-exp",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": "bare-bones-family",
+            "variant_id": "var-bare",
+            "trial_count": 1,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 1,
+            "aggregate_signal_count": 5,
+            # No return_summary, no economics_summary
+        }
+        import json
+        artifact.write_text(json.dumps(data))
+
+        result, output = self._capture_output("--review-summary", "--json", str(artifact))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert parsed["count"] == 1
+        record = parsed["review_summary"][0]
+        assert record["experiment_name"] == "bare-bones-exp"
+        assert record["gross_return_total"] is None
+        assert record["net_return_total"] is None
+        assert record["cost_deduction_total"] is None

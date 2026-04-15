@@ -28,12 +28,39 @@ def _format_row(exp: IndexedExperiment) -> str:
         econ_str = f"cs={cost_sides} e={entries} x={exits} f={flips}"
     else:
         econ_str = "N/A"
+    # Format return summary if present
+    ret = exp.return_summary
+    if ret:
+        gross = ret.get("gross_return_total", 0.0)
+        net = ret.get("net_return_total", 0.0)
+        cost = ret.get("cost_deduction_total", 0.0)
+        ret_str = f"g={gross:.4f} n={net:.4f} c={cost:.4f}"
+    else:
+        ret_str = "N/A"
     return (
         f"{exp.experiment_name} | {exp.strategy_name} | {exp.family_id or 'N/A'} | "
         f"{exp.variant_id or 'N/A'} | {exp.trial_count or 0} | "
         f"{exp.gate_status or 'N/A'} | {exp.split_count} | {exp.signal_count} | "
-        f"{exp.fee_bps} | {exp.slippage_bps} | {econ_str} | "
+        f"{exp.fee_bps} | {exp.slippage_bps} | {econ_str} | {ret_str} | "
         f"{exp.result_type} | {eligible_indicator} | {exp.artifact_path}"
+    )
+
+
+def _format_review_row(exp: IndexedExperiment) -> str:
+    """Format a single eligible artifact as a compact review text row."""
+    ret = exp.return_summary
+    if ret:
+        gross = ret.get("gross_return_total", 0.0) if ret else 0.0
+        net = ret.get("net_return_total", 0.0) if ret else 0.0
+        cost = ret.get("cost_deduction_total", 0.0) if ret else 0.0
+        ret_str = f"g={gross:.4f} n={net:.4f} c={cost:.4f}"
+    else:
+        ret_str = "g=N/A n=N/A c=N/A"
+    return (
+        f"{exp.experiment_name} | {exp.family_id or 'N/A'} | {exp.variant_id or 'N/A'} | "
+        f"{exp.result_type} | {exp.gate_status or 'N/A'} | {exp.trial_count or 0} | "
+        f"{exp.fee_bps} | {exp.slippage_bps} | {exp.signal_count} | {exp.split_count} | "
+        f"{ret_str} | {exp.artifact_path}"
     )
 
 
@@ -82,6 +109,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="N",
         default=None,
         help="Show only top N families after sort and filter.",
+    )
+    parser.add_argument(
+        "--review-summary",
+        action="store_true",
+        help="Surface a compact review record for eligible artifacts only.",
     )
 
     try:
@@ -163,6 +195,51 @@ def main(argv: list[str] | None = None) -> int:
                     f"{s['max_trial_count']} | {s['pass_count']} | {s['fail_count']} | "
                     f"eligible {s['eligible_count']}/{s['artifact_count']}"
                 )
+    elif args.review_summary:
+        # Filter to eligible artifacts only
+        eligible = [e for e in indexed if e.eligible_for_review]
+
+        if args.json:
+            records = []
+            for e in eligible:
+                ret = e.return_summary or {}
+                records.append({
+                    "experiment_name": e.experiment_name,
+                    "family_id": e.family_id,
+                    "variant_id": e.variant_id,
+                    "result_type": e.result_type,
+                    "gate_status": e.gate_status,
+                    "trial_count": e.trial_count,
+                    "fee_bps": e.fee_bps,
+                    "slippage_bps": e.slippage_bps,
+                    "signal_count": e.signal_count,
+                    "split_count": e.split_count,
+                    "gross_return_total": ret.get("gross_return_total"),
+                    "net_return_total": ret.get("net_return_total"),
+                    "cost_deduction_total": ret.get("cost_deduction_total"),
+                    "artifact_path": str(e.artifact_path),
+                })
+            print(json.dumps({"review_summary": records, "count": len(records)}, indent=2))
+        else:
+            if not eligible:
+                print("No eligible artifacts for review.")
+            else:
+                print(
+                    "experiment_name | family_id | variant_id | result_type | gate_status | "
+                    "trial_count | fee_bps | slippage_bps | signal_count | split_count | "
+                    "gross_return | net_return | cost_deduction | artifact_path"
+                )
+                for exp in eligible:
+                    ret = exp.return_summary
+                    gross = ret.get("gross_return_total", 0.0) if ret else 0.0
+                    net = ret.get("net_return_total", 0.0) if ret else 0.0
+                    cost = ret.get("cost_deduction_total", 0.0) if ret else 0.0
+                    print(
+                        f"{exp.experiment_name} | {exp.family_id or 'N/A'} | {exp.variant_id or 'N/A'} | "
+                        f"{exp.result_type} | {exp.gate_status or 'N/A'} | {exp.trial_count or 0} | "
+                        f"{exp.fee_bps} | {exp.slippage_bps} | {exp.signal_count} | {exp.split_count} | "
+                        f"{gross:.4f} | {net:.4f} | {cost:.4f} | {exp.artifact_path}"
+                    )
     elif args.json:
         # Machine-readable JSON: list of dicts with new fields
         records = [
