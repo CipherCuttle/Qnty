@@ -67,6 +67,8 @@ class IndexedExperiment:
     fee_bps: float = 0.0
     slippage_bps: float = 0.0
     economics_summary: Optional[dict[str, Any]] = None
+    return_summary: Optional[dict[str, Any]] = None
+    inference_summary: Optional[dict[str, Any]] = None
     eligible_for_review: bool = False
     ineligibility_reasons: list[str] = None
 
@@ -206,6 +208,8 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
                 fee_bps=data.get("fee_bps", 0.0),
                 slippage_bps=data.get("slippage_bps", 0.0),
                 economics_summary=data.get("economics_summary"),
+                return_summary=data.get("return_summary"),
+                inference_summary=data.get("inference_summary"),
                 eligible_for_review=eligibility.eligible_for_review,
                 ineligibility_reasons=eligibility.ineligibility_reasons,
             )
@@ -230,6 +234,8 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
                 fee_bps=data.get("fee_bps", 0.0),
                 slippage_bps=data.get("slippage_bps", 0.0),
                 economics_summary=data.get("economics_summary"),
+                return_summary=data.get("return_summary"),
+                inference_summary=data.get("inference_summary"),
                 eligible_for_review=eligibility.eligible_for_review,
                 ineligibility_reasons=eligibility.ineligibility_reasons,
             )
