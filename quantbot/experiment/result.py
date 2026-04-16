@@ -10,8 +10,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from scipy.stats import norm
-
 from quantbot.core.determinism import canonical_json_dumps
 from quantbot.experiment.spec import ExperimentSpec
 
@@ -287,6 +285,11 @@ def _compute_kurtosis(returns: list[float]) -> Optional[float]:
     return g2
 
 
+def _norm_cdf(x: float) -> float:
+    """Standard normal CDF using math.erf (no scipy dependency)."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
 def compute_psr(
     sharpe_like: float,
     track_record_length: int,
@@ -338,7 +341,7 @@ def compute_psr(
     z_score = (sr * correction) + (1.0 / 6.0)
 
     # PSR = standard normal CDF of z / sqrt(n)
-    psr = norm.cdf(z_score / math.sqrt(n))
+    psr = _norm_cdf(z_score / math.sqrt(n))
 
     # Clamp to [0, 1] for numerical stability
     return max(0.0, min(1.0, psr))
