@@ -14,6 +14,7 @@ from pathlib import Path
 
 from quantbot.experiment.calibration import CalibrationComparison, classify_calibration_status
 from quantbot.experiment.index import IndexedExperiment, index_experiment_artifacts
+from quantbot.experiment.pbo import classify_pbo_status, pbo_status_label
 
 
 def _format_row(exp: IndexedExperiment) -> str:
@@ -95,6 +96,14 @@ def _format_review_row(exp: IndexedExperiment) -> str:
         cal_str = f"calibration: assumed={cal.assumed_total_cost_bps:.1f} observed={cal.observed_avg_shortfall_bps:.1f} delta=+{cal.delta_bps:.1f} n={cal.record_count} [{status}]"
     else:
         cal_str = ""
+    # Format PBO overfitting summary if present
+    pbo_str = ""
+    of_summary = exp.overfitting_summary
+    if of_summary is not None:
+        pbo_val = of_summary.get("pbo")
+        path_cnt = of_summary.get("path_count")
+        pbo_stat = classify_pbo_status(pbo_val, path_cnt)
+        pbo_str = f"pbo: method={of_summary.get('method', 'N/A')} paths={path_cnt if path_cnt is not None else '?'} pbo={pbo_val if pbo_val is not None else '?'} [{pbo_stat}]"
     row = (
         f"{exp.experiment_name} | {exp.family_id or 'N/A'} | {exp.variant_id or 'N/A'} | "
         f"{exp.result_type} | {exp.gate_status or 'N/A'} | {exp.trial_count or 0} | "
@@ -103,6 +112,8 @@ def _format_review_row(exp: IndexedExperiment) -> str:
     )
     if cal_str:
         row += f" | {cal_str}"
+    if pbo_str:
+        row += f" | {pbo_str}"
     row += f" | {exp.artifact_path}"
     return row
 
@@ -251,6 +262,26 @@ def main(argv: list[str] | None = None) -> int:
                 summary["material_mismatch_count"] = material_mismatch_count
                 summary["insufficient_data_count"] = insufficient_data_count
                 summary["calibration_status"] = dominant_status
+            # Aggregate PBO stats
+            with_pbo = [e for e in exps if e.overfitting_summary is not None]
+            if with_pbo:
+                pbo_values = [e.overfitting_summary.get("pbo") for e in with_pbo if e.overfitting_summary.get("pbo") is not None]
+                if pbo_values:
+                    avg_pbo = sum(pbo_values) / len(pbo_values)
+                    summary["avg_pbo"] = round(avg_pbo, 4)
+                summary["pbo_count"] = len(with_pbo)
+                # Count status categories
+                pbo_statuses = [classify_pbo_status(e.overfitting_summary.get("pbo"), e.overfitting_summary.get("path_count")) for e in with_pbo]
+                for status_val in ["insufficient_data", "low_overfit_risk", "elevated_overfit_risk", "high_overfit_risk"]:
+                    cnt = pbo_statuses.count(status_val)
+                    if cnt > 0:
+                        summary[f"pbo_{status_val}_count"] = cnt
+                # Worst status (highest risk)
+                risk_order = ["high_overfit_risk", "elevated_overfit_risk", "low_overfit_risk", "insufficient_data"]
+                for worst in risk_order:
+                    if worst in pbo_statuses:
+                        summary["worst_pbo_status"] = worst
+                        break
             summaries.append(summary)
 
         # Sort summaries
@@ -316,6 +347,15 @@ def main(argv: list[str] | None = None) -> int:
                         "record_count": e.calibration.record_count,
                         "calibration_status": status,
                     }
+                if e.overfitting_summary is not None:
+                    pbo_val = e.overfitting_summary.get("pbo")
+                    path_cnt = e.overfitting_summary.get("path_count")
+                    record["pbo"] = {
+                        "method": e.overfitting_summary.get("method"),
+                        "path_count": path_cnt,
+                        "pbo": pbo_val,
+                        "pbo_status": classify_pbo_status(pbo_val, path_cnt),
+                    }
                 records.append(record)
             print(json.dumps({"review_summary": records, "count": len(records)}, indent=2))
         else:
@@ -338,16 +378,27 @@ def main(argv: list[str] | None = None) -> int:
                         cal_line = f"calibration: assumed={cal.assumed_total_cost_bps:.1f} observed={cal.observed_avg_shortfall_bps:.1f} delta=+{cal.delta_bps:.1f} n={cal.record_count} [{status}]"
                     else:
                         cal_line = ""
+                    of_summary = exp.overfitting_summary
+                    if of_summary is not None:
+                        pbo_val = of_summary.get("pbo")
+                        path_cnt = of_summary.get("path_count")
+                        pbo_stat = classify_pbo_status(pbo_val, path_cnt)
+                        pbo_line = f"pbo: method={of_summary.get('method', 'N/A')} paths={path_cnt if path_cnt is not None else '?'} pbo={pbo_val if pbo_val is not None else '?'} [{pbo_stat}]"
+                    else:
+                        pbo_line = ""
                     print(
                         f"{exp.experiment_name} | {exp.family_id or 'N/A'} | {exp.variant_id or 'N/A'} | "
                         f"{exp.result_type} | {exp.gate_status or 'N/A'} | {exp.trial_count or 0} | "
                         f"{exp.fee_bps} | {exp.slippage_bps} | {exp.signal_count} | {exp.split_count} | "
                         f"{gross:.4f} | {net:.4f} | {cost:.4f}"
                     )
+                    line_parts = []
                     if cal_line:
-                        print(f"  {cal_line} | {exp.artifact_path}")
-                    else:
-                        print(f"  {exp.artifact_path}")
+                        line_parts.append(cal_line)
+                    if pbo_line:
+                        line_parts.append(pbo_line)
+                    line_parts.append(str(exp.artifact_path))
+                    print(f"  {' | '.join(line_parts)}")
     elif args.json:
         # Machine-readable JSON: list of dicts with new fields
         records = [

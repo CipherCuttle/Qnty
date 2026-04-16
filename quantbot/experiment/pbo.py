@@ -102,6 +102,54 @@ class PBOSummary:
         }
 
 
+# Threshold constants for PBO status classification.
+# Observational labels only — no promotion claims.
+PBO_INSUFFICIENT_PATH_COUNT: int = 3
+PBO_LOW_RISK_THRESHOLD: float = 0.05
+PBO_ELEVATED_RISK_THRESHOLD: float = 0.15
+
+
+def classify_pbo_status(pbo: float | None, path_count: int | None) -> str:
+    """Classify overfit risk from PBO metric.
+
+    Policy knobs (inspectable at module level):
+        PBO_INSUFFICIENT_PATH_COUNT : minimum path count for classification
+        PBO_LOW_RISK_THRESHOLD      : pbo <= this → low overfit risk
+        PBO_ELEVATED_RISK_THRESHOLD  : pbo <= this → elevated overfit risk
+
+    Status values:
+        insufficient_data : pbo is None or path_count < PBO_INSUFFICIENT_PATH_COUNT
+        low_overfit_risk   : pbo <= PBO_LOW_RISK_THRESHOLD with sufficient paths
+        elevated_overfit_risk : PBO_LOW_RISK_THRESHOLD < pbo <= PBO_ELEVATED_RISK_THRESHOLD
+        high_overfit_risk  : pbo > PBO_ELEVATED_RISK_THRESHOLD
+
+    Returns:
+        One of: "insufficient_data", "low_overfit_risk", "elevated_overfit_risk", "high_overfit_risk"
+    """
+    if pbo is None or path_count is None or path_count < PBO_INSUFFICIENT_PATH_COUNT:
+        return "insufficient_data"
+    if pbo <= PBO_LOW_RISK_THRESHOLD:
+        return "low_overfit_risk"
+    if pbo <= PBO_ELEVATED_RISK_THRESHOLD:
+        return "elevated_overfit_risk"
+    return "high_overfit_risk"
+
+
+def pbo_status_label(pbo: float | None, path_count: int | None) -> str:
+    """Compact inline PBO risk label for display.
+
+    Returns a short label suitable for inline display in review rows.
+    """
+    status = classify_pbo_status(pbo, path_count)
+    if status == "insufficient_data":
+        return "pbo=?"
+    if status == "low_overfit_risk":
+        return f"pbo={pbo:.3f}"
+    if status == "elevated_overfit_risk":
+        return f"pbo={pbo:.3f}!"
+    return f"pbo={pbo:.3f}!!"
+
+
 def _compute_sharpe(returns: list[float], bars_per_year: Optional[float] = None) -> float:
     """Compute Sharpe-like ratio from return series.
 

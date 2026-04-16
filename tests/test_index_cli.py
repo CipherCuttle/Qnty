@@ -1107,3 +1107,182 @@ class TestCalibrationStatusInOutput:
         family_summary = parsed[0]
         assert "calibration_status" in family_summary
         assert family_summary["calibration_status"] == "aligned"
+
+
+class TestReviewSummaryWithPBO:
+    """Tests for --review-summary mode with PBO overfitting_summary data."""
+
+    def _capture_output(self, *cli_args):
+        """Run CLI with args, capture stdout, return (exit_code, output)."""
+        import io
+        import sys as _sys
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            result = main(list(cli_args))
+        finally:
+            output = _sys.stdout.getvalue()
+            _sys.stdout = old_stdout
+        return result, output
+
+    def _make_pbo_artifact(self, tmp_path, pbo=0.03, path_count=10, family_id="pbo-family", trial_count=1):
+        """Create an artifact with overfitting_summary containing PBO data."""
+        import json
+        artifact = tmp_path / "walkforward_result.json"
+        artifact.write_text(json.dumps({
+            "experiment_name": f"pbo-test-{trial_count}",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": family_id,
+            "variant_id": "var-1",
+            "trial_count": trial_count,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 2,
+            "aggregate_signal_count": 30,
+            "return_summary": {
+                "gross_return_total": 0.12,
+                "net_return_total": 0.08,
+                "cost_deduction_total": 0.04,
+            },
+            "overfitting_summary": {
+                "method": "pbo",
+                "path_count": path_count,
+                "selection_metric": "sharpe",
+                "pbo": pbo,
+                "assumptions": [],
+                "limitations": [],
+                "provenance": {},
+            },
+        }))
+        return artifact
+
+    def test_review_summary_with_pbo_data(self, tmp_path):
+        """Review-summary text output includes PBO fields when overfitting_summary present."""
+        self._make_pbo_artifact(tmp_path, pbo=0.03, path_count=10)
+
+        result, output = self._capture_output("--review-summary", str(tmp_path))
+
+        assert result == 0
+        assert "pbo: method=pbo" in output
+        assert "paths=10" in output
+        assert "pbo=0.03" in output
+        assert "low_overfit_risk" in output
+
+    def test_review_summary_without_pbo_data(self, tmp_path):
+        """Review-summary text output omits PBO when no overfitting_summary."""
+        import json
+        artifact = tmp_path / "walkforward_result.json"
+        artifact.write_text(json.dumps({
+            "experiment_name": "no-pbo-test",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": "no-pbo-family",
+            "variant_id": "var-1",
+            "trial_count": 1,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 2,
+            "aggregate_signal_count": 30,
+            "return_summary": {"gross_return_total": 0.12, "net_return_total": 0.08, "cost_deduction_total": 0.04},
+        }))
+
+        result, output = self._capture_output("--review-summary", str(tmp_path))
+
+        assert result == 0
+        assert "pbo:" not in output
+        assert "low_overfit_risk" not in output
+
+    def test_review_summary_json_output_with_pbo(self, tmp_path):
+        """JSON review_summary includes pbo object with pbo_status when overfitting_summary present."""
+        self._make_pbo_artifact(tmp_path, pbo=0.08, path_count=10)
+
+        result, output = self._capture_output("--review-summary", "--json", str(tmp_path))
+
+        assert result == 0
+        import json
+        parsed = json.loads(output)
+        assert "review_summary" in parsed
+        record = parsed["review_summary"][0]
+        assert "pbo" in record
+        assert record["pbo"]["method"] == "pbo"
+        assert record["pbo"]["path_count"] == 10
+        assert record["pbo"]["pbo"] == 0.08
+        assert record["pbo"]["pbo_status"] == "elevated_overfit_risk"
+
+    def test_review_summary_json_pbo_insufficient_paths(self, tmp_path):
+        """JSON review_summary shows insufficient_data when path_count < 3."""
+        self._make_pbo_artifact(tmp_path, pbo=0.03, path_count=2)
+
+        result, output = self._capture_output("--review-summary", "--json", str(tmp_path))
+
+        assert result == 0
+        import json
+        parsed = json.loads(output)
+        record = parsed["review_summary"][0]
+        assert record["pbo"]["pbo_status"] == "insufficient_data"
+
+    def test_review_summary_json_pbo_high_risk(self, tmp_path):
+        """JSON review_summary shows high_overfit_risk when pbo > 0.15."""
+        self._make_pbo_artifact(tmp_path, pbo=0.25, path_count=10)
+
+        result, output = self._capture_output("--review-summary", "--json", str(tmp_path))
+
+        assert result == 0
+        import json
+        parsed = json.loads(output)
+        record = parsed["review_summary"][0]
+        assert record["pbo"]["pbo_status"] == "high_overfit_risk"
+
+    def test_artifact_pbo_status_classification(self, tmp_path):
+        """Unit test for classify_pbo_status: verifies all four status values."""
+        from quantbot.experiment.pbo import classify_pbo_status
+
+        # insufficient_data
+        assert classify_pbo_status(None, 10) == "insufficient_data"
+        assert classify_pbo_status(0.03, 2) == "insufficient_data"
+
+        # low_overfit_risk
+        assert classify_pbo_status(0.03, 10) == "low_overfit_risk"
+        assert classify_pbo_status(0.05, 10) == "low_overfit_risk"
+
+        # elevated_overfit_risk
+        assert classify_pbo_status(0.10, 10) == "elevated_overfit_risk"
+        assert classify_pbo_status(0.15, 10) == "elevated_overfit_risk"
+
+        # high_overfit_risk
+        assert classify_pbo_status(0.20, 10) == "high_overfit_risk"
+        assert classify_pbo_status(0.95, 10) == "high_overfit_risk"
+
+    def test_family_level_pbo_aggregation(self, tmp_path):
+        """--by-family JSON includes PBO aggregation when artifacts have overfitting_summary."""
+        import json
+
+        # Create two artifacts with different PBO values in same family
+        run1_dir = tmp_path / "run1"
+        run1_dir.mkdir()
+        self._make_pbo_artifact(run1_dir, pbo=0.03, path_count=10, family_id="pbo-family", trial_count=1)
+
+        run2_dir = tmp_path / "run2"
+        run2_dir.mkdir()
+        self._make_pbo_artifact(run2_dir, pbo=0.20, path_count=10, family_id="pbo-family", trial_count=2)
+
+        result, output = self._capture_output("--by-family", "--json", str(run1_dir), str(run2_dir))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert len(parsed) == 1
+        family_summary = parsed[0]
+        assert "pbo_count" in family_summary
+        assert family_summary["pbo_count"] == 2
+        assert "avg_pbo" in family_summary
+        # avg of 0.03 and 0.20 = 0.115
+        assert abs(family_summary["avg_pbo"] - 0.115) < 0.001
+        assert "worst_pbo_status" in family_summary
+        assert family_summary["worst_pbo_status"] == "high_overfit_risk"
+        assert "pbo_high_overfit_risk_count" in family_summary
+        assert family_summary["pbo_high_overfit_risk_count"] == 1
+        assert "pbo_low_overfit_risk_count" in family_summary
+        assert family_summary["pbo_low_overfit_risk_count"] == 1

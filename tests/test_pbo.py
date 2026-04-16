@@ -19,6 +19,8 @@ from quantbot.experiment.pbo import (
     compute_path_dispersion,
     compute_pbo_cscv,
     compute_pbo,
+    classify_pbo_status,
+    pbo_status_label,
 )
 from quantbot.experiment.result import ReturnSeries, WalkForwardSplitResult, InferenceSummary, ReturnSummary
 
@@ -1178,5 +1180,83 @@ class TestPBOLegacyCompatibility:
         # Both classes and functions exist
         assert PBOSummary is not None
         assert PathDispersionSummary is not None
+
+
+class TestClassifyPBOStatus:
+    """Tests for classify_pbo_status function."""
+
+    def test_classify_pbo_status_insufficient_none_pbo(self) -> None:
+        """None pbo returns insufficient_data."""
+        result = classify_pbo_status(None, 10)
+        assert result == "insufficient_data"
+
+    def test_classify_pbo_status_insufficient_none_path_count(self) -> None:
+        """None path_count returns insufficient_data."""
+        result = classify_pbo_status(0.03, None)
+        assert result == "insufficient_data"
+
+    def test_classify_pbo_status_insufficient_low_path_count(self) -> None:
+        """path_count < 3 returns insufficient_data."""
+        result = classify_pbo_status(0.03, 2)
+        assert result == "insufficient_data"
+
+    def test_classify_pbo_status_insufficient_boundary(self) -> None:
+        """path_count == 3 is sufficient; pbo=0.03 <= 0.05 → low_overfit_risk."""
+        result = classify_pbo_status(0.03, 3)
+        assert result == "low_overfit_risk"
+
+    def test_classify_pbo_status_low(self) -> None:
+        """pbo <= 0.05 returns low_overfit_risk."""
+        result = classify_pbo_status(0.05, 10)
+        assert result == "low_overfit_risk"
+
+    def test_classify_pbo_status_low_boundary(self) -> None:
+        """pbo == 0.05 returns low_overfit_risk."""
+        result = classify_pbo_status(0.05, 10)
+        assert result == "low_overfit_risk"
+
+    def test_classify_pbo_status_elevated(self) -> None:
+        """0.05 < pbo <= 0.15 returns elevated_overfit_risk."""
+        result = classify_pbo_status(0.10, 10)
+        assert result == "elevated_overfit_risk"
+
+    def test_classify_pbo_status_elevated_boundary(self) -> None:
+        """pbo == 0.15 returns elevated_overfit_risk."""
+        result = classify_pbo_status(0.15, 10)
+        assert result == "elevated_overfit_risk"
+
+    def test_classify_pbo_status_high(self) -> None:
+        """pbo > 0.15 returns high_overfit_risk."""
+        result = classify_pbo_status(0.20, 10)
+        assert result == "high_overfit_risk"
+
+    def test_classify_pbo_status_high_very_high(self) -> None:
+        """Very high pbo returns high_overfit_risk."""
+        result = classify_pbo_status(0.95, 10)
+        assert result == "high_overfit_risk"
+
+
+class TestPBOStatusLabel:
+    """Tests for pbo_status_label function."""
+
+    def test_label_insufficient_data(self) -> None:
+        """Insufficient data returns 'pbo=?'."""
+        result = pbo_status_label(None, 10)
+        assert result == "pbo=?"
+
+    def test_label_low_risk(self) -> None:
+        """Low risk returns compact pbo value."""
+        result = pbo_status_label(0.03, 10)
+        assert result == "pbo=0.030"
+
+    def test_label_elevated_risk(self) -> None:
+        """Elevated risk returns pbo with exclamation."""
+        result = pbo_status_label(0.10, 10)
+        assert result == "pbo=0.100!"
+
+    def test_label_high_risk(self) -> None:
+        """High risk returns pbo with double exclamation."""
+        result = pbo_status_label(0.25, 10)
+        assert result == "pbo=0.250!!"
         assert callable(compute_pbo)
         assert callable(compute_path_dispersion)
