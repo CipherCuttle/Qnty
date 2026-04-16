@@ -164,6 +164,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Path to Franken reconciliation files directory.",
     )
+    parser.add_argument(
+        "--overfitting",
+        action="store_true",
+        help="Include path dispersion diagnostic summaries in JSON output.",
+    )
 
     try:
         args = parser.parse_args(argv)
@@ -367,6 +372,7 @@ def main(argv: list[str] | None = None) -> int:
                 "inferential_summary": e.inferential_summary,
                 "eligible_for_review": e.eligible_for_review,
                 "ineligibility_reasons": e.ineligibility_reasons,
+                **({"overfitting_summary": e.overfitting_summary} if args.overfitting else {}),
             }
             for e in indexed
         ]
