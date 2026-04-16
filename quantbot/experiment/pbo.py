@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Literal
 
-from quantbot.experiment.result import ReturnSeries
+from quantbot.experiment.result import ReturnSeries, WalkForwardSplitResult
 
 
 # Combinatorial path cap to prevent explosion
@@ -58,6 +58,44 @@ class PathDispersionSummary:
             "method": self.method,
             "path_count": self.path_count,
             "dispersion_ratio": self.dispersion_ratio,
+            "assumptions": self.assumptions,
+            "limitations": self.limitations,
+            "provenance": self.provenance,
+        }
+
+
+@dataclass
+class PBOSummary:
+    """Result of Bailey-style PBO computation.
+
+    PBO (Probability of Beat a Random) measures the probability that an
+    in-sample selected path beats a randomly selected path out-of-sample.
+
+    Attributes:
+        method: Always "pbo" for this implementation.
+        path_count: Number of combinatorial paths evaluated.
+        selection_metric: Metric used for in-sample selection ("sharpe" or "return").
+        pbo: Probability of beat-a-random (0.0 to 1.0).
+        assumptions: Explicit list of assumptions made.
+        limitations: Explicit list of known limitations.
+        provenance: Dict linking back to family/variant/artifact.
+    """
+
+    method: str = "pbo"
+    path_count: int = 0
+    selection_metric: str = "sharpe"
+    pbo: float = 0.0
+    assumptions: list[str] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
+    provenance: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Serialize to dict for JSON output."""
+        return {
+            "method": self.method,
+            "path_count": self.path_count,
+            "selection_metric": self.selection_metric,
+            "pbo": self.pbo,
             "assumptions": self.assumptions,
             "limitations": self.limitations,
             "provenance": self.provenance,
@@ -359,4 +397,199 @@ def compute_pbo_cscv(
     """
     return compute_path_dispersion(
         return_series_list, metric_name, family_id, variant_id, artifact_path
+    )
+
+
+def _aggregate_metric(
+    rs: ReturnSeries,
+    metric: Literal["sharpe", "return"] = "sharpe",
+) -> float:
+    """Aggregate return series into a single score for path selection.
+
+    Args:
+        rs: ReturnSeries to aggregate.
+        metric: "sharpe" for Sharpe-like ratio, "return" for net return total.
+
+    Returns:
+        Aggregate score (higher is better for selection).
+    """
+    if not rs.net_returns:
+        return 0.0
+
+    if metric == "sharpe":
+        return _compute_sharpe(rs.net_returns)
+    else:  # "return"
+        return sum(rs.net_returns)
+
+
+def compute_pbo(
+    paths: list[list[WalkForwardSplitResult]],
+    selection_metric: Literal["sharpe", "return"] = "sharpe",
+    family_id: Optional[str] = None,
+    variant_id: Optional[str] = None,
+    artifact_path: Optional[str] = None,
+) -> PBOSummary:
+    """Compute Bailey-style PBO using paired train/test return series.
+
+    PBO (Probability of Beat a Random) is the probability that a path selected
+    based on in-sample (train) performance beats a randomly selected path
+    out-of-sample (test).
+
+    Procedure:
+    1. For each path, compute in-sample score from train splits and
+       out-of-sample score from test splits.
+    2. Select the best in-sample path (highest train score).
+    3. Count how many random paths the selected path beats OOS.
+    4. PBO = fraction of random paths beaten.
+
+    Args:
+        paths: List of paths, where each path is a list of WalkForwardSplitResult
+            with split_role="both". Each split has train_inference_summary,
+            train_return_summary (for IS score) and return_series/return_summary
+            (for OOS score).
+        selection_metric: "sharpe" uses Sharpe-like ratio; "return" uses net return total.
+        family_id: Optional family identifier for provenance.
+        variant_id: Optional variant identifier for provenance.
+        artifact_path: Optional artifact path for provenance.
+
+    Returns:
+        PBOSummary with pbo probability and diagnostic metadata.
+    """
+    assumptions = [
+        "PBO is computed as P(selected beats random OOS), not combinatorial CSCV",
+        "Train/test split is inherited from walk-forward (no purge/embargo applied here)",
+        "Best-in-sample selection is deterministic (highest train score wins)",
+        "Win condition: selected path OOS score > random path OOS score",
+        "Selection metric: " + selection_metric + " (from train_inference_summary or train_return_summary)",
+        "Evaluation metric: same as selection metric, computed on test-side data",
+        "Log returns used for Sharpe computation",
+        "No transaction costs in computation (costs already in return series)",
+        "This is a DIAGNOSTIC for overfitting, not proof of edge or profitability",
+    ]
+
+    limitations = [
+        "Bailey-style PBO requires many random paths - results unstable with few paths",
+        "No purge/embargo between train and test periods (inherited from walk-forward)",
+        "Best-of-N selection introduces selection bias not accounted for in PBO formula",
+        "Single selection (best) - does not represent full combinatorial enumeration",
+        "Test period performance may not generalize to live trading",
+        "This is a DIAGNOSTIC, not proof of edge or readiness to trade",
+    ]
+
+    provenance = {}
+    if family_id:
+        provenance["family_id"] = family_id
+    if variant_id:
+        provenance["variant_id"] = variant_id
+    if artifact_path:
+        provenance["artifact_path"] = artifact_path
+
+    # Handle degenerate cases
+    if not paths:
+        return PBOSummary(
+            method="pbo",
+            path_count=0,
+            selection_metric=selection_metric,
+            pbo=0.0,
+            assumptions=assumptions,
+            limitations=limitations,
+            provenance=provenance,
+        )
+
+    if len(paths) < 2:
+        return PBOSummary(
+            method="pbo",
+            path_count=len(paths),
+            selection_metric=selection_metric,
+            pbo=0.0,
+            assumptions=assumptions,
+            limitations=limitations + ["Need at least 2 paths for PBO comparison"],
+            provenance=provenance,
+        )
+
+    # Compute in-sample and out-of-sample scores for each path
+    path_scores: list[tuple[int, float, float]] = []  # (path_idx, train_score, test_score)
+
+    for path_idx, path in enumerate(paths):
+        # Collect train and test scores across splits
+        train_scores: list[float] = []
+        test_scores: list[float] = []
+
+        for split in path:
+            if split.split_role != "both":
+                continue
+
+            # In-sample score: use train_inference_summary or train_return_summary
+            if split.train_inference_summary is not None:
+                if selection_metric == "sharpe":
+                    train_score = split.train_inference_summary.sharpe_like or 0.0
+                else:
+                    train_score = split.train_return_summary.net_return_total if split.train_return_summary else 0.0
+                train_scores.append(train_score)
+
+            # Out-of-sample score: use return_series
+            if split.return_series is not None and split.return_series.net_returns:
+                if selection_metric == "sharpe":
+                    test_score = _compute_sharpe(split.return_series.net_returns)
+                else:
+                    test_score = sum(split.return_series.net_returns)
+                test_scores.append(test_score)
+
+        if not train_scores or not test_scores:
+            # Cannot compute path score - use zeros
+            path_scores.append((path_idx, 0.0, 0.0))
+        else:
+            # Aggregate across splits (simple sum for now)
+            train_score = sum(train_scores) / len(train_scores) if train_scores else 0.0
+            test_score = sum(test_scores) / len(test_scores) if test_scores else 0.0
+            path_scores.append((path_idx, train_score, test_score))
+
+    if not path_scores:
+        return PBOSummary(
+            method="pbo",
+            path_count=0,
+            selection_metric=selection_metric,
+            pbo=0.0,
+            assumptions=assumptions,
+            limitations=limitations + ["No valid path scores computed"],
+            provenance=provenance,
+        )
+
+    # Select best in-sample path
+    best_path_idx, best_train_score, best_test_score = max(
+        path_scores, key=lambda x: x[1]
+    )
+
+    # Compute PBO: probability that selected path BEATS a random path OOS.
+    # Higher OOS score = better (for Sharpe/return metrics where higher is better).
+    # PBO = fraction of random paths that the selected path beats.
+    # If selected_path OOS > random_path OOS, selected beats random.
+    # If selected_path OOS < random_path OOS, random beats selected (overfitting signal).
+    selected_beats_count = 0
+    total_random = len(path_scores) - 1  # Exclude self
+
+    for path_idx, train_score, test_score in path_scores:
+        if path_idx == best_path_idx:
+            continue  # Skip self
+        if best_test_score > test_score:
+            # Selected beats random OOS
+            selected_beats_count += 1
+        elif best_test_score == test_score:
+            # Half credit for ties
+            selected_beats_count += 0.5
+        # else: random beats selected (overfitting signal) - no increment
+
+    if total_random > 0:
+        pbo = selected_beats_count / total_random
+    else:
+        pbo = 0.0
+
+    return PBOSummary(
+        method="pbo",
+        path_count=len(paths),
+        selection_metric=selection_metric,
+        pbo=pbo,
+        assumptions=assumptions,
+        limitations=limitations,
+        provenance=provenance,
     )

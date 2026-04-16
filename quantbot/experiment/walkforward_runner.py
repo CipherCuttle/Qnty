@@ -102,9 +102,17 @@ def run_walkforward_experiment(
         test_bars = bars[wf_split.test_start:wf_split.test_end]
         test_bar_count = len(test_bars)
 
+        # Also slice bars to train window for train-side experiment
+        train_bars = bars[wf_split.train_start:wf_split.train_end]
+        train_bar_count = len(train_bars)
+
         # Write test bars to per-split CSV
         split_csv_path = split_dir / "split_bars.csv"
         _write_split_csv(test_bars, split_csv_path)
+
+        # Write train bars to per-split train CSV
+        train_csv_path = split_dir / "train_bars.csv"
+        _write_split_csv(train_bars, train_csv_path)
 
         # Write a minimal manifest for this split
         split_manifest = {
@@ -116,7 +124,17 @@ def run_walkforward_experiment(
         split_manifest_path = split_dir / "manifest.json"
         split_manifest_path.write_text(json.dumps(split_manifest), encoding="utf-8")
 
-        # Build split-specific spec
+        # Write train manifest
+        train_manifest = {
+            "version": 1,
+            "bars_file": "train_bars.csv",
+            "symbol": spec.strategy_params.get("symbol", "UNKNOWN"),
+            "interval": interval if interval else "unknown",
+        }
+        train_manifest_path = split_dir / "train_manifest.json"
+        train_manifest_path.write_text(json.dumps(train_manifest), encoding="utf-8")
+
+        # Build split-specific spec for test experiment
         # Use variant_id as base for split-specific variant (falls back to experiment_name)
         base_variant = spec.variant_id if spec.variant_id else spec.experiment_name
         split_spec = ExperimentSpec(
@@ -136,7 +154,29 @@ def run_walkforward_experiment(
             trial_count=spec.trial_count,
         )
 
-        # Run experiment for this split on the sliced bars
+        # Build split-specific spec for train experiment
+        train_spec = ExperimentSpec(
+            experiment_name=f"{spec.experiment_name}_train_{idx:03d}",
+            strategy_name=spec.strategy_name,
+            strategy_params={
+                **spec.strategy_params,
+                "_split_index": idx,
+                "_train_start": wf_split.train_start,
+                "_train_end": wf_split.train_end,
+            },
+            fixture_name=spec.fixture_name,
+            description=f"{spec.description} [train split {idx}]",
+            notes=spec.notes,
+            family_id=spec.family_id if spec.family_id else spec.experiment_name,
+            variant_id=f"{base_variant}_train_{idx:03d}",
+            trial_count=spec.trial_count,
+        )
+
+        # Initialize train results as None (will remain None if train run fails)
+        train_inference_summary = None
+        train_return_summary = None
+
+        # Run experiment for this split on the test window
         try:
             result = run_experiment(
                 spec=split_spec,
@@ -171,13 +211,31 @@ def run_walkforward_experiment(
             first_ts = result.first_timestamp
             last_ts = result.last_timestamp
 
-        # Collect per-split summary
-        # Compute inference_summary for this split's return_series
-        split_inference = result.inference_summary if 'result' in locals() else None
+        # Compute inference_summary for test split
+        split_inference = result.inference_summary if "result" in locals() else None
 
+        # Run train experiment if train bars are available
+        if train_bar_count > 0:
+            train_output_dir = split_dir / "train_run"
+            train_output_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                train_result = run_experiment(
+                    spec=train_spec,
+                    manifest_path=train_manifest_path,
+                    csv_path=train_csv_path,
+                    output_dir=train_output_dir,
+                    interval=interval,
+                )
+                train_inference_summary = train_result.inference_summary
+                train_return_summary = train_result.return_summary
+            except Exception:
+                # Train experiment failed - leave train fields as None
+                pass
+
+        # Collect per-split summary
         split_result = WalkForwardSplitResult(
             split_index=idx,
-            train_bar_count=wf_split.train_end - wf_split.train_start,
+            train_bar_count=train_bar_count,
             test_bar_count=test_bar_count,
             signal_count=signal_count,
             long_count=long_count,
@@ -191,6 +249,9 @@ def run_walkforward_experiment(
             return_summary=split_returns,
             return_series=split_return_series,
             inference_summary=split_inference,
+            train_inference_summary=train_inference_summary,
+            train_return_summary=train_return_summary,
+            split_role="both",
         )
         split_results.append(split_result)
         total_bar_count += test_bar_count
