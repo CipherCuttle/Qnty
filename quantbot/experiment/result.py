@@ -233,6 +233,205 @@ class InferentialSummary:
         }
 
 
+# ----------------------------------------------------------------------
+# ReplicationSummary - cross-asset replication comparison layer
+# ----------------------------------------------------------------------
+
+def _compute_replication_metrics(
+    artifact_data: dict[str, Any],
+) -> dict[str, float | None] | None:
+    """Extract metrics from an artifact dict for replication comparison.
+
+    Args:
+        artifact_data: Parsed experiment_result.json or walkforward_result.json.
+
+    Returns:
+        Dict with net_return, sharpe_like, psr, dsr, pbo keys, or None if
+        no usable data available.
+    """
+    ret = artifact_data.get("return_summary")
+    inf = artifact_data.get("inference_summary")
+    inf_summary = artifact_data.get("inferential_summary")
+    overfitting = artifact_data.get("overfitting_summary")
+
+    net_return = None
+    sharpe_like = None
+    if ret is not None:
+        net_return = ret.get("net_return_total")
+    if inf is not None:
+        sharpe_like = inf.get("sharpe_like")
+
+    psr = None
+    dsr = None
+    if inf_summary is not None:
+        psr = inf_summary.get("psr")
+        dsr = inf_summary.get("dsr")
+
+    pbo = None
+    if overfitting is not None:
+        pbo = overfitting.get("pbo")
+
+    # Return metrics if at least one metric is available
+    has_any = any(v is not None for v in [net_return, sharpe_like, psr, dsr, pbo])
+    if not has_any:
+        return None
+
+    return {
+        "net_return": net_return,
+        "sharpe_like": sharpe_like,
+        "psr": psr,
+        "dsr": dsr,
+        "pbo": pbo,
+    }
+
+
+def _classify_replication(
+    source_metrics: dict[str, float | None],
+    comparison_metrics: dict[str, float | None] | None,
+) -> tuple[str, int]:
+    """Classify replication result based on source and comparison metrics.
+
+    Args:
+        source_metrics: Metrics from the source fixture.
+        comparison_metrics: Metrics from comparison fixture, or None.
+
+    Returns:
+        Tuple of (interpretation, comparison_count).
+    """
+    if comparison_metrics is None:
+        return "insufficient_replication_data", 0
+
+    # Count how many comparison metrics we have
+    available = sum(1 for v in comparison_metrics.values() if v is not None)
+    if available == 0:
+        return "insufficient_replication_data", 0
+
+    # Compare sharpe-like and net_return direction
+    source_sharpe = source_metrics.get("sharpe_like")
+    comp_sharpe = comparison_metrics.get("sharpe_like")
+    source_net = source_metrics.get("net_return")
+    comp_net = comparison_metrics.get("net_return")
+
+    signals: list[bool] = []
+
+    # Direction agreement: both positive or both negative net return
+    if source_net is not None and comp_net is not None:
+        same_direction = (source_net >= 0) == (comp_net >= 0)
+        signals.append(same_direction)
+
+    # Sharpe similarity: within 0.5 of each other if both available
+    if source_sharpe is not None and comp_sharpe is not None:
+        sharpe_diff = abs(source_sharpe - comp_sharpe)
+        similar_sharpe = sharpe_diff < 0.5
+        signals.append(similar_sharpe)
+
+    # DSR agreement if both available
+    source_dsr = source_metrics.get("dsr")
+    comp_dsr = comparison_metrics.get("dsr")
+    if source_dsr is not None and comp_dsr is not None:
+        dsr_agree = (source_dsr >= 0.5) == (comp_dsr >= 0.5)
+        signals.append(dsr_agree)
+
+    if not signals:
+        return "insufficient_replication_data", available
+
+    # classify based on signal agreement
+    true_count = sum(signals)
+    false_count = len(signals) - true_count
+
+    if true_count >= 2 and false_count <= 1:
+        return "replication_available", available
+    elif false_count >= 2:
+        return "replication_weak", available
+    else:
+        return "replication_mixed", available
+
+
+@dataclass
+class ReplicationSummary:
+    """Cross-asset replication comparison for a family/candidate.
+
+    Provides an observational layer comparing metrics across fixtures
+    to assess whether results replicate across assets. This is NOT proof
+    of edge or generalizability.
+
+    Attributes:
+        replication_dimension: Always "asset" (regime replication not supported).
+        source_fixture: Fixture name used as the source.
+        comparison_fixture: Fixture name used for comparison, or None.
+        source_metrics: Metrics from the source fixture.
+        comparison_metrics: Metrics from comparison fixture, or None.
+        interpretation: One of: replication_available, replication_mixed,
+                        replication_weak, insufficient_replication_data.
+        comparison_count: Number of comparison fixtures available (0 if insufficient).
+    """
+
+    replication_dimension: Literal["asset"] = "asset"
+    source_fixture: str = ""
+    comparison_fixture: str | None = None
+    source_metrics: dict[str, float | None] = None
+    comparison_metrics: dict[str, float | None] = None
+    interpretation: str = "insufficient_replication_data"
+    comparison_count: int = 0
+
+    def __post_init__(self) -> None:
+        if self.source_metrics is None:
+            self.source_metrics = {}
+        if self.comparison_metrics is None:
+            self.comparison_metrics = {}
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return {
+            "replication_dimension": self.replication_dimension,
+            "source_fixture": self.source_fixture,
+            "comparison_fixture": self.comparison_fixture,
+            "source_metrics": self.source_metrics,
+            "comparison_metrics": self.comparison_metrics,
+            "interpretation": self.interpretation,
+            "comparison_count": self.comparison_count,
+        }
+
+
+def generate_replication_summary(
+    source_artifact_data: dict[str, Any],
+    source_fixture: str,
+    comparison_artifact_data: dict[str, Any] | None = None,
+    comparison_fixture: str | None = None,
+) -> ReplicationSummary:
+    """Generate a replication summary comparing source and optional comparison fixture.
+
+    Args:
+        source_artifact_data: Parsed experiment artifact dict for the source fixture.
+        source_fixture: Name of the source fixture.
+        comparison_artifact_data: Parsed experiment artifact dict for comparison,
+            or None if no comparison available.
+        comparison_fixture: Name of the comparison fixture, or None.
+
+    Returns:
+        ReplicationSummary with metrics and interpretation.
+    """
+    source_metrics = _compute_replication_metrics(source_artifact_data)
+    if source_metrics is None:
+        source_metrics = {}
+
+    comparison_metrics: dict[str, float | None] | None = None
+    if comparison_artifact_data is not None:
+        comparison_metrics = _compute_replication_metrics(comparison_artifact_data)
+
+    interpretation, comparison_count = _classify_replication(source_metrics, comparison_metrics)
+
+    return ReplicationSummary(
+        replication_dimension="asset",
+        source_fixture=source_fixture,
+        comparison_fixture=comparison_fixture,
+        source_metrics=source_metrics,
+        comparison_metrics=comparison_metrics,
+        interpretation=interpretation,
+        comparison_count=comparison_count,
+    )
+
+
 def _compute_skewness(returns: list[float]) -> Optional[float]:
     """Compute population skewness (Fisher's) of a return series.
 

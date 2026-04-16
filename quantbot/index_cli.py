@@ -15,6 +15,7 @@ from pathlib import Path
 from quantbot.experiment.calibration import CalibrationComparison, classify_calibration_status
 from quantbot.experiment.index import IndexedExperiment, index_experiment_artifacts
 from quantbot.experiment.pbo import classify_pbo_status, pbo_status_label
+from quantbot.experiment.result import generate_replication_summary, ReplicationSummary
 
 
 def _format_row(exp: IndexedExperiment) -> str:
@@ -179,6 +180,13 @@ def main(argv: list[str] | None = None) -> int:
         "--overfitting",
         action="store_true",
         help="Include path dispersion diagnostic summaries in JSON output.",
+    )
+    parser.add_argument(
+        "--replication",
+        nargs=2,
+        metavar=("SOURCE_FIXTURE", "COMPARISON_FIXTURE"),
+        help="Generate replication summary comparing two fixtures. "
+             "Outputs JSON with replication comparison metrics and interpretation.",
     )
 
     try:
@@ -400,6 +408,51 @@ def main(argv: list[str] | None = None) -> int:
                         line_parts.append(pbo_line)
                     line_parts.append(str(exp.artifact_path))
                     print(f"  {' | '.join(line_parts)}")
+    elif args.replication:
+        # Generate replication summary for two fixtures
+        source_fixture, comparison_fixture = args.replication
+
+        # Find artifacts matching the source and comparison fixtures
+        source_exp = None
+        comparison_exp = None
+        for exp in indexed:
+            if exp.fixture_name == source_fixture:
+                if source_exp is None:
+                    source_exp = exp
+            if exp.fixture_name == comparison_fixture:
+                if comparison_exp is None:
+                    comparison_exp = exp
+
+        if source_exp is None:
+            print(f"Error: No artifact found for source fixture: {source_fixture}", file=sys.stderr)
+            return 1
+
+        # Load the raw artifact data
+        import json as _json
+        try:
+            with open(source_exp.artifact_path, "r", encoding="utf-8") as f:
+                source_data = _json.load(f)
+        except Exception as exc:
+            print(f"Error: Failed to load source artifact: {exc}", file=sys.stderr)
+            return 1
+
+        comparison_data = None
+        if comparison_exp is not None:
+            try:
+                with open(comparison_exp.artifact_path, "r", encoding="utf-8") as f:
+                    comparison_data = _json.load(f)
+            except Exception as exc:
+                print(f"Warning: Failed to load comparison artifact: {exc}", file=sys.stderr)
+                comparison_data = None
+
+        summary = generate_replication_summary(
+            source_artifact_data=source_data,
+            source_fixture=source_fixture,
+            comparison_artifact_data=comparison_data,
+            comparison_fixture=comparison_fixture if comparison_data is not None else None,
+        )
+        print(_json.dumps(summary.to_dict(), indent=2))
+        return 0
     elif args.json:
         # Machine-readable JSON: list of dicts with new fields
         records = [
