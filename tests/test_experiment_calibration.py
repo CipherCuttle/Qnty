@@ -219,3 +219,73 @@ class TestCompareReconciliationDir:
         comp = comparisons[0]
         assert comp.delta_bps == 0.0  # assumed_total_cost_bps unknown
         assert comp.observed_avg_shortfall_bps == 25.0
+
+
+class TestClassifyCalibrationStatus:
+    """Tests for classify_calibration_status."""
+
+    def test_insufficient_data_classification(self):
+        """record_count below threshold → insufficient_data."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=0.0, record_count=29)
+        assert result == "insufficient_data"
+
+    def test_aligned_classification(self):
+        """Sufficient records and |delta| <= 5 bps → aligned."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=3.0, record_count=100)
+        assert result == "aligned"
+
+    def test_aligned_at_boundary(self):
+        """|delta| == threshold is aligned."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=5.0, record_count=100)
+        assert result == "aligned"
+
+    def test_aligned_negative_delta(self):
+        """Negative delta is compared by magnitude."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=-4.0, record_count=100)
+        assert result == "aligned"
+
+    def test_mild_mismatch_classification(self):
+        """5 bps < |delta| <= 15 bps → mild_mismatch."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=10.0, record_count=100)
+        assert result == "mild_mismatch"
+
+    def test_mild_mismatch_at_lower_boundary(self):
+        """|delta| just above mild threshold."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=5.1, record_count=100)
+        assert result == "mild_mismatch"
+
+    def test_mild_mismatch_at_upper_boundary(self):
+        """|delta| == material threshold is still mild_mismatch."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=15.0, record_count=100)
+        assert result == "mild_mismatch"
+
+    def test_material_mismatch_classification(self):
+        """|delta| > 15 bps → material_mismatch."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=20.0, record_count=100)
+        assert result == "material_mismatch"
+
+    def test_material_mismatch_just_above_threshold(self):
+        """|delta| just above material threshold."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=15.1, record_count=100)
+        assert result == "material_mismatch"
+
+    def test_insufficient_data_overrides_mild(self):
+        """Insufficient records wins over delta magnitude."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=10.0, record_count=10)
+        assert result == "insufficient_data"
+
+    def test_insufficient_data_overrides_material(self):
+        """Insufficient records wins over delta magnitude."""
+        from quantbot.experiment.calibration import classify_calibration_status
+        result = classify_calibration_status(delta_bps=50.0, record_count=5)
+        assert result == "insufficient_data"

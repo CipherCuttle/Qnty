@@ -932,3 +932,178 @@ class TestIndexCliCalibrationSummary:
         assert result == 0
         parsed = json.loads(output)
         assert parsed["count"] == 1
+
+
+class TestCalibrationStatusInOutput:
+    """Tests for calibration_status field in CLI output."""
+
+    def _capture_output(self, *args):
+        """Capture stdout from main() for a given set of CLI arguments."""
+        import io
+        import sys as _sys
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            result = main(list(args))
+        finally:
+            output = _sys.stdout.getvalue()
+            _sys.stdout = old_stdout
+        return result, output
+
+    def _make_cal_artifact(self, tmp_path, delta_bps, record_count, family_id="cal-family"):
+        """Helper: creates an artifact with calibration data."""
+        run_dir = tmp_path / "run1"
+        run_dir.mkdir()
+        artifact = run_dir / "walkforward_result.json"
+        import json
+        artifact.write_text(json.dumps({
+            "experiment_name": "cal-status-test",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": family_id,
+            "variant_id": "v1",
+            "trial_count": 1,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 1,
+            "aggregate_signal_count": 5,
+            "return_summary": {
+                "gross_return_total": 0.05,
+                "net_return_total": 0.03,
+                "cost_deduction_total": 0.02,
+            },
+        }))
+        cal_dir = tmp_path / "calibrations"
+        cal_dir.mkdir()
+        # assumed_total_cost_bps = 15.0, so delta = observed - 15.0
+        observed = 15.0 + delta_bps
+        (cal_dir / f"{family_id}_v1_t1_reconciliation.json").write_text(json.dumps({
+            "family_id": family_id,
+            "variant_id": "v1",
+            "trial_count": 1,
+            "observed_avg_shortfall_bps": observed,
+            "record_count": record_count,
+        }))
+        return run_dir
+
+    def test_review_summary_json_has_calibration_status(self, tmp_path):
+        """review-summary JSON output includes calibration_status field."""
+        self._make_cal_artifact(tmp_path, delta_bps=3.0, record_count=100)
+
+        result, output = self._capture_output("--review-summary", "--json", "--calibration-dir", str(tmp_path / "calibrations"), str(tmp_path / "run1"))
+
+        assert result == 0
+        parsed = json.loads(output)
+        record = parsed["review_summary"][0]
+        assert "calibration" in record
+        assert "calibration_status" in record["calibration"]
+        assert record["calibration"]["calibration_status"] == "aligned"
+
+    def test_review_summary_text_has_calibration_status(self, tmp_path):
+        """review-summary text output includes calibration_status."""
+        self._make_cal_artifact(tmp_path, delta_bps=3.0, record_count=100)
+
+        result, output = self._capture_output("--review-summary", "--calibration-dir", str(tmp_path / "calibrations"), str(tmp_path / "run1"))
+
+        assert result == 0
+        assert "aligned" in output
+
+    def test_calibration_status_insufficient_data(self, tmp_path):
+        """record_count < 30 → insufficient_data in review-summary JSON."""
+        self._make_cal_artifact(tmp_path, delta_bps=3.0, record_count=10)
+
+        result, output = self._capture_output("--review-summary", "--json", "--calibration-dir", str(tmp_path / "calibrations"), str(tmp_path / "run1"))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert parsed["review_summary"][0]["calibration"]["calibration_status"] == "insufficient_data"
+
+    def test_calibration_status_material_mismatch(self, tmp_path):
+        """|delta| > 15 → material_mismatch in review-summary JSON."""
+        self._make_cal_artifact(tmp_path, delta_bps=20.0, record_count=100)
+
+        result, output = self._capture_output("--review-summary", "--json", "--calibration-dir", str(tmp_path / "calibrations"), str(tmp_path / "run1"))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert parsed["review_summary"][0]["calibration"]["calibration_status"] == "material_mismatch"
+
+    def test_by_family_json_has_calibration_counts(self, tmp_path):
+        """--by-family JSON includes aligned_count, mild/mismatch counts."""
+        # Create two artifacts: one aligned, one material_mismatch
+        run1_dir = tmp_path / "run1"
+        run1_dir.mkdir()
+        import json
+        artifact1 = run1_dir / "walkforward_result.json"
+        artifact1.write_text(json.dumps({
+            "experiment_name": "cal-status-test-1",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": "multi-cal-family",
+            "variant_id": "v1",
+            "trial_count": 1,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 1,
+            "aggregate_signal_count": 5,
+            "return_summary": {"gross_return_total": 0.05, "net_return_total": 0.03, "cost_deduction_total": 0.02},
+        }))
+        run2_dir = tmp_path / "run2"
+        run2_dir.mkdir()
+        artifact2 = run2_dir / "walkforward_result.json"
+        artifact2.write_text(json.dumps({
+            "experiment_name": "cal-status-test-2",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": "multi-cal-family",
+            "variant_id": "v1",
+            "trial_count": 2,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 1,
+            "aggregate_signal_count": 5,
+            "return_summary": {"gross_return_total": 0.05, "net_return_total": 0.03, "cost_deduction_total": 0.02},
+        }))
+        cal_dir = tmp_path / "calibrations"
+        cal_dir.mkdir()
+        # Artificially set assumed=15, so delta = observed-15
+        # run1: delta=+3.0 → aligned (|3| <= 5)
+        (cal_dir / "multi-cal-family_v1_t1_reconciliation.json").write_text(json.dumps({
+            "family_id": "multi-cal-family", "variant_id": "v1", "trial_count": 1,
+            "observed_avg_shortfall_bps": 18.0, "record_count": 100,
+        }))
+        # run2: delta=+20.0 → material_mismatch (|20| > 15)
+        (cal_dir / "multi-cal-family_v1_t2_reconciliation.json").write_text(json.dumps({
+            "family_id": "multi-cal-family", "variant_id": "v1", "trial_count": 2,
+            "observed_avg_shortfall_bps": 35.0, "record_count": 100,
+        }))
+
+        result, output = self._capture_output("--by-family", "--json", "--calibration-dir", str(cal_dir), str(run1_dir), str(run2_dir))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert len(parsed) == 1
+        family_summary = parsed[0]
+        assert "aligned_count" in family_summary
+        assert "mild_mismatch_count" in family_summary
+        assert "material_mismatch_count" in family_summary
+        assert "insufficient_data_count" in family_summary
+        assert family_summary["aligned_count"] == 1
+        assert family_summary["material_mismatch_count"] == 1
+        assert family_summary["mild_mismatch_count"] == 0
+        assert family_summary["insufficient_data_count"] == 0
+
+    def test_by_family_json_has_dominant_status(self, tmp_path):
+        """--by-family JSON includes dominant calibration_status field."""
+        self._make_cal_artifact(tmp_path, delta_bps=3.0, record_count=100, family_id="dom-family")
+
+        result, output = self._capture_output("--by-family", "--json", "--calibration-dir", str(tmp_path / "calibrations"), str(tmp_path / "run1"))
+
+        assert result == 0
+        parsed = json.loads(output)
+        family_summary = parsed[0]
+        assert "calibration_status" in family_summary
+        assert family_summary["calibration_status"] == "aligned"

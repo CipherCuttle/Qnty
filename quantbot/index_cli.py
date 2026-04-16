@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 
-from quantbot.experiment.calibration import CalibrationComparison
+from quantbot.experiment.calibration import CalibrationComparison, classify_calibration_status
 from quantbot.experiment.index import IndexedExperiment, index_experiment_artifacts
 
 
@@ -91,7 +91,8 @@ def _format_review_row(exp: IndexedExperiment) -> str:
     # Format calibration if present
     cal = exp.calibration
     if cal is not None:
-        cal_str = f"calibration: assumed={cal.assumed_total_cost_bps:.1f} observed={cal.observed_avg_shortfall_bps:.1f} delta=+{cal.delta_bps:.1f} n={cal.record_count}"
+        status = classify_calibration_status(cal.delta_bps, cal.record_count)
+        cal_str = f"calibration: assumed={cal.assumed_total_cost_bps:.1f} observed={cal.observed_avg_shortfall_bps:.1f} delta=+{cal.delta_bps:.1f} n={cal.record_count} [{status}]"
     else:
         cal_str = ""
     row = (
@@ -211,8 +212,23 @@ def main(argv: list[str] | None = None) -> int:
             with_calibration = [e for e in exps if e.calibration is not None]
             if with_calibration:
                 avg_delta_bps = sum(e.calibration.delta_bps for e in with_calibration) / len(with_calibration)
+                # Count status categories
+                aligned_count = sum(1 for e in with_calibration if classify_calibration_status(e.calibration.delta_bps, e.calibration.record_count) == "aligned")
+                mild_mismatch_count = sum(1 for e in with_calibration if classify_calibration_status(e.calibration.delta_bps, e.calibration.record_count) == "mild_mismatch")
+                material_mismatch_count = sum(1 for e in with_calibration if classify_calibration_status(e.calibration.delta_bps, e.calibration.record_count) == "material_mismatch")
+                insufficient_data_count = sum(1 for e in with_calibration if classify_calibration_status(e.calibration.delta_bps, e.calibration.record_count) == "insufficient_data")
+                # Determine dominant status
+                status_counts = {
+                    "aligned": aligned_count,
+                    "mild_mismatch": mild_mismatch_count,
+                    "material_mismatch": material_mismatch_count,
+                    "insufficient_data": insufficient_data_count,
+                }
+                dominant_status = max(status_counts, key=status_counts.get) if any(v > 0 for v in status_counts.values()) else None
             else:
                 avg_delta_bps = None
+                aligned_count = mild_mismatch_count = material_mismatch_count = insufficient_data_count = 0
+                dominant_status = None
             summary = {
                 "family_id": fid,
                 "artifact_count": len(exps),
@@ -224,6 +240,12 @@ def main(argv: list[str] | None = None) -> int:
             }
             if avg_delta_bps is not None:
                 summary["avg_delta_bps"] = round(avg_delta_bps, 4)
+            if with_calibration:
+                summary["aligned_count"] = aligned_count
+                summary["mild_mismatch_count"] = mild_mismatch_count
+                summary["material_mismatch_count"] = material_mismatch_count
+                summary["insufficient_data_count"] = insufficient_data_count
+                summary["calibration_status"] = dominant_status
             summaries.append(summary)
 
         # Sort summaries
@@ -281,11 +303,13 @@ def main(argv: list[str] | None = None) -> int:
                     "artifact_path": str(e.artifact_path),
                 }
                 if e.calibration is not None:
+                    status = classify_calibration_status(e.calibration.delta_bps, e.calibration.record_count)
                     record["calibration"] = {
                         "assumed_total_cost_bps": e.calibration.assumed_total_cost_bps,
                         "observed_avg_shortfall_bps": e.calibration.observed_avg_shortfall_bps,
                         "delta_bps": e.calibration.delta_bps,
                         "record_count": e.calibration.record_count,
+                        "calibration_status": status,
                     }
                 records.append(record)
             print(json.dumps({"review_summary": records, "count": len(records)}, indent=2))
@@ -305,7 +329,8 @@ def main(argv: list[str] | None = None) -> int:
                     cost = ret.get("cost_deduction_total", 0.0) if ret else 0.0
                     cal = exp.calibration
                     if cal is not None:
-                        cal_line = f"calibration: assumed={cal.assumed_total_cost_bps:.1f} observed={cal.observed_avg_shortfall_bps:.1f} delta=+{cal.delta_bps:.1f} n={cal.record_count}"
+                        status = classify_calibration_status(cal.delta_bps, cal.record_count)
+                        cal_line = f"calibration: assumed={cal.assumed_total_cost_bps:.1f} observed={cal.observed_avg_shortfall_bps:.1f} delta=+{cal.delta_bps:.1f} n={cal.record_count} [{status}]"
                     else:
                         cal_line = ""
                     print(

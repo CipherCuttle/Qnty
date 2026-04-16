@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+# Threshold constants for calibration status classification.
+# These are inspectable policy knobs — review them alongside any calibration report.
+INSUFFICIENT_DATA_MIN_RECORDS: int = 30
+MILD_MISMATCH_THRESHOLD_BPS: float = 5.0
+MATERIAL_MISMATCH_THRESHOLD_BPS: float = 15.0
+
 from quantbot.experiment.result import EconomicsSummary
 
 
@@ -163,3 +169,32 @@ def compare_reconciliation_dir(
             continue
 
     return comparisons
+
+
+def classify_calibration_status(delta_bps: float, record_count: int) -> str:
+    """Classify calibration status based on delta magnitude and sample size.
+
+    Policy knobs (inspectable at module level):
+        INSUFFICIENT_DATA_MIN_RECORDS  : minimum record count for classification
+        MILD_MISMATCH_THRESHOLD_BPS    : |delta| above this → mild mismatch
+        MATERIAL_MISMATCH_THRESHOLD_BPS: |delta| above this → material mismatch
+
+    Status values:
+        insufficient_data : record_count below threshold
+        aligned            : |delta| <= threshold with sufficient records
+        mild_mismatch      : threshold < |delta| <= material
+        material_mismatch  : |delta| > material threshold
+
+    Returns:
+        One of: "insufficient_data", "aligned", "mild_mismatch", "material_mismatch"
+    """
+    if record_count < INSUFFICIENT_DATA_MIN_RECORDS:
+        return "insufficient_data"
+
+    abs_delta = abs(delta_bps)
+    if abs_delta <= MILD_MISMATCH_THRESHOLD_BPS:
+        return "aligned"
+    elif abs_delta <= MATERIAL_MISMATCH_THRESHOLD_BPS:
+        return "mild_mismatch"
+    else:
+        return "material_mismatch"
