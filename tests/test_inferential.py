@@ -17,7 +17,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from scipy.stats import skew as scipy_skew, kurtosis as scipy_kurtosis
 
 from quantbot.core.determinism import canonical_json_dumps
 from quantbot.experiment.index import index_experiment_artifacts, IndexedExperiment
