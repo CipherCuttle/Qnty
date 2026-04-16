@@ -58,8 +58,10 @@ def _format_row(exp: IndexedExperiment) -> str:
     if inf_summary:
         psr = inf_summary.get("psr")
         dsr = inf_summary.get("dsr")
+        dsr_provisional = inf_summary.get("dsr_provisional", False)
         if psr is not None and dsr is not None:
-            inf_meta_str = f"PSR={psr:.4f} DSR={dsr:.4f}"
+            dsr_display = f"{dsr:.4f}(prov)" if dsr_provisional else f"{dsr:.4f}"
+            inf_meta_str = f"PSR={psr:.4f} DSR={dsr_display}"
         elif psr is not None:
             inf_meta_str = f"PSR={psr:.4f} DSR=N/A"
         else:

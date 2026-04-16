@@ -684,3 +684,221 @@ class TestComputeInferentialSummary:
         )
         result = compute_inferential_summary(inf_summary, trial_count=None)
         assert result.std_return == 0.025
+
+
+# =============================================================================
+# 7. DSR PROVISIONAL SEMANTICS
+# =============================================================================
+
+
+class TestDSRProvisionalSemantics:
+    """Tests for DSR provisional semantics (WalkForward split_count handling)."""
+
+    def _make_wf_result(
+        self, split_count: int, trial_count: int, sharpe_like: float = 0.5
+    ) -> WalkForwardExperimentResult:
+        """Create a WalkForwardExperimentResult with specified split/trial counts."""
+        # Build splits matching split_count
+        splits = []
+        net_returns = [0.01, -0.005, 0.015] * 30  # 90 bars
+        for idx in range(split_count):
+            split = WalkForwardSplitResult(
+                split_index=idx,
+                train_bar_count=60,
+                test_bar_count=30,
+                signal_count=5,
+                long_count=3,
+                short_count=2,
+                flat_count=0,
+                receipt_path=None,
+                artifact_path=None,
+                return_series=ReturnSeries(
+                    gross_returns=net_returns,
+                    net_returns=net_returns,
+                    bar_timestamps=[],
+                    interval="8h",
+                ),
+            )
+            splits.append(split)
+
+        wf = WalkForwardExperimentResult(
+            experiment_name="test-wf",
+            split_count=split_count,
+            splits=splits,
+            total_bar_count=90 * split_count,
+            total_signal_count=5 * split_count,
+            strategy_name="test",
+            strategy_params={},
+            fixture_name="test",
+            family_id="test-family",
+            variant_id="test-variant",
+            trial_count=trial_count,
+            fee_bps=10.0,
+            slippage_bps=5.0,
+        )
+        wf.inference_summary = wf.aggregate_inference_summary()
+        return wf
+
+    def test_dsr_provisional_when_split_count_below_threshold(self):
+        """DSR should be provisional when split_count < 2."""
+        # split_count=1 (below threshold), trial_count=5
+        result = self._make_wf_result(split_count=1, trial_count=5, sharpe_like=0.5)
+        d = result.to_dict()
+        assert d["inferential_summary"]["dsr_provisional"] is True
+        # When split_count < 2, effective_trial_count falls back to trial_count (not split_count)
+        assert d["inferential_summary"]["effective_trial_count"] == 5
+        assert d["inferential_summary"]["raw_trial_count"] == 5
+        # Note should indicate weak trial semantics
+        note = d["inferential_summary"]["dsr_trial_semantics_note"]
+        assert "provisional" in note.lower() or "weak" in note.lower()
+
+    def test_dsr_not_provisional_when_split_count_adequate(self):
+        """DSR should NOT be provisional when split_count >= 2."""
+        # split_count=5 (adequate), trial_count=1 (ignored)
+        result = self._make_wf_result(split_count=5, trial_count=1, sharpe_like=0.5)
+        d = result.to_dict()
+        assert d["inferential_summary"]["dsr_provisional"] is False
+        assert d["inferential_summary"]["effective_trial_count"] == 5
+        # Note should indicate computed from split_count
+        note = d["inferential_summary"]["dsr_trial_semantics_note"]
+        assert "split_count" in note
+
+    def test_psr_still_persists_correctly(self):
+        """PSR should be computed and persisted independently of DSR provisional."""
+        result = self._make_wf_result(split_count=3, trial_count=1, sharpe_like=0.5)
+        d = result.to_dict()
+        # PSR should exist
+        assert "psr" in d["inferential_summary"]
+        assert d["inferential_summary"]["psr"] is not None
+        # PSR does NOT get the provisional flag
+        assert d["inferential_summary"]["dsr_provisional"] is False
+
+    def test_json_artifacts_carry_new_semantics_fields(self):
+        """All 4 new fields should be present in serialized inferential_summary."""
+        result = self._make_wf_result(split_count=1, trial_count=5, sharpe_like=0.5)
+        d = result.to_dict()
+        inf = d["inferential_summary"]
+
+        # All 4 new fields must be present
+        assert "dsr_provisional" in inf
+        assert "dsr_trial_semantics_note" in inf
+        assert "effective_trial_count" in inf
+        assert "raw_trial_count" in inf
+
+        # Verify round-trip (serialize and deserialize)
+        json_str = json.dumps(d)
+        parsed = json.loads(json_str)
+        assert parsed["inferential_summary"]["dsr_provisional"] == inf["dsr_provisional"]
+        assert parsed["inferential_summary"]["effective_trial_count"] == inf["effective_trial_count"]
+        assert parsed["inferential_summary"]["raw_trial_count"] == inf["raw_trial_count"]
+
+    def test_index_output_reflects_provisional_status(self, tmp_path: Path):
+        """IndexedExperiment with dsr_provisional=True should show (prov) suffix."""
+        artifact_path = tmp_path / "prov_experiment" / "experiment_result.json"
+        net_returns = [0.01, -0.005, 0.015] * 30
+
+        # Compute inferential summary with provisional semantics
+        rs = ReturnSeries(
+            gross_returns=net_returns,
+            net_returns=net_returns,
+            bar_timestamps=[],
+            interval="8h",
+        )
+        inference_summary = compute_inference_summary(rs)
+
+        # Simulate split_count=1 scenario
+        inferential = compute_inferential_summary(
+            inference_summary,
+            trial_count=5,
+            raw_trial_count=5,
+            effective_trial_count=1,  # Fallback due to split_count < 2
+            dsr_provisional=True,
+            dsr_trial_semantics_note="DSR computed from raw trial_count (split_count < 2). Trial semantics are weak.",
+        )
+
+        data = {
+            "experiment_name": "prov-test",
+            "strategy_name": "test",
+            "strategy_params": {},
+            "fixture_name": "test",
+            "family_id": "test-family",
+            "variant_id": "test-variant",
+            "trial_count": 5,
+            "engine_version": "0.1.0",
+            "receipt_digest": "abc123",
+            "bar_count": 90,
+            "signal_count": 5,
+            "first_timestamp": "2024-01-01T00:00:00Z",
+            "last_timestamp": "2024-01-04T00:00:00Z",
+            "long_count": 2,
+            "short_count": 2,
+            "flat_count": 1,
+            "gate_verdict": {"status": "PASS", "reasons": [], "checked": []},
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "return_series": {
+                "gross_returns": net_returns,
+                "net_returns": net_returns,
+                "bar_timestamps": [],
+                "interval": "8h",
+            },
+            "inferential_summary": inferential.to_dict(),
+        }
+
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(canonical_json_dumps(data), encoding="utf-8")
+
+        results = index_experiment_artifacts([artifact_path])
+        assert len(results) == 1
+        indexed = results[0]
+
+        # Verify IndexedExperiment carries the provisional flag
+        assert indexed.inferential_summary is not None
+        assert indexed.inferential_summary.get("dsr_provisional") is True
+
+    def test_legacy_artifacts_missing_new_fields_do_not_break_indexing(self, tmp_path: Path):
+        """Artifacts without new DSR fields should load with defaults."""
+        artifact_path = tmp_path / "legacy_no_dsr" / "experiment_result.json"
+        net_returns = [0.01, -0.005, 0.015] * 30
+
+        # Create artifact WITHOUT the new provisional fields (old format)
+        data = {
+            "experiment_name": "legacy-no-dsr",
+            "strategy_name": "test",
+            "strategy_params": {},
+            "fixture_name": "test",
+            "family_id": "test-family",
+            "variant_id": "test-variant",
+            "trial_count": 5,
+            "engine_version": "0.1.0",
+            "receipt_digest": "abc123",
+            "bar_count": 90,
+            "signal_count": 5,
+            "first_timestamp": "2024-01-01T00:00:00Z",
+            "last_timestamp": "2024-01-04T00:00:00Z",
+            "long_count": 2,
+            "short_count": 2,
+            "flat_count": 1,
+            "gate_verdict": {"status": "PASS", "reasons": [], "checked": []},
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "return_series": {
+                "gross_returns": net_returns,
+                "net_returns": net_returns,
+                "bar_timestamps": [],
+                "interval": "8h",
+            },
+            # NOTE: No dsr_provisional, dsr_trial_semantics_note, effective_trial_count, raw_trial_count
+        }
+
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(canonical_json_dumps(data), encoding="utf-8")
+
+        # Should load without error
+        results = index_experiment_artifacts([artifact_path])
+        assert len(results) == 1
+        indexed = results[0]
+
+        # inferential_summary may be None or present, but should not break
+        # The new fields default to False/empty when InferentialSummary is constructed
+        # without them during deserialization

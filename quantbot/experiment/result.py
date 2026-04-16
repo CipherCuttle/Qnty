@@ -200,6 +200,10 @@ class InferentialSummary:
     dsr: Optional[float] = None
     dsr_trial_count: Optional[int] = None
     dsr_note: str = ""
+    dsr_provisional: bool = False
+    dsr_trial_semantics_note: str = ""
+    effective_trial_count: Optional[int] = None
+    raw_trial_count: Optional[int] = None
     sharpe_like: Optional[float] = None
     std_return: Optional[float] = None
     skewness: Optional[float] = None
@@ -217,6 +221,10 @@ class InferentialSummary:
             "dsr": self.dsr,
             "dsr_trial_count": self.dsr_trial_count,
             "dsr_note": self.dsr_note,
+            "dsr_provisional": self.dsr_provisional,
+            "dsr_trial_semantics_note": self.dsr_trial_semantics_note,
+            "effective_trial_count": self.effective_trial_count,
+            "raw_trial_count": self.raw_trial_count,
             "sharpe_like": self.sharpe_like,
             "std_return": self.std_return,
             "skewness": self.skewness,
@@ -467,6 +475,10 @@ def compute_dsr(
 def compute_inferential_summary(
     inference_summary: InferenceSummary,
     trial_count: Optional[int] = None,
+    raw_trial_count: Optional[int] = None,
+    effective_trial_count: Optional[int] = None,
+    dsr_provisional: bool = False,
+    dsr_trial_semantics_note: str = "",
 ) -> InferentialSummary:
     """Build InferentialSummary from InferenceSummary + optional trial metadata.
 
@@ -476,6 +488,10 @@ def compute_inferential_summary(
     Args:
         inference_summary: The basic inference summary from compute_inference_summary.
         trial_count: Optional cumulative trial count for DSR computation.
+        raw_trial_count: The original trial_count input before any fallback adjustment.
+        effective_trial_count: The trial count actually used for DSR computation.
+        dsr_provisional: True when trial semantics are weak (e.g., split_count < 2).
+        dsr_trial_semantics_note: Human-readable explanation of trial semantics.
 
     Returns:
         InferentialSummary with PSR (always if computable) and DSR (if trial_count >= 2).
@@ -516,6 +532,10 @@ def compute_inferential_summary(
         dsr=dsr,
         dsr_trial_count=dsr_trial_count,
         dsr_note=dsr_note,
+        dsr_provisional=dsr_provisional,
+        dsr_trial_semantics_note=dsr_trial_semantics_note,
+        effective_trial_count=effective_trial_count,
+        raw_trial_count=raw_trial_count,
         sharpe_like=sharpe,
         std_return=std,
         skewness=skew,
@@ -1041,7 +1061,7 @@ class WalkForwardExperimentResult:
             for s in self.splits
         ]
 
-        return {
+        d = {
             "experiment_name": self.experiment_name,
             "strategy_name": self.strategy_name,
             "strategy_params": self.strategy_params,
@@ -1071,8 +1091,24 @@ class WalkForwardExperimentResult:
         # WalkForward uses split_count as the implicit trial structure
         if self.inference_summary is not None:
             # Use split_count as effective trial count for walkforward DSR
-            trial_count = self.split_count if self.split_count >= 2 else self.trial_count
-            inferential = compute_inferential_summary(self.inference_summary, trial_count)
+            raw_trial_count = self.trial_count
+            effective_trial_count = self.split_count if self.split_count >= 2 else self.trial_count
+            is_provisional = self.split_count < 2  # weak trial semantics when no real splits
+            if is_provisional:
+                trial_semantics_note = (
+                    "DSR computed from raw trial_count (split_count < 2). "
+                    "Trial semantics are weak."
+                )
+            else:
+                trial_semantics_note = "DSR computed from split_count."
+            inferential = compute_inferential_summary(
+                self.inference_summary,
+                effective_trial_count,
+                raw_trial_count=raw_trial_count,
+                effective_trial_count=effective_trial_count,
+                dsr_provisional=is_provisional,
+                dsr_trial_semantics_note=trial_semantics_note,
+            )
             d["inferential_summary"] = inferential.to_dict()
         else:
             d["inferential_summary"] = None
