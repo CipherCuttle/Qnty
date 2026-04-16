@@ -17,6 +17,13 @@ from quantbot.experiment.walkforward import WalkForwardSplit, build_walkforward_
 from quantbot.experiment.walkforward_runner import run_walkforward_experiment
 from quantbot.experiment.gates import GateVerdict, gate_experiment_result, gate_walkforward_result
 from quantbot.experiment.index import IndexedExperiment, index_experiment_artifacts
+from quantbot.experiment.calibration import (
+    FrankenReconciliationRecord,
+    CalibrationComparison,
+    ingest_franken_reconciliation,
+    compare_record,
+    compare_reconciliation_dir,
+)
 
 __all__ = [
     "ExperimentSpec",
@@ -34,4 +41,9 @@ __all__ = [
     "index_experiment_artifacts",
     "InferenceSummary",
     "compute_inference_summary",
+    "FrankenReconciliationRecord",
+    "CalibrationComparison",
+    "ingest_franken_reconciliation",
+    "compare_record",
+    "compare_reconciliation_dir",
 ]
