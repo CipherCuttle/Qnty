@@ -74,6 +74,7 @@ class IndexedExperiment:
     ineligibility_reasons: list[str] = None
     calibration: "CalibrationComparison | None" = field(default=None)
     overfitting_summary: Optional[dict[str, Any]] = None
+    robustness_summary: Optional[dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         if self.ineligibility_reasons is None:
@@ -289,6 +290,7 @@ def index_experiment_artifacts(
                 eligible_for_review=eligibility.eligible_for_review,
                 ineligibility_reasons=eligibility.ineligibility_reasons,
                 overfitting_summary=data.get("overfitting_summary"),
+                robustness_summary=data.get("robustness_summary"),
             )
             indexed.calibration = _find_calibration_for_artifact(indexed, calibration_dir)
             results.append(indexed)

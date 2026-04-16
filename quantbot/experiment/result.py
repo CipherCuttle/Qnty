@@ -355,6 +355,293 @@ def compute_psr(
     return max(0.0, min(1.0, psr))
 
 
+# Stress multipliers for cost-robustness scan
+COST_STRESS_MULTIPLIERS = (0.5, 1.0, 2.0, 3.0, 5.0)
+
+
+@dataclass
+class CostRobustnessLevel:
+    """Result of a single cost-stress level."""
+
+    stress_multiplier: float
+    stressed_total_cost_bps: float
+    stressed_net_return_total: float
+    stressed_sharpe_like: Optional[float]
+    stressed_dsr: Optional[float] = None
+    stressed_psr: Optional[float] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return {
+            "stress_multiplier": self.stress_multiplier,
+            "stressed_total_cost_bps": self.stressed_total_cost_bps,
+            "stressed_net_return_total": self.stressed_net_return_total,
+            "sharpe_like": self.stressed_sharpe_like,
+            "dsr": self.stressed_dsr,
+            "psr": self.stressed_psr,
+        }
+
+
+@dataclass
+class CostRobustnessSummary:
+    """Cost-robustness sensitivity scan summary.
+
+    Provides a stress-test layer that answers how sensitive current results
+    are to worse execution costs, without rebuilding the market-impact engine.
+    """
+
+    baseline_assumed_total_cost_bps: float
+    scan_levels: list[float]
+    results: list[CostRobustnessLevel]
+    break_even_cost_multiplier: Optional[float] = None
+    break_even_cost_bps: Optional[float] = None
+    first_degraded_inference_multiplier: Optional[float] = None
+    first_degraded_inference_threshold: Optional[float] = None
+    franken_comparison_note: Optional[str] = None
+    assumptions_limitations: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return {
+            "baseline_assumed_total_cost_bps": self.baseline_assumed_total_cost_bps,
+            "scan_levels": self.scan_levels,
+            "results": [r.to_dict() for r in self.results],
+            "break_even_cost_multiplier": self.break_even_cost_multiplier,
+            "break_even_cost_bps": self.break_even_cost_bps,
+            "first_degraded_inference_multiplier": self.first_degraded_inference_multiplier,
+            "first_degraded_inference_threshold": self.first_degraded_inference_threshold,
+            "franken_comparison_note": self.franken_comparison_note,
+            "assumptions_limitations": self.assumptions_limitations,
+        }
+
+
+def compute_cost_robustness(
+    wf_result: "WalkForwardExperimentResult",
+    franken_record: Optional["FrankenReconciliationRecord"] = None,
+    inference_threshold: Optional[float] = None,
+) -> CostRobustnessSummary:
+    """Compute cost-robustness sensitivity scan for a walk-forward result.
+
+    Recomputes net returns under stressed cost assumptions to assess
+    sensitivity without rerunning the experiment.
+
+    What CAN be recomputed:
+    - Net return total: gross_return_total - (assumed_total_cost_bps * stress_multiplier)
+    - Sharpe-like: from stressed net_returns list via compute_inference_summary
+    - DSR: from stressed sharpe-like, trial_count, track_record_length
+    - PSR: from stressed sharpe-like, track_record_length, skewness, kurtosis
+
+    What CANNOT be recomputed:
+    - PBO: requires re-running with stressed costs
+    - Any metric requiring per-bar order-execution simulation
+
+    Args:
+        wf_result: WalkForwardExperimentResult with return_series and
+            aggregate_economics_summary available.
+        franken_record: Optional Franken reconciliation record for
+            observational comparison note.
+        inference_threshold: Optional threshold for degraded inference detection.
+
+    Returns:
+        CostRobustnessSummary with scan results at each multiplier level.
+    """
+    # Get baseline economics
+    agg_econ = wf_result.aggregate_economics_summary()
+    agg_return = wf_result.aggregate_return_summary()
+
+    if agg_econ is None or agg_return is None:
+        return CostRobustnessSummary(
+            baseline_assumed_total_cost_bps=0.0,
+            scan_levels=list(COST_STRESS_MULTIPLIERS),
+            results=[],
+            assumptions_limitations=(
+                "Cannot compute: no aggregate economics or return summary available. "
+                "Run the experiment first to generate artifacts."
+            ),
+        )
+
+    baseline_cost_bps = agg_econ.assumed_total_cost_bps
+    gross_return_total = agg_return.gross_return_total
+    bars_held = agg_return.bars_held
+    cost_deduction_total = agg_return.cost_deduction_total
+
+    # Build stressed net returns for sharpe computation
+    # Cost per bar = cost_deduction_total / bars_held
+    # Stressed cost per bar = (cost_deduction_total * multiplier) / bars_held
+    # Incremental cost per bar = cost_deduction_total * (multiplier - 1) / bars_held
+    per_bar_cost = cost_deduction_total / bars_held if bars_held > 0 else 0.0
+
+    # Get combined return series for computing stressed sharpe
+    combined_rs = _build_combined_return_series(wf_result)
+    if combined_rs is None:
+        # No return series available - cannot compute sharpe-like
+        sharpe_computable = False
+        combined_net_returns: list[float] = []
+    else:
+        sharpe_computable = True
+        combined_net_returns = list(combined_rs.net_returns)
+        interval = combined_rs.interval
+
+    results: list[CostRobustnessLevel] = []
+    break_even_cost_multiplier: Optional[float] = None
+    break_even_cost_bps: Optional[float] = None
+    first_degraded_inference_multiplier: Optional[float] = None
+
+    # Franken observational comparison
+    franken_comparison_note: Optional[str] = None
+    if franken_record is not None and franken_record.observed_avg_shortfall_bps > 0:
+        franken_bps = franken_record.observed_avg_shortfall_bps
+        if baseline_cost_bps > 0:
+            franken_ratio = franken_bps / baseline_cost_bps
+            franken_comparison_note = (
+                f"Franken observed shortfall ({franken_bps:.1f} bps) is "
+                f"~{franken_ratio:.1f}x the baseline assumption ({baseline_cost_bps:.1f} bps)."
+            )
+        elif franken_bps > 0:
+            franken_comparison_note = (
+                f"Franken observed shortfall ({franken_bps:.1f} bps) but "
+                "baseline assumption is 0 bps."
+            )
+
+    for multiplier in COST_STRESS_MULTIPLIERS:
+        # Stressed cost in bps (for reporting)
+        stressed_cost_bps = baseline_cost_bps * multiplier
+        # Stressed net return: gross minus scaled cost deduction (in decimal)
+        stressed_cost_decimal = cost_deduction_total * multiplier
+        stressed_net_return_total = gross_return_total - stressed_cost_decimal
+
+        # Compute stressed sharpe-like if return series available
+        stressed_sharpe: Optional[float] = None
+        stressed_dsr: Optional[float] = None
+        stressed_psr: Optional[float] = None
+
+        if sharpe_computable and per_bar_cost > 0:
+            # Stressed net = gross - (cost_per_bar * multiplier)
+            # cost_per_bar = gross - net for non-flat bars
+            stressed_returns: list[float] = []
+            for i, net_ret in enumerate(combined_net_returns):
+                gross_ret = combined_rs.gross_returns[i] if i < len(combined_rs.gross_returns) else net_ret
+                if gross_ret != 0.0 or net_ret != 0.0:
+                    # Non-flat bar: stressed net = gross - (cost_per_bar * multiplier)
+                    bar_cost = gross_ret - net_ret
+                    stressed_net = gross_ret - (bar_cost * multiplier)
+                    stressed_returns.append(stressed_net)
+                else:
+                    # Flat bar - no cost
+                    stressed_returns.append(0.0)
+
+            # Build stressed ReturnSeries
+            stressed_rs = ReturnSeries(
+                gross_returns=list(combined_rs.gross_returns),
+                net_returns=stressed_returns,
+                bar_timestamps=list(combined_rs.bar_timestamps),
+                interval=interval,
+            )
+
+            # Compute stressed inference
+            stressed_inf = compute_inference_summary(stressed_rs)
+            stressed_sharpe = stressed_inf.sharpe_like
+
+            # Compute DSR/PSR from stressed sharpe
+            if stressed_sharpe is not None:
+                track_record_length = len(stressed_returns)
+                if track_record_length >= 3:
+                    # Compute skewness/kurtosis manually from stressed returns
+                    stressed_skew = _compute_skewness(stressed_returns)
+                    stressed_kurt = _compute_kurtosis(stressed_returns)
+
+                    # DSR needs trial_count - use experiment's trial_count
+                    dsr_val, _ = compute_dsr(
+                        sharpe_like=stressed_sharpe,
+                        trial_count=wf_result.trial_count,
+                        track_record_length=track_record_length,
+                    )
+                    stressed_dsr = dsr_val
+
+                    # PSR needs skewness/kurtosis
+                    stressed_psr = compute_psr(
+                        sharpe_like=stressed_sharpe,
+                        track_record_length=track_record_length,
+                        skewness=stressed_skew,
+                        kurtosis=stressed_kurt,
+                    )
+
+        elif sharpe_computable and per_bar_cost == 0 and multiplier > 1:
+            # No costs assumed, cannot stress further
+            stressed_sharpe = None
+
+        results.append(CostRobustnessLevel(
+            stress_multiplier=multiplier,
+            stressed_total_cost_bps=stressed_cost_bps,
+            stressed_net_return_total=stressed_net_return_total,
+            stressed_sharpe_like=stressed_sharpe,
+            stressed_dsr=stressed_dsr,
+            stressed_psr=stressed_psr,
+        ))
+
+        # Detect break-even: first level where net_return <= 0
+        if break_even_cost_multiplier is None and stressed_net_return_total <= 0:
+            break_even_cost_multiplier = multiplier
+            break_even_cost_bps = stressed_cost_bps
+
+        # Detect degraded inference: first level where sharpe < threshold
+        if (inference_threshold is not None
+                and first_degraded_inference_multiplier is None
+                and stressed_sharpe is not None
+                and stressed_sharpe < inference_threshold):
+            first_degraded_inference_multiplier = multiplier
+
+    assumptions = (
+        "Recomputed from preserved return series. "
+        "Assumes cost scales linearly with multiplier and is distributed "
+        "evenly across bars held. "
+        "PBO cannot be recomputed without re-running. "
+        "DSR uses experiment trial_count (may not reflect independent backtest count)."
+    )
+
+    return CostRobustnessSummary(
+        baseline_assumed_total_cost_bps=baseline_cost_bps,
+        scan_levels=list(COST_STRESS_MULTIPLIERS),
+        results=results,
+        break_even_cost_multiplier=break_even_cost_multiplier,
+        break_even_cost_bps=break_even_cost_bps,
+        first_degraded_inference_multiplier=first_degraded_inference_multiplier,
+        first_degraded_inference_threshold=inference_threshold,
+        franken_comparison_note=franken_comparison_note,
+        assumptions_limitations=assumptions,
+    )
+
+
+def _build_combined_return_series(
+    wf_result: "WalkForwardExperimentResult",
+) -> Optional[ReturnSeries]:
+    """Build combined ReturnSeries from all splits."""
+    all_gross: list[float] = []
+    all_net: list[float] = []
+    all_ts: list[str] = []
+    interval = "unknown"
+    has_series = False
+
+    for split in wf_result.splits:
+        if split.return_series is not None:
+            has_series = True
+            all_gross.extend(split.return_series.gross_returns)
+            all_net.extend(split.return_series.net_returns)
+            all_ts.extend(split.return_series.bar_timestamps)
+            if split.return_series.interval != "unknown":
+                interval = split.return_series.interval
+
+    if not has_series:
+        return None
+
+    return ReturnSeries(
+        gross_returns=all_gross,
+        net_returns=all_net,
+        bar_timestamps=all_ts,
+        interval=interval,
+    )
+
+
 def compute_dsr(
     sharpe_like: float,
     trial_count: int,
@@ -861,6 +1148,7 @@ class WalkForwardExperimentResult:
     return_summary: Optional[ReturnSummary] = None
     return_series: Optional[ReturnSeries] = None
     inference_summary: Optional[InferenceSummary] = None
+    robustness_summary: Optional[CostRobustnessSummary] = None
 
     def __post_init__(self) -> None:
         if self.strategy_params is None:
@@ -899,6 +1187,12 @@ class WalkForwardExperimentResult:
         if self.inference_summary is None:
             return None
         return self.inference_summary.to_dict()
+
+    def _robustness_summary_to_dict(self) -> dict[str, Any] | None:
+        """Serialize robustness_summary to dict, or None if not set."""
+        if self.robustness_summary is None:
+            return None
+        return self.robustness_summary.to_dict()
 
     def aggregate_inference_summary(self) -> InferenceSummary | None:
         """Aggregate inference summaries from all splits.
@@ -1088,6 +1382,7 @@ class WalkForwardExperimentResult:
             "return_summary": self._return_summary_to_dict(),
             "return_series": self._return_series_to_dict(),
             "inference_summary": self._inference_summary_to_dict(),
+            "robustness_summary": self._robustness_summary_to_dict(),
         }
 
         # Compute inferential summary with split_count as trial proxy for DSR

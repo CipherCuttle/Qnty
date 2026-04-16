@@ -336,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
                     "cost_deduction_total": ret.get("cost_deduction_total"),
                     "inference_summary": inf,
                     "inferential_summary": e.inferential_summary,
+                    "robustness_summary": e.robustness_summary,
                     "artifact_path": str(e.artifact_path),
                 }
                 if e.calibration is not None:

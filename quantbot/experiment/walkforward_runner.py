@@ -13,6 +13,7 @@ from quantbot.experiment.result import (
     ExperimentResult,
     WalkForwardExperimentResult,
     WalkForwardSplitResult,
+    compute_cost_robustness,
 )
 from quantbot.experiment.spec import ExperimentSpec
 from quantbot.experiment.walkforward import WalkForwardSplit, build_walkforward_splits
@@ -289,6 +290,10 @@ def run_walkforward_experiment(
 
     # Run gate checks and attach verdict
     wf_result.gate_verdict = gate_walkforward_result(wf_result)
+
+    # Compute cost-robustness sensitivity scan if return_series is available
+    if wf_result.return_series is not None:
+        wf_result.robustness_summary = compute_cost_robustness(wf_result)
 
     # Write deterministic walkforward_result.json (now includes gate_verdict)
     wf_json_path = output_dir / "walkforward_result.json"

@@ -11,6 +11,10 @@ from quantbot.experiment.result import (
     WalkForwardExperimentResult,
     WalkForwardSplitResult,
     compute_inference_summary,
+    CostRobustnessSummary,
+    CostRobustnessLevel,
+    COST_STRESS_MULTIPLIERS,
+    compute_cost_robustness,
 )
 from quantbot.experiment.runner import run_experiment
 from quantbot.experiment.walkforward import WalkForwardSplit, build_walkforward_splits
@@ -46,4 +50,8 @@ __all__ = [
     "ingest_franken_reconciliation",
     "compare_record",
     "compare_reconciliation_dir",
+    "CostRobustnessSummary",
+    "CostRobustnessLevel",
+    "COST_STRESS_MULTIPLIERS",
+    "compute_cost_robustness",
 ]
