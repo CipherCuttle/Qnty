@@ -8,7 +8,7 @@ and produces a stable normalized summary suitable for sorting/comparison.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -72,6 +72,7 @@ class IndexedExperiment:
     inferential_summary: Optional[dict[str, Any]] = None
     eligible_for_review: bool = False
     ineligibility_reasons: list[str] = None
+    calibration: "CalibrationComparison | None" = field(default=None)
 
     def __post_init__(self) -> None:
         if self.ineligibility_reasons is None:
@@ -152,7 +153,50 @@ def evaluate_eligibility(artifact_data: dict[str, Any]) -> EligibilityResult:
     )
 
 
-def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
+def _find_calibration_for_artifact(
+    artifact: IndexedExperiment,
+    calibration_dir: Path | None,
+) -> "CalibrationComparison | None":
+    """Find a calibration comparison for an artifact by matching family_id, variant_id, trial_count.
+
+    Args:
+        artifact: The indexed experiment to find calibration for.
+        calibration_dir: Directory containing Franken reconciliation files, or None.
+
+    Returns:
+        CalibrationComparison if found, None otherwise.
+    """
+    if calibration_dir is None or not calibration_dir.exists():
+        return None
+
+    from quantbot.experiment.calibration import compare_reconciliation_dir
+
+    try:
+        comparisons = compare_reconciliation_dir(calibration_dir)
+    except Exception:
+        return None
+
+    for comp in comparisons:
+        if (
+            comp.family_id == artifact.family_id
+            and comp.variant_id == artifact.variant_id
+            and comp.trial_count == artifact.trial_count
+        ):
+            # Compute assumed_total_cost_bps and delta_bps from artifact fee/slippage
+            assumed_total = artifact.fee_bps + artifact.slippage_bps
+            comp.assumed_fee_bps = artifact.fee_bps
+            comp.assumed_slippage_bps = artifact.slippage_bps
+            comp.assumed_total_cost_bps = assumed_total
+            comp.delta_bps = comp.observed_avg_shortfall_bps - assumed_total
+            return comp
+
+    return None
+
+
+def index_experiment_artifacts(
+    paths: list[Path],
+    calibration_dir: Path | None = None,
+) -> list[IndexedExperiment]:
     """Read experiment artifact files and produce normalized summaries.
 
     Accepts paths to either experiment_result.json or walkforward_result.json
@@ -215,6 +259,7 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
                 eligible_for_review=eligibility.eligible_for_review,
                 ineligibility_reasons=eligibility.ineligibility_reasons,
             )
+            indexed.calibration = _find_calibration_for_artifact(indexed, calibration_dir)
             results.append(indexed)
 
         elif filename == "walkforward_result.json":
@@ -242,6 +287,7 @@ def index_experiment_artifacts(paths: list[Path]) -> list[IndexedExperiment]:
                 eligible_for_review=eligibility.eligible_for_review,
                 ineligibility_reasons=eligibility.ineligibility_reasons,
             )
+            indexed.calibration = _find_calibration_for_artifact(indexed, calibration_dir)
             results.append(indexed)
 
         else:

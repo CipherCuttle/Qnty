@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+from quantbot.experiment.calibration import CalibrationComparison
 from quantbot.experiment.index import IndexedExperiment, index_experiment_artifacts
 
 
@@ -87,12 +88,22 @@ def _format_review_row(exp: IndexedExperiment) -> str:
         ret_str = f"g={gross:.4f} n={net:.4f} c={cost:.4f}"
     else:
         ret_str = "g=N/A n=N/A c=N/A"
-    return (
+    # Format calibration if present
+    cal = exp.calibration
+    if cal is not None:
+        cal_str = f"calibration: assumed={cal.assumed_total_cost_bps:.1f} observed={cal.observed_avg_shortfall_bps:.1f} delta=+{cal.delta_bps:.1f} n={cal.record_count}"
+    else:
+        cal_str = ""
+    row = (
         f"{exp.experiment_name} | {exp.family_id or 'N/A'} | {exp.variant_id or 'N/A'} | "
         f"{exp.result_type} | {exp.gate_status or 'N/A'} | {exp.trial_count or 0} | "
         f"{exp.fee_bps} | {exp.slippage_bps} | {exp.signal_count} | {exp.split_count} | "
-        f"{ret_str} | {exp.artifact_path}"
+        f"{ret_str}"
     )
+    if cal_str:
+        row += f" | {cal_str}"
+    row += f" | {exp.artifact_path}"
+    return row
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,6 +157,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Surface a compact review record for eligible artifacts only.",
     )
+    parser.add_argument(
+        "--calibration-dir",
+        type=Path,
+        default=None,
+        help="Path to Franken reconciliation files directory.",
+    )
 
     try:
         args = parser.parse_args(argv)
@@ -160,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Index artifacts
     try:
-        indexed = index_experiment_artifacts(args.paths)
+        indexed = index_experiment_artifacts(args.paths, calibration_dir=args.calibration_dir)
     except (FileNotFoundError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -190,14 +207,24 @@ def main(argv: list[str] | None = None) -> int:
             fail_count = sum(1 for e in exps if e.gate_status == "FAIL")
             eligible_count = sum(1 for e in exps if e.eligible_for_review)
             max_trial = max((e.trial_count for e in exps if e.trial_count is not None), default=0)
-            summaries.append({
+            # Aggregate calibration stats
+            with_calibration = [e for e in exps if e.calibration is not None]
+            if with_calibration:
+                avg_delta_bps = sum(e.calibration.delta_bps for e in with_calibration) / len(with_calibration)
+            else:
+                avg_delta_bps = None
+            summary = {
                 "family_id": fid,
                 "artifact_count": len(exps),
                 "max_trial_count": max_trial,
                 "pass_count": pass_count,
                 "fail_count": fail_count,
                 "eligible_count": eligible_count,
-            })
+                "calibration_count": len(with_calibration),
+            }
+            if avg_delta_bps is not None:
+                summary["avg_delta_bps"] = round(avg_delta_bps, 4)
+            summaries.append(summary)
 
         # Sort summaries
         numeric_sort_fields = {"eligible_count", "pass_count", "fail_count", "max_trial_count", "artifact_count"}
@@ -235,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             for e in eligible:
                 ret = e.return_summary or {}
                 inf = e.inference_summary or {}
-                records.append({
+                record = {
                     "experiment_name": e.experiment_name,
                     "family_id": e.family_id,
                     "variant_id": e.variant_id,
@@ -252,7 +279,15 @@ def main(argv: list[str] | None = None) -> int:
                     "inference_summary": inf,
                     "inferential_summary": e.inferential_summary,
                     "artifact_path": str(e.artifact_path),
-                })
+                }
+                if e.calibration is not None:
+                    record["calibration"] = {
+                        "assumed_total_cost_bps": e.calibration.assumed_total_cost_bps,
+                        "observed_avg_shortfall_bps": e.calibration.observed_avg_shortfall_bps,
+                        "delta_bps": e.calibration.delta_bps,
+                        "record_count": e.calibration.record_count,
+                    }
+                records.append(record)
             print(json.dumps({"review_summary": records, "count": len(records)}, indent=2))
         else:
             if not eligible:
@@ -268,12 +303,21 @@ def main(argv: list[str] | None = None) -> int:
                     gross = ret.get("gross_return_total", 0.0) if ret else 0.0
                     net = ret.get("net_return_total", 0.0) if ret else 0.0
                     cost = ret.get("cost_deduction_total", 0.0) if ret else 0.0
+                    cal = exp.calibration
+                    if cal is not None:
+                        cal_line = f"calibration: assumed={cal.assumed_total_cost_bps:.1f} observed={cal.observed_avg_shortfall_bps:.1f} delta=+{cal.delta_bps:.1f} n={cal.record_count}"
+                    else:
+                        cal_line = ""
                     print(
                         f"{exp.experiment_name} | {exp.family_id or 'N/A'} | {exp.variant_id or 'N/A'} | "
                         f"{exp.result_type} | {exp.gate_status or 'N/A'} | {exp.trial_count or 0} | "
                         f"{exp.fee_bps} | {exp.slippage_bps} | {exp.signal_count} | {exp.split_count} | "
-                        f"{gross:.4f} | {net:.4f} | {cost:.4f} | {exp.artifact_path}"
+                        f"{gross:.4f} | {net:.4f} | {cost:.4f}"
                     )
+                    if cal_line:
+                        print(f"  {cal_line} | {exp.artifact_path}")
+                    else:
+                        print(f"  {exp.artifact_path}")
     elif args.json:
         # Machine-readable JSON: list of dicts with new fields
         records = [

@@ -717,3 +717,218 @@ class TestIndexCliReviewSummary:
         assert record["gross_return_total"] is None
         assert record["net_return_total"] is None
         assert record["cost_deduction_total"] is None
+
+
+class TestIndexCliCalibrationSummary:
+    """Tests for calibration delta surfacing in review-summary output."""
+
+    def _capture_output(self, *args):
+        """Capture stdout from main() call."""
+        import io
+        import sys as _sys
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            result = main(list(args))
+        finally:
+            output = _sys.stdout.getvalue()
+            _sys.stdout = old_stdout
+        return result, output
+
+    def _make_eligible_artifact(self, tmp_path, family_id="cal-family", variant_id="v1", trial=1):
+        """Create a minimal eligible walkforward artifact."""
+        artifact = tmp_path / "walkforward_result.json"
+        data = {
+            "experiment_name": "calibration-test",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": family_id,
+            "variant_id": variant_id,
+            "trial_count": trial,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 1,
+            "aggregate_signal_count": 5,
+            "return_summary": {
+                "gross_return_total": 0.05,
+                "net_return_total": 0.03,
+                "cost_deduction_total": 0.02,
+            },
+        }
+        import json
+        artifact.write_text(json.dumps(data))
+        return artifact
+
+    def test_review_summary_with_calibration_text(self, tmp_path):
+        """Text output includes calibration line when calibration is present."""
+        artifact = self._make_eligible_artifact(tmp_path)
+
+        # Create a calibration reconciliation file
+        cal_dir = tmp_path / "calibrations"
+        cal_dir.mkdir()
+        reconciliation = {
+            "family_id": "cal-family",
+            "variant_id": "v1",
+            "trial_count": 1,
+            "observed_avg_shortfall_bps": 12.3,
+            "observed_entry_shortfall_bps": 6.0,
+            "observed_exit_shortfall_bps": 6.3,
+            "record_count": 150,
+        }
+        import json
+        (cal_dir / "cal-family_v1_t1_reconciliation.json").write_text(json.dumps(reconciliation))
+
+        result, output = self._capture_output("--review-summary", "--calibration-dir", str(cal_dir), str(artifact))
+
+        assert result == 0
+        assert "calibration:" in output
+        assert "assumed=15.0" in output  # fee_bps + slippage_bps
+        assert "observed=12.3" in output
+        assert "delta=" in output
+
+    def test_review_summary_with_calibration_json(self, tmp_path):
+        """JSON output includes calibration block when calibration is present."""
+        artifact = self._make_eligible_artifact(tmp_path)
+
+        cal_dir = tmp_path / "calibrations"
+        cal_dir.mkdir()
+        reconciliation = {
+            "family_id": "cal-family",
+            "variant_id": "v1",
+            "trial_count": 1,
+            "observed_avg_shortfall_bps": 12.3,
+            "observed_entry_shortfall_bps": 6.0,
+            "observed_exit_shortfall_bps": 6.3,
+            "record_count": 150,
+        }
+        import json
+        (cal_dir / "cal-family_v1_t1_reconciliation.json").write_text(json.dumps(reconciliation))
+
+        result, output = self._capture_output("--review-summary", "--json", "--calibration-dir", str(cal_dir), str(artifact))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert parsed["count"] == 1
+        record = parsed["review_summary"][0]
+        assert "calibration" in record
+        assert record["calibration"]["assumed_total_cost_bps"] == 15.0
+        assert record["calibration"]["observed_avg_shortfall_bps"] == 12.3
+        assert abs(record["calibration"]["delta_bps"] - (-2.7)) < 0.001  # observed - assumed, with float tolerance
+        assert record["calibration"]["record_count"] == 150
+
+    def test_review_summary_without_calibration(self, tmp_path):
+        """Output works when calibration is None (no --calibration-dir)."""
+        artifact = self._make_eligible_artifact(tmp_path)
+
+        result, output = self._capture_output("--review-summary", "--json", str(artifact))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert parsed["count"] == 1
+        record = parsed["review_summary"][0]
+        # No calibration block should be present
+        assert "calibration" not in record
+
+    def test_family_triage_with_calibration(self, tmp_path):
+        """Family summary includes calibration stats when calibration data present."""
+        # Create two artifacts in subdirectories (proper artifact structure)
+        run1_dir = tmp_path / "run1"
+        run1_dir.mkdir()
+        artifact1 = run1_dir / "walkforward_result.json"
+        import json
+        artifact1.write_text(json.dumps({
+            "experiment_name": "calibration-test-1",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": "test-family",
+            "variant_id": "v1",
+            "trial_count": 1,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 1,
+            "aggregate_signal_count": 5,
+            "return_summary": {
+                "gross_return_total": 0.05,
+                "net_return_total": 0.03,
+                "cost_deduction_total": 0.02,
+            },
+        }))
+
+        run2_dir = tmp_path / "run2"
+        run2_dir.mkdir()
+        artifact2 = run2_dir / "walkforward_result.json"
+        artifact2.write_text(json.dumps({
+            "experiment_name": "calibration-test-2",
+            "strategy_name": "ThresholdStrategy",
+            "fixture_name": "BTCUSDT_8h",
+            "family_id": "test-family",
+            "variant_id": "v1",
+            "trial_count": 2,
+            "fee_bps": 10.0,
+            "slippage_bps": 5.0,
+            "gate_verdict": {"status": "PASS"},
+            "split_count": 1,
+            "aggregate_signal_count": 5,
+            "return_summary": {
+                "gross_return_total": 0.05,
+                "net_return_total": 0.03,
+                "cost_deduction_total": 0.02,
+            },
+        }))
+
+        cal_dir = tmp_path / "calibrations"
+        cal_dir.mkdir()
+        # First calibration: delta = +2.0 bps
+        (cal_dir / "test-family_v1_t1_reconciliation.json").write_text(json.dumps({
+            "family_id": "test-family",
+            "variant_id": "v1",
+            "trial_count": 1,
+            "observed_avg_shortfall_bps": 17.0,
+            "record_count": 100,
+        }))
+        # Second calibration: delta = +4.0 bps
+        (cal_dir / "test-family_v1_t2_reconciliation.json").write_text(json.dumps({
+            "family_id": "test-family",
+            "variant_id": "v1",
+            "trial_count": 2,
+            "observed_avg_shortfall_bps": 19.0,
+            "record_count": 100,
+        }))
+
+        result, output = self._capture_output("--by-family", "--json", "--calibration-dir", str(cal_dir), str(run1_dir), str(run2_dir))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert len(parsed) == 1
+        family_summary = parsed[0]
+        assert family_summary["family_id"] == "test-family"
+        assert family_summary["calibration_count"] == 2
+        assert "avg_delta_bps" in family_summary
+        # Average of +2.0 and +4.0 = +3.0
+        assert abs(family_summary["avg_delta_bps"] - 3.0) < 0.001
+
+    def test_family_triage_without_calibration(self, tmp_path):
+        """Family summary works without calibration data."""
+        artifact = self._make_eligible_artifact(tmp_path, family_id="no-cal-family")
+
+        result, output = self._capture_output("--by-family", "--json", str(artifact))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert len(parsed) == 1
+        family_summary = parsed[0]
+        assert family_summary["family_id"] == "no-cal-family"
+        assert family_summary["calibration_count"] == 0
+        assert "avg_delta_bps" not in family_summary
+
+    def test_missing_calibration_dir_does_not_fail(self, tmp_path):
+        """Graceful handling when calibration dir doesn't exist."""
+        artifact = self._make_eligible_artifact(tmp_path)
+
+        result, output = self._capture_output("--review-summary", "--json", "--calibration-dir", "/nonexistent/path", str(artifact))
+
+        assert result == 0
+        parsed = json.loads(output)
+        assert parsed["count"] == 1
