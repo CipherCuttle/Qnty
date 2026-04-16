@@ -833,6 +833,9 @@ class WalkForwardSplitResult:
     return_summary: Optional[ReturnSummary] = None
     return_series: Optional[ReturnSeries] = None
     inference_summary: Optional[InferenceSummary] = None
+    train_inference_summary: Optional[InferenceSummary] = None
+    train_return_summary: Optional[ReturnSummary] = None
+    split_role: str = "test"  # "train" | "test" | "both"
 
 
 @dataclass

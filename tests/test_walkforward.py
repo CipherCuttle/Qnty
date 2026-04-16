@@ -1,6 +1,7 @@
 """Tests for walk-forward split support."""
 
 from quantbot.data.types import Bar
+from quantbot.experiment.result import InferenceSummary, ReturnSummary
 from quantbot.experiment.walkforward import WalkForwardSplit, build_walkforward_splits
 
 
@@ -120,3 +121,144 @@ class TestEdgeCases:
 
         last = splits[-1]
         assert last.test_end <= len(bars)
+
+
+class TestWalkForwardSplitResultFields:
+    """Tests for WalkForwardSplitResult train/test path substrate fields."""
+
+    def test_walkforward_split_result_default_split_role(self):
+        """Default split_role is 'test'."""
+        from quantbot.experiment.result import WalkForwardSplitResult
+
+        result = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=10,
+            test_bar_count=5,
+            signal_count=0,
+            long_count=0,
+            short_count=0,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+        )
+        assert result.split_role == "test"
+        assert result.train_inference_summary is None
+        assert result.train_return_summary is None
+
+    def test_walkforward_split_result_train_role(self):
+        """split_role can be set to 'train'."""
+        from quantbot.experiment.result import WalkForwardSplitResult
+
+        result = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=10,
+            test_bar_count=5,
+            signal_count=0,
+            long_count=0,
+            short_count=0,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            split_role="train",
+        )
+        assert result.split_role == "train"
+
+    def test_walkforward_split_result_both_role(self):
+        """split_role can be set to 'both'."""
+        from quantbot.experiment.result import WalkForwardSplitResult
+
+        result = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=10,
+            test_bar_count=5,
+            signal_count=0,
+            long_count=0,
+            short_count=0,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            split_role="both",
+        )
+        assert result.split_role == "both"
+
+    def test_walkforward_split_result_train_inference_summary(self):
+        """train_inference_summary can be assigned."""
+        from quantbot.experiment.result import WalkForwardSplitResult
+
+        inference = InferenceSummary(
+            bar_count_for_returns=10,
+            mean_return=0.01,
+            std_return=0.02,
+            gross_return_total=0.1,
+            net_return_total=0.08,
+            cost_deduction_total=0.02,
+            sharpe_like=1.5,
+            annualized=False,
+            interval="unknown",
+            annualization_note="interval unknown",
+        )
+        result = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=10,
+            test_bar_count=5,
+            signal_count=0,
+            long_count=0,
+            short_count=0,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            train_inference_summary=inference,
+        )
+        assert result.train_inference_summary is not None
+        assert result.train_inference_summary.sharpe_like == 1.5
+
+    def test_walkforward_split_result_train_return_summary(self):
+        """train_return_summary can be assigned."""
+        from quantbot.experiment.result import WalkForwardSplitResult
+
+        ret_summary = ReturnSummary(
+            gross_return_total=0.10,
+            net_return_total=0.08,
+            cost_deduction_total=0.02,
+            bars_held=10,
+            winning_bars=6,
+            losing_bars=4,
+        )
+        result = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=10,
+            test_bar_count=5,
+            signal_count=0,
+            long_count=0,
+            short_count=0,
+            flat_count=0,
+            receipt_path=None,
+            artifact_path=None,
+            train_return_summary=ret_summary,
+        )
+        assert result.train_return_summary is not None
+        assert result.train_return_summary.gross_return_total == 0.10
+
+    def test_walkforward_split_result_legacy_test_only(self):
+        """Ensure existing test-only results work without changes."""
+        from quantbot.experiment.result import WalkForwardSplitResult
+
+        result = WalkForwardSplitResult(
+            split_index=0,
+            train_bar_count=10,
+            test_bar_count=100,
+            signal_count=50,
+            long_count=25,
+            short_count=10,
+            flat_count=15,
+            receipt_path=None,
+            artifact_path=None,
+            return_summary=ReturnSummary(
+                gross_return_total=0.05,
+                net_return_total=0.04,
+                cost_deduction_total=0.01,
+            ),
+        )
+        assert result.split_role == "test"  # default
+        assert result.train_inference_summary is None  # not populated
+        assert result.return_summary.gross_return_total == 0.05
