@@ -19,7 +19,18 @@ class ThresholdStrategy:
     Only for testing - no real trading.
     """
 
-    def __init__(self, threshold: float, symbol: str = "TESTUSD") -> None:
+    def __init__(
+        self,
+        threshold: float,
+        symbol: str = "TESTUSD",
+        # Internal params injected by walkforward_runner - accepted but ignored
+        _split_index: int | None = None,
+        _test_start: int | None = None,
+        _test_end: int | None = None,
+        _train_start: int | None = None,
+        _train_end: int | None = None,
+        **kwargs,
+    ) -> None:
         """Initialize threshold strategy.
 
         Args:

@@ -6,6 +6,12 @@ Minimal honest implementation - no optimization, no alpha claims.
 import json
 from pathlib import Path
 
+# Import strategy modules to ensure they register themselves
+import quantbot.strategy.noop  # noqa: F401
+import quantbot.strategy.threshold  # noqa: F401
+import quantbot.strategy.ma_deviation  # noqa: F401
+
+from quantbot.core.determinism import sha256_file
 from quantbot.data.loaders import load_bars_from_csv
 from quantbot.data.types import Bar
 from quantbot.experiment.gates import gate_walkforward_result
@@ -115,22 +121,16 @@ def run_walkforward_experiment(
         train_csv_path = split_dir / "train_bars.csv"
         _write_split_csv(train_bars, train_csv_path)
 
-        # Write a minimal manifest for this split
+        # Write a proper manifest with SHA256 hashes for integrity verification
         split_manifest = {
-            "version": 1,
-            "bars_file": "split_bars.csv",
-            "symbol": spec.strategy_params.get("symbol", "UNKNOWN"),
-            "interval": interval if interval else "unknown",
+            "split_bars.csv": sha256_file(split_csv_path),
         }
         split_manifest_path = split_dir / "manifest.json"
         split_manifest_path.write_text(json.dumps(split_manifest), encoding="utf-8")
 
-        # Write train manifest
+        # Write train manifest with SHA256 hash
         train_manifest = {
-            "version": 1,
-            "bars_file": "train_bars.csv",
-            "symbol": spec.strategy_params.get("symbol", "UNKNOWN"),
-            "interval": interval if interval else "unknown",
+            "train_bars.csv": sha256_file(train_csv_path),
         }
         train_manifest_path = split_dir / "train_manifest.json"
         train_manifest_path.write_text(json.dumps(train_manifest), encoding="utf-8")
