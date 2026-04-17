@@ -153,6 +153,8 @@ def run_walkforward_experiment(
             family_id=spec.family_id if spec.family_id else spec.experiment_name,
             variant_id=f"{base_variant}_split_{idx:03d}",
             trial_count=spec.trial_count,
+            fee_bps=spec.fee_bps,
+            slippage_bps=spec.slippage_bps,
         )
 
         # Build split-specific spec for train experiment
@@ -171,6 +173,8 @@ def run_walkforward_experiment(
             family_id=spec.family_id if spec.family_id else spec.experiment_name,
             variant_id=f"{base_variant}_train_{idx:03d}",
             trial_count=spec.trial_count,
+            fee_bps=spec.fee_bps,
+            slippage_bps=spec.slippage_bps,
         )
 
         # Initialize train results as None (will remain None if train run fails)
