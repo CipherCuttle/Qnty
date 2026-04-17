@@ -181,17 +181,25 @@ class InferentialSummary:
         psr_n: Track record length (bar count) used for PSR computation.
         dsr: Deflated Sharpe Ratio - Sharpe ratio adjusted for multiple testing
             across N trials. None if trial_count < 2 or not computable.
+            WARNING: DSR is a z-score-like test statistic, NOT a probability.
+            It is UNBOUNDED and can exceed 10 or 100 under high trial count
+            + low bar count conditions.
         dsr_trial_count: Trial count used for DSR computation. None if DSR not computed.
         dsr_note: Explanation when DSR is None or has limitations.
+        dsr_interpretation: Always "z_score_like_test_statistic" when DSR is present.
+            Documents that DSR is unbounded and cannot be interpreted as probability.
         sharpe_like: Same as InferenceSummary.sharpe_like for convenience.
         std_return: Same as InferenceSummary.std_return for convenience.
         skewness: Sample skewness (Fisher's) of net returns, or None if n < 3.
         kurtosis: Sample excess kurtosis (Fisher's) of net returns, or None if n < 4.
         assumptions_note: Human-readable note on assumptions and limitations.
+        low_trial_pressure_warning: True when trial_count is suspiciously low
+            relative to bar count (ratio < 0.1), indicating weak multiple-testing
+            correction that may overstate DSR.
 
     Note:
         PSR is NOT a probability of edge. It is P(SR > 0) under normality.
-        DSR is SR adjusted for selection bias across multiple trials.
+        DSR is a z-score-like test statistic measuring (SR - E[SR_max]) / sigma_SR_max.
         Neither constitutes proof of edge or readiness to trade.
     """
 
@@ -202,6 +210,7 @@ class InferentialSummary:
     dsr_note: str = ""
     dsr_provisional: bool = False
     dsr_trial_semantics_note: str = ""
+    dsr_interpretation: Optional[str] = None
     effective_trial_count: Optional[int] = None
     raw_trial_count: Optional[int] = None
     sharpe_like: Optional[float] = None
@@ -212,6 +221,7 @@ class InferentialSummary:
         "Assumes i.i.d. returns; does not account for non-stationarity; "
         "does not constitute proof of edge."
     )
+    low_trial_pressure_warning: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict."""
@@ -223,6 +233,7 @@ class InferentialSummary:
             "dsr_note": self.dsr_note,
             "dsr_provisional": self.dsr_provisional,
             "dsr_trial_semantics_note": self.dsr_trial_semantics_note,
+            "dsr_interpretation": self.dsr_interpretation,
             "effective_trial_count": self.effective_trial_count,
             "raw_trial_count": self.raw_trial_count,
             "sharpe_like": self.sharpe_like,
@@ -230,6 +241,7 @@ class InferentialSummary:
             "skewness": self.skewness,
             "kurtosis": self.kurtosis,
             "assumptions_note": self.assumptions_note,
+            "low_trial_pressure_warning": self.low_trial_pressure_warning,
         }
 
 
@@ -1174,6 +1186,7 @@ def compute_inferential_summary(
     effective_trial_count: Optional[int] = None,
     dsr_provisional: bool = False,
     dsr_trial_semantics_note: str = "",
+    net_returns: Optional[list[float]] = None,
 ) -> InferentialSummary:
     """Build InferentialSummary from InferenceSummary + optional trial metadata.
 
@@ -1187,6 +1200,8 @@ def compute_inferential_summary(
         effective_trial_count: The trial count actually used for DSR computation.
         dsr_provisional: True when trial semantics are weak (e.g., split_count < 2).
         dsr_trial_semantics_note: Human-readable explanation of trial semantics.
+        net_returns: Optional list of net returns for skewness/kurtosis computation.
+            If provided, skewness and kurtosis will be computed and used in PSR.
 
     Returns:
         InferentialSummary with PSR (always if computable) and DSR (if trial_count >= 2).
@@ -1199,12 +1214,16 @@ def compute_inferential_summary(
     dsr: Optional[float] = None
     dsr_trial_count: Optional[int] = None
     dsr_note = ""
+    dsr_interpretation: Optional[str] = None
+    low_trial_pressure_warning = False
 
-    # We need returns to compute skewness/kurtosis, but they may not be available
-    # If inference_summary came from a ReturnSeries, skew/kurt could be passed in
-    # For now, we compute without them (conservative)
+    # Compute skewness and kurtosis if returns are provided
     skew: Optional[float] = None
     kurt: Optional[float] = None
+    if net_returns is not None and len(net_returns) >= 3:
+        skew = _compute_skewness(net_returns)
+    if net_returns is not None and len(net_returns) >= 4:
+        kurt = _compute_kurtosis(net_returns)
 
     # Compute PSR if sharpe_like exists and n >= 2
     if sharpe is not None and n >= 2:
@@ -1215,6 +1234,15 @@ def compute_inferential_summary(
         if sharpe is not None and n >= 3:
             dsr, dsr_note = compute_dsr(sharpe, trial_count, n)
             dsr_trial_count = trial_count
+            dsr_interpretation = "z_score_like_test_statistic"
+            # Check for low trial pressure: trial_count / bar_count < 0.1
+            if n > 0 and trial_count / n < 0.1:
+                low_trial_pressure_warning = True
+                dsr_note = (
+                    f"LOW TRIAL PRESSURE WARNING: trial_count ({trial_count}) / bar_count ({n}) < 0.1. "
+                    f"DSR may overstate adjustment. "
+                    + dsr_note
+                )
         else:
             dsr_note = (
                 f"DSR not computed: sharpe_like={'available' if sharpe is not None else 'None'}, "
@@ -1229,12 +1257,14 @@ def compute_inferential_summary(
         dsr_note=dsr_note,
         dsr_provisional=dsr_provisional,
         dsr_trial_semantics_note=dsr_trial_semantics_note,
+        dsr_interpretation=dsr_interpretation,
         effective_trial_count=effective_trial_count,
         raw_trial_count=raw_trial_count,
         sharpe_like=sharpe,
         std_return=std,
         skewness=skew,
         kurtosis=kurt,
+        low_trial_pressure_warning=low_trial_pressure_warning,
     )
 
 
@@ -1493,7 +1523,10 @@ class ExperimentResult:
         # Compute inferential summary with trial context for multiple-testing-aware inference
         if self.inference_summary is not None:
             trial_count = self.spec.trial_count
-            inferential = compute_inferential_summary(self.inference_summary, trial_count)
+            net_returns = self.return_series.net_returns if self.return_series else None
+            inferential = compute_inferential_summary(
+                self.inference_summary, trial_count, net_returns=net_returns
+            )
             d["inferential_summary"] = inferential.to_dict()
         else:
             d["inferential_summary"] = None
@@ -1807,6 +1840,7 @@ class WalkForwardExperimentResult:
                 )
             else:
                 trial_semantics_note = "DSR computed from split_count."
+            net_returns = self.return_series.net_returns if self.return_series else None
             inferential = compute_inferential_summary(
                 self.inference_summary,
                 effective_trial_count,
@@ -1814,6 +1848,7 @@ class WalkForwardExperimentResult:
                 effective_trial_count=effective_trial_count,
                 dsr_provisional=is_provisional,
                 dsr_trial_semantics_note=trial_semantics_note,
+                net_returns=net_returns,
             )
             d["inferential_summary"] = inferential.to_dict()
         else:

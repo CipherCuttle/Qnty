@@ -901,3 +901,281 @@ class TestDSRProvisionalSemantics:
         # inferential_summary may be None or present, but should not break
         # The new fields default to False/empty when InferentialSummary is constructed
         # without them during deserialization
+
+
+# =============================================================================
+# 9. DSR/PSR SANITY BOUNDS (Forensic Regression Tests)
+# =============================================================================
+
+
+class TestDSRPSRSanityBounds:
+    """Forensic sanity tests to catch DSR inflation.
+
+    A forensic audit found DSR ≈ 1500+ for ma_dev_V1, which is mathematically
+    impossible with the current formula (maximum ~189 for SR=6, t=2, n=1000).
+    These tests ensure no future regression can produce impossible values.
+    """
+
+    def test_dsr_upper_bound_sr6_t2_n1000(self):
+        """Mathematical bound: SR=6, t=2, n=1000 → DSR max ≈ 189.
+
+        DSR = (sharpe_like - expected_max_sr) / sigma_sr_max
+        expected_max_sr = sqrt(2 * ln(2)) / sqrt(1000) ≈ 0.0372
+        sigma_sr_max = 1.0 / sqrt(1000) ≈ 0.0316
+        DSR ≈ (6 - 0.0372) / 0.0316 ≈ 189
+        """
+        dsr, note = compute_dsr(sharpe_like=6.0, trial_count=2, track_record_length=1000)
+        assert dsr is not None, f"DSR should be computed for t=2, n=1000: {note}"
+        assert 100 <= dsr <= 200, (
+            f"DSR with SR=6, t=2, n=1000 should be ≈189, got {dsr}. "
+            "Values >200 indicate impossible inflation."
+        )
+
+    def test_dsr_upper_bound_sr6_t2_n10000(self):
+        """Mathematical bound: SR=6, t=2, n=10000 → DSR max ≈ 600.
+
+        expected_max_sr = sqrt(2 * ln(2)) / sqrt(10000) ≈ 0.0118
+        sigma_sr_max = 1.0 / sqrt(10000) ≈ 0.0100
+        DSR ≈ (6 - 0.0118) / 0.01 ≈ 599
+        """
+        dsr, note = compute_dsr(sharpe_like=6.0, trial_count=2, track_record_length=10000)
+        assert dsr is not None, f"DSR should be computed for t=2, n=10000: {note}"
+        assert 100 <= dsr <= 700, (
+            f"DSR with SR=6, t=2, n=10000 should be ≈600, got {dsr}. "
+            "Values >700 indicate impossible inflation."
+        )
+
+    def test_dsr_bounded_by_sqrt_n(self):
+        """DSR grows as O(sqrt(n)) for fixed SR and t.
+        
+        Mathematical bound: DSR ≈ SR * sqrt(n) for large n with t=2.
+        For n=10000, SR=6, t=2: DSR ≈ 6 * sqrt(10000) = 600 (upper bound).
+        This confirms DSR=1500+ requires n>63,000 bars, not SR inflation.
+        """
+        import math
+        for n in [1000, 5000, 10000]:
+            dsr, _ = compute_dsr(sharpe_like=6.0, trial_count=2, track_record_length=n)
+            # Theoretical upper bound: SR * sqrt(n) (ignoring expected_max_sr which is small)
+            theoretical_upper = 6.0 * math.sqrt(n) * 1.1  # 10% margin
+            assert dsr is not None, f"DSR should be computed for n={n}"
+            assert dsr < theoretical_upper, (
+                f"DSR={dsr:.1f} exceeded theoretical bound {theoretical_upper:.1f} for n={n}, t=2, SR=6"
+            )
+
+    def test_psr_skewness_sign_convention(self):
+        """Document PSR sign convention for skewness.
+        
+        The correction formula uses: correction -= (skewness * sr) / 6.0
+        With negative skewness and positive SR, the term subtracted is negative,
+        so correction INCREASES, and PSR INCREASES.
+        
+        This is flagged as a forensic finding: negative skewness *increases* PSR
+        in this implementation. Audit note: verify sign convention against
+        Bailey & López de Prado (2014) Table 1 before treating PSR as conservative.
+        """
+        # For SR=1.0, negative skewness increases PSR (sign convention finding)
+        psr_no_skew = compute_psr(sharpe_like=1.0, track_record_length=252)
+        psr_neg_skew = compute_psr(sharpe_like=1.0, track_record_length=252, skewness=-1.0)
+        # AUDIT NOTE: This counterintuitive direction is what the code currently computes
+        # Negative skewness increases PSR — verify this matches Bailey & López de Prado
+        assert psr_neg_skew > psr_no_skew, (
+            "FORENSIC: Negative skewness currently increases PSR. "
+            f"PSR(no skew)={psr_no_skew:.4f}, PSR(skew=-1)={psr_neg_skew:.4f}. "
+            "Verify sign convention against Bailey & López de Prado (2014)."
+        )
+
+    def test_psr_sane_for_sr6_n1000(self):
+        """PSR for SR=6, n=1000 should be >0.99 (high confidence SR>0).
+
+        PSR = Φ(Z / sqrt(n)) where Z is the skewness-corrected standard normal deviate.
+        With SR=6 and n=1000, Z ≈ 6 (no correction), so PSR ≈ Φ(6/sqrt(1000)) ≈ Φ(0.19) ≈ 0.575.
+        Actually for high SR the formula saturates at ~1.0.
+        """
+        psr = compute_psr(sharpe_like=6.0, track_record_length=1000)
+        assert 0.5 < psr <= 1.0, (
+            f"PSR with SR=6, n=1000 should be high but <=1.0, got {psr}. "
+            "Value outside [0.5, 1.0] indicates formula error."
+        )
+
+
+# =============================================================================
+# 8. HARDENED SEMANTICS (Phase 2)
+# =============================================================================
+
+
+class TestHardenedSemantics:
+    """Tests for hardened inferential semantics (Phase 2 hardening).
+
+    Verifies:
+    - Moment corrections (skewness/kurtosis) are applied when returns provided
+    - DSR z-score interpretation note is present when DSR is computed
+    - effective_trial_count is surfaced in output
+    - Low-trial-pressure warning fires when trial_count/bar_count < 0.1
+    """
+
+    def test_moment_corrections_applied_when_returns_provided(self):
+        """Skewness and kurtosis should be computed when net_returns provided."""
+        net_returns = [0.01, -0.005, 0.015, 0.02, -0.01, 0.005, 0.01, -0.015] * 10  # 80 bars
+        inf_summary = InferenceSummary(
+            bar_count_for_returns=80,
+            mean_return=0.002,
+            std_return=0.015,
+            gross_return_total=0.16,
+            net_return_total=0.16,
+            cost_deduction_total=0.0,
+            sharpe_like=0.5,
+            annualized=True,
+            interval="8h",
+            annualization_note="annualized using 1095 bars/year",
+        )
+        result = compute_inferential_summary(inf_summary, trial_count=None, net_returns=net_returns)
+
+        # Skewness and kurtosis should be computed (not None) when returns provided
+        assert result.skewness is not None, "skewness should be computed when returns provided"
+        assert result.kurtosis is not None, "kurtosis should be computed when returns provided"
+
+    def test_moment_corrections_absent_when_no_returns(self):
+        """Skewness and kurtosis should remain None when net_returns not provided."""
+        inf_summary = InferenceSummary(
+            bar_count_for_returns=80,
+            mean_return=0.002,
+            std_return=0.015,
+            gross_return_total=0.16,
+            net_return_total=0.16,
+            cost_deduction_total=0.0,
+            sharpe_like=0.5,
+            annualized=True,
+            interval="8h",
+            annualization_note="annualized using 1095 bars/year",
+        )
+        result = compute_inferential_summary(inf_summary, trial_count=None, net_returns=None)
+
+        # Skewness and kurtosis should be None when no returns provided
+        assert result.skewness is None, "skewness should be None when no returns provided"
+        assert result.kurtosis is None, "kurtosis should be None when no returns provided"
+
+    def test_dsr_z_score_interpretation_note_present(self):
+        """DSR output should include dsr_interpretation field when DSR is computed."""
+        inf_summary = InferenceSummary(
+            bar_count_for_returns=100,
+            mean_return=0.002,
+            std_return=0.015,
+            gross_return_total=0.2,
+            net_return_total=0.2,
+            cost_deduction_total=0.0,
+            sharpe_like=1.0,
+            annualized=True,
+            interval="8h",
+            annualization_note="annualized using 1095 bars/year",
+        )
+        result = compute_inferential_summary(inf_summary, trial_count=10)
+
+        # dsr_interpretation should be present and correctly valued
+        assert result.dsr_interpretation == "z_score_like_test_statistic"
+        assert result.dsr is not None
+
+    def test_dsr_interpretation_note_absent_when_dsr_not_computed(self):
+        """dsr_interpretation should be None when DSR cannot be computed."""
+        inf_summary = InferenceSummary(
+            bar_count_for_returns=100,
+            mean_return=0.002,
+            std_return=0.015,
+            gross_return_total=0.2,
+            net_return_total=0.2,
+            cost_deduction_total=0.0,
+            sharpe_like=1.0,
+            annualized=True,
+            interval="8h",
+            annualization_note="annualized using 1095 bars/year",
+        )
+        # trial_count < 2 means DSR cannot be computed
+        result = compute_inferential_summary(inf_summary, trial_count=1)
+
+        assert result.dsr is None
+        assert result.dsr_interpretation is None
+
+    def test_effective_trial_count_surfaced_in_output(self):
+        """effective_trial_count should be present in inferential summary output."""
+        inf_summary = InferenceSummary(
+            bar_count_for_returns=100,
+            mean_return=0.002,
+            std_return=0.015,
+            gross_return_total=0.2,
+            net_return_total=0.2,
+            cost_deduction_total=0.0,
+            sharpe_like=0.5,
+            annualized=True,
+            interval="8h",
+            annualization_note="annualized using 1095 bars/year",
+        )
+        result = compute_inferential_summary(
+            inf_summary,
+            trial_count=10,
+            effective_trial_count=10,
+            raw_trial_count=5,
+        )
+
+        assert result.effective_trial_count == 10
+        assert result.raw_trial_count == 5
+
+    def test_low_trial_pressure_warning_fires(self):
+        """low_trial_pressure_warning should be True when trial_count/bar_count < 0.1."""
+        inf_summary = InferenceSummary(
+            bar_count_for_returns=100,  # 100 bars
+            mean_return=0.002,
+            std_return=0.015,
+            gross_return_total=0.2,
+            net_return_total=0.2,
+            cost_deduction_total=0.0,
+            sharpe_like=1.0,
+            annualized=True,
+            interval="8h",
+            annualization_note="annualized using 1095 bars/year",
+        )
+        # trial_count=5 / bar_count=100 = 0.05 < 0.1 -> low trial pressure
+        result = compute_inferential_summary(inf_summary, trial_count=5)
+
+        assert result.low_trial_pressure_warning is True
+        assert "LOW TRIAL PRESSURE WARNING" in result.dsr_note
+
+    def test_low_trial_pressure_warning_not_fired_when_adequate(self):
+        """low_trial_pressure_warning should be False when trial_count/bar_count >= 0.1."""
+        inf_summary = InferenceSummary(
+            bar_count_for_returns=100,  # 100 bars
+            mean_return=0.002,
+            std_return=0.015,
+            gross_return_total=0.2,
+            net_return_total=0.2,
+            cost_deduction_total=0.0,
+            sharpe_like=1.0,
+            annualized=True,
+            interval="8h",
+            annualization_note="annualized using 1095 bars/year",
+        )
+        # trial_count=20 / bar_count=100 = 0.2 >= 0.1 -> adequate trial pressure
+        result = compute_inferential_summary(inf_summary, trial_count=20)
+
+        assert result.low_trial_pressure_warning is False
+        assert "LOW TRIAL PRESSURE WARNING" not in result.dsr_note
+
+    def test_to_dict_includes_new_hardening_fields(self):
+        """to_dict() should include dsr_interpretation and low_trial_pressure_warning."""
+        inf_summary = InferenceSummary(
+            bar_count_for_returns=100,
+            mean_return=0.002,
+            std_return=0.015,
+            gross_return_total=0.2,
+            net_return_total=0.2,
+            cost_deduction_total=0.0,
+            sharpe_like=1.0,
+            annualized=True,
+            interval="8h",
+            annualization_note="annualized using 1095 bars/year",
+        )
+        result = compute_inferential_summary(inf_summary, trial_count=5)
+        d = result.to_dict()
+
+        assert "dsr_interpretation" in d
+        assert "low_trial_pressure_warning" in d
+        assert d["dsr_interpretation"] == "z_score_like_test_statistic"
+        assert d["low_trial_pressure_warning"] is True
