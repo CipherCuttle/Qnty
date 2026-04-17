@@ -432,6 +432,215 @@ def generate_replication_summary(
     )
 
 
+# ----------------------------------------------------------------------
+# RegimeReplicationSummary - cross-regime replication comparison layer
+# ----------------------------------------------------------------------
+
+
+@dataclass
+class RegimeReplicationSummary:
+    """Cross-regime replication comparison for a family/candidate.
+
+    Provides an observational layer comparing metrics across regime buckets
+    (e.g. low_vol vs high_vol, uptrend vs downtrend) to assess whether
+    results replicate across distinct market regimes. This is NOT proof
+    of edge or generalizability.
+
+    Attributes:
+        regime_dimension: Which regime dimension ("volatility", "trend", or
+                         "combined" if both are used).
+        buckets: Mapping from regime label to aggregated metrics across all
+                 splits in that regime bucket.
+        interpretation: Observational label - one of: regime_replication_available,
+                       regime_replication_mixed, regime_replication_weak,
+                       insufficient_regime_replication_data.
+        regime_bucket_count: Number of distinct regime buckets with data.
+        regime_split_coverage: How many splits were tagged with a regime label.
+    """
+
+    regime_dimension: str = "volatility"
+    buckets: dict[str, dict[str, float | None]] | None = None
+    interpretation: str = "insufficient_regime_replication_data"
+    regime_bucket_count: int = 0
+    regime_split_coverage: int = 0
+
+    def __post_init__(self) -> None:
+        if self.buckets is None:
+            self.buckets = {}
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return {
+            "regime_dimension": self.regime_dimension,
+            "buckets": dict(self.buckets) if self.buckets else {},
+            "interpretation": self.interpretation,
+            "regime_bucket_count": self.regime_bucket_count,
+            "regime_split_coverage": self.regime_split_coverage,
+        }
+
+
+def _classify_regime_replication(
+    buckets: dict[str, dict[str, float | None]],
+) -> tuple[str, int]:
+    """Classify regime replication based on per-bucket metrics.
+
+    Compares net_return direction and sharpe-like similarity across
+    distinct regime buckets.
+
+    Args:
+        buckets: Mapping from regime label -> metrics dict.
+
+    Returns:
+        Tuple of (interpretation, bucket_count).
+    """
+    bucket_list = list(buckets.values())
+    if len(bucket_list) < 2:
+        return "insufficient_regime_replication_data", len(bucket_list)
+
+    # Collect sharpe-like and net_return per bucket
+    sharpe_vals: list[float] = []
+    net_return_vals: list[float] = []
+    for b in bucket_list:
+        sh = b.get("sharpe_like")
+        nr = b.get("net_return")
+        if sh is not None:
+            sharpe_vals.append(sh)
+        if nr is not None:
+            net_return_vals.append(nr)
+
+    if len(sharpe_vals) < 2 and len(net_return_vals) < 2:
+        return "insufficient_regime_replication_data", len(bucket_list)
+
+    signals: list[bool] = []
+
+    # Direction agreement across buckets: same sign net_return
+    if len(net_return_vals) >= 2:
+        signs = [v >= 0 for v in net_return_vals]
+        all_same_sign = all(s == signs[0] for s in signs)
+        signals.append(all_same_sign)
+
+    # Sharpe similarity: std < 0.5 across buckets if multiple available
+    if len(sharpe_vals) >= 2:
+        mean_s = sum(sharpe_vals) / len(sharpe_vals)
+        variance = sum((v - mean_s) ** 2 for v in sharpe_vals) / len(sharpe_vals)
+        std_s = variance ** 0.5
+        similar_sharpe = std_s < 0.5
+        signals.append(similar_sharpe)
+
+    if not signals:
+        return "insufficient_regime_replication_data", len(bucket_list)
+
+    true_count = sum(signals)
+    false_count = len(signals) - true_count
+
+    if true_count >= 2 and false_count <= 0:
+        return "regime_replication_available", len(bucket_list)
+    elif false_count >= 2:
+        return "regime_replication_weak", len(bucket_list)
+    else:
+        return "regime_replication_mixed", len(bucket_list)
+
+
+def _aggregate_bucket_metrics(
+    split_results: list[dict[str, Any]],
+) -> dict[str, dict[str, float | None]]:
+    """Aggregate metrics across split results into per-bucket summaries.
+
+    Args:
+        split_results: List of split result dicts with regime labels and metrics.
+
+    Returns:
+        Dict mapping regime label -> aggregated metrics dict.
+    """
+    from collections import defaultdict
+
+    bucket_metrics: dict[str, dict[str, list[float | None]]] = defaultdict(
+        lambda: {"net_return": [], "sharpe_like": [], "psr": [], "dsr": [], "pbo": []}
+    )
+
+    for split in split_results:
+        regime_label = split.get("regime_label", "unknown")
+        metrics = _compute_replication_metrics(split)
+        if metrics is None:
+            continue
+        for key in bucket_metrics[regime_label]:
+            bucket_metrics[regime_label][key].append(metrics.get(key))
+
+    # Aggregate: use median for sharpe-like, sum for returns, mean for psr/dsr/pbo
+    result: dict[str, dict[str, float | None]] = {}
+    for regime_label, key_lists in bucket_metrics.items():
+        bucket: dict[str, float | None] = {}
+        # Median for net_return and sharpe_like
+        for k in ("net_return", "sharpe_like"):
+            vals = [v for v in key_lists[k] if v is not None]
+            if vals:
+                sorted_vals = sorted(vals)
+                n = len(sorted_vals)
+                bucket[k] = sorted_vals[n // 2]  # median
+            else:
+                bucket[k] = None
+        # Mean for psr, dsr, pbo
+        for k in ("psr", "dsr", "pbo"):
+            vals = [v for v in key_lists[k] if v is not None]
+            bucket[k] = sum(vals) / len(vals) if vals else None
+        result[regime_label] = bucket
+
+    return result
+
+
+def generate_regime_replication_summary(
+    split_results: list[dict[str, Any]],
+    regime_dimension: str = "volatility",
+) -> RegimeReplicationSummary:
+    """Generate a regime replication summary by grouping split results by regime label.
+
+    Args:
+        split_results: List of split result dicts. Each dict must contain:
+            - regime_label: str (the regime label for this split, e.g. "low_vol")
+            - return_summary: dict with net_return_total
+            - inference_summary: dict with sharpe_like
+            - inferential_summary: dict with psr, dsr
+            - overfitting_summary: dict with pbo
+            Or None for any of these if not available.
+        regime_dimension: One of "volatility", "trend", or "combined".
+
+    Returns:
+        RegimeReplicationSummary with per-bucket metrics and interpretation.
+    """
+    if not split_results:
+        return RegimeReplicationSummary(
+            regime_dimension=regime_dimension,
+            buckets={},
+            interpretation="insufficient_regime_replication_data",
+            regime_bucket_count=0,
+            regime_split_coverage=0,
+        )
+
+    # Filter splits that have a regime label
+    tagged_splits = [s for s in split_results if s.get("regime_label")]
+    regime_split_coverage = len(tagged_splits)
+
+    if regime_split_coverage == 0:
+        return RegimeReplicationSummary(
+            regime_dimension=regime_dimension,
+            buckets={},
+            interpretation="insufficient_regime_replication_data",
+            regime_bucket_count=0,
+            regime_split_coverage=0,
+        )
+
+    buckets = _aggregate_bucket_metrics(tagged_splits)
+    interpretation, bucket_count = _classify_regime_replication(buckets)
+
+    return RegimeReplicationSummary(
+        regime_dimension=regime_dimension,
+        buckets=buckets,
+        interpretation=interpretation,
+        regime_bucket_count=bucket_count,
+        regime_split_coverage=regime_split_coverage,
+    )
+
+
 def _compute_skewness(returns: list[float]) -> Optional[float]:
     """Compute population skewness (Fisher's) of a return series.
 
