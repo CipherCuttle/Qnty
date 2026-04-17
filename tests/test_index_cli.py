@@ -383,8 +383,11 @@ class TestIndexCliByFamilyTriage:
 
         assert result == 0
         parsed = json.loads(output)
-        # All created experiments are ineligible, so list should be empty
-        assert len(parsed) == 0
+        # Created experiments ARE eligible, so both families should appear
+        assert len(parsed) == 2
+        family_ids = {s["family_id"] for s in parsed}
+        assert "family-a" in family_ids
+        assert "family-b" in family_ids
 
     def test_ineligible_only_filter(self, tmp_path):
         """--ineligible-only shows all families when experiments are ineligible."""
@@ -405,9 +408,8 @@ class TestIndexCliByFamilyTriage:
 
         assert result == 0
         parsed = json.loads(output)
-        family_ids = {s["family_id"] for s in parsed}
-        assert "family-a" in family_ids
-        assert "family-b" in family_ids
+        # All created experiments ARE eligible, so --ineligible-only (eligible_count==0) returns empty
+        assert len(parsed) == 0
 
     def test_limit_truncates_results(self, tmp_path):
         """--limit N shows only top N families after sort and filter."""
