@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from quantbot.experiment.calibration import MATERIAL_MISMATCH_THRESHOLD_BPS
 from quantbot.experiment.index import (
     IndexedExperiment,
     classify_promotion,
@@ -199,6 +200,158 @@ class TestPaperReviewRequiredPath:
 
         assert verdict.classification == "paper_review_required"
         assert "calibration_requires_external_franken" in verdict.provisional_flags
+
+    def test_calibration_mild_mismatch_no_material_flag(self) -> None:
+        """Mild mismatch (10 bps) does NOT trigger calibration_material_mismatch flag."""
+        exp = IndexedExperiment(
+            experiment_name="calibration-mild-test",
+            strategy_name="ThresholdStrategy",
+            fixture_name="BTCUSDT_8h",
+            gate_status="PASS",
+            split_count=0,
+            signal_count=5,
+            receipt_digest="abc123",
+            artifact_path=Path("/tmp/artifact.json"),
+            result_type="single",
+            family_id="family-001",
+            variant_id="variant-a",
+            trial_count=10,
+            fee_bps=10.0,
+            slippage_bps=3.0,
+            inference_summary={
+                "bar_count_for_returns": 100,
+                "mean_return": 0.001,
+                "std_return": 0.01,
+                "gross_return_total": 0.1,
+                "net_return_total": 0.08,
+                "cost_deduction_total": 0.02,
+                "sharpe_like": 0.8,
+                "annualized": True,
+                "interval": "8h",
+            },
+        )
+        mock_cal = MagicMock()
+        mock_cal.delta_bps = 10.0  # 5 < |delta| <= 15, so mild_mismatch
+        mock_cal.record_count = 100
+        exp.calibration = mock_cal
+
+        verdict = classify_promotion(exp)
+
+        assert "calibration_material_mismatch" not in verdict.review_signal_flags
+
+    def test_calibration_material_mismatch_triggers_flag(self) -> None:
+        """Material mismatch (20 bps) DOES trigger calibration_material_mismatch flag."""
+        exp = IndexedExperiment(
+            experiment_name="calibration-material-test",
+            strategy_name="ThresholdStrategy",
+            fixture_name="BTCUSDT_8h",
+            gate_status="PASS",
+            split_count=0,
+            signal_count=5,
+            receipt_digest="abc123",
+            artifact_path=Path("/tmp/artifact.json"),
+            result_type="single",
+            family_id="family-001",
+            variant_id="variant-a",
+            trial_count=10,
+            fee_bps=10.0,
+            slippage_bps=3.0,
+            inference_summary={
+                "bar_count_for_returns": 100,
+                "mean_return": 0.001,
+                "std_return": 0.01,
+                "gross_return_total": 0.1,
+                "net_return_total": 0.08,
+                "cost_deduction_total": 0.02,
+                "sharpe_like": 0.8,
+                "annualized": True,
+                "interval": "8h",
+            },
+        )
+        mock_cal = MagicMock()
+        mock_cal.delta_bps = 20.0  # > 15 bps, so material_mismatch
+        mock_cal.record_count = 100
+        exp.calibration = mock_cal
+
+        verdict = classify_promotion(exp)
+
+        assert "calibration_material_mismatch" in verdict.review_signal_flags
+
+    def test_calibration_exact_threshold_no_flag(self) -> None:
+        """Exact threshold (15 bps) does NOT trigger calibration_material_mismatch flag."""
+        exp = IndexedExperiment(
+            experiment_name="calibration-exact-test",
+            strategy_name="ThresholdStrategy",
+            fixture_name="BTCUSDT_8h",
+            gate_status="PASS",
+            split_count=0,
+            signal_count=5,
+            receipt_digest="abc123",
+            artifact_path=Path("/tmp/artifact.json"),
+            result_type="single",
+            family_id="family-001",
+            variant_id="variant-a",
+            trial_count=10,
+            fee_bps=10.0,
+            slippage_bps=3.0,
+            inference_summary={
+                "bar_count_for_returns": 100,
+                "mean_return": 0.001,
+                "std_return": 0.01,
+                "gross_return_total": 0.1,
+                "net_return_total": 0.08,
+                "cost_deduction_total": 0.02,
+                "sharpe_like": 0.8,
+                "annualized": True,
+                "interval": "8h",
+            },
+        )
+        mock_cal = MagicMock()
+        mock_cal.delta_bps = MATERIAL_MISMATCH_THRESHOLD_BPS  # exactly 15.0
+        mock_cal.record_count = 100
+        exp.calibration = mock_cal
+
+        verdict = classify_promotion(exp)
+
+        assert "calibration_material_mismatch" not in verdict.review_signal_flags
+
+    def test_calibration_insufficient_records_no_flag(self) -> None:
+        """Insufficient records (record_count < 10) does not trigger material mismatch flag."""
+        exp = IndexedExperiment(
+            experiment_name="calibration-insufficient-test",
+            strategy_name="ThresholdStrategy",
+            fixture_name="BTCUSDT_8h",
+            gate_status="PASS",
+            split_count=0,
+            signal_count=5,
+            receipt_digest="abc123",
+            artifact_path=Path("/tmp/artifact.json"),
+            result_type="single",
+            family_id="family-001",
+            variant_id="variant-a",
+            trial_count=10,
+            fee_bps=10.0,
+            slippage_bps=3.0,
+            inference_summary={
+                "bar_count_for_returns": 100,
+                "mean_return": 0.001,
+                "std_return": 0.01,
+                "gross_return_total": 0.1,
+                "net_return_total": 0.08,
+                "cost_deduction_total": 0.02,
+                "sharpe_like": 0.8,
+                "annualized": True,
+                "interval": "8h",
+            },
+        )
+        mock_cal = MagicMock()
+        mock_cal.delta_bps = 20.0  # Would be material mismatch with enough records
+        mock_cal.record_count = 5  # Below 10 threshold
+        exp.calibration = mock_cal
+
+        verdict = classify_promotion(exp)
+
+        assert "calibration_material_mismatch" not in verdict.review_signal_flags
 
     def test_paper_review_required_with_sharpe_like_no_interval(self) -> None:
         """Sharpe-like without interval => paper_review_required."""

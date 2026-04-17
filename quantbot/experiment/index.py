@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
+from quantbot.experiment.calibration import MATERIAL_MISMATCH_THRESHOLD_BPS
 from quantbot.experiment.result import PromotionSummary, PromotionVerdict
 
 
@@ -333,7 +334,7 @@ def _collect_review_signals(exp: IndexedExperiment) -> tuple[dict[str, Any], lis
     if exp.calibration is not None:
         delta = exp.calibration.delta_bps
         record_count = exp.calibration.record_count
-        if record_count >= 10 and abs(delta) > 5.0:
+        if record_count >= 10 and abs(delta) > MATERIAL_MISMATCH_THRESHOLD_BPS:
             review_signal_flags.append("calibration_material_mismatch")
 
     return signals, provisional_flags, review_signal_flags
