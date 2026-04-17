@@ -40,7 +40,7 @@ class MADeviationStrategy:
             symbol: Symbol for emitted signals.
             threshold_pct: Minimum deviation percentage to trigger signal.
         """
-        self.ma_period = ma_period
+        self.ma_period = int(ma_period)
         self.symbol = symbol
         self.threshold_pct = threshold_pct
         self._bars: list[float] = []
