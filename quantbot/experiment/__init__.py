@@ -15,6 +15,8 @@ from quantbot.experiment.result import (
     CostRobustnessLevel,
     COST_STRESS_MULTIPLIERS,
     compute_cost_robustness,
+    RegimeReplicationSummary,
+    generate_regime_replication_summary,
 )
 from quantbot.experiment.runner import run_experiment
 from quantbot.experiment.walkforward import WalkForwardSplit, build_walkforward_splits
@@ -81,4 +83,7 @@ __all__ = [
     "DEFAULT_TREND_WINDOW",
     "DEFAULT_VOL_HIGH_QUANTILE",
     "DEFAULT_TREND_THRESHOLD",
+    # Cross-regime replication
+    "RegimeReplicationSummary",
+    "generate_regime_replication_summary",
 ]
