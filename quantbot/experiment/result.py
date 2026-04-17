@@ -6,9 +6,9 @@ Paper mode only - no real trading, no profitability claims.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from quantbot.core.determinism import canonical_json_dumps
 from quantbot.experiment.spec import ExperimentSpec
@@ -1828,3 +1828,91 @@ class WalkForwardExperimentResult:
     def write_json(self, path: Path) -> None:
         """Write result as deterministic JSON to disk."""
         path.write_text(self.to_json(), encoding="utf-8")
+
+
+# ----------------------------------------------------------------------
+# PromotionVerdict and PromotionSummary - Qnty → Franken promotion contract
+# ----------------------------------------------------------------------
+
+
+@dataclass
+class PromotionVerdict:
+    """Machine-readable promotion classification for Qnty → Franken promotion contract.
+
+    This is a PAPER/SHADOW contract only. NOT for live trading.
+
+    Attributes:
+        classification: paper_eligible | paper_review_required | paper_ineligible
+        hard_gate_status: PASS | FAIL
+        hard_gate_reasons: Human-readable reasons for hard gate status
+        eligibility_status: PASS | FAIL
+        eligibility_reasons: Human-readable reasons for eligibility status
+        review_signals: Soft review signals (OBSERVATIONAL only)
+        review_signal_flags: Keys of signals that triggered review_required
+        provisional_flags: Provisional dimensions present (for transparency)
+        provenance: artifact_path, family_id, variant_id, trial_count, result_type
+        honest_caveats: Explicit limitations of this contract
+
+    Hard Gates (all must pass):
+        - bar_count > 0 (single) / split_count >= 2 (walkforward)
+        - signal_count >= 3 (single) / total_signal_count >= 5 (walkforward)
+        - gate_status == PASS
+
+    Provisional Dimensions (surfaced but NOT used as gates):
+        - pbo (non-canonical path-dispersion proxy)
+        - dsr_trial_semantics (exploration count, not independent trials)
+        - calibration_delta_bps (requires external Franken data)
+        - psr assumes i.i.d. normality (may not hold)
+        - sharpe_like without interval (annualization issue)
+    """
+
+    classification: Literal["paper_eligible", "paper_review_required", "paper_ineligible"]
+    hard_gate_status: Literal["PASS", "FAIL"]
+    hard_gate_reasons: list[str]
+    eligibility_status: Literal["PASS", "FAIL"]
+    eligibility_reasons: list[str]
+    review_signals: dict[str, Any]
+    review_signal_flags: list[str]
+    provisional_flags: list[str]
+    provenance: dict[str, Any]
+    honest_caveats: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return asdict(self)
+
+
+@dataclass
+class PromotionSummary:
+    """Top-level promotion contract output.
+
+    PAPER/SHADOW CONTRACT ONLY - NOT for live trading.
+    """
+
+    contract_version: str = "1.0.0"
+    generated_at: str = ""  # ISO 8601
+    artifact_path: str = ""
+    experiment_name: str = ""
+    family_id: Optional[str] = None
+    variant_id: Optional[str] = None
+    result_type: Literal["single", "walkforward"] = "single"
+    verdict: PromotionVerdict = None
+
+    def __post_init__(self) -> None:
+        if self.verdict is None:
+            self.verdict = PromotionVerdict(
+                classification="paper_ineligible",
+                hard_gate_status="FAIL",
+                hard_gate_reasons=["verdict not yet computed"],
+                eligibility_status="FAIL",
+                eligibility_reasons=["verdict not yet computed"],
+                review_signals={},
+                review_signal_flags=[],
+                provisional_flags=[],
+                provenance={},
+                honest_caveats=["verdict not yet computed"],
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict."""
+        return asdict(self)

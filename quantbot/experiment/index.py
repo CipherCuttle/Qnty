@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
+
+from quantbot.experiment.result import PromotionSummary, PromotionVerdict
 
 
 @dataclass
@@ -75,6 +78,7 @@ class IndexedExperiment:
     calibration: "CalibrationComparison | None" = field(default=None)
     overfitting_summary: Optional[dict[str, Any]] = None
     robustness_summary: Optional[dict[str, Any]] = None
+    promotion_classification: Optional[dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         if self.ineligibility_reasons is None:
@@ -152,6 +156,283 @@ def evaluate_eligibility(artifact_data: dict[str, Any]) -> EligibilityResult:
     return EligibilityResult(
         eligible_for_review=len(reasons) == 0,
         ineligibility_reasons=reasons
+    )
+
+
+def _evaluate_hard_gates(exp: IndexedExperiment) -> tuple[Literal["PASS", "FAIL"], list[str]]:
+    """Evaluate hard gate criteria for promotion eligibility.
+
+    Hard gates (all must pass):
+        - bar_count > 0 (single) / split_count >= 2 (walkforward)
+        - signal_count >= 3 (single) / total_signal_count >= 5 (walkforward)
+        - gate_status == PASS
+
+    Returns:
+        Tuple of (gate_status, list of failure reasons)
+    """
+    reasons: list[str] = []
+
+    if exp.result_type == "single":
+        # Single experiment: bar_count > 0, signal_count >= 3
+        bar_count = exp.inference_summary.get("bar_count_for_returns", 0) if exp.inference_summary else 0
+        signal_count = exp.signal_count
+
+        if bar_count == 0:
+            reasons.append("bar_count is zero")
+        if signal_count < 3:
+            reasons.append(f"signal_count {signal_count} < 3 (degenerate threshold)")
+    else:
+        # Walkforward: split_count >= 2, total_signal_count >= 5
+        split_count = exp.split_count
+        signal_count = exp.signal_count  # aggregate_signal_count for walkforward
+
+        if split_count < 2:
+            reasons.append(f"split_count {split_count} < 2 (minimum viable)")
+        if signal_count < 5:
+            reasons.append(f"total_signal_count {signal_count} < 5 (aggregate minimum)")
+
+    # Gate status must be PASS
+    if exp.gate_status != "PASS":
+        reasons.append(f"gate_status is {exp.gate_status}, expected PASS")
+
+    status: Literal["PASS", "FAIL"] = "FAIL" if reasons else "PASS"
+    return status, reasons
+
+
+def _evaluate_eligibility_fields(exp: IndexedExperiment) -> tuple[Literal["PASS", "FAIL"], list[str]]:
+    """Evaluate presence of required eligibility fields.
+
+    Required fields:
+        - family_id
+        - variant_id
+        - trial_count
+        - fee_bps
+        - slippage_bps
+
+    Returns:
+        Tuple of (eligibility_status, list of missing field reasons)
+    """
+    reasons: list[str] = []
+
+    if not exp.family_id:
+        reasons.append("missing family_id")
+    if not exp.variant_id:
+        reasons.append("missing variant_id")
+    if exp.trial_count is None:
+        reasons.append("missing trial_count")
+    if exp.fee_bps is None or exp.fee_bps == 0.0:
+        reasons.append("missing or zero fee_bps")
+    if exp.slippage_bps is None or exp.slippage_bps == 0.0:
+        reasons.append("missing or zero slippage_bps")
+
+    status: Literal["PASS", "FAIL"] = "FAIL" if reasons else "PASS"
+    return status, reasons
+
+
+def _collect_review_signals(exp: IndexedExperiment) -> tuple[dict[str, Any], list[str], list[str]]:
+    """Collect soft review signals for observability.
+
+    These signals are OBSERVATIONAL only and do NOT gate promotion.
+
+    Returns:
+        Tuple of (review_signals dict, provisional_flags list, review_signal_flags list)
+    """
+    signals: dict[str, Any] = {}
+    provisional_flags: list[str] = []
+    review_signal_flags: list[str] = []
+
+    # Economics
+    if exp.economics_summary:
+        signals["economics"] = {
+            "fee_bps": exp.economics_summary.get("fee_bps"),
+            "slippage_bps": exp.economics_summary.get("slippage_bps"),
+            "assumed_total_cost_bps": exp.economics_summary.get("assumed_total_cost_bps"),
+            "cost_side_count": exp.economics_summary.get("cost_side_count"),
+        }
+
+    # Returns
+    if exp.return_summary:
+        signals["returns"] = {
+            "gross_return_total": exp.return_summary.get("gross_return_total"),
+            "net_return_total": exp.return_summary.get("net_return_total"),
+        }
+
+    # Inferential signals (PSR, DSR, skewness, kurtosis)
+    if exp.inferential_summary:
+        inf = exp.inferential_summary
+        signals["inferential"] = {
+            "psr": inf.get("psr"),
+            "dsr": inf.get("dsr"),
+            "dsr_provisional": inf.get("dsr_provisional", False),
+            "dsr_trial_semantics_note": inf.get("dsr_trial_semantics_note", ""),
+            "sharpe_like": inf.get("sharpe_like"),
+            "skewness": inf.get("skewness"),
+            "kurtosis": inf.get("kurtosis"),
+        }
+        # PSR assumes i.i.d. normality - mark as provisional if PSR is present
+        if inf.get("psr") is not None:
+            provisional_flags.append("psr_assumes_iid")
+        # DSR trial semantics are exploration count, not independent trials
+        if inf.get("dsr") is not None and inf.get("dsr_provisional"):
+            provisional_flags.append("dsr_trial_semantics_exploration_count")
+
+    # Cost robustness
+    if exp.robustness_summary:
+        break_even = exp.robustness_summary.get("break_even_cost_multiplier")
+        if break_even is not None:
+            signals["cost_robustness"] = {
+                "break_even_cost_multiplier": break_even,
+            }
+
+    # PBO (provisional - non-canonical path-dispersion proxy)
+    if exp.overfitting_summary:
+        pbo = exp.overfitting_summary.get("pbo")
+        if pbo is not None:
+            signals["pbo"] = {
+                "pbo": pbo,
+                "path_count": exp.overfitting_summary.get("path_count"),
+                "method": exp.overfitting_summary.get("method"),
+            }
+            provisional_flags.append("pbo_non_canonical")
+
+    # Calibration delta_bps (requires external Franken data)
+    if exp.calibration is not None:
+        signals["calibration"] = {
+            "delta_bps": exp.calibration.delta_bps,
+            "assumed_total_cost_bps": exp.calibration.assumed_total_cost_bps,
+            "observed_avg_shortfall_bps": exp.calibration.observed_avg_shortfall_bps,
+            "record_count": exp.calibration.record_count,
+        }
+        provisional_flags.append("calibration_requires_external_franken")
+
+    # Sharpe-like without interval (annualization issue)
+    if exp.inference_summary:
+        sharpe_like = exp.inference_summary.get("sharpe_like")
+        interval = exp.inference_summary.get("interval", "unknown")
+        if sharpe_like is not None and interval == "unknown":
+            provisional_flags.append("sharpe_like_without_interval")
+
+    # Review signal flags: detect signals that warrant review
+    # (these are observational flags, not hard gates)
+    if exp.inferential_summary:
+        psr = exp.inferential_summary.get("psr")
+        dsr = exp.inferential_summary.get("dsr")
+        dsr_prov = exp.inferential_summary.get("dsr_provisional", False)
+        if psr is not None and psr < 0.5:
+            review_signal_flags.append("psr_below_0.5")
+        if dsr is not None and dsr < 0.5:
+            review_signal_flags.append("dsr_below_0.5")
+        if dsr_prov:
+            review_signal_flags.append("dsr_provisional_trial_semantics")
+
+    if exp.robustness_summary:
+        break_even = exp.robustness_summary.get("break_even_cost_multiplier")
+        if break_even is not None and break_even < 1.0:
+            review_signal_flags.append("break_even_below_1.0")
+
+    if exp.calibration is not None:
+        delta = exp.calibration.delta_bps
+        record_count = exp.calibration.record_count
+        if record_count >= 10 and abs(delta) > 5.0:
+            review_signal_flags.append("calibration_material_mismatch")
+
+    return signals, provisional_flags, review_signal_flags
+
+
+def classify_promotion(exp: IndexedExperiment) -> PromotionVerdict:
+    """Classify a shortlisted candidate for Qnty → Franken promotion.
+
+    PAPER/SHADOW CONTRACT ONLY - NOT for live trading.
+
+    Hard gates (all must pass):
+        - bar_count > 0 (single) / split_count >= 2 (walkforward)
+        - signal_count >= 3 (single) / total_signal_count >= 5 (walkforward)
+        - gate_status == PASS
+
+    Soft review signals are OBSERVATIONAL only.
+
+    Provisional dimensions (surfaced but NOT used as gates):
+        - pbo (non-canonical path-dispersion proxy)
+        - dsr_trial_semantics (exploration count, not independent trials)
+        - calibration_delta_bps (requires external Franken data)
+        - psr assumes i.i.d. (may not hold)
+        - sharpe_like without interval (annualization issue)
+
+    Classification Logic:
+        - paper_eligible: ALL hard gates PASS AND ALL eligibility fields present AND no provisional issues
+        - paper_review_required: ALL hard gates PASS AND ALL eligibility fields present BUT has provisional signals
+        - paper_ineligible: ANY hard gate FAIL OR any eligibility field missing
+    """
+    # Evaluate hard gates
+    hard_gate_status, hard_gate_reasons = _evaluate_hard_gates(exp)
+
+    # Evaluate eligibility fields
+    eligibility_status, eligibility_reasons = _evaluate_eligibility_fields(exp)
+
+    # Collect review signals
+    review_signals, provisional_flags, review_signal_flags = _collect_review_signals(exp)
+
+    # Honest caveats
+    honest_caveats = [
+        "PAPER/SHADOW CONTRACT ONLY - NOT for live trading.",
+        "Hard gates evaluate structural criteria only, not profitability.",
+        "Soft review signals are OBSERVATIONAL - they do NOT constitute proof of edge.",
+        "PSR assumes i.i.d. returns - this assumption may not hold in practice.",
+        "DSR trial semantics reflect exploration count, not independent trials.",
+        "PBO is a non-canonical path-dispersion proxy - not a standard metric.",
+        "calibration_delta_bps requires external Franken data not available here.",
+        "Sharpe-like without known interval cannot be annualized.",
+        "This contract cannot claim alpha, profitability, or readiness for live trading.",
+    ]
+
+    # Provenance
+    provenance = {
+        "artifact_path": str(exp.artifact_path),
+        "family_id": exp.family_id,
+        "variant_id": exp.variant_id,
+        "trial_count": exp.trial_count,
+        "result_type": exp.result_type,
+    }
+
+    # Classification logic
+    if hard_gate_status == "FAIL" or eligibility_status == "FAIL":
+        classification: Literal["paper_eligible", "paper_review_required", "paper_ineligible"] = "paper_ineligible"
+    elif len(provisional_flags) > 0:
+        classification = "paper_review_required"
+    else:
+        classification = "paper_eligible"
+
+    return PromotionVerdict(
+        classification=classification,
+        hard_gate_status=hard_gate_status,
+        hard_gate_reasons=hard_gate_reasons,
+        eligibility_status=eligibility_status,
+        eligibility_reasons=eligibility_reasons,
+        review_signals=review_signals,
+        review_signal_flags=review_signal_flags,
+        provisional_flags=provisional_flags,
+        provenance=provenance,
+        honest_caveats=honest_caveats,
+    )
+
+
+def compute_promotion_summary(exp: IndexedExperiment) -> PromotionSummary:
+    """Compute a full promotion summary for an indexed experiment.
+
+    PAPER/SHADOW CONTRACT ONLY - NOT for live trading.
+    """
+    verdict = classify_promotion(exp)
+    generated_at = datetime.now(timezone.utc).isoformat()
+
+    return PromotionSummary(
+        contract_version="1.0.0",
+        generated_at=generated_at,
+        artifact_path=str(exp.artifact_path),
+        experiment_name=exp.experiment_name,
+        family_id=exp.family_id,
+        variant_id=exp.variant_id,
+        result_type=exp.result_type,
+        verdict=verdict,
     )
 
 
@@ -263,6 +544,9 @@ def index_experiment_artifacts(
                 overfitting_summary=data.get("overfitting_summary"),
             )
             indexed.calibration = _find_calibration_for_artifact(indexed, calibration_dir)
+            # Compute promotion classification
+            verdict = classify_promotion(indexed)
+            indexed.promotion_classification = verdict.to_dict()
             results.append(indexed)
 
         elif filename == "walkforward_result.json":
@@ -293,6 +577,9 @@ def index_experiment_artifacts(
                 robustness_summary=data.get("robustness_summary"),
             )
             indexed.calibration = _find_calibration_for_artifact(indexed, calibration_dir)
+            # Compute promotion classification
+            verdict = classify_promotion(indexed)
+            indexed.promotion_classification = verdict.to_dict()
             results.append(indexed)
 
         else:

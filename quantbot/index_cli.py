@@ -105,6 +105,11 @@ def _format_review_row(exp: IndexedExperiment) -> str:
         path_cnt = of_summary.get("path_count")
         pbo_stat = classify_pbo_status(pbo_val, path_cnt)
         pbo_str = f"pbo: method={of_summary.get('method', 'N/A')} paths={path_cnt if path_cnt is not None else '?'} pbo={pbo_val if pbo_val is not None else '?'} [{pbo_stat}]"
+    # Format promotion classification if present
+    promo_str = ""
+    if exp.promotion_classification is not None:
+        pc = exp.promotion_classification
+        promo_str = f"promotion: [{pc.get('classification', 'N/A')}] hard_gate={pc.get('hard_gate_status', 'N/A')}"
     row = (
         f"{exp.experiment_name} | {exp.family_id or 'N/A'} | {exp.variant_id or 'N/A'} | "
         f"{exp.result_type} | {exp.gate_status or 'N/A'} | {exp.trial_count or 0} | "
@@ -115,6 +120,8 @@ def _format_review_row(exp: IndexedExperiment) -> str:
         row += f" | {cal_str}"
     if pbo_str:
         row += f" | {pbo_str}"
+    if promo_str:
+        row += f" | {promo_str}"
     row += f" | {exp.artifact_path}"
     return row
 
@@ -477,6 +484,7 @@ def main(argv: list[str] | None = None) -> int:
                 "inferential_summary": e.inferential_summary,
                 "eligible_for_review": e.eligible_for_review,
                 "ineligibility_reasons": e.ineligibility_reasons,
+                "promotion_classification": e.promotion_classification,
                 **({"overfitting_summary": e.overfitting_summary} if args.overfitting else {}),
             }
             for e in indexed
