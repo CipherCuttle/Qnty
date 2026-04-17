@@ -28,6 +28,20 @@ from quantbot.experiment.calibration import (
     compare_record,
     compare_reconciliation_dir,
 )
+from quantbot.experiment.regime import (
+    RegimeMetadata,
+    CombinedRegimeMetadata,
+    compute_combined_regime,
+    compute_vol_regime,
+    compute_trend_regime,
+    compute_log_returns,
+    VolRegimeLabel,
+    TrendRegimeLabel,
+    DEFAULT_VOL_WINDOW,
+    DEFAULT_TREND_WINDOW,
+    DEFAULT_VOL_HIGH_QUANTILE,
+    DEFAULT_TREND_THRESHOLD,
+)
 
 __all__ = [
     "ExperimentSpec",
@@ -54,4 +68,17 @@ __all__ = [
     "CostRobustnessLevel",
     "COST_STRESS_MULTIPLIERS",
     "compute_cost_robustness",
+    # Regime-tagging substrate
+    "RegimeMetadata",
+    "CombinedRegimeMetadata",
+    "compute_combined_regime",
+    "compute_vol_regime",
+    "compute_trend_regime",
+    "compute_log_returns",
+    "VolRegimeLabel",
+    "TrendRegimeLabel",
+    "DEFAULT_VOL_WINDOW",
+    "DEFAULT_TREND_WINDOW",
+    "DEFAULT_VOL_HIGH_QUANTILE",
+    "DEFAULT_TREND_THRESHOLD",
 ]
