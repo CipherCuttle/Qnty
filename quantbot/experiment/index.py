@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 from quantbot.experiment.calibration import MATERIAL_MISMATCH_THRESHOLD_BPS
-from quantbot.experiment.result import PromotionSummary, PromotionVerdict
+from quantbot.experiment.result import PromotionSummary, PromotionVerdict, ReplicationSummary
 
 
 @dataclass
@@ -79,6 +79,7 @@ class IndexedExperiment:
     calibration: "CalibrationComparison | None" = field(default=None)
     overfitting_summary: Optional[dict[str, Any]] = None
     robustness_summary: Optional[dict[str, Any]] = None
+    replication_summary: Optional["ReplicationSummary"] = None
     promotion_classification: Optional[dict[str, Any]] = None
 
     def __post_init__(self) -> None:
@@ -336,6 +337,11 @@ def _collect_review_signals(exp: IndexedExperiment) -> tuple[dict[str, Any], lis
         record_count = exp.calibration.record_count
         if record_count >= 10 and abs(delta) > MATERIAL_MISMATCH_THRESHOLD_BPS:
             review_signal_flags.append("calibration_material_mismatch")
+
+    # Replication weak: cross-asset replication showed weak agreement
+    if exp.replication_summary is not None:
+        if exp.replication_summary.interpretation == "replication_weak":
+            review_signal_flags.append("replication_weak")
 
     return signals, provisional_flags, review_signal_flags
 
