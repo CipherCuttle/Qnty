@@ -10,9 +10,10 @@ import argparse
 import sys
 from pathlib import Path
 
-# Import threshold strategy to register it in the experiment registry
+# Import strategies to register them in the experiment registry
 import quantbot.strategy.threshold  # noqa: F401
 import quantbot.strategy.rolling_return_breakout  # noqa: F401
+import quantbot.strategy.regime_filtered_breakout  # noqa: F401
 
 from quantbot.experiment import ExperimentSpec, run_walkforward_experiment
 from quantbot.version import ENGINE_VERSION
