@@ -219,7 +219,7 @@ def _compute_return_summary(strategy, bars, economics_summary, interval: str = "
     bar_timestamps: list[str] = []
 
     # Per-bar cost for net return calculation (distributed evenly)
-    cost_per_event = economics_summary.assumed_total_cost_bps / 10000.0
+    cost_per_event = (economics_summary.fee_bps + economics_summary.slippage_bps) / 10000.0
     cost_deduction_total = economics_summary.cost_side_count * cost_per_event
 
     for i in range(1, len(bars)):

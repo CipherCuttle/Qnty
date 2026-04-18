@@ -598,7 +598,7 @@ class TestNetReturnDeduction:
         bars = self._make_bars([100.0, 102.0])
 
         # 10 bps fee + 3 bps slippage = 13 bps per event
-        # The function computes: entry=1, exit=1, cost_side_count=2
+        # assumed_total_cost_bps is the per-side cost (not total cost)
         economics = EconomicsSummary(
             cost_side_count=2,  # entry + exit
             entry_count=1,
@@ -606,17 +606,17 @@ class TestNetReturnDeduction:
             flip_count=0,
             fee_bps=10.0,
             slippage_bps=3.0,
-            assumed_total_cost_bps=26.0,  # 2 * 13
+            assumed_total_cost_bps=13.0,  # per-side cost: fee + slippage
         )
 
         result, return_series = _compute_return_summary(strategy, bars, economics)
 
         # Gross: (102-100)/100 = 0.02
-        # Cost: 2 * (26/10000) = 0.0052 (cost_per_event = assumed_total_cost_bps/10000)
-        # Net: 0.02 - 0.0052 = 0.0148
+        # Cost: cost_side_count (2) * cost_per_event (13/10000 = 0.0013) = 0.0026
+        # Net: 0.02 - 0.0026 = 0.0174
         assert abs(result.gross_return_total - 0.02) < 0.0001
-        assert abs(result.cost_deduction_total - 0.0052) < 0.0001
-        assert abs(result.net_return_total - 0.0148) < 0.0001
+        assert abs(result.cost_deduction_total - 0.0026) < 0.0001
+        assert abs(result.net_return_total - 0.0174) < 0.0001
 
     def test_net_return_with_explicit_cost_rate(self) -> None:
         """Test net = gross - cost_deduction with explicit cost rate."""
@@ -625,7 +625,8 @@ class TestNetReturnDeduction:
         strategy = self._make_mock_strategy(signals)
         bars = self._make_bars([100.0, 110.0])
 
-        # 10 bps total cost, 1 cost-bearing event
+        # 10 bps total cost (7 fee + 3 slippage), 1 cost-bearing event
+        # assumed_total_cost_bps is the per-side cost
         economics = EconomicsSummary(
             cost_side_count=1,
             entry_count=1,
@@ -633,13 +634,13 @@ class TestNetReturnDeduction:
             flip_count=0,
             fee_bps=7.0,
             slippage_bps=3.0,
-            assumed_total_cost_bps=10.0,
+            assumed_total_cost_bps=10.0,  # per-side cost: fee + slippage
         )
 
         result, return_series = _compute_return_summary(strategy, bars, economics)
 
         # Gross: (110-100)/100 = 0.10
-        # Cost: 1 * (10/10000) = 0.001
+        # Cost: cost_side_count (1) * cost_per_event (10/10000 = 0.001) = 0.001
         # Net: 0.10 - 0.001 = 0.099
         assert abs(result.gross_return_total - 0.10) < 0.0001
         assert abs(result.cost_deduction_total - 0.001) < 0.0001
@@ -653,6 +654,7 @@ class TestNetReturnDeduction:
         bars = self._make_bars([100.0, 102.0])
 
         # Flip = exit + entry = 2 cost-bearing events
+        # assumed_total_cost_bps is the per-side cost (not total cost)
         economics = EconomicsSummary(
             cost_side_count=2,  # flip = exit + entry
             entry_count=1,
@@ -660,15 +662,15 @@ class TestNetReturnDeduction:
             flip_count=1,
             fee_bps=10.0,
             slippage_bps=0.0,
-            assumed_total_cost_bps=20.0,  # 2 * 10
+            assumed_total_cost_bps=10.0,  # per-side cost: fee + slippage
         )
 
         result, return_series = _compute_return_summary(strategy, bars, economics)
 
         # Verify gross return is computed (actual value depends on position state timing)
         assert result.gross_return_total > 0
-        # Cost: 2 events * 20/10000 = 0.004
-        assert abs(result.cost_deduction_total - 0.004) < 0.0001
+        # Cost: cost_side_count (2) * cost_per_event (10/10000 = 0.001) = 0.002
+        assert abs(result.cost_deduction_total - 0.002) < 0.0001
         # Net = gross - cost
         assert result.net_return_total < result.gross_return_total
 
