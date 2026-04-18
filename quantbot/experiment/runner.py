@@ -141,7 +141,7 @@ def _compute_economics_summary(strategy, bars, fee_bps: float, slippage_bps: flo
                     flip_count += 1
                 prev_direction = "short"
 
-    # cost_side_count = entries + exits (flips count as 2 since they are exit+entry)
+    # cost_side_count = entries + exits + flips (each trade event pays once)
     cost_side_count = entry_count + exit_count + flip_count
     assumed_total_cost_bps = cost_side_count * (fee_bps + slippage_bps)
 

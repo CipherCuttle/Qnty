@@ -59,6 +59,17 @@ class TestExperimentCliArgParsing:
         # Experiment succeeds when strategy is properly registered
         assert result == 0
 
+    def test_rolling_return_breakout_strategy_accepted(self, tmp_path):
+        """RollingReturnBreakoutStrategy is registered and accepted by the CLI."""
+        out = tmp_path / "out"
+        out.mkdir()
+        result = main([
+            "--fixture", "btcusdt-8h",
+            "--strategy", "RollingReturnBreakoutStrategy",
+            "--out", str(out),
+        ])
+        assert result == 0
+
     def test_multiple_params_accepted(self, tmp_path):
         out = tmp_path / "out"
         out.mkdir()

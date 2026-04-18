@@ -646,7 +646,7 @@ class TestComputeEconomicsSummary:
         assert result.cost_side_count == 2
 
     def test_cost_side_count_formula(self) -> None:
-        """cost_side_count = entry_count + exit_count + flip_count."""
+        """cost_side_count = entry_count + exit_count + flip_count * 2."""
         from quantbot.experiment.runner import _compute_economics_summary
 
         class MockSignal:
@@ -675,7 +675,7 @@ class TestComputeEconomicsSummary:
         result = _compute_economics_summary(strategy, bars, 10.0, 3.0)
         assert result.entry_count == 2
         assert result.exit_count == 2
-        assert result.cost_side_count == result.entry_count + result.exit_count + result.flip_count
+        assert result.cost_side_count == result.entry_count + result.exit_count + result.flip_count * 2
 
     def test_assumed_total_cost_bps_formula(self) -> None:
         """assumed_total_cost_bps = cost_side_count * (fee_bps + slippage_bps)."""
