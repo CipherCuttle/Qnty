@@ -47,6 +47,10 @@ class RegimeFilteredBreakoutStrategy(RollingReturnBreakoutStrategy):
         """
         # Store bar for regime computation
         self._rfb_bars.append(bar)
+        # Keep trend_window+1 bars so we get trend_window log returns
+        # (log returns count = bars - 1, and regime needs len(log_rets) >= window)
+        if len(self._rfb_bars) > self.trend_window + 1:
+            self._rfb_bars = self._rfb_bars[-(self.trend_window + 1) :]
 
         # Gate: check trend regime before breakout logic
         if len(self._rfb_bars) >= self.trend_window:

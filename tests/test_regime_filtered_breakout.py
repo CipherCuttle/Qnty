@@ -282,3 +282,117 @@ class TestRegimeFilteredBreakoutDeterminism:
         signals_b = collect(strat_b, bars)
 
         assert signals_a == signals_b, "Same params should produce same signals across instances"
+
+
+class TestRFBRegimeBoundedness:
+    """Regression tests for _rfb_bars boundedness bug.
+
+    Previously, _rfb_bars grew unbounded, contaminating regime computation
+    with stale historical bars. The fix caps _rfb_bars to trend_window+1 bars.
+    """
+
+    def test_rfb_bars_never_exceeds_trend_window_plus_one(self) -> None:
+        """_rfb_bars must not grow beyond trend_window + 1."""
+        bars = [
+            make_bar(f"2024-01-01T{i:02d}:00:00Z", 100.0 + i * 0.5)
+            for i in range(100)
+        ]
+
+        strat = RegimeFilteredBreakoutStrategy(
+            rolling_return_period=20,
+            return_threshold=0.01,
+            min_hold_bars=1,
+            trend_window=20,
+            trend_threshold=0.001,
+            allowed_trend_regimes=["uptrend"],
+            symbol="TESTUSD",
+        )
+
+        for bar in bars:
+            strat.on_bar(bar)
+            assert len(strat._rfb_bars) <= strat.trend_window + 1, (
+                f"_rfb_bars grew to {len(strat._rfb_bars)}, "
+                f"exceeding trend_window+1={strat.trend_window + 1}"
+            )
+
+    def test_regime_uses_only_recent_window(self) -> None:
+        """Regime must be computed from recent bars, not entire history.
+
+        Build a sequence where early bars are strongly uptrend (large gains)
+        but recent bars are sideways. Regime should be 'sideways', not 'uptrend'.
+        """
+        # First 30 bars: strong uptrend (big gains)
+        early_bars = [
+            make_bar(f"2024-01-01T{i:02d}:00:00Z", 100.0 + i * 5.0)
+            for i in range(30)
+        ]
+        # Next 25 bars: flat sideways (small oscillation around 250)
+        flat_base = 250.0
+        late_bars = [
+            make_bar(f"2024-01-01T{i:02d}:00:00Z", flat_base + (i % 3 - 1) * 0.1)
+            for i in range(30, 55)
+        ]
+        all_bars = early_bars + late_bars
+
+        strat = RegimeFilteredBreakoutStrategy(
+            rolling_return_period=20,
+            return_threshold=0.01,
+            min_hold_bars=1,
+            trend_window=20,
+            trend_threshold=0.001,
+            allowed_trend_regimes=["uptrend"],
+            symbol="TESTUSD",
+        )
+
+        for bar in all_bars:
+            strat.on_bar(bar)
+
+        # After the flat period, regime should be sideways (not uptrend)
+        # and no signals should emit since only uptrend is allowed
+        signals = [strat.on_bar(bar) for bar in late_bars]
+        non_none = [s for s in signals if s is not None]
+        assert len(non_none) == 0, (
+            f"Expected 0 signals during sideways regime, got {len(non_none)}. "
+            f"This means stale uptrend from early bars contaminated regime."
+        )
+
+    def test_sideways_holdout_no_signal_from_warmup_contamination(self) -> None:
+        """A sideways holdout window must not emit signals due to warmup contamination.
+
+        This is the specific failure mode that exposed the bug: a fresh sideways
+        window would incorrectly emit signals because _rfb_bars retained stale
+        uptrend bars from the warmup period.
+        """
+        # Warmup: 30 bars of strong uptrend
+        warmup_bars = [
+            make_bar(f"2024-01-01T{i:02d}:00:00Z", 100.0 + i * 2.0)
+            for i in range(30)
+        ]
+        # Holdout: 30 bars of flat sideways
+        holdout_bars = [
+            make_bar(f"2024-01-01T{i:02d}:00:00Z", 160.0 + (i % 3 - 1) * 0.1)
+            for i in range(30, 60)
+        ]
+
+        strat = RegimeFilteredBreakoutStrategy(
+            rolling_return_period=20,
+            return_threshold=0.01,
+            min_hold_bars=1,
+            trend_window=20,
+            trend_threshold=0.001,
+            allowed_trend_regimes=["uptrend"],
+            symbol="TESTUSD",
+        )
+
+        # Warmup
+        for bar in warmup_bars:
+            strat.on_bar(bar)
+
+        # Holdout: should emit no signals (sideways regime, uptrend only allowed)
+        holdout_signals = [strat.on_bar(bar) for bar in holdout_bars]
+        non_none = [s for s in holdout_signals if s is not None]
+
+        assert len(non_none) == 0, (
+            f"Holdout emitted {len(non_none)} signals despite sideways regime. "
+            f"Bug: stale warmup bars in _rfb_bars contaminated regime computation."
+        )
