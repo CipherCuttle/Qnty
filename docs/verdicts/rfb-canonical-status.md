@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-19
 **Strategy:** RegimeFilteredBreakoutStrategy (RFB) — PRIMARY CANDIDATE
-**Branch:** `qnty/rfb-regime-bugfix`
+**Branch:** `main`
 
 ---
 

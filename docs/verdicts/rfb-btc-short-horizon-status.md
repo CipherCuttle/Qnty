@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-19
 **Strategy:** RegimeFilteredBreakoutStrategy BASELINE (unchanged)
-**Branch:** `qnty/rfb-regime-bugfix` at `7dfb557`
+**Branch:** `main` at `646c494`
 
 ---
 
