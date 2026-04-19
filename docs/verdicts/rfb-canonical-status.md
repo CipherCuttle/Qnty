@@ -1,12 +1,16 @@
 # RFB Canonical Status
 
 **Date:** 2026-04-19
-**Strategy:** RegimeFilteredBreakoutStrategy BASELINE
-**Branch:** `qnty/rfb-regime-bugfix` (merged to main)
+**Strategy:** RegimeFilteredBreakoutStrategy (RFB) — PRIMARY CANDIDATE
+**Branch:** `qnty/rfb-regime-bugfix`
 
 ---
 
-## Current Status: BTCUSDT-only, regime-qualified research candidate
+## Current Status: PRIMARY BTC-ONLY HYPOTHESIS
+
+**RFB is the primary candidate. BASE (RollingReturnBreakoutStrategy) is the secondary comparator.**
+
+RFB beats BASE net-of-costs in apples-to-apples BTC forward comparison.
 
 ---
 
@@ -16,7 +20,28 @@
 |------|--------|---------|
 | Economics fix (cost double-counting) | ✅ Fixed on main | [`a1265af`](origin/main) |
 | RFB regime-state bug (`_rfb_bars` unbounded) | ✅ Fixed | [`quantbot/strategy/regime_filtered_breakout.py:49-53`](quantbot/strategy/regime_filtered_breakout.py:49) |
+| RFB walkforward registration | ✅ Fixed | [`walkforward_runner.py`](quantbot/experiment/walkforward_runner.py) import |
 | Regression tests | ✅ Added | [`tests/test_regime_filtered_breakout.py`](tests/test_regime_filtered_breakout.py) |
+
+---
+
+## Apples-to-Apples BTC Comparison: RFB vs BASE
+
+**Evidence:** [`base-vs-rfb-apples-to-apples-2026-04-19.md`](docs/verdicts/base-vs-rfb-apples-to-apples-2026-04-19.md)
+**Fixture:** BTCUSDT_8h.csv (2190 bars, 12 walkforward windows)
+
+| Metric | BASE (fee=10/slip=5) | RFB (fee=10/slip=5) | BASE (fee=20/slip=10) | RFB (fee=20/slip=10) |
+|--------|---------------------|---------------------|----------------------|----------------------|
+| signal_count | 61 | 37 | 61 | 37 |
+| net_return_total | 0.3080 | **0.3161** | 0.1265 | **0.2051** |
+| positive_windows | 9/12 | **10/12** | 6/12 | **9/12** |
+
+**Key ratios:**
+- RFB/BASE net @ 10/5: **1.026** (RFB wins by 2.6%)
+- RFB/BASE net @ 20/10: **1.621** (RFB wins by 62.1%)
+- RFB cost robustness: degrades 35.1% when costs double vs 58.9% for BASE
+
+**VERDICT:** RFB wins net-of-costs at both cost settings. The regime filter is not just reducing signals proportionally — it produces superior net returns, especially under realistic cost assumptions (20/10).
 
 ---
 
@@ -40,14 +65,17 @@
 |-------|---------|---------|
 | ETHUSDT cross-symbol generalization | ❌ FALSIFIED | Per prior sprint results |
 | explicit `high_vol` regime-gate refinement | ❌ FALSIFIED | Per [`rfb-refinement-verdict.md`](docs/verdicts/rfb-refinement-verdict.md) |
+| BASE over RFB net-of-costs | ❌ FALSIFIED | Apples-to-apples comparison: RFB wins |
 
 ---
 
 ## What Is NOT Claimed
 
 - No live-trading claims
-- No cross-symbol generalization
+- No cross-symbol generalization (BTC-only)
 - No parameter tuning (BASELINE fixed)
+- No new family work justified
+- No further parameter tuning justified
 
 ---
 
@@ -84,3 +112,4 @@ See: [`rfb-btc-rolling-holdout-validation-2026-04-19.md`](docs/verdicts/rfb-btc-
 | `rfb-regime-bugfix-validation-2026-04-19.md` | VALID | Bug fix confirmed, corrected holdout = +3.50% |
 | `rfb-btc-holdout-validation-2026-04-19.md` | SUPERSEDED | Documented buggy behavior; corrected results in rolling-holdout doc |
 | `rfb-btc-rolling-holdout-validation-2026-04-19.md` | CURRENT | Most comprehensive holdout validation |
+| `base-vs-rfb-apples-to-apples-2026-04-19.md` | CURRENT | Apples-to-apples comparison: RFB wins |

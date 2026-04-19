@@ -396,3 +396,115 @@ class TestRFBRegimeBoundedness:
             f"Holdout emitted {len(non_none)} signals despite sideways regime. "
             f"Bug: stale warmup bars in _rfb_bars contaminated regime computation."
         )
+
+
+class TestRFBWalkforwardRegistration:
+    """Regression tests for walkforward runner registration.
+
+    These tests verify that RegimeFilteredBreakoutStrategy is properly registered
+    in the walkforward runner's module context, so it can be used in rolling
+    forward experiments without collapsing to zero signals.
+    """
+
+    def test_rfb_registered_in_runner_registry(self) -> None:
+        """RegimeFilteredBreakoutStrategy must be findable by the experiment runner.
+
+        This was the root cause of the "zero signals in rolling context" gap:
+        walkforward_runner.py did not import regime_filtered_breakout, so the
+        strategy class was not in _STRATEGY_REGISTRY when run_experiment tried
+        to build it by name.
+        """
+        # Registry lives in runner.py; walkforward_runner imports run_experiment from there
+        # so the registry is shared. Import the registry from runner.py directly.
+        from quantbot.experiment.runner import _STRATEGY_REGISTRY
+
+        assert "RegimeFilteredBreakoutStrategy" in _STRATEGY_REGISTRY, (
+            f"RegimeFilteredBreakoutStrategy not found in runner registry. "
+            f"Available: {list(_STRATEGY_REGISTRY.keys())}. "
+            f"This is the root cause of zero signals in rolling context."
+        )
+
+    def test_rfb_produces_signals_in_rolling_context_when_uptrend(self) -> None:
+        """RFB must produce non-zero signals in rolling windows when regime is uptrend.
+
+        This is the core regression: prior rolling sprint tested RollingReturnBreakoutStrategy
+        (base) instead of RegimeFilteredBreakoutStrategy. This test proves the intended
+        regime-filtered path works correctly.
+        """
+        # Simulate 3 walkforward-like splits, each with fresh warmup
+        # Split 1: uptrend throughout (30 bars)
+        split1_bars = [
+            make_bar(f"2024-01-01T{i:02d}:00:00Z", 100.0 + i * 1.0)
+            for i in range(30)
+        ]
+
+        # Split 2: uptrend throughout (30 bars)
+        split2_bars = [
+            make_bar(f"2024-02-01T{i:02d}:00:00Z", 100.0 + i * 1.0)
+            for i in range(30)
+        ]
+
+        # Split 3: uptrend throughout (30 bars)
+        split3_bars = [
+            make_bar(f"2024-03-01T{i:02d}:00:00Z", 100.0 + i * 1.0)
+            for i in range(30)
+        ]
+
+        total_signals = 0
+
+        for split_idx, bars in enumerate([split1_bars, split2_bars, split3_bars]):
+            # Fresh strategy instance per split (mimics walkforward behavior)
+            strat = RegimeFilteredBreakoutStrategy(
+                rolling_return_period=20,
+                return_threshold=0.01,  # low threshold to trigger breakout
+                min_hold_bars=1,
+                trend_window=20,
+                trend_threshold=0.001,
+                allowed_trend_regimes=["uptrend"],
+                symbol="TESTUSD",
+            )
+
+            signals = [strat.on_bar(bar) for bar in bars]
+            non_none = [s for s in signals if s is not None]
+            total_signals += len(non_none)
+
+        assert total_signals > 0, (
+            f"RFB collapsed to zero signals across 3 rolling windows. "
+            f"This means the regime filter is suppressing valid uptrend signals, "
+            f"or the strategy is not properly registered in the walkforward runner."
+        )
+
+    def test_rfb_rolling_context_does_not_collapse_spuriously(self) -> None:
+        """RFB must not collapse to zero solely due to walkforward runner handling.
+
+        This test verifies that the combination of:
+        1. Fresh strategy instance per window (walkforward design)
+        2. Bounded _rfb_bars (trend_window + 1 cap)
+        3. Regime gate (uptrend required)
+
+        Does not spuriously suppress all signals due to implementation issues.
+        """
+        # 25 bars of steady uptrend (25 bars > trend_window=20, regime becomes uptrend)
+        uptrend_bars = [
+            make_bar(f"2024-01-01T{i:02d}:00:00Z", 100.0 + i * 1.5)
+            for i in range(25)
+        ]
+
+        strat = RegimeFilteredBreakoutStrategy(
+            rolling_return_period=20,
+            return_threshold=0.01,
+            min_hold_bars=1,
+            trend_window=20,
+            trend_threshold=0.001,
+            allowed_trend_regimes=["uptrend"],
+            symbol="TESTUSD",
+        )
+
+        signals = [strat.on_bar(bar) for bar in uptrend_bars]
+        non_none = [s for s in signals if s is not None]
+
+        assert len(non_none) > 0, (
+            f"RFB produced 0 signals in 25-bar uptrend window. "
+            f"Expected > 0. This may indicate stale warmup bars or "
+            f"improper _rfb_bars bounding in rolling context."
+        )

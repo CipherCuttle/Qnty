@@ -1,0 +1,10 @@
+{
+  "symbol": "BTCUSDT",
+  "interval": "8h",
+  "first_timestamp": "2024-12-31 00:00:00+00:00",
+  "last_timestamp": "2025-11-29 00:00:00+00:00",
+  "row_count": 1000,
+  "source": "Binance public API",
+  "download_date": "2026-04-19",
+  "sha256": "96fc9f917545b8b69b8b607314ac7ed1321fe0eabb09ee4318539f722154661e"
+}

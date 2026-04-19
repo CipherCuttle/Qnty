@@ -11,6 +11,7 @@ import quantbot.strategy.noop  # noqa: F401
 import quantbot.strategy.threshold  # noqa: F401
 import quantbot.strategy.ma_deviation  # noqa: F401
 import quantbot.strategy.rolling_return_breakout  # noqa: F401
+import quantbot.strategy.regime_filtered_breakout  # noqa: F401
 
 from quantbot.core.determinism import sha256_file
 from quantbot.data.loaders import load_bars_from_csv
