@@ -12,6 +12,7 @@ scenario,annual_bps,carry_per_bar,total_instances,positive_net_instances,positiv
 S1,548,0.00005005,12177,6768,0.5558
 S2,1500,0.00013699,12177,6744,0.5538
 S3,4928,0.00045005,12177,6660,0.5469
+real-carry,1377,0.00012571,12177,6744,0.5538
 
 === CARRY SCENARIO LABEL ===
 Uniform carry stress scenarios anchored to BTC-observed rates.

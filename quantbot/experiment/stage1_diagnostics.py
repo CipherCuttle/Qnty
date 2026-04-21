@@ -513,7 +513,7 @@ def write_funding_sensitivity_md(btc_sensitivity: dict[int, float], out_path: Pa
         "- 8h bars per year ≈ 1095",
         "- Per-bar cost = annual_bps / 10000 / 1095",
         "- Altcoin funding (548/1500/4928) is NOT used in any model — caveat space only",
-        "- Carry for alts remains a structural unknown; no multi-asset forward-paper bridge in this cycle",
+        "- Carry for alts remains a structural unknown; no multi-asset live-bridge in this cycle",
     ])
 
     with open(out_path, "w", encoding="utf-8") as fh:
