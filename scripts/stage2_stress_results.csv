@@ -1,0 +1,19 @@
+=== COMBINED-REGIME MATRIX ===
+vol_regime,trend_regime,regime_key,trial_count,positive_count,sign_consistency,median_excess,total_excess,ci_lower,ci_upper,cell_count
+low,vol_uptrend,low_vol_uptrend,3537,2016,0.5700,0.003824,13.524961,0.002871,0.004089,12
+high,vol_uptrend,high_vol_uptrend,1284,741,0.5771,0.018849,24.202110,0.004659,0.008591,12
+high,vol_sideways,high_vol_sideways,2071,1145,0.5529,0.000154,0.319329,0.002981,0.005632,8
+low,vol_downtrend,low_vol_downtrend,2090,1104,0.5282,0.005062,10.578757,0.000750,0.002177,8
+high,vol_downtrend,high_vol_downtrend,2159,1194,0.5530,0.000399,0.861500,0.002577,0.004558,4
+low,vol_sideways,low_vol_sideways,1036,583,0.5627,0.004676,4.844097,0.000969,0.002963,4
+
+=== CARRY STRESS ===
+scenario,annual_bps,carry_per_bar,total_instances,positive_net_instances,positive_fraction
+S1,548,0.00005005,12177,6768,0.5558
+S2,1500,0.00013699,12177,6744,0.5538
+S3,4928,0.00045005,12177,6660,0.5469
+
+=== CARRY SCENARIO LABEL ===
+Uniform carry stress scenarios anchored to BTC-observed rates.
+For sensitivity analysis only. Not modeled truth.
+Altcoin carry is structurally unknown. Not a conservative bound.
