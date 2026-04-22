@@ -1,0 +1,14 @@
+{
+  "package_name": "tsmom-package-v2-volnorm",
+  "package_version": "1.0.0",
+  "branch": "qnty/tsmom-package-v2-volnorm",
+  "sizing_method": "volatility-normalized (inverse-vol)",
+  "position_weighting": "inverse-vol normalized, heat-capped",
+  "heat_cap": 1.0,
+  "vol_lookback_bars": 90,
+  "vol_floor": 1e-06,
+  "benchmark_mode": "gross (no funding adjustment)",
+  "carry_mode": "net of realistic funding costs",
+  "carry_symmetry": "long/short symmetric carry burden",
+  "heat_cap_active": true
+}
