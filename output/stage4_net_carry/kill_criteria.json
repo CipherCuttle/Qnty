@@ -1,9 +1,9 @@
 {
   "killed": true,
-  "k1_excess_return": 1.691616,
-  "k2_drawdown": 0.471224,
+  "k1_excess_return": 1.737715,
+  "k2_drawdown": 0.463608,
   "k3_funding_drag_ratio": 0.0,
-  "k4_highvol_excess_return": 0.741041,
+  "k4_highvol_excess_return": 0.773394,
   "k5_sharpe_watch": false,
   "k6_sharpe_review": true,
   "verdict": "FAILED"

@@ -184,7 +184,7 @@ def evaluate_split(
             # Carry cost: |funding_rate| * 3 per bar (3 × 8h periods/day)
             carry_cost = 0.0
             if funding_lookup is not None:
-                bar_dt = pd.Timestamp(bar.timestamp)
+                bar_dt = pd.Timestamp(bar.timestamp).tz_localize("UTC")
                 key = (symbol, bar_dt)
                 if key in funding_lookup:
                     fr = abs(funding_lookup[key])
