@@ -19,7 +19,7 @@ SYMBOLS = [
 ]
 
 START_TIME_MS = 1625097600000  # 2021-07-01 00:00:00 UTC
-END_TIME_MS = 1745193600000     # 2025-04-20 00:00:00 UTC
+END_TIME_MS = 1776643200000  # 2026-04-20 00:00:00 UTC — BOUNDED VALIDATION REFRESH: extend to ~2026-04-20
 
 API_URL_TEMPLATE = "https://fapi.binance.com/fapi/v1/klines?symbol={SYM}&interval=8h&startTime={TS}&limit=500"
 DATA_DIR = Path("data")

@@ -1,0 +1,5361 @@
+{
+  "window_size": 500,
+  "summary": {
+    "net_return": 0.502443,
+    "benchmark_return": -1.988455,
+    "excess_return": 2.490897,
+    "max_drawdown": 0.111519,
+    "sharpe": 2.909,
+    "heat_cap_triggers": 0,
+    "bars_with_active": 296,
+    "heat_cap_trigger_rate": 0.0,
+    "avg_portfolio_heat": 0.037785,
+    "final_equity": 1.652754
+  },
+  "per_bar_obs": [
+    {
+      "bar_index": 4771,
+      "timestamp": "2025-11-07T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4772,
+      "timestamp": "2025-11-07T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4773,
+      "timestamp": "2025-11-08T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4774,
+      "timestamp": "2025-11-08T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4775,
+      "timestamp": "2025-11-08T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4776,
+      "timestamp": "2025-11-09T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4777,
+      "timestamp": "2025-11-09T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4778,
+      "timestamp": "2025-11-09T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4779,
+      "timestamp": "2025-11-10T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4780,
+      "timestamp": "2025-11-10T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4781,
+      "timestamp": "2025-11-10T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4782,
+      "timestamp": "2025-11-11T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4783,
+      "timestamp": "2025-11-11T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4784,
+      "timestamp": "2025-11-11T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4785,
+      "timestamp": "2025-11-12T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4786,
+      "timestamp": "2025-11-12T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4787,
+      "timestamp": "2025-11-12T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4788,
+      "timestamp": "2025-11-13T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4789,
+      "timestamp": "2025-11-13T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4790,
+      "timestamp": "2025-11-13T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4791,
+      "timestamp": "2025-11-14T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4792,
+      "timestamp": "2025-11-14T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4793,
+      "timestamp": "2025-11-14T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4794,
+      "timestamp": "2025-11-15T00:00:00",
+      "active_symbols": [
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.02595416338636477,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.018006025776235605
+    },
+    {
+      "bar_index": 4795,
+      "timestamp": "2025-11-15T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4796,
+      "timestamp": "2025-11-15T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4797,
+      "timestamp": "2025-11-16T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4798,
+      "timestamp": "2025-11-16T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4799,
+      "timestamp": "2025-11-16T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4800,
+      "timestamp": "2025-11-17T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4801,
+      "timestamp": "2025-11-17T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4802,
+      "timestamp": "2025-11-17T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4803,
+      "timestamp": "2025-11-18T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4804,
+      "timestamp": "2025-11-18T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4805,
+      "timestamp": "2025-11-18T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4806,
+      "timestamp": "2025-11-19T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4807,
+      "timestamp": "2025-11-19T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4808,
+      "timestamp": "2025-11-19T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4809,
+      "timestamp": "2025-11-20T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4810,
+      "timestamp": "2025-11-20T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4811,
+      "timestamp": "2025-11-20T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4812,
+      "timestamp": "2025-11-21T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4813,
+      "timestamp": "2025-11-21T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4814,
+      "timestamp": "2025-11-21T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4815,
+      "timestamp": "2025-11-22T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4816,
+      "timestamp": "2025-11-22T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4817,
+      "timestamp": "2025-11-22T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4818,
+      "timestamp": "2025-11-23T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4819,
+      "timestamp": "2025-11-23T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4820,
+      "timestamp": "2025-11-23T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4821,
+      "timestamp": "2025-11-24T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4822,
+      "timestamp": "2025-11-24T08:00:00",
+      "active_symbols": [
+        "SOLUSDT"
+      ],
+      "portfolio_heat": 0.03237867073772682,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.012793042063324642
+    },
+    {
+      "bar_index": 4823,
+      "timestamp": "2025-11-24T16:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.031051701281553483,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.05615746246775009
+    },
+    {
+      "bar_index": 4824,
+      "timestamp": "2025-11-25T00:00:00",
+      "active_symbols": [
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.029458475136892596,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.005259886170794909
+    },
+    {
+      "bar_index": 4825,
+      "timestamp": "2025-11-25T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4826,
+      "timestamp": "2025-11-25T16:00:00",
+      "active_symbols": [
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.029494833024666774,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.006256257157955112
+    },
+    {
+      "bar_index": 4827,
+      "timestamp": "2025-11-26T00:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.03118170495868097,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0036897172158491514
+    },
+    {
+      "bar_index": 4828,
+      "timestamp": "2025-11-26T08:00:00",
+      "active_symbols": [
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.029529731585462973,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.01519148929826606
+    },
+    {
+      "bar_index": 4829,
+      "timestamp": "2025-11-26T16:00:00",
+      "active_symbols": [
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.02964990062936319,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.02283139469984913
+    },
+    {
+      "bar_index": 4830,
+      "timestamp": "2025-11-27T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02652143319447746,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.003030193955674329
+    },
+    {
+      "bar_index": 4831,
+      "timestamp": "2025-11-27T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.026525633525732718,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0050302068331672415
+    },
+    {
+      "bar_index": 4832,
+      "timestamp": "2025-11-27T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02653242554269407,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0002607929597276918
+    },
+    {
+      "bar_index": 4833,
+      "timestamp": "2025-11-28T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0265408276820307,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.007335332311022934
+    },
+    {
+      "bar_index": 4834,
+      "timestamp": "2025-11-28T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02664957671509994,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.01980003061273645
+    },
+    {
+      "bar_index": 4835,
+      "timestamp": "2025-11-28T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02672799570883634,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.02061505398721677
+    },
+    {
+      "bar_index": 4836,
+      "timestamp": "2025-11-29T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.026731753759089975,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.00452586038213137
+    },
+    {
+      "bar_index": 4837,
+      "timestamp": "2025-11-29T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.026751280737401836,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005503660261226861
+    },
+    {
+      "bar_index": 4838,
+      "timestamp": "2025-11-29T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02675637266023214,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.007055034563292111
+    },
+    {
+      "bar_index": 4839,
+      "timestamp": "2025-11-30T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.026761656275664916,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0023738966006180556
+    },
+    {
+      "bar_index": 4840,
+      "timestamp": "2025-11-30T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02679297413276223,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.00872233240457654
+    },
+    {
+      "bar_index": 4841,
+      "timestamp": "2025-11-30T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.026853915116023593,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.018923171534369534
+    },
+    {
+      "bar_index": 4842,
+      "timestamp": "2025-12-01T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4843,
+      "timestamp": "2025-12-01T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4844,
+      "timestamp": "2025-12-01T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4845,
+      "timestamp": "2025-12-02T00:00:00",
+      "active_symbols": [
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.01919733237114228,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.008308348995836285
+    },
+    {
+      "bar_index": 4846,
+      "timestamp": "2025-12-02T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.025768548881141703,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0521358198185922
+    },
+    {
+      "bar_index": 4847,
+      "timestamp": "2025-12-02T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.025777935517487676,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0027643058599529243
+    },
+    {
+      "bar_index": 4848,
+      "timestamp": "2025-12-03T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.028455635350567436,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.019985505971206026
+    },
+    {
+      "bar_index": 4849,
+      "timestamp": "2025-12-03T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02590146588979556,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.00013040242377229663
+    },
+    {
+      "bar_index": 4850,
+      "timestamp": "2025-12-03T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.027918379819647402,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.022253429453518447
+    },
+    {
+      "bar_index": 4851,
+      "timestamp": "2025-12-04T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.027922674875055693,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.004028109735459333
+    },
+    {
+      "bar_index": 4852,
+      "timestamp": "2025-12-04T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.027926425678791618,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0008011482322562731
+    },
+    {
+      "bar_index": 4853,
+      "timestamp": "2025-12-04T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02798019808690915,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.017632768995506778
+    },
+    {
+      "bar_index": 4854,
+      "timestamp": "2025-12-05T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.030764344892394622,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.007631175053693172
+    },
+    {
+      "bar_index": 4855,
+      "timestamp": "2025-12-05T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.030819250310148198,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.018292882229816513
+    },
+    {
+      "bar_index": 4856,
+      "timestamp": "2025-12-05T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.030891606572958877,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.017543965642809366
+    },
+    {
+      "bar_index": 4857,
+      "timestamp": "2025-12-06T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.030893441630572272,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0012680138232254016
+    },
+    {
+      "bar_index": 4858,
+      "timestamp": "2025-12-06T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03090310396919604,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005514761875375846
+    },
+    {
+      "bar_index": 4859,
+      "timestamp": "2025-12-06T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.030903353742519058,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0006047728224508807
+    },
+    {
+      "bar_index": 4860,
+      "timestamp": "2025-12-07T00:00:00",
+      "active_symbols": [
+        "ETHUSDT"
+      ],
+      "portfolio_heat": 0.029582671479245766,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0003156812772969756
+    },
+    {
+      "bar_index": 4861,
+      "timestamp": "2025-12-07T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.030904544186237184,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0023652359641668924
+    },
+    {
+      "bar_index": 4862,
+      "timestamp": "2025-12-07T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.028174811425788142,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.007037988767663048
+    },
+    {
+      "bar_index": 4863,
+      "timestamp": "2025-12-08T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.028904084656093464,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.018133146400065622
+    },
+    {
+      "bar_index": 4864,
+      "timestamp": "2025-12-08T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02893923582771062,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.00993148048231771
+    },
+    {
+      "bar_index": 4865,
+      "timestamp": "2025-12-08T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.028955492226643485,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0005272626709560716
+    },
+    {
+      "bar_index": 4866,
+      "timestamp": "2025-12-09T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031023809711067524,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.004575358548524049
+    },
+    {
+      "bar_index": 4867,
+      "timestamp": "2025-12-09T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02658489781975281,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.027489327221858546
+    },
+    {
+      "bar_index": 4868,
+      "timestamp": "2025-12-09T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03128231991359873,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005696227706403105
+    },
+    {
+      "bar_index": 4869,
+      "timestamp": "2025-12-10T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.024406518389634504,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0016545690577024885
+    },
+    {
+      "bar_index": 4870,
+      "timestamp": "2025-12-10T08:00:00",
+      "active_symbols": [
+        "ETHUSDT"
+      ],
+      "portfolio_heat": 0.030159530505064418,
+      "heat_cap_triggered": false,
+      "weighted_return": -5.364173760073168e-06
+    },
+    {
+      "bar_index": 4871,
+      "timestamp": "2025-12-10T16:00:00",
+      "active_symbols": [
+        "ETHUSDT"
+      ],
+      "portfolio_heat": 0.03015960526525887,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.00137785808223252
+    },
+    {
+      "bar_index": 4872,
+      "timestamp": "2025-12-11T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4873,
+      "timestamp": "2025-12-11T08:00:00",
+      "active_symbols": [
+        "ETHUSDT"
+      ],
+      "portfolio_heat": 0.030419280446399806,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.006984763170935657
+    },
+    {
+      "bar_index": 4874,
+      "timestamp": "2025-12-11T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.02476190755521629,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.024462096135401134
+    },
+    {
+      "bar_index": 4875,
+      "timestamp": "2025-12-12T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.028940777559484817,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.004862361475075688
+    },
+    {
+      "bar_index": 4876,
+      "timestamp": "2025-12-12T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT"
+      ],
+      "portfolio_heat": 0.02816436180009036,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.039552390639926306
+    },
+    {
+      "bar_index": 4877,
+      "timestamp": "2025-12-12T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.025078308710990642,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0038429918453728572
+    },
+    {
+      "bar_index": 4878,
+      "timestamp": "2025-12-13T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT"
+      ],
+      "portfolio_heat": 0.028174040888915293,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.002372224159305059
+    },
+    {
+      "bar_index": 4879,
+      "timestamp": "2025-12-13T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02921903137821418,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.003917223143592696
+    },
+    {
+      "bar_index": 4880,
+      "timestamp": "2025-12-13T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.029220248276523034,
+      "heat_cap_triggered": false,
+      "weighted_return": -1.8496809558926088e-05
+    },
+    {
+      "bar_index": 4881,
+      "timestamp": "2025-12-14T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02922070511101297,
+      "heat_cap_triggered": false,
+      "weighted_return": -8.949325165430431e-05
+    },
+    {
+      "bar_index": 4882,
+      "timestamp": "2025-12-14T08:00:00",
+      "active_symbols": [
+        "ETHUSDT"
+      ],
+      "portfolio_heat": 0.031059677884371317,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.010075220458146796
+    },
+    {
+      "bar_index": 4883,
+      "timestamp": "2025-12-14T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4884,
+      "timestamp": "2025-12-15T00:00:00",
+      "active_symbols": [
+        "ETHUSDT"
+      ],
+      "portfolio_heat": 0.0311551109210162,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.02092335408471529
+    },
+    {
+      "bar_index": 4885,
+      "timestamp": "2025-12-15T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4886,
+      "timestamp": "2025-12-15T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4887,
+      "timestamp": "2025-12-16T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4888,
+      "timestamp": "2025-12-16T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4889,
+      "timestamp": "2025-12-16T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4890,
+      "timestamp": "2025-12-17T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4891,
+      "timestamp": "2025-12-17T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4892,
+      "timestamp": "2025-12-17T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4893,
+      "timestamp": "2025-12-18T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4894,
+      "timestamp": "2025-12-18T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4895,
+      "timestamp": "2025-12-18T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4896,
+      "timestamp": "2025-12-19T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4897,
+      "timestamp": "2025-12-19T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4898,
+      "timestamp": "2025-12-19T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4899,
+      "timestamp": "2025-12-20T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4900,
+      "timestamp": "2025-12-20T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4901,
+      "timestamp": "2025-12-20T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4902,
+      "timestamp": "2025-12-21T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4903,
+      "timestamp": "2025-12-21T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4904,
+      "timestamp": "2025-12-21T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4905,
+      "timestamp": "2025-12-22T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.028680346640026746,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005801310800748595
+    },
+    {
+      "bar_index": 4906,
+      "timestamp": "2025-12-22T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031282197085079295,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.008034876295705746
+    },
+    {
+      "bar_index": 4907,
+      "timestamp": "2025-12-22T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.03079447123831168,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.014544830686216103
+    },
+    {
+      "bar_index": 4908,
+      "timestamp": "2025-12-23T00:00:00",
+      "active_symbols": [
+        "ETHUSDT"
+      ],
+      "portfolio_heat": 0.03283578380186074,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.015154654768641269
+    },
+    {
+      "bar_index": 4909,
+      "timestamp": "2025-12-23T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4910,
+      "timestamp": "2025-12-23T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.026634023614722037,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0051524435440010626
+    },
+    {
+      "bar_index": 4911,
+      "timestamp": "2025-12-24T00:00:00",
+      "active_symbols": [
+        "ETHUSDT"
+      ],
+      "portfolio_heat": 0.032902903966995876,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.010865100156547715
+    },
+    {
+      "bar_index": 4912,
+      "timestamp": "2025-12-24T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.028782176369870127,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0011416061254469194
+    },
+    {
+      "bar_index": 4913,
+      "timestamp": "2025-12-24T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02986566252477927,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005353955660494331
+    },
+    {
+      "bar_index": 4914,
+      "timestamp": "2025-12-25T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4915,
+      "timestamp": "2025-12-25T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031398682488327584,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005207183795501377
+    },
+    {
+      "bar_index": 4916,
+      "timestamp": "2025-12-25T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4917,
+      "timestamp": "2025-12-26T00:00:00",
+      "active_symbols": [
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.022514746761868383,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.013988479398102242
+    },
+    {
+      "bar_index": 4918,
+      "timestamp": "2025-12-26T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4919,
+      "timestamp": "2025-12-26T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4920,
+      "timestamp": "2025-12-27T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4921,
+      "timestamp": "2025-12-27T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4922,
+      "timestamp": "2025-12-27T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4923,
+      "timestamp": "2025-12-28T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4924,
+      "timestamp": "2025-12-28T08:00:00",
+      "active_symbols": [
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03382422943239792,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.019573728003470646
+    },
+    {
+      "bar_index": 4925,
+      "timestamp": "2025-12-28T16:00:00",
+      "active_symbols": [
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03382425412479212,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.001688586916807875
+    },
+    {
+      "bar_index": 4926,
+      "timestamp": "2025-12-29T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4927,
+      "timestamp": "2025-12-29T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4928,
+      "timestamp": "2025-12-29T16:00:00",
+      "active_symbols": [
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03383420504945809,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0011952752899574003
+    },
+    {
+      "bar_index": 4929,
+      "timestamp": "2025-12-30T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03113099100920409,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0034996491222192318
+    },
+    {
+      "bar_index": 4930,
+      "timestamp": "2025-12-30T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03182458525577614,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.012282807027589665
+    },
+    {
+      "bar_index": 4931,
+      "timestamp": "2025-12-30T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031827755477765673,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0032971052461344638
+    },
+    {
+      "bar_index": 4932,
+      "timestamp": "2025-12-31T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03183172345104576,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0025088607783394336
+    },
+    {
+      "bar_index": 4933,
+      "timestamp": "2025-12-31T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031196885509389673,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0038148091005869005
+    },
+    {
+      "bar_index": 4934,
+      "timestamp": "2025-12-31T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03549392634111177,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.003588239794020972
+    },
+    {
+      "bar_index": 4935,
+      "timestamp": "2026-01-01T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.035496031552384094,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0022909678882082926
+    },
+    {
+      "bar_index": 4936,
+      "timestamp": "2026-01-01T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031851094001863936,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.004534946354150713
+    },
+    {
+      "bar_index": 4937,
+      "timestamp": "2026-01-01T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03187052801399299,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.008438181331897714
+    },
+    {
+      "bar_index": 4938,
+      "timestamp": "2026-01-02T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031872006758304164,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0006581577391661254
+    },
+    {
+      "bar_index": 4939,
+      "timestamp": "2026-01-02T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03192235371626938,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.015503160477379896
+    },
+    {
+      "bar_index": 4940,
+      "timestamp": "2026-01-02T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0320009298132901,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.016826474579694866
+    },
+    {
+      "bar_index": 4941,
+      "timestamp": "2026-01-03T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03201371590480923,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.009213091609270963
+    },
+    {
+      "bar_index": 4942,
+      "timestamp": "2026-01-03T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032019838485934884,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.004563572496676217
+    },
+    {
+      "bar_index": 4943,
+      "timestamp": "2026-01-03T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03203406717012102,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.007923633445421312
+    },
+    {
+      "bar_index": 4944,
+      "timestamp": "2026-01-04T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032065030250079805,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.009962125134652677
+    },
+    {
+      "bar_index": 4945,
+      "timestamp": "2026-01-04T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03206980270177244,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0028767593000159544
+    },
+    {
+      "bar_index": 4946,
+      "timestamp": "2026-01-04T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032072792516932666,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0014596254096258293
+    },
+    {
+      "bar_index": 4947,
+      "timestamp": "2026-01-05T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032098278251821676,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.009595765531292632
+    },
+    {
+      "bar_index": 4948,
+      "timestamp": "2026-01-05T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03213237268486519,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.011444471919546045
+    },
+    {
+      "bar_index": 4949,
+      "timestamp": "2026-01-05T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0323014533427632,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.018677259012004038
+    },
+    {
+      "bar_index": 4950,
+      "timestamp": "2026-01-06T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03230863556989136,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.005209431998916311
+    },
+    {
+      "bar_index": 4951,
+      "timestamp": "2026-01-06T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032342321224930325,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.013274041125679464
+    },
+    {
+      "bar_index": 4952,
+      "timestamp": "2026-01-06T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03235450937968116,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.002745787764835688
+    },
+    {
+      "bar_index": 4953,
+      "timestamp": "2026-01-07T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032373505915658574,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.008811314826432121
+    },
+    {
+      "bar_index": 4954,
+      "timestamp": "2026-01-07T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03248557714189208,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0253375771418316
+    },
+    {
+      "bar_index": 4955,
+      "timestamp": "2026-01-07T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032490872367776306,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0012674772435263134
+    },
+    {
+      "bar_index": 4956,
+      "timestamp": "2026-01-08T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0325235580609432,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.012950710480440705
+    },
+    {
+      "bar_index": 4957,
+      "timestamp": "2026-01-08T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032527193773304555,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0010845979933134875
+    },
+    {
+      "bar_index": 4958,
+      "timestamp": "2026-01-08T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03253308086955523,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0038705622946470196
+    },
+    {
+      "bar_index": 4959,
+      "timestamp": "2026-01-09T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03253588891353901,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.00056495492198642
+    },
+    {
+      "bar_index": 4960,
+      "timestamp": "2026-01-09T08:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03223309072467349,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0004771750982161486
+    },
+    {
+      "bar_index": 4961,
+      "timestamp": "2026-01-09T16:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03224955185563973,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.008071639218305029
+    },
+    {
+      "bar_index": 4962,
+      "timestamp": "2026-01-10T00:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03225328523263975,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.002841732623345221
+    },
+    {
+      "bar_index": 4963,
+      "timestamp": "2026-01-10T08:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0322543170054288,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.00041356996869389677
+    },
+    {
+      "bar_index": 4964,
+      "timestamp": "2026-01-10T16:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03705840401770061,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.002160417524954909
+    },
+    {
+      "bar_index": 4965,
+      "timestamp": "2026-01-11T00:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03706133394589472,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.00324068268015581
+    },
+    {
+      "bar_index": 4966,
+      "timestamp": "2026-01-11T08:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03716037283260952,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.004242079019950489
+    },
+    {
+      "bar_index": 4967,
+      "timestamp": "2026-01-11T16:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03716742535994187,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.001379858776685864
+    },
+    {
+      "bar_index": 4968,
+      "timestamp": "2026-01-12T00:00:00",
+      "active_symbols": [
+        "SOLUSDT"
+      ],
+      "portfolio_heat": 0.04071099364679777,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.011896952871522407
+    },
+    {
+      "bar_index": 4969,
+      "timestamp": "2026-01-12T08:00:00",
+      "active_symbols": [
+        "SOLUSDT"
+      ],
+      "portfolio_heat": 0.04072055371001508,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.008224480095972864
+    },
+    {
+      "bar_index": 4970,
+      "timestamp": "2026-01-12T16:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.037214154267743646,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.01018278388709015
+    },
+    {
+      "bar_index": 4971,
+      "timestamp": "2026-01-13T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4972,
+      "timestamp": "2026-01-13T08:00:00",
+      "active_symbols": [
+        "SOLUSDT"
+      ],
+      "portfolio_heat": 0.04089078859454746,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.024811838545945823
+    },
+    {
+      "bar_index": 4973,
+      "timestamp": "2026-01-13T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03188730280600177,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.026576138810072734
+    },
+    {
+      "bar_index": 4974,
+      "timestamp": "2026-01-14T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031890482398364596,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0027375485910874683
+    },
+    {
+      "bar_index": 4975,
+      "timestamp": "2026-01-14T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031922816423632025,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.009959298875825124
+    },
+    {
+      "bar_index": 4976,
+      "timestamp": "2026-01-14T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032869115311838136,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0004175025384991355
+    },
+    {
+      "bar_index": 4977,
+      "timestamp": "2026-01-15T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031935443071421724,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.007546226811750331
+    },
+    {
+      "bar_index": 4978,
+      "timestamp": "2026-01-15T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03193815819176688,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.002191365029617948
+    },
+    {
+      "bar_index": 4979,
+      "timestamp": "2026-01-15T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03195857686033404,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.008028940049958709
+    },
+    {
+      "bar_index": 4980,
+      "timestamp": "2026-01-16T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.031959505504720896,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0008815768866555292
+    },
+    {
+      "bar_index": 4981,
+      "timestamp": "2026-01-16T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03198827108739901,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.011938234218560792
+    },
+    {
+      "bar_index": 4982,
+      "timestamp": "2026-01-16T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03202474062910578,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.014086468485830134
+    },
+    {
+      "bar_index": 4983,
+      "timestamp": "2026-01-17T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03202949198714267,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.004323982873373095
+    },
+    {
+      "bar_index": 4984,
+      "timestamp": "2026-01-17T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032051612398869764,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.01000256895286308
+    },
+    {
+      "bar_index": 4985,
+      "timestamp": "2026-01-17T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03205880398049118,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.005873097607857124
+    },
+    {
+      "bar_index": 4986,
+      "timestamp": "2026-01-18T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.032062088176811866,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.003510531513968009
+    },
+    {
+      "bar_index": 4987,
+      "timestamp": "2026-01-18T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03206523374419728,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.003124049087627377
+    },
+    {
+      "bar_index": 4988,
+      "timestamp": "2026-01-18T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.02991676365379145,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.016381952628375353
+    },
+    {
+      "bar_index": 4989,
+      "timestamp": "2026-01-19T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.029951503658470012,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.012390752889864923
+    },
+    {
+      "bar_index": 4990,
+      "timestamp": "2026-01-19T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.029952702834894672,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0012427586138134676
+    },
+    {
+      "bar_index": 4991,
+      "timestamp": "2026-01-19T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.029958193964785912,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.004872098526337436
+    },
+    {
+      "bar_index": 4992,
+      "timestamp": "2026-01-20T00:00:00",
+      "active_symbols": [
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03459934417732402,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.006513761591230321
+    },
+    {
+      "bar_index": 4993,
+      "timestamp": "2026-01-20T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4994,
+      "timestamp": "2026-01-20T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4995,
+      "timestamp": "2026-01-21T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4996,
+      "timestamp": "2026-01-21T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4997,
+      "timestamp": "2026-01-21T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4998,
+      "timestamp": "2026-01-22T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 4999,
+      "timestamp": "2026-01-22T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5000,
+      "timestamp": "2026-01-22T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5001,
+      "timestamp": "2026-01-23T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5002,
+      "timestamp": "2026-01-23T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5003,
+      "timestamp": "2026-01-23T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5004,
+      "timestamp": "2026-01-24T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5005,
+      "timestamp": "2026-01-24T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5006,
+      "timestamp": "2026-01-24T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5007,
+      "timestamp": "2026-01-25T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5008,
+      "timestamp": "2026-01-25T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5009,
+      "timestamp": "2026-01-25T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5010,
+      "timestamp": "2026-01-26T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5011,
+      "timestamp": "2026-01-26T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5012,
+      "timestamp": "2026-01-26T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5013,
+      "timestamp": "2026-01-27T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5014,
+      "timestamp": "2026-01-27T08:00:00",
+      "active_symbols": [
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03650653518551128,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0003390407346805864
+    },
+    {
+      "bar_index": 5015,
+      "timestamp": "2026-01-27T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03221173354622377,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.01679400520551269
+    },
+    {
+      "bar_index": 5016,
+      "timestamp": "2026-01-28T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.035239170606358505,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0009168398515016279
+    },
+    {
+      "bar_index": 5017,
+      "timestamp": "2026-01-28T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.030599482189854827,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.00144787975107667
+    },
+    {
+      "bar_index": 5018,
+      "timestamp": "2026-01-28T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.035239496563125236,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0005629061526129407
+    },
+    {
+      "bar_index": 5019,
+      "timestamp": "2026-01-29T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03525951943843847,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.007360048326831292
+    },
+    {
+      "bar_index": 5020,
+      "timestamp": "2026-01-29T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5021,
+      "timestamp": "2026-01-29T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5022,
+      "timestamp": "2026-01-30T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5023,
+      "timestamp": "2026-01-30T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5024,
+      "timestamp": "2026-01-30T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5025,
+      "timestamp": "2026-01-31T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5026,
+      "timestamp": "2026-01-31T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5027,
+      "timestamp": "2026-01-31T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5028,
+      "timestamp": "2026-02-01T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5029,
+      "timestamp": "2026-02-01T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5030,
+      "timestamp": "2026-02-01T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5031,
+      "timestamp": "2026-02-02T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5032,
+      "timestamp": "2026-02-02T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5033,
+      "timestamp": "2026-02-02T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5034,
+      "timestamp": "2026-02-03T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5035,
+      "timestamp": "2026-02-03T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5036,
+      "timestamp": "2026-02-03T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5037,
+      "timestamp": "2026-02-04T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5038,
+      "timestamp": "2026-02-04T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5039,
+      "timestamp": "2026-02-04T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5040,
+      "timestamp": "2026-02-05T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5041,
+      "timestamp": "2026-02-05T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5042,
+      "timestamp": "2026-02-05T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5043,
+      "timestamp": "2026-02-06T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5044,
+      "timestamp": "2026-02-06T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5045,
+      "timestamp": "2026-02-06T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5046,
+      "timestamp": "2026-02-07T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5047,
+      "timestamp": "2026-02-07T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5048,
+      "timestamp": "2026-02-07T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5049,
+      "timestamp": "2026-02-08T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5050,
+      "timestamp": "2026-02-08T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5051,
+      "timestamp": "2026-02-08T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5052,
+      "timestamp": "2026-02-09T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5053,
+      "timestamp": "2026-02-09T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5054,
+      "timestamp": "2026-02-09T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5055,
+      "timestamp": "2026-02-10T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5056,
+      "timestamp": "2026-02-10T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5057,
+      "timestamp": "2026-02-10T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5058,
+      "timestamp": "2026-02-11T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5059,
+      "timestamp": "2026-02-11T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5060,
+      "timestamp": "2026-02-11T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5061,
+      "timestamp": "2026-02-12T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04361269334251003,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.011320341803719255
+    },
+    {
+      "bar_index": 5062,
+      "timestamp": "2026-02-12T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.039392314608730904,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.006584705120400631
+    },
+    {
+      "bar_index": 5063,
+      "timestamp": "2026-02-12T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.037460430874794906,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.008017112068369405
+    },
+    {
+      "bar_index": 5064,
+      "timestamp": "2026-02-13T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5065,
+      "timestamp": "2026-02-13T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5066,
+      "timestamp": "2026-02-13T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.03452025706777767,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.00421932185584408
+    },
+    {
+      "bar_index": 5067,
+      "timestamp": "2026-02-14T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.03778754261526305,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.006370953903273661
+    },
+    {
+      "bar_index": 5068,
+      "timestamp": "2026-02-14T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.03784153537416271,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.016632518698348184
+    },
+    {
+      "bar_index": 5069,
+      "timestamp": "2026-02-14T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.039878588554195085,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0072494577063622265
+    },
+    {
+      "bar_index": 5070,
+      "timestamp": "2026-02-15T00:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04768157402681796,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.058702297778808185
+    },
+    {
+      "bar_index": 5071,
+      "timestamp": "2026-02-15T08:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04810454527314778,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.05867850964541054
+    },
+    {
+      "bar_index": 5072,
+      "timestamp": "2026-02-15T16:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.0481648699011305,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.023491633762818206
+    },
+    {
+      "bar_index": 5073,
+      "timestamp": "2026-02-16T00:00:00",
+      "active_symbols": [
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04861140362767811,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.009503060006806755
+    },
+    {
+      "bar_index": 5074,
+      "timestamp": "2026-02-16T08:00:00",
+      "active_symbols": [
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.048625512767530715,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.00861891120228753
+    },
+    {
+      "bar_index": 5075,
+      "timestamp": "2026-02-16T16:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04830923881554952,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.023044162481014395
+    },
+    {
+      "bar_index": 5076,
+      "timestamp": "2026-02-17T00:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.045130323024946045,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0057238710062609026
+    },
+    {
+      "bar_index": 5077,
+      "timestamp": "2026-02-17T08:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04836453587266388,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.02109065297752322
+    },
+    {
+      "bar_index": 5078,
+      "timestamp": "2026-02-17T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04041572349917051,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.007762819490511957
+    },
+    {
+      "bar_index": 5079,
+      "timestamp": "2026-02-18T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04043440792578604,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.007762333510729288
+    },
+    {
+      "bar_index": 5080,
+      "timestamp": "2026-02-18T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04044991351389643,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.011413919508306858
+    },
+    {
+      "bar_index": 5081,
+      "timestamp": "2026-02-18T16:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04852102341184479,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0274217137028619
+    },
+    {
+      "bar_index": 5082,
+      "timestamp": "2026-02-19T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04053494213412844,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.010369147308060891
+    },
+    {
+      "bar_index": 5083,
+      "timestamp": "2026-02-19T08:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.040256450837527366,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.018475947417635058
+    },
+    {
+      "bar_index": 5084,
+      "timestamp": "2026-02-19T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04061134725194461,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.01213582251533233
+    },
+    {
+      "bar_index": 5085,
+      "timestamp": "2026-02-20T00:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04540400044602605,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.008926542048590488
+    },
+    {
+      "bar_index": 5086,
+      "timestamp": "2026-02-20T08:00:00",
+      "active_symbols": [
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.048665575876604826,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.008871640351639428
+    },
+    {
+      "bar_index": 5087,
+      "timestamp": "2026-02-20T16:00:00",
+      "active_symbols": [
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04409188828636486,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.007965436586365567
+    },
+    {
+      "bar_index": 5088,
+      "timestamp": "2026-02-21T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5089,
+      "timestamp": "2026-02-21T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5090,
+      "timestamp": "2026-02-21T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5091,
+      "timestamp": "2026-02-22T00:00:00",
+      "active_symbols": [
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.040122382882508675,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.005158531808954898
+    },
+    {
+      "bar_index": 5092,
+      "timestamp": "2026-02-22T08:00:00",
+      "active_symbols": [
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04013200482916861,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.010559896619910495
+    },
+    {
+      "bar_index": 5093,
+      "timestamp": "2026-02-22T16:00:00",
+      "active_symbols": [
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04013204595979097,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0017708752586910019
+    },
+    {
+      "bar_index": 5094,
+      "timestamp": "2026-02-23T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5095,
+      "timestamp": "2026-02-23T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5096,
+      "timestamp": "2026-02-23T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5097,
+      "timestamp": "2026-02-24T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5098,
+      "timestamp": "2026-02-24T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5099,
+      "timestamp": "2026-02-24T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5100,
+      "timestamp": "2026-02-25T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5101,
+      "timestamp": "2026-02-25T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04137322588471064,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.04641800385375138
+    },
+    {
+      "bar_index": 5102,
+      "timestamp": "2026-02-25T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.041410883986479796,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.012263424280941512
+    },
+    {
+      "bar_index": 5103,
+      "timestamp": "2026-02-26T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.041412344028508755,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0038806968844795
+    },
+    {
+      "bar_index": 5104,
+      "timestamp": "2026-02-26T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04141712479645837,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.007463515365790947
+    },
+    {
+      "bar_index": 5105,
+      "timestamp": "2026-02-26T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04415146355744151,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0018376152284337866
+    },
+    {
+      "bar_index": 5106,
+      "timestamp": "2026-02-27T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.039798992416232,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005149856765478028
+    },
+    {
+      "bar_index": 5107,
+      "timestamp": "2026-02-27T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5108,
+      "timestamp": "2026-02-27T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5109,
+      "timestamp": "2026-02-28T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5110,
+      "timestamp": "2026-02-28T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5111,
+      "timestamp": "2026-02-28T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5112,
+      "timestamp": "2026-03-01T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04597254560975493,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.01888481753566168
+    },
+    {
+      "bar_index": 5113,
+      "timestamp": "2026-03-01T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0447276273302342,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.005103009634573057
+    },
+    {
+      "bar_index": 5114,
+      "timestamp": "2026-03-01T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04477892782377653,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.021761647078293835
+    },
+    {
+      "bar_index": 5115,
+      "timestamp": "2026-03-02T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04041135867432936,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0009078468312712464
+    },
+    {
+      "bar_index": 5116,
+      "timestamp": "2026-03-02T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04244038669850959,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.05008520813840162
+    },
+    {
+      "bar_index": 5117,
+      "timestamp": "2026-03-02T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04245558645319125,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.011214121962825294
+    },
+    {
+      "bar_index": 5118,
+      "timestamp": "2026-03-03T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.042472103393768626,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.012359354978458697
+    },
+    {
+      "bar_index": 5119,
+      "timestamp": "2026-03-03T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04247798892303063,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.006446556676960016
+    },
+    {
+      "bar_index": 5120,
+      "timestamp": "2026-03-03T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.040884868709801764,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.010179514642346659
+    },
+    {
+      "bar_index": 5121,
+      "timestamp": "2026-03-04T00:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03986533704555595,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.01165852582740527
+    },
+    {
+      "bar_index": 5122,
+      "timestamp": "2026-03-04T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04298642406026738,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.05506084492958101
+    },
+    {
+      "bar_index": 5123,
+      "timestamp": "2026-03-04T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04139293377281225,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.011422358261307212
+    },
+    {
+      "bar_index": 5124,
+      "timestamp": "2026-03-05T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.041404425578184086,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.009643785428655351
+    },
+    {
+      "bar_index": 5125,
+      "timestamp": "2026-03-05T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0430246435071372,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.003017169662813909
+    },
+    {
+      "bar_index": 5126,
+      "timestamp": "2026-03-05T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.041419736838016655,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.008829137219869504
+    },
+    {
+      "bar_index": 5127,
+      "timestamp": "2026-03-06T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04303642880659819,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.001347464941795853
+    },
+    {
+      "bar_index": 5128,
+      "timestamp": "2026-03-06T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04164303791365389,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.04065222807270014
+    },
+    {
+      "bar_index": 5129,
+      "timestamp": "2026-03-06T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04325040059306314,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.000569062487808854
+    },
+    {
+      "bar_index": 5130,
+      "timestamp": "2026-03-07T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04325180393222281,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0009781932710403321
+    },
+    {
+      "bar_index": 5131,
+      "timestamp": "2026-03-07T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03908959781993416,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0014205400328082436
+    },
+    {
+      "bar_index": 5132,
+      "timestamp": "2026-03-07T16:00:00",
+      "active_symbols": [
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.03257421594563303,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.009177681649189485
+    },
+    {
+      "bar_index": 5133,
+      "timestamp": "2026-03-08T00:00:00",
+      "active_symbols": [
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.03257481332339745,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0005440756277604881
+    },
+    {
+      "bar_index": 5134,
+      "timestamp": "2026-03-08T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.037943593275091045,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0035833417528570934
+    },
+    {
+      "bar_index": 5135,
+      "timestamp": "2026-03-08T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5136,
+      "timestamp": "2026-03-09T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5137,
+      "timestamp": "2026-03-09T08:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.03675831636339612,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.023032932752973558
+    },
+    {
+      "bar_index": 5138,
+      "timestamp": "2026-03-09T16:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0367636955293772,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.006955343324455493
+    },
+    {
+      "bar_index": 5139,
+      "timestamp": "2026-03-10T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.043522343590433915,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.022555624058323568
+    },
+    {
+      "bar_index": 5140,
+      "timestamp": "2026-03-10T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.043562631330047424,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.015990971661428766
+    },
+    {
+      "bar_index": 5141,
+      "timestamp": "2026-03-10T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04191511827702016,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.020472082642902262
+    },
+    {
+      "bar_index": 5142,
+      "timestamp": "2026-03-11T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5143,
+      "timestamp": "2026-03-11T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5144,
+      "timestamp": "2026-03-11T16:00:00",
+      "active_symbols": [
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04188795704077126,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.008939226951602559
+    },
+    {
+      "bar_index": 5145,
+      "timestamp": "2026-03-12T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5146,
+      "timestamp": "2026-03-12T08:00:00",
+      "active_symbols": [
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.041906006715485396,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.007098795242684595
+    },
+    {
+      "bar_index": 5147,
+      "timestamp": "2026-03-12T16:00:00",
+      "active_symbols": [
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04190747267423181,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.002564753723011204
+    },
+    {
+      "bar_index": 5148,
+      "timestamp": "2026-03-13T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04370939891988153,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.016575495807113604
+    },
+    {
+      "bar_index": 5149,
+      "timestamp": "2026-03-13T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04371631540957609,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.004337536197633372
+    },
+    {
+      "bar_index": 5150,
+      "timestamp": "2026-03-13T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04373726726786024,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.012504692529087131
+    },
+    {
+      "bar_index": 5151,
+      "timestamp": "2026-03-14T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.043741017801786734,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.00596964488089622
+    },
+    {
+      "bar_index": 5152,
+      "timestamp": "2026-03-14T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04374175160953431,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0017066548512066895
+    },
+    {
+      "bar_index": 5153,
+      "timestamp": "2026-03-14T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04375744993702643,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.010046851229426067
+    },
+    {
+      "bar_index": 5154,
+      "timestamp": "2026-03-15T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.043759632738005955,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0029097653946334404
+    },
+    {
+      "bar_index": 5155,
+      "timestamp": "2026-03-15T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.043761006801527856,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0008167630980720926
+    },
+    {
+      "bar_index": 5156,
+      "timestamp": "2026-03-15T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04387770107199723,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.029004188436639572
+    },
+    {
+      "bar_index": 5157,
+      "timestamp": "2026-03-16T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0439180182202786,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.01581721020806292
+    },
+    {
+      "bar_index": 5158,
+      "timestamp": "2026-03-16T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04392460079402596,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.00047522808347838074
+    },
+    {
+      "bar_index": 5159,
+      "timestamp": "2026-03-16T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04401352697184628,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.025491393734075312
+    },
+    {
+      "bar_index": 5160,
+      "timestamp": "2026-03-17T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04402864219402744,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.010583438708561982
+    },
+    {
+      "bar_index": 5161,
+      "timestamp": "2026-03-17T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.044035060528005175,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.00704451282031052
+    },
+    {
+      "bar_index": 5162,
+      "timestamp": "2026-03-17T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.044036391816448556,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0021035570664049265
+    },
+    {
+      "bar_index": 5163,
+      "timestamp": "2026-03-18T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04403908961428398,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.00044444514827901224
+    },
+    {
+      "bar_index": 5164,
+      "timestamp": "2026-03-18T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04483141254145222,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0470960021742478
+    },
+    {
+      "bar_index": 5165,
+      "timestamp": "2026-03-18T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04430670447530023,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.00573335429308615
+    },
+    {
+      "bar_index": 5166,
+      "timestamp": "2026-03-19T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.050540118598223924,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.009248332040037447
+    },
+    {
+      "bar_index": 5167,
+      "timestamp": "2026-03-19T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.05058735256406699,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.021174422276924794
+    },
+    {
+      "bar_index": 5168,
+      "timestamp": "2026-03-19T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.0506033968684023,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.011191229655456067
+    },
+    {
+      "bar_index": 5169,
+      "timestamp": "2026-03-20T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.049458722930832144,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005239449625970064
+    },
+    {
+      "bar_index": 5170,
+      "timestamp": "2026-03-20T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.05061442076997165,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.008127195983740058
+    },
+    {
+      "bar_index": 5171,
+      "timestamp": "2026-03-20T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.05062100559091836,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.006830016837857194
+    },
+    {
+      "bar_index": 5172,
+      "timestamp": "2026-03-21T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.044961964239342955,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0025328301907663825
+    },
+    {
+      "bar_index": 5173,
+      "timestamp": "2026-03-21T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.05062326115664947,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0025292143334663757
+    },
+    {
+      "bar_index": 5174,
+      "timestamp": "2026-03-21T16:00:00",
+      "active_symbols": [
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.05226905024371062,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.020537645633920222
+    },
+    {
+      "bar_index": 5175,
+      "timestamp": "2026-03-22T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5176,
+      "timestamp": "2026-03-22T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5177,
+      "timestamp": "2026-03-22T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5178,
+      "timestamp": "2026-03-23T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5179,
+      "timestamp": "2026-03-23T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5180,
+      "timestamp": "2026-03-23T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5181,
+      "timestamp": "2026-03-24T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5182,
+      "timestamp": "2026-03-24T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5183,
+      "timestamp": "2026-03-24T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5184,
+      "timestamp": "2026-03-25T00:00:00",
+      "active_symbols": [
+        "SOLUSDT"
+      ],
+      "portfolio_heat": 0.05351246315703379,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.011039633685961591
+    },
+    {
+      "bar_index": 5185,
+      "timestamp": "2026-03-25T08:00:00",
+      "active_symbols": [
+        "SOLUSDT"
+      ],
+      "portfolio_heat": 0.05351247134375862,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0007455988412180226
+    },
+    {
+      "bar_index": 5186,
+      "timestamp": "2026-03-25T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04316030609286349,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0034941011771936164
+    },
+    {
+      "bar_index": 5187,
+      "timestamp": "2026-03-26T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT"
+      ],
+      "portfolio_heat": 0.043442923172676944,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.021912843808503026
+    },
+    {
+      "bar_index": 5188,
+      "timestamp": "2026-03-26T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5189,
+      "timestamp": "2026-03-26T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5190,
+      "timestamp": "2026-03-27T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5191,
+      "timestamp": "2026-03-27T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5192,
+      "timestamp": "2026-03-27T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5193,
+      "timestamp": "2026-03-28T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5194,
+      "timestamp": "2026-03-28T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5195,
+      "timestamp": "2026-03-28T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5196,
+      "timestamp": "2026-03-29T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5197,
+      "timestamp": "2026-03-29T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5198,
+      "timestamp": "2026-03-29T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5199,
+      "timestamp": "2026-03-30T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5200,
+      "timestamp": "2026-03-30T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5201,
+      "timestamp": "2026-03-30T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5202,
+      "timestamp": "2026-03-31T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5203,
+      "timestamp": "2026-03-31T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5204,
+      "timestamp": "2026-03-31T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5205,
+      "timestamp": "2026-04-01T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5206,
+      "timestamp": "2026-04-01T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5207,
+      "timestamp": "2026-04-01T16:00:00",
+      "active_symbols": [
+        "ETHUSDT"
+      ],
+      "portfolio_heat": 0.048107802910891485,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.002146734000180611
+    },
+    {
+      "bar_index": 5208,
+      "timestamp": "2026-04-02T00:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5209,
+      "timestamp": "2026-04-02T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5210,
+      "timestamp": "2026-04-02T16:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5211,
+      "timestamp": "2026-04-03T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04037843701647539,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.002997819819249111
+    },
+    {
+      "bar_index": 5212,
+      "timestamp": "2026-04-03T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04038073328039834,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.004795437133235227
+    },
+    {
+      "bar_index": 5213,
+      "timestamp": "2026-04-03T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04038161962410142,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0015916916848183144
+    },
+    {
+      "bar_index": 5214,
+      "timestamp": "2026-04-04T00:00:00",
+      "active_symbols": [
+        "ETHUSDT"
+      ],
+      "portfolio_heat": 0.04829981832168278,
+      "heat_cap_triggered": false,
+      "weighted_return": -9.83269542183047e-05
+    },
+    {
+      "bar_index": 5215,
+      "timestamp": "2026-04-04T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04038630529700916,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.003682041828928393
+    },
+    {
+      "bar_index": 5216,
+      "timestamp": "2026-04-04T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.040387401045030344,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0010973508807712873
+    },
+    {
+      "bar_index": 5217,
+      "timestamp": "2026-04-05T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04039920482009883,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.010033534001945411
+    },
+    {
+      "bar_index": 5218,
+      "timestamp": "2026-04-05T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04040936960480528,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.007637215748978653
+    },
+    {
+      "bar_index": 5219,
+      "timestamp": "2026-04-05T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04051288751702761,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.025959728587282127
+    },
+    {
+      "bar_index": 5220,
+      "timestamp": "2026-04-06T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04051890862459523,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005555367710689522
+    },
+    {
+      "bar_index": 5221,
+      "timestamp": "2026-04-06T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04400575300831111,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.010319294184711938
+    },
+    {
+      "bar_index": 5222,
+      "timestamp": "2026-04-06T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04406036531140777,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.021162226556639598
+    },
+    {
+      "bar_index": 5223,
+      "timestamp": "2026-04-07T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04059946669245003,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.002590900292989613
+    },
+    {
+      "bar_index": 5224,
+      "timestamp": "2026-04-07T08:00:00",
+      "active_symbols": [],
+      "portfolio_heat": 0.0,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0
+    },
+    {
+      "bar_index": 5225,
+      "timestamp": "2026-04-07T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04609978852358307,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.059485060033008054
+    },
+    {
+      "bar_index": 5226,
+      "timestamp": "2026-04-08T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.046839888126584475,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0025343412654666017
+    },
+    {
+      "bar_index": 5227,
+      "timestamp": "2026-04-08T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT"
+      ],
+      "portfolio_heat": 0.04685896845024999,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.012818381918564136
+    },
+    {
+      "bar_index": 5228,
+      "timestamp": "2026-04-08T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04613267141619376,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.007855040487671966
+    },
+    {
+      "bar_index": 5229,
+      "timestamp": "2026-04-09T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04613405398742852,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.003539080678755309
+    },
+    {
+      "bar_index": 5230,
+      "timestamp": "2026-04-09T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046166084360846724,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.01504828834405284
+    },
+    {
+      "bar_index": 5231,
+      "timestamp": "2026-04-09T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046172112510288556,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.006752835233369468
+    },
+    {
+      "bar_index": 5232,
+      "timestamp": "2026-04-10T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04617481024315419,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.004980458415436262
+    },
+    {
+      "bar_index": 5233,
+      "timestamp": "2026-04-10T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04619889761205247,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.01257770538140406
+    },
+    {
+      "bar_index": 5234,
+      "timestamp": "2026-04-10T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04620477965035196,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.006341447950716998
+    },
+    {
+      "bar_index": 5235,
+      "timestamp": "2026-04-11T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0462071660583853,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.004129143489669128
+    },
+    {
+      "bar_index": 5236,
+      "timestamp": "2026-04-11T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04620865560774935,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0022626852148141187
+    },
+    {
+      "bar_index": 5237,
+      "timestamp": "2026-04-11T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046214833294744996,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005687546633048698
+    },
+    {
+      "bar_index": 5238,
+      "timestamp": "2026-04-12T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04628493841653096,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.02402514739080522
+    },
+    {
+      "bar_index": 5239,
+      "timestamp": "2026-04-12T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04137312507987019,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.012442052387441413
+    },
+    {
+      "bar_index": 5240,
+      "timestamp": "2026-04-12T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04137377206470074,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0002463923258198582
+    },
+    {
+      "bar_index": 5241,
+      "timestamp": "2026-04-13T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "portfolio_heat": 0.04137411964777643,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0004850833378783043
+    },
+    {
+      "bar_index": 5242,
+      "timestamp": "2026-04-13T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046319798186618334,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.010056972027218947
+    },
+    {
+      "bar_index": 5243,
+      "timestamp": "2026-04-13T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04653590256684372,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.038989903178068525
+    },
+    {
+      "bar_index": 5244,
+      "timestamp": "2026-04-14T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046537245495183774,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0016424808907840606
+    },
+    {
+      "bar_index": 5245,
+      "timestamp": "2026-04-14T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04503730584125816,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005833111825452073
+    },
+    {
+      "bar_index": 5246,
+      "timestamp": "2026-04-14T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04238112795799196,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.016462578650820178
+    },
+    {
+      "bar_index": 5247,
+      "timestamp": "2026-04-15T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04238428640187318,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.004175011247128209
+    },
+    {
+      "bar_index": 5248,
+      "timestamp": "2026-04-15T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04660560207172013,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.00885877409332002
+    },
+    {
+      "bar_index": 5249,
+      "timestamp": "2026-04-15T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.0466226186646342,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.010955045419282395
+    },
+    {
+      "bar_index": 5250,
+      "timestamp": "2026-04-16T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046626051856185055,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.0002794759089754801
+    },
+    {
+      "bar_index": 5251,
+      "timestamp": "2026-04-16T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046634774875557075,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005994427373549631
+    },
+    {
+      "bar_index": 5252,
+      "timestamp": "2026-04-16T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04666083864448752,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.013459023870749806
+    },
+    {
+      "bar_index": 5253,
+      "timestamp": "2026-04-17T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04667041521319515,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.00787767429586104
+    },
+    {
+      "bar_index": 5254,
+      "timestamp": "2026-04-17T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04681243781006615,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.03195889657616801
+    },
+    {
+      "bar_index": 5255,
+      "timestamp": "2026-04-17T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04682335302516299,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.007722408062328051
+    },
+    {
+      "bar_index": 5256,
+      "timestamp": "2026-04-18T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046824805662678305,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.002292053325260608
+    },
+    {
+      "bar_index": 5257,
+      "timestamp": "2026-04-18T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046861411361639904,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.017253485693458036
+    },
+    {
+      "bar_index": 5258,
+      "timestamp": "2026-04-18T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046866151199909084,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0055298675455042814
+    },
+    {
+      "bar_index": 5259,
+      "timestamp": "2026-04-19T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046883935337806236,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.011783298855202837
+    },
+    {
+      "bar_index": 5260,
+      "timestamp": "2026-04-19T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046895556000376246,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.009382346485900648
+    },
+    {
+      "bar_index": 5261,
+      "timestamp": "2026-04-19T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.046987092793317024,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.02643640931344218
+    },
+    {
+      "bar_index": 5262,
+      "timestamp": "2026-04-20T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04701390328536276,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.014455278543660157
+    },
+    {
+      "bar_index": 5263,
+      "timestamp": "2026-04-20T08:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04362864054234186,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.009783469922247368
+    },
+    {
+      "bar_index": 5264,
+      "timestamp": "2026-04-20T16:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.043629591058726644,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0005520374481295823
+    },
+    {
+      "bar_index": 5265,
+      "timestamp": "2026-04-21T00:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04363397934366028,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.005874237232129853
+    },
+    {
+      "bar_index": 5266,
+      "timestamp": "2026-04-21T08:00:00",
+      "active_symbols": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04622122531952547,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.0018150477596806513
+    },
+    {
+      "bar_index": 5267,
+      "timestamp": "2026-04-21T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04703624679809615,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.002976104807353812
+    },
+    {
+      "bar_index": 5268,
+      "timestamp": "2026-04-22T00:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.047091500268374685,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.020542325846596876
+    },
+    {
+      "bar_index": 5269,
+      "timestamp": "2026-04-22T08:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.04710708688251923,
+      "heat_cap_triggered": false,
+      "weighted_return": 0.007744956028174568
+    },
+    {
+      "bar_index": 5270,
+      "timestamp": "2026-04-22T16:00:00",
+      "active_symbols": [
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "BNBUSDT"
+      ],
+      "portfolio_heat": 0.047136230664674934,
+      "heat_cap_triggered": false,
+      "weighted_return": -0.014575535432985986
+    }
+  ]
+}

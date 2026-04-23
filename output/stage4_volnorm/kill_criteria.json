@@ -1,0 +1,10 @@
+{
+  "killed": false,
+  "k1_excess_return": 0.703028,
+  "k2_drawdown": 0.225758,
+  "k3_funding_drag_ratio": 0.0,
+  "k4_highvol_excess_return": 0.179012,
+  "k5_sharpe_watch": false,
+  "k6_sharpe_review": false,
+  "verdict": "PASSED"
+}
