@@ -1,0 +1,18 @@
+[Unit]
+Description=Qnty Health Check Timer - Every 4 hours
+Requires=qnty-healthcheck.service
+
+[Timer]
+# Run every 4 hours: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00, 22:00 UTC
+OnCalendar=*-*-* 00:00:00
+OnCalendar=*-*-* 04:00:00
+OnCalendar=*-*-* 08:00:00
+OnCalendar=*-*-* 12:00:00
+OnCalendar=*-*-* 16:00:00
+OnCalendar=*-*-* 20:00:00
+OnCalendar=*-*-* 22:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

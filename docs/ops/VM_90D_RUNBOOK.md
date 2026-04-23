@@ -1,0 +1,326 @@
+# Qnty VM 90-Day Runbook — Frozen Package V2 Observer
+
+**Phase:** Forward Observation (Shadow Mode)  
+**Package:** Package V2 (volnorm, frozen)  
+**Duration:** 90 days after successful burn-in  
+**VM:** Hetzner CX23, Ubuntu 24.04 LTS, 1× IPv4
+
+---
+
+## 1. VM Directory Layout
+
+```
+/srv/qnty/
+├── repo/              # git clone of Qnty (frozen at deploy SHA)
+├── venv/              # python -m venv (Python 3.10+)
+├── data/              # OHLCV + funding CSVs (symlink to /srv/qnty/repo/data)
+├── output/           # all run outputs
+│   └── forward_obs_v1/   # forward observation output family
+├── state/            # freshness tracking (created at runtime)
+├── logs/              # systemd journal excerpts + script logs
+├── config/            # reserved for overrides (not used during freeze)
+└── backups/           # Hetzner snapshot references + manual backup copies
+```
+
+**Why this layout:**
+- `repo/` is frozen at a specific git SHA. No pulls, no branches touched.
+- `data/` symlinks to `repo/data` — fetch scripts write in-place.
+- `output/forward_obs_v1/` accumulates all observation artifacts.
+- All service logs go to systemd journal (journalctl).
+
+---
+
+## 2. Security Posture
+
+### SSH
+- SSH key only, **no password authentication**
+- `PermitRootLogin no`
+- `PubkeyAuthentication yes`
+- `PasswordAuthentication no`
+- SSH key for `qnty` user only (not root)
+
+### Firewall (UFW)
+```bash
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh
+ufw enable
+```
+
+### Tailscale
+**Optional.** If used: install and authenticate. Provides WireGuard VPN tunnel for Viktor's laptop. Not required for the observer to function.
+
+### Exchange API Keys
+**Not required.** All data is public market data from Binance public API. No exchange credentials exist on this VM at any point.
+
+### Live Trading
+**Not authorized.** The VM has no exchange API keys, no order-routing code, and no wallet access. It is purely a computation and observation engine.
+
+---
+
+## 3. Software Installation (One-Time VM Setup)
+
+### 3.1 OS User
+```bash
+adduser --system --group --home /srv/qnty qnty
+mkdir -p /srv/qnty
+```
+
+### 3.2 Python
+```bash
+apt-get update && apt-get install -y python3.11 python3.11-venv git curl
+python3.11 -m venv /srv/qnty/venv
+```
+
+### 3.3 Clone Repo (at frozen SHA)
+```bash
+cd /srv/qnty
+git clone https://github.com/<org>/Qnty.git repo
+cd repo
+git checkout <FROZEN_SHA>   # Record this SHA in the burn-in checklist
+git submodule update --init  # if any submodules exist
+pip install -e .
+```
+
+### 3.4 Data Symlink
+```bash
+ln -sf /srv/qnty/repo/data /srv/qnty/data
+```
+
+### 3.5 Create Required Directories
+```bash
+mkdir -p /srv/qnty/output/forward_obs_v1
+mkdir -p /srv/qnty/state
+mkdir -p /srv/qnty/logs
+mkdir -p /srv/qnty/config
+mkdir -p /srv/qnty/backups
+```
+
+### 3.6 Copy Systemd Units
+```bash
+cp /srv/qnty/repo/ops/systemd/*.service /etc/systemd/system/
+cp /srv/qnty/repo/ops/systemd/*.timer /etc/systemd/system/
+systemctl daemon-reload
+```
+
+### 3.7 Enable and Start Timers
+```bash
+systemctl enable qnty-data-refresh.timer
+systemctl enable qnty-shadow-run.timer
+systemctl enable qnty-healthcheck.timer
+systemctl enable qnty-daily-summary.timer
+
+systemctl start qnty-data-refresh.timer
+systemctl start qnty-shadow-run.timer
+systemctl start qnty-healthcheck.timer
+systemctl start qnty-daily-summary.timer
+```
+
+### 3.8 Hetzner Backup
+- Enable Provider Backup in Hetzner console (automatic daily backups)
+- After setup and before burn-in: take one **manual snapshot** labeled `clean-deploy-<date>`
+- After burn-in and before 90-day start: take one **manual snapshot** labeled `post-burnin-<date>`
+
+---
+
+## 4. Scheduling — 8h Bar Close Times (UTC)
+
+| Bar Index | Closes (UTC) |
+|-----------|-------------|
+| Bar 0     | 00:00 UTC   |
+| Bar 1     | 08:00 UTC   |
+| Bar 2     | 16:00 UTC   |
+
+### 8h Cycle
+```
+00:00 UTC  → Bar 0 close
+00:05 UTC  → data-refresh fires (fetch new data)
+00:10 UTC  → shadow-run fires (observe on Bar 0)
+
+08:00 UTC  → Bar 1 close
+08:05 UTC  → data-refresh fires
+08:10 UTC  → shadow-run fires
+
+16:00 UTC  → Bar 2 close
+16:05 UTC  → data-refresh fires
+16:10 UTC  → shadow-run fires
+```
+
+### Systemd Timer Schedule (Exact)
+
+| Timer | Schedule |
+|-------|----------|
+| `qnty-data-refresh.timer` | `*-*-* 00:05:00, 08:05:00, 16:05:00` |
+| `qnty-shadow-run.timer`   | `*-*-* 00:10:00, 08:10:00, 16:10:00` |
+| `qnty-healthcheck.timer`  | Every 4h: `00,04,08,12,16,20,22:00` |
+| `qnty-daily-summary.timer` | Daily at `17:00:00` |
+
+The 5-minute buffer after bar close ensures fetch scripts have completed before shadow-run starts. The 10-minute buffer gives the exchange time to finalize the bar.
+
+---
+
+## 5. Service Descriptions
+
+### 5.1 Data Refresh (`qnty-data-refresh.service`)
+- Calls `scripts/fetch_ohlcv_rest.py` (OHLCV for 10 symbols)
+- Calls `scripts/fetch_funding_rest.py` (funding rates for 10 symbols)
+- Uses public Binance API — **no keys required**
+- Overwrites full CSV files each run (acceptable: ~40k records, ~40s)
+- Sets `END_TIME_MS` to tomorrow to capture all available data
+- **Fails loudly** if network is unavailable or API returns errors
+
+### 5.2 Shadow Run (`qnty-shadow-run.service`)
+- Runs `scripts/run_stage4_volnorm.py` (full walkforward, kill criteria)
+- Runs `scripts/run_validation_v2.py` (holdout observation)
+- Copies outputs to `/srv/qnty/output/forward_obs_v1/`
+- Writes `bar_decisions.jsonl` entry per run
+- **Never places orders. Never requires exchange credentials.**
+- Timeout: 30 minutes
+
+### 5.3 Healthcheck (`qnty-healthcheck.service`)
+- Checks all `data/*_8h_ohlcv.csv` files are ≤9h old
+- Checks disk usage ≤80%
+- Checks all systemd timer states are `active`
+- Checks `bar_decisions.jsonl` exists and has recent entry
+- **Exits 0 on pass, exits 1 on fail**
+- Failure triggers alerting (see Alerts section)
+
+### 5.4 Daily Summary (`qnty-daily-summary.service`)
+- Collects run metadata: commit SHA, bar count, newest bar timestamp, last verdict
+- Writes `daily_summary.jsonl` entry
+- Writes human-readable `logs/daily_summary_<YYYY-MM-DD>.txt`
+- Not a dashboard — Viktor reads the text file
+
+---
+
+## 6. Output / Artifact Plan
+
+All outputs live under `/srv/qnty/output/forward_obs_v1/`:
+
+| File | Purpose |
+|------|---------|
+| `run_metadata.json` | Run timestamp + frozen commit SHA |
+| `bar_decisions.jsonl` | One line per shadow run: timestamp + commit SHA |
+| `daily_summary.jsonl` | One line per day: bar count, newest bar, verdict |
+| `per_split_metrics.csv` | From stage4: per-split equity, sharpe, max drawdown |
+| `kill_criteria.json` | From stage4: K1, K2, K4, heat_cap status |
+| `verdict.json` | From validation: GO/FAIL, observation count |
+| `observation_log.json` | From validation: per-bar observation details |
+| `caveat_note.md` | From validation: caveats in effect |
+| `validation_receipt.md` | From validation: protocol receipt |
+| `logs/daily_summary_<YYYY-MM-DD>.txt` | Human-readable daily summary |
+
+### 90-Day Final Outputs
+At the end of 90 days, the following files constitute the complete evidence package:
+- `bar_decisions.jsonl` — all bar observations across 90 days
+- `daily_summary.jsonl` — all daily summaries
+- `per_split_metrics.csv` — walkforward equity series
+- `kill_criteria.json` — kill criteria status at end of run
+- `final_90d_verdict.md` — Viktor's verdict document (manually authored after review)
+
+---
+
+## 7. Freeze Rules (Forbidden During 90-Day Run)
+
+**Absolutely no changes to:**
+1. Strategy logic (`quantbot/strategy/`)
+2. Signal logic (`quantbot/experiment/volnorm_portfolio.py`)
+3. Threshold values (vol lookback, heat cap)
+4. Universe composition (10 symbols)
+5. K3 implementation (not available)
+6. Benchmark semantics (gross)
+7. Carry semantics (net of realistic funding)
+8. Any code in `quantbot/` or `scripts/`
+
+**Absolutely no:**
+- `git pull`, branch switches, or commits in `/srv/qnty/repo`
+- Installation of new Python packages
+- Overlay/ML/Kelly/RAMOM additions
+- Live trading enablement
+- Exchange API key introduction
+- Research mutation mixed with observation operations
+
+**If a change is needed:**
+1. Stop all timers: `systemctl stop qnty-*.timer`
+2. Take a Hetzner snapshot
+3. Make the change on a branch (off-VM)
+4. Test it separately (not on this VM)
+5. Get explicit authorization
+6. If approved: snapshot again, then restart timers
+
+---
+
+## 8. Viewing Logs
+
+```bash
+# All qnty services
+journalctl -t qnty-data-refresh
+journalctl -t qnty-shadow-run
+journalctl -t qnty-healthcheck
+journalctl -t qnty-daily-summary
+
+# All qnty logs in reverse time order
+journalctl -t qnty-data-refresh -t qnty-shadow-run -t qnty-healthcheck -t qnty-daily-summary -r
+
+# Filter by timer
+journalctl -u qnty-data-refresh.timer --since "1 hour ago"
+
+# Human-readable daily summaries
+cat /srv/qnty/logs/daily_summary_$(date -u +%Y-%m-%d).txt
+
+# Bar decisions
+cat /srv/qnty/output/forward_obs_v1/bar_decisions.jsonl | tail -10
+
+# Forward observation outputs
+ls -la /srv/qnty/output/forward_obs_v1/
+```
+
+---
+
+## 9. Manual Commands (Emergency Only)
+
+```bash
+# Force a data refresh
+systemctl start qnty-data-refresh.service
+
+# Force a shadow run
+systemctl start qnty-shadow-run.service
+
+# Force a healthcheck
+systemctl start qnty-healthcheck.service
+
+# Check all timer statuses
+systemctl list-timers qnty-
+
+# Check a specific data file freshness
+tail -1 /srv/qnty/data/BTCUSDT_8h_ohlcv.csv
+
+# Check disk space
+df -h /srv/qnty
+```
+
+---
+
+## 10. Git SHA Tracking
+
+Record the frozen SHA at deploy time:
+
+```bash
+cd /srv/qnty/repo
+git rev-parse HEAD > /srv/qnty/state/deploy_sha.txt
+cat /srv/qnty/state/deploy_sha.txt
+```
+
+This SHA is appended to every shadow-run output. It is the anchor that proves no code mutation occurred during the 90-day run.
+
+---
+
+## 11. Prerequisites Before 90-Day Clock Starts
+
+1. Burn-in completed successfully (see `VM_90D_BURNIN_CHECKLIST.md`)
+2. Clean-deploy snapshot taken
+3. Post-burnin snapshot taken
+4. All timers verified active: `systemctl list-timers qnty-`
+5. First shadow run completed with output in `forward_obs_v1/`
+6. Viktor has SSH access and can view daily summaries
+7. Alerting configured (see `VM_90D_ALERTS_AND_RECOVERY.md`)

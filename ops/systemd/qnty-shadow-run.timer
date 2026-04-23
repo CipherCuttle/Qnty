@@ -1,0 +1,15 @@
+[Unit]
+Description=Qnty Shadow Run Timer - Every 8h at :10 past hour (10min after bar close)
+Requires=qnty-shadow-run.service
+
+[Timer]
+# Run at 00:10, 08:10, 16:10 UTC - 10 minutes after each 8h bar close
+# This ensures data-refresh has completed and written new bar data
+OnCalendar=*-*-* 00:10:00
+OnCalendar=*-*-* 08:10:00
+OnCalendar=*-*-* 16:10:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

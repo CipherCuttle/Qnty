@@ -1,0 +1,11 @@
+[Unit]
+Description=Qnty Daily Summary Timer - Daily at 17:00 UTC
+Requires=qnty-daily-summary.service
+
+[Timer]
+# Run daily at 17:00 UTC
+OnCalendar=*-*-* 17:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

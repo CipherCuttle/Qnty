@@ -1,0 +1,14 @@
+[Unit]
+Description=Qnty Data Refresh Timer - Every 8h at :05 past hour (5min after bar close)
+Requires=qnty-data-refresh.service
+
+[Timer]
+# Run at 00:05, 08:05, 16:05 UTC - 5 minutes after each 8h bar close
+OnCalendar=*-*-* 00:05:00
+OnCalendar=*-*-* 08:05:00
+OnCalendar=*-*-* 16:05:00
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
