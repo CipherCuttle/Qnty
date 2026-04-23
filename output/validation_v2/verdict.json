@@ -1,0 +1,14 @@
+{
+  "verdict": "GO",
+  "reasons": [
+    "max_dd 0.1115 <= 0.35",
+    "excess_return 2.4909 > 0",
+    "heat_cap_trigger_rate 0.0000 <= 0.05"
+  ],
+  "metrics": {
+    "max_drawdown": 0.111519,
+    "excess_return": 2.490897,
+    "heat_cap_trigger_rate": 0.0,
+    "window_size": 500
+  }
+}
