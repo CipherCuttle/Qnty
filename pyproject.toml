@@ -5,10 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "quantbot"
 version = "0.1.0"
-description = "Cleanroom quantitative trading framework"
+description = "Cleanroom crypto quant research harness"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+  "numpy",
+  "pandas",
+  "requests",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest",
+]
 
 [project.scripts]
 qnty-replay = "quantbot.cli:main"

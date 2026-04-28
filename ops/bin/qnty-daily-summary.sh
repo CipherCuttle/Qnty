@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# qnty-daily-summary.sh - Ops-only: generate Viktor-facing daily status summary
+# qnty-daily-summary.sh - Ops-only: generate <operator>-facing daily status summary
 # Does NOT place orders. Does NOT require exchange credentials.
 set -euo pipefail
 

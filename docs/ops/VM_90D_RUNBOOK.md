@@ -1,9 +1,11 @@
 # Qnty VM 90-Day Runbook — Frozen Package V2 Observer
 
-**Phase:** Forward Observation (Shadow Mode)  
-**Package:** Package V2 (volnorm, frozen)  
-**Duration:** 90 days after successful burn-in  
-**VM:** Hetzner CX23, Ubuntu 24.04 LTS, 1× IPv4
+**Phase:** Forward Observation (Shadow Mode)
+**Package:** Package V2 (volnorm, frozen)
+**Duration:** 90 days after successful burn-in
+**VM:** Example — Hetzner CX23, Ubuntu 24.04 LTS, 1× IPv4
+
+> **Note:** This runbook uses `/srv/qnty` as an example operator path and mentions Hetzner/Tailscale as example infrastructure. These are not requirements. Alerting, backups, and snapshots are operator responsibilities.
 
 ---
 
@@ -48,7 +50,7 @@ ufw enable
 ```
 
 ### Tailscale
-**Optional.** If used: install and authenticate. Provides WireGuard VPN tunnel for Viktor's laptop. Not required for the observer to function.
+**Optional.** If used: install and authenticate. Provides WireGuard VPN tunnel for <operator>'s laptop. Not required for the observer to function.
 
 ### Exchange API Keys
 **Not required.** All data is public market data from Binance public API. No exchange credentials exist on this VM at any point.
@@ -189,7 +191,7 @@ The 5-minute buffer after bar close ensures fetch scripts have completed before 
 - Collects run metadata: commit SHA, bar count, newest bar timestamp, last verdict
 - Writes `daily_summary.jsonl` entry
 - Writes human-readable `logs/daily_summary_<YYYY-MM-DD>.txt`
-- Not a dashboard — Viktor reads the text file
+- Not a dashboard — <operator> reads the text file
 
 ---
 
@@ -216,7 +218,7 @@ At the end of 90 days, the following files constitute the complete evidence pack
 - `daily_summary.jsonl` — all daily summaries
 - `per_split_metrics.csv` — walkforward equity series
 - `kill_criteria.json` — kill criteria status at end of run
-- `final_90d_verdict.md` — Viktor's verdict document (manually authored after review)
+- `final_90d_verdict.md` — <operator>'s verdict document (manually authored after review)
 
 ---
 
@@ -322,5 +324,5 @@ This SHA is appended to every shadow-run output. It is the anchor that proves no
 3. Post-burnin snapshot taken
 4. All timers verified active: `systemctl list-timers qnty-`
 5. First shadow run completed with output in `forward_obs_v1/`
-6. Viktor has SSH access and can view daily summaries
+6. <operator> has SSH access and can view daily summaries
 7. Alerting configured (see `VM_90D_ALERTS_AND_RECOVERY.md`)

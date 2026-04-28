@@ -29,6 +29,18 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Experiment results
+# Local env / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Runtime / generated artifacts
+data/
+output/
 experiment_results/
 tmp_rfb_evidence_sprint.py
+
+# Local AI / tooling scratch
+.roo/
+.secondbrain/

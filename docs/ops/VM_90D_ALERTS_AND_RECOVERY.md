@@ -1,16 +1,18 @@
 # Qnty VM 90-Day Alerts and Recovery
 
-**Purpose:** Define alerting behavior and recovery procedures for the 90-day observer.  
-**Principle:** Minimal complexity. Viktor receives email or webhook notifications on failure only.
+**Purpose:** Define alerting behavior and recovery procedures for the 90-day observer.
+**Principle:** Minimal complexity. <operator> receives email or webhook notifications on failure only.
+
+> **Note:** This runbook uses `/srv/qnty` as an example operator path and mentions Hetzner/Tailscale as example infrastructure. These are not requirements. Alerting, backups, and snapshots are operator responsibilities.
 
 ---
 
 ## 1. Alerting Philosophy
 
 - **No dashboards.** No Grafana. No Prometheus. No Slack bot with charts.
-- **Email on failure.** Viktor receives one email when something breaks.
-- **Daily summary is read-only.** Viktor reads it when he wants, not when the system pushes.
-- **Escalation path is manual.** Viktor triages and decides.
+- **Email on failure.** <operator> receives one email when something breaks.
+- **Daily summary is read-only.** <operator> reads it when he wants, not when the system pushes.
+- **Escalation path is manual.** <operator> triages and decides.
 
 ---
 
@@ -18,7 +20,7 @@
 
 The `qnty-healthcheck.service` is the alert arbiter. It exits 0 (pass) or 1 (fail).
 
-### Alert Level: CRITICAL — Page Viktor Immediately
+### Alert Level: CRITICAL — Page <operator> Immediately
 
 Triggered by `qnty-healthcheck.sh` returning exit code 1:
 
@@ -71,17 +73,17 @@ ExecStart=/srv/qnty/repo/ops/bin/qnty-send-alert.sh "Qnty Healthcheck FAIL"
 Create `ops/bin/qnty-send-alert.sh`:
 ```bash
 #!/usr/bin/env bash
-# qnty-send-alert.sh - Send alert email to Viktor
+# qnty-send-alert.sh - Send alert email to <operator>
 set -euo pipefail
-RECIPIENT="viktor@example.com"  # Replace with Viktor's email
+RECIPIENT="<operator-email>"  # Replace with <operator>'s email
 SUBJECT="${1:-Qnty Alert}"
 BODY="${2:-Healthcheck failed on $(hostname) at $(date -u)}"
 echo "$BODY" | mail -s "$SUBJECT" "$RECIPIENT"
 ```
 
-**Configure postfix** to relay through Viktor's email provider (or use ssmtp for simple SMTP relay).
+**Configure postfix** to relay through <operator>'s email provider (or use ssmtp for simple SMTP relay).
 
-### Option B: Webhook to Viktor's Endpoint
+### Option B: Webhook to <operator>'s Endpoint
 
 Replace the email step with a curl webhook:
 
@@ -91,7 +93,7 @@ curl -X POST https://viktor.example.com/webhook/qnty \
   -d "{\"alert\": \"$1\", \"host\": \"$(hostname)\", \"ts\": \"$(date -u)\"}"
 ```
 
-This requires Viktor to host a simple receiver endpoint. Minimal infrastructure.
+This requires <operator> to host a simple receiver endpoint. Minimal infrastructure.
 
 ### Option C: Pushover or Similar (No Infrastructure)
 
@@ -108,7 +110,7 @@ curl -s -F "token=YOUR_PUSHOVER_TOKEN" \
 
 ## 4. Healthcheck Failure Response Procedure
 
-When Viktor receives an alert:
+When <operator> receives an alert:
 
 ### Step 1: Assess (5 minutes)
 ```bash
@@ -221,10 +223,10 @@ tail -1 /srv/qnty/data/BTCUSDT_8h_ohlcv.csv
 |------|-----------|-----------|--------|
 | Hetzner automatic backup | Daily | 7 days | Hetzner console (provider backup) |
 | Hetzner manual snapshot | Before burn-in, after burn-in, monthly | Until replaced | Manual in Hetzner console |
-| Output directory | Weekly | 90 days | Copy to Viktor's laptop or S3 |
+| Output directory | Weekly | 90 days | Copy to <operator>'s laptop or S3 |
 | State directory | Weekly | 90 days | Copy alongside outputs |
 
-### Weekly Output Copy Command (run from Viktor's laptop)
+### Weekly Output Copy Command (run from <operator>'s laptop)
 ```bash
 rsync -avz qnty@<VM_IP>:/srv/qnty/output/ /backup/qnty/output/
 rsync -avz qnty@<VM_IP>:/srv/qnty/state/ /backup/qnty/state/
@@ -255,7 +257,7 @@ rsync -avz qnty@<VM_IP>:/srv/qnty/logs/ /final/qnty_logs/
 ```
 
 ### Step 4: Write Final Verdict
-Viktor authors `/final/qnty_output/forward_obs_v1/final_90d_verdict.md`:
+<operator> authors `/final/qnty_output/forward_obs_v1/final_90d_verdict.md`:
 ```markdown
 # 90-Day Forward Observation — Final Verdict
 
@@ -271,7 +273,7 @@ Kill Criteria Results:
 
 ## Verdict
 
-[ Viktor's written verdict ]
+[ <operator>'s written verdict ]
 
 ## Caveats Confirmed
 
@@ -281,26 +283,26 @@ Kill Criteria Results:
 
 ## Next Authorized Action
 
-[ What Viktor authorizes next ]
+[ What <operator> authorizes next ]
 ```
 
 ### Step 5: Archive the VM
 - Keep Hetzner snapshot labeled `90d-archive-<date>`
 - Shut down the VM (don't delete yet, keep snapshot)
-- Delete VM after Viktor confirms final verdict written
+- Delete VM after <operator> confirms final verdict written
 
 ---
 
 ## 8. Minimal Alert Checklist
 
-To set up alerting on a fresh VM, Viktor does these 3 things:
+To set up alerting on a fresh VM, <operator> does these 3 things:
 
 1. **Install mailutils** (or configure ssmtp/webhook) during VM setup:
    ```bash
    apt-get install mailutils
    ```
 
-2. **Replace `viktor@example.com`** in `ops/bin/qnty-send-alert.sh` with real email
+2. **Replace `<operator-email>`** in `ops/bin/qnty-send-alert.sh` with real email
 
 3. **Add `OnFailure=qnty-alert-email.service`** to `qnty-healthcheck.service`:
    ```bash

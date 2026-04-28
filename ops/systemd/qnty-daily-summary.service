@@ -1,5 +1,5 @@
 [Unit]
-Description=Qnty Daily Summary - Viktor-Facing Daily Status
+Description=Qnty Daily Summary - <operator>-Facing Daily Status
 After=network.target
 
 [Service]

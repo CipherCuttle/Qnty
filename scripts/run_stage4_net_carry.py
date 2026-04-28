@@ -9,6 +9,9 @@ This script:
 5. Applies portfolio-level kill criteria (K1–K4; K5/K6 diagnostic)
 6. Outputs: per-split CSV, aggregate CSV, kill-criteria JSON
 
+WARNING: Labels like "PASSED" and "SURVIVED" in output artifacts are research
+labels meaning "not killed by this test." They are NOT live trading approval.
+
 Usage:
     python scripts/run_stage4_net_carry.py
 """
@@ -553,7 +556,7 @@ def main() -> int:
     print(f"  K4 high-vol excess return:  {d['k4_highvol_excess_return']:>10.6f}  {'✗ KILL' if d['k4_highvol_excess_return'] < 0 else '✓'}")
     print(f"  K5 Sharpe 0.3–0.8 (WATCH):   {d['k5_sharpe_watch']}")
     print(f"  K6 Sharpe>0.8 + K1/K2:      {d['k6_sharpe_review']}")
-    print(f"\n  VERDICT: {d['verdict']}  {'(KILLED)' if d['killed'] else '(SURVIVED)'}")
+    print(f"\n  RESEARCH_LABEL: {d['verdict']}  {'(KILLED)' if d['killed'] else '(NOT_KILLED_BY_THIS_TEST)'}")
 
     return 0
 

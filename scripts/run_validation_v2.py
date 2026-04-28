@@ -7,7 +7,7 @@ Implements the bounded validation protocol from:
 This is an execution-layer wrapper — NOT a redesign task.
 No strategy logic is reimplemented; we import and call the frozen Package V2 code.
 
-GO conditions (ALL must pass):
+RESEARCH_CONTINUE conditions (ALL must pass):
   - max_dd ≤ 0.35
   - excess_return > 0
   - heat_cap triggers in ≤ 5% of bars
@@ -21,6 +21,10 @@ INCONCLUSIVE:
   - < 200 bars
   - extreme black swan
   - benchmark/K3 ambiguity
+
+WARNING: The JSON label "GO" below is a research label meaning
+"continue research / not killed by this test." It is NOT live
+ trading approval.
 
 Usage:
     python scripts/run_validation_v2.py
@@ -336,9 +340,11 @@ def run_validation_window(
 
 
 def determine_verdict(metrics: dict) -> tuple[str, list[str]]:
-    """Apply GO/FAIL/INCONCLUSIVE gate.
+    """Apply RESEARCH_CONTINUE/FAIL/INCONCLUSIVE gate.
 
     Returns (verdict, list of reasons).
+    NOTE: "GO" in the returned verdict is a research label only.
+    It means "not killed by this test," not live trading approval.
     """
     reasons = []
 

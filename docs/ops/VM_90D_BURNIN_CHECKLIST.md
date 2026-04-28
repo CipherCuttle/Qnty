@@ -1,16 +1,18 @@
 # Qnty VM 90-Day Burn-In Checklist
 
-**Purpose:** Verify the VM observer is functioning correctly before the 90-day clock starts.  
-**Minimum Duration:** 7 consecutive days of successful operation.  
-**VM:** Hetzner CX23, Ubuntu 24.04 LTS
+**Purpose:** Verify the VM observer is functioning correctly before the 90-day clock starts.
+**Minimum Duration:** 7 consecutive days of successful operation.
+**VM:** Example — Hetzner CX23, Ubuntu 24.04 LTS
+
+> **Note:** This runbook uses `/srv/qnty` as an example operator path and mentions Hetzner/Tailscale as example infrastructure. These are not requirements. Alerting, backups, and snapshots are operator responsibilities.
 
 ---
 
 ## Burn-In Overview
 
-Burn-in runs the full systemd schedule but does NOT start the 90-day clock. The 90-day clock starts only after all burn-in checks pass and Viktor explicitly authorizes it.
+Burn-in runs the full systemd schedule but does NOT start the 90-day clock. The 90-day clock starts only after all burn-in checks pass and <operator> explicitly authorizes it.
 
-Burn-in checks are repeated daily during the burn-in window. Viktor reviews the accumulated evidence and signs off before the 90-day start.
+Burn-in checks are repeated daily during the burn-in window. <operator> reviews the accumulated evidence and signs off before the 90-day start.
 
 ---
 
@@ -20,7 +22,7 @@ Run this checklist each day during burn-in. All items must pass for that day.
 
 ### Day 1 (Baseline)
 
-- [ ] **SSH access verified** — Viktor can SSH to VM as `qnty` user
+- [ ] **SSH access verified** — <operator> can SSH to VM as `qnty` user
 - [ ] **Disk space** — `df -h /srv/qnty` shows <50% used
 - [ ] **Python venv** — `/srv/qnty/venv/bin/python --version` returns 3.10+
 - [ ] **Repo SHA recorded** — `git rev-parse HEAD` matches expected SHA, recorded in `/srv/qnty/state/deploy_sha.txt`
@@ -74,9 +76,9 @@ The 90-day clock MAY start when ALL of the following are true:
 - [ ] `verdict.json` exists from validation run
 
 ### Authorization
-- [ ] Viktor has reviewed the burn-in evidence
-- [ ] Viktor has reviewed the caveat reminder (Package V2 not deployment-ready)
-- [ ] Viktor explicitly authorizes 90-day start in writing (email/slack/issue)
+- [ ] <operator> has reviewed the burn-in evidence
+- [ ] <operator> has reviewed the caveat reminder (Package V2 not deployment-ready)
+- [ ] <operator> explicitly authorizes 90-day start in writing (email/slack/issue)
 
 ---
 
@@ -89,7 +91,7 @@ The 90-day clock MAY start when ALL of the following are true:
 5. **Repo git status is dirty** — must be clean at deploy time
 6. **Missing symbols** in OHLCV or funding data — Binance API may be down or symbols changed
 7. **Any exchange credentials found on VM** — must be zero, stop immediately and audit
-8. **Viktor has not signed off** — explicit authorization required
+8. **<operator> has not signed off** — explicit authorization required
 
 ---
 
@@ -127,10 +129,10 @@ Create `/srv/qnty/logs/burnin_log.md` with this template:
 | 6   |      |             |            |             |      |            |
 | 7   |      |             |            |             |      |            |
 
-## Viktor Sign-Off
+## <operator> Sign-Off
 
 - Authorization to start 90-day run: YES / NO
-- Viktor signature: ___________________
+- <operator> signature: ___________________
 - Date: ___________________
 ```
 
@@ -150,7 +152,7 @@ If any burn-in day fails:
 
 ## Post-Burn-In, Pre-90-Day Actions
 
-After burn-in completes and Viktor authorizes:
+After burn-in completes and <operator> authorizes:
 
 1. Take Hetzner snapshot labeled `post-burnin-<date>`
 2. Record the authorized SHA in `/srv/qnty/state/authorized_sha.txt`
@@ -164,7 +166,7 @@ After burn-in completes and Viktor authorizes:
    Burn-in completed: <YYYY-MM-DD>
    90-day start: <YYYY-MM-DD>
    90-day end: <YYYY-MM-DD+90>
-   Viktor authorized: <date>
+   <operator> authorized: <date>
    
    Caveats in effect:
    - benchmark remains gross
