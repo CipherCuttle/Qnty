@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUTPUT_DIR="/srv/qnty/output/forward_obs_v1"
 DATA_DIR="/srv/qnty/data"
+LOG_DIR="${LOG_DIR:-/srv/qnty/logs}"
 
 NOW_UTC=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 TODAY=$(date -u '+%Y-%m-%d')
