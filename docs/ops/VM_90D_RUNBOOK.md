@@ -105,6 +105,26 @@ cp /srv/qnty/repo/ops/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 ```
 
+The committed unit files use the canonical `qnty` system user. If a VM was
+intentionally built under an operator user such as `viktor`, keep the committed
+unit files canonical and add local systemd drop-ins instead:
+
+```bash
+for svc in qnty-data-refresh qnty-shadow-run qnty-healthcheck qnty-daily-summary; do
+  mkdir -p /etc/systemd/system/${svc}.service.d
+  cat > /etc/systemd/system/${svc}.service.d/user.conf <<'EOF'
+[Service]
+User=viktor
+Group=viktor
+EOF
+done
+
+systemctl daemon-reload
+```
+
+This makes local user drift visible in `systemctl cat` without changing the
+repo's production baseline.
+
 ### 3.7 Enable and Start Timers
 ```bash
 systemctl enable qnty-data-refresh.timer
@@ -122,6 +142,31 @@ systemctl start qnty-daily-summary.timer
 - Enable Provider Backup in Hetzner console (automatic daily backups)
 - After setup and before burn-in: take one **manual snapshot** labeled `clean-deploy-<date>`
 - After burn-in and before 90-day start: take one **manual snapshot** labeled `post-burnin-<date>`
+
+### 3.9 Provenance Files and Protocol Receipt
+
+Before starting the 90-day clock, write the VM provenance files:
+
+```bash
+cd /srv/qnty/repo
+/srv/qnty/repo/ops/bin/qnty-write-provenance-receipt.sh
+```
+
+This creates:
+
+| File | Purpose |
+|------|---------|
+| `/srv/qnty/state/deploy_sha` | Git SHA deployed on the VM |
+| `/srv/qnty/state/authorized_sha` | Git SHA authorized for observation |
+| `/srv/qnty/state/90d_start_date` | UTC start date for the observation clock |
+| `/srv/qnty/state/protocol_receipt.md` | Host, unit, healthcheck, and unit-file-hash receipt |
+
+The helper refuses to overwrite existing files unless `FORCE=1` is set after
+operator review. To authorize a different SHA explicitly:
+
+```bash
+AUTHORIZED_SHA=<approved-sha> /srv/qnty/repo/ops/bin/qnty-write-provenance-receipt.sh
+```
 
 ---
 
@@ -180,12 +225,19 @@ The 5-minute buffer after bar close ensures fetch scripts have completed before 
 - Timeout: 30 minutes
 
 ### 5.3 Healthcheck (`qnty-healthcheck.service`)
-- Checks all `data/*_8h_ohlcv.csv` files are ≤9h old
+- Checks all active `data/*_8h_ohlcv.csv` files are ≤9h old
+- Parses both Unix epoch timestamps and ISO timestamps
+- Logs an explicit skip for known stale/delisted symbols in `KNOWN_STALE_OHLCV_FILES`
 - Checks disk usage ≤80%
 - Checks all systemd timer states are `active`
 - Checks `bar_decisions.jsonl` exists and has recent entry
 - **Exits 0 on pass, exits 1 on fail**
 - Failure triggers alerting (see Alerts section)
+
+Current VM policy sets `KNOWN_STALE_OHLCV_FILES=MATICUSDT_8h_ohlcv.csv` by
+default because MATICUSDT is a known stale/delisted/migrated market in this
+observer dataset. This exception is logged on every healthcheck; it must not be
+silent.
 
 ### 5.4 Daily Summary (`qnty-daily-summary.service`)
 - Collects run metadata: commit SHA, bar count, newest bar timestamp, last verdict
@@ -211,6 +263,14 @@ All outputs live under `/srv/qnty/output/forward_obs_v1/`:
 | `caveat_note.md` | From validation: caveats in effect |
 | `validation_receipt.md` | From validation: protocol receipt |
 | `logs/daily_summary_<YYYY-MM-DD>.txt` | Human-readable daily summary |
+
+A `GO`, `PASSED`, or `SURVIVED` label means the configured observer kill
+criteria were not triggered for that research run. It does not prove real-money
+profitability, deployment readiness, or live-trading approval.
+
+Runtime `data/`, `output/`, and `experiment_results/` churn belongs on the VM
+and is ignored by git. Curated, human-authored receipts and verdicts belong
+under `docs/` when they are intentionally promoted into repo history.
 
 ### 90-Day Final Outputs
 At the end of 90 days, the following files constitute the complete evidence package:
@@ -275,6 +335,13 @@ cat /srv/qnty/output/forward_obs_v1/bar_decisions.jsonl | tail -10
 
 # Forward observation outputs
 ls -la /srv/qnty/output/forward_obs_v1/
+
+# Verify VM provenance and runtime truth
+/srv/qnty/repo/ops/bin/qnty-verify-vm-provenance.sh
+
+# Hetzner/operator laptop check
+ssh -i ~/.ssh/hetzner_qnty_key <operator>@<VM_IP> \
+  'hostname; date -u; /srv/qnty/repo/ops/bin/qnty-verify-vm-provenance.sh'
 ```
 
 ---
@@ -303,17 +370,31 @@ df -h /srv/qnty
 
 ---
 
-## 10. Git SHA Tracking
+## 10. Git SHA Tracking and Verification
 
-Record the frozen SHA at deploy time:
+Record the frozen SHA at deploy time with the provenance helper:
 
 ```bash
 cd /srv/qnty/repo
-git rev-parse HEAD > /srv/qnty/state/deploy_sha.txt
-cat /srv/qnty/state/deploy_sha.txt
+/srv/qnty/repo/ops/bin/qnty-write-provenance-receipt.sh
+/srv/qnty/repo/ops/bin/qnty-verify-vm-provenance.sh
 ```
 
-This SHA is appended to every shadow-run output. It is the anchor that proves no code mutation occurred during the 90-day run.
+The verifier checks:
+
+- deployed Git HEAD
+- non-runtime git drift, excluding generated `data/`, `output/`, and `experiment_results/`
+- active qnty timers
+- latest healthcheck PASS
+- latest output timestamp
+- `/srv/qnty/state/deploy_sha`
+- `/srv/qnty/state/authorized_sha`
+- `/srv/qnty/state/90d_start_date`
+- deployed HEAD equals `deploy_sha`
+- `deploy_sha` equals `authorized_sha`
+
+This SHA is appended to every shadow-run output. It is the anchor that proves no
+code mutation occurred during the 90-day run.
 
 ---
 
