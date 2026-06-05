@@ -1,0 +1,122 @@
+"""Reconciliation invariants for the paper_pnl_v1 ledger.
+
+Pure checks over the persisted ledgers. Returns a list of failure strings; empty == pass.
+See docs/paper_pnl_v1_schema.md sections 3, 5, 6.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from quantbot.paper.config import load_config
+from quantbot.paper import ledger
+
+EPS = 1e-6
+
+
+def _dup_ids(rows: list[dict[str, Any]], key: str) -> list[str]:
+    seen: set[str] = set()
+    dups: list[str] = []
+    for r in rows:
+        v = str(r.get(key))
+        if v in seen:
+            dups.append(v)
+        seen.add(v)
+    return dups
+
+
+def reconcile(output_dir: Path) -> list[str]:
+    failures: list[str] = []
+    config = load_config(output_dir)
+    forward_start_ts = config["forward_start_ts"]
+    initial_equity = float(config["initial_equity_usd"])
+
+    fills = ledger.read_jsonl(output_dir / "paper_fills.jsonl")
+    trades = ledger.read_jsonl(output_dir / "paper_trades.jsonl")
+    equity = ledger.read_jsonl(output_dir / "paper_equity.jsonl")
+    funding = ledger.read_jsonl(output_dir / "paper_funding.jsonl")
+    positions = ledger.read_jsonl(output_dir / "paper_positions.jsonl")
+    summary = ledger.read_json(output_dir / "paper_pnl_summary.json", default={})
+
+    # --- uniqueness / append-only ---
+    for rows, key, name in [
+        (fills, "fill_id", "fills"),
+        (trades, "trade_id", "trades"),
+        (funding, "funding_id", "funding"),
+        (equity, "bar_ts", "equity"),
+        (positions, "bar_ts", "positions"),
+    ]:
+        dups = _dup_ids(rows, key)
+        if dups:
+            failures.append(f"{name}: duplicate {key} values {dups[:5]}")
+
+    # --- backfill policy: no forward fill before forward_start_ts ---
+    for f in fills:
+        if f.get("backfill") is not False:
+            failures.append(f"fill {f.get('fill_id')} not marked backfill=false")
+        if f.get("fill_ts", "") < forward_start_ts:
+            failures.append(
+                f"fill {f.get('fill_id')} fill_ts {f.get('fill_ts')} < forward_start_ts"
+            )
+
+    # --- fill shape ---
+    fill_ids = {f["fill_id"] for f in fills}
+    for f in fills:
+        side, kind = f.get("side"), f.get("kind")
+        if (kind == "entry" and side != "BUY") or (kind == "exit" and side != "SELL"):
+            failures.append(f"fill {f['fill_id']} side/kind mismatch: {side}/{kind}")
+        if f.get("qty", 0) <= 0:
+            failures.append(f"fill {f['fill_id']} non-positive qty")
+
+    # --- trade internal consistency ---
+    for t in trades:
+        expect_net = t["gross_pnl"] - t["fees"] - t["funding"]
+        if abs(expect_net - t["net_pnl"]) > EPS:
+            failures.append(
+                f"trade {t['trade_id']} net_pnl {t['net_pnl']} != gross-fees-funding {expect_net}"
+            )
+        if t.get("hold_bars", 0) < 1:
+            failures.append(f"trade {t['trade_id']} hold_bars < 1")
+        for ref in ("entry_fill_id", "exit_fill_id"):
+            if t.get(ref) not in fill_ids:
+                failures.append(f"trade {t['trade_id']} dangling {ref}={t.get(ref)}")
+
+    # --- equity internal consistency (section 3.2) ---
+    prev_fees = None
+    for e in equity:
+        recomputed = (
+            initial_equity
+            + e["realized_pnl"]
+            - e["fees_cum"]
+            - e["funding_cum"]
+            + e["unrealized_pnl"]
+        )
+        if abs(recomputed - e["equity"]) > 1e-4:
+            failures.append(
+                f"equity {e['bar_ts']} mismatch: stored {e['equity']} vs recomputed {recomputed}"
+            )
+        if not (0.0 - EPS <= e["drawdown"] <= 1.0 + EPS):
+            failures.append(f"equity {e['bar_ts']} drawdown out of range: {e['drawdown']}")
+        if prev_fees is not None and e["fees_cum"] + EPS < prev_fees:
+            failures.append(f"equity {e['bar_ts']} fees_cum decreased")
+        prev_fees = e["fees_cum"]
+
+    # --- funding ledger ties to last equity funding_cum ---
+    if equity:
+        funding_total = sum(f.get("funding_amount", 0.0) for f in funding)
+        if abs(funding_total - equity[-1]["funding_cum"]) > 1e-4:
+            failures.append(
+                f"funding sum {funding_total} != last equity funding_cum {equity[-1]['funding_cum']}"
+            )
+
+    # --- summary: winrate null iff no closed trades ---
+    if summary:
+        closed = summary.get("closed_trades", 0)
+        wr = summary.get("winrate", None)
+        if closed == 0 and wr is not None:
+            failures.append("summary winrate must be null when closed_trades == 0")
+        if closed > 0 and wr is None:
+            failures.append("summary winrate must be set when closed_trades > 0")
+
+    return failures

@@ -1,0 +1,17 @@
+[Unit]
+Description=Qnty Paper PnL - Additive simulated ledger over forward_obs_v1 (SIMULATION)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+User=qnty
+Group=qnty
+WorkingDirectory=/srv/qnty/repo
+Environment="PATH=/srv/qnty/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=/srv/qnty/venv"
+ExecStart=/srv/qnty/repo/ops/bin/qnty-paper-pnl-run.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qnty-paper-pnl
+TimeoutSec=600
