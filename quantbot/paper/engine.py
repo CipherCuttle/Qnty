@@ -222,7 +222,7 @@ def run_engine(
         result.equity.append(
             {
                 "bar_ts": ts,
-                "realized_pnl": round(realized_gross, 8),
+                "realized_gross_pnl": round(realized_gross, 8),
                 "unrealized_pnl": round(unreal, 8),
                 "funding_cum": round(acc["funding_cum"], 8),
                 "fees_cum": round(acc["fees_cum"], 8),

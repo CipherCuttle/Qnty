@@ -122,6 +122,14 @@ def test_round_trip_fill_and_pnl(tmp_path):
     assert t["hold_bars"] == 2  # held during T2 and T3 bars
     assert abs(t["net_pnl"] - (t["gross_pnl"] - t["fees"] - t["funding"])) < 1e-9
     assert t["gross_pnl"] > 0  # rising prices
+    # trade entry/exit prices tie to the referenced fills' fill_price
+    assert t["entry_price"] == entry["fill_price"]
+    assert t["exit_price"] == exit_["fill_price"]
+
+    # equity field is realized GROSS (named accordingly), not net
+    equity = _read(out / "paper_equity.jsonl")
+    assert equity and all("realized_gross_pnl" in e for e in equity)
+    assert all("realized_pnl" not in e for e in equity)
 
     assert summary["closed_trades"] == 1
     assert summary["winrate"] == 1.0

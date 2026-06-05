@@ -62,6 +62,7 @@ def reconcile(output_dir: Path) -> list[str]:
 
     # --- fill shape ---
     fill_ids = {f["fill_id"] for f in fills}
+    fill_price_by_id = {f["fill_id"]: f.get("fill_price") for f in fills}
     for f in fills:
         side, kind = f.get("side"), f.get("kind")
         if (kind == "entry" and side != "BUY") or (kind == "exit" and side != "SELL"):
@@ -81,13 +82,21 @@ def reconcile(output_dir: Path) -> list[str]:
         for ref in ("entry_fill_id", "exit_fill_id"):
             if t.get(ref) not in fill_ids:
                 failures.append(f"trade {t['trade_id']} dangling {ref}={t.get(ref)}")
+        # trade entry/exit prices must equal the referenced fills' fill_price
+        for ref, price_field in (("entry_fill_id", "entry_price"), ("exit_fill_id", "exit_price")):
+            ref_price = fill_price_by_id.get(t.get(ref))
+            if ref_price is not None and abs(ref_price - t.get(price_field, 0.0)) > EPS:
+                failures.append(
+                    f"trade {t['trade_id']} {price_field} {t.get(price_field)} != "
+                    f"{ref} fill_price {ref_price}"
+                )
 
     # --- equity internal consistency (section 3.2) ---
     prev_fees = None
     for e in equity:
         recomputed = (
             initial_equity
-            + e["realized_pnl"]
+            + e["realized_gross_pnl"]
             - e["fees_cum"]
             - e["funding_cum"]
             + e["unrealized_pnl"]

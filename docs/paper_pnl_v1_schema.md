@@ -114,6 +114,12 @@ positions from earlier decisions that executed at or before `T`'s open). Funding
 `T` accrues on that pre-fill book. New fills are applied after the bar-`T` snapshot and
 first appear in bar `T+1`'s snapshot.
 
+**Funding accrual convention (v1):** a position entered at the `T+1` open is considered
+active for the `T+1` snapshot and accrues funding at the `T+1` bar boundary (its first
+snapshot), and likewise accrues through the exit-signal bar (the last pre-fill snapshot
+before its `T+1` exit fill). Funding is charged once per bar boundary the position is on
+the book at snapshot time; this is a deliberate v1 convention, not an exact venue match.
+
 ### 3.2 Equity definition (no double counting)
 ```
 equity(T) = initial_equity_usd
@@ -138,7 +144,7 @@ All JSONL ledgers are **append-only**, deterministic key order, never rewritten.
 | `paper_position_state.json` | mutable anchor | `watermark_bar_ts, open_positions{symbol->{entry_fill_id, entry_price, qty, entry_bar_ts, funding_accrued}}, accumulators{realized_gross, fees_cum, funding_cum}` |
 | `paper_positions.jsonl` | append | `bar_ts, open_symbols, num_open, gross_exposure_usd` |
 | `paper_trades.jsonl` | append | `trade_id(=exit_fill_id), symbol, entry_fill_id, exit_fill_id, entry_bar_ts, exit_bar_ts, qty, entry_price, exit_price, gross_pnl, fees, funding, net_pnl, hold_bars, backfill=false` |
-| `paper_equity.jsonl` | append | `bar_ts, realized_pnl, unrealized_pnl, funding_cum, fees_cum, equity, drawdown, num_open` |
+| `paper_equity.jsonl` | append | `bar_ts, realized_gross_pnl, unrealized_pnl, funding_cum, fees_cum, equity, drawdown, num_open` |
 | `paper_funding.jsonl` | append | `funding_id(=symbol|bar_ts), symbol, bar_ts, notional_usd, funding_rate, rate_available, funding_amount` |
 | `paper_pnl_summary.json` | overwrite | `closed_trades, winrate(null until closed_trades>0), net_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, current_verdict, disclaimer` |
 | `paper_provenance.json` | overwrite | latest run: input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests, `engine_version`, `git_sha`, `run_ts` |
@@ -156,6 +162,14 @@ All JSONL ledgers are **append-only**, deterministic key order, never rewritten.
 - Reruns are idempotent: append rows only for IDs not already present; the
   `watermark_bar_ts` in `paper_position_state.json` ensures already-resolved bars are not
   reprocessed. A byte-identical input set must yield byte-identical ledgers.
+
+> **Provenance vs. long-term source of truth.** `paper_provenance.json` digests the
+> *current* `observation_log.json`, which is a rolling 500-bar full-overwrite window. Once
+> that window advances past the earliest forward bars, the live `observation_log.json` no
+> longer spans the full forward history — but the append-only paper ledgers
+> (`paper_fills/positions/trades/equity/funding.jsonl`) do, and they are the authoritative
+> long-term record. The provenance digest pins the inputs *as seen on each run*; it is not
+> expected to re-derive the entire forward history from a single later snapshot.
 
 ---
 
