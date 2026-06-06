@@ -41,6 +41,7 @@ def compute_summary(
     equity: list[dict[str, Any]],
     open_positions: dict[str, Any],
     bars_elapsed: int,
+    funding_gaps: int = 0,
 ) -> dict[str, Any]:
     """Aggregate stats over ALL forward ledger rows. winrate is null until closed trades."""
     closed = len(trades)
@@ -84,6 +85,9 @@ def compute_summary(
         "expectancy": expectancy,
         "open_positions": sorted(open_positions),
         "num_open": len(open_positions),
+        # Funding-gap exposure must be visible in the summary, not only the receipt (Blocker 6).
+        "funding_gap": funding_gaps > 0,
+        "funding_gap_count": int(funding_gaps),
         "current_verdict": verdict,
         "disclaimer": DISCLAIMER,
     }
@@ -116,6 +120,7 @@ def build_provenance(
     paper_dir: Path,
     data_dir: Path,
     symbols: list[str],
+    config: dict[str, Any] | None = None,
     aborted: bool = False,
     abort_code: str | None = None,
     abort_reason: str | None = None,
@@ -144,6 +149,8 @@ def build_provenance(
     record: dict[str, Any] = {
         "run_ts": _now_utc(),
         "engine_version": PAPER_ENGINE_VERSION,
+        # baseline_label must appear in every provenance artifact (Blocker 6 / schema § 8).
+        "baseline_label": (config or {}).get("baseline_label", BASELINE_LABEL),
         "git_sha": git_sha(),
         "status": "ABORTED" if aborted else "OK",
         "input_digests": inputs,

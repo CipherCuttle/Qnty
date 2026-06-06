@@ -200,31 +200,74 @@ def run_engine(
             break
 
         # --- 1. snapshot bar `ts` on the PRE-FILL book (funding + marks + equity) ---
+        # Funding is accrued over the ACTUAL position holding interval, from entry fill
+        # timestamp to exit fill / current mark timestamp — never before the position
+        # exists, and through the T+1 exit fill (Blocker 1 / schema doc section 11).
         window_start = _interval_start(ts, interval_hours)
         for sym in sorted(open_positions):
             pos = open_positions[sym]
+            pos["hold_bars"] += 1
             close_ts = prices.close_at(sym, ts)
             mark = close_ts if close_ts is not None else pos["entry_price"]
             notional_at = pos["qty"] * mark
-            # Accrue EVERY funding event in (ts - interval, ts]; long pays when rate>0.
+            # Clamp the window start to the entry FILL timestamp: the position is filled
+            # at T+1 open, so no funding event before that fill may be charged. On the bar
+            # the position is first filled the held interval is zero -> nothing to accrue.
+            eff_start = max(window_start, pos["entry_fill_ts"])
+            if eff_start >= ts:
+                continue
+            # Accrue EVERY funding event in (eff_start, ts]; long pays when rate>0.
             rate, num_events, available = funding_in_interval(
-                funding_index, sym, window_start, ts
+                funding_index, sym, eff_start, ts
             )
             amount = notional_at * rate if available else 0.0
             pos["funding_accrued"] += amount
-            pos["hold_bars"] += 1
             acc["funding_cum"] += amount
             result.funding.append(
                 {
                     "funding_id": f"{sym}|{ts}",
                     "symbol": sym,
                     "bar_ts": ts,
-                    "window_start": window_start,
+                    "window_start": eff_start,
+                    "window_end": ts,
                     "notional_usd": round(notional_at, 8),
                     "funding_rate": round(rate, 12),
                     "funding_events": num_events,
                     "rate_available": available,
                     "funding_amount": round(amount, 8),
+                }
+            )
+
+        # Exit-tail funding stub: a position exiting at this bar is still held until its
+        # T+1 exit FILL, so funding events in (exit_signal_ts, exit_fill_ts] must still be
+        # charged. Accrued here (before the equity snapshot) so the bar-`ts` equity
+        # funding_cum stays exactly tied to the funding ledger sum (Blocker 1).
+        for sym in exits:
+            pos = open_positions[sym]
+            next_ts, _ = nxt[sym]
+            stub_mark_close = prices.close_at(sym, next_ts)
+            # v1 mark approximation: stub notional uses the exit-fill bar mark if available,
+            # else the entry price (documented in schema doc section 11).
+            stub_mark = stub_mark_close if stub_mark_close is not None else pos["entry_price"]
+            stub_notional = pos["qty"] * stub_mark
+            s_rate, s_events, s_available = funding_in_interval(
+                funding_index, sym, ts, next_ts
+            )
+            s_amount = stub_notional * s_rate if s_available else 0.0
+            pos["funding_accrued"] += s_amount
+            acc["funding_cum"] += s_amount
+            result.funding.append(
+                {
+                    "funding_id": f"{sym}|{ts}|exit",
+                    "symbol": sym,
+                    "bar_ts": ts,
+                    "window_start": ts,
+                    "window_end": next_ts,
+                    "notional_usd": round(stub_notional, 8),
+                    "funding_rate": round(s_rate, 12),
+                    "funding_events": s_events,
+                    "rate_available": s_available,
+                    "funding_amount": round(s_amount, 8),
                 }
             )
 
@@ -348,6 +391,7 @@ def run_engine(
                 "entry_price": fill_price,
                 "qty": qty,
                 "entry_bar_ts": ts,
+                "entry_fill_ts": next_ts,  # actual fill timestamp (T+1 open) for funding
                 "funding_accrued": 0.0,
                 "entry_fee": fee,
                 "hold_bars": 0,

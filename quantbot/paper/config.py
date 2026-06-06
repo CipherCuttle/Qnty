@@ -35,10 +35,98 @@ DEFAULT_MAX_BAR_STALENESS_HOURS = 24  # abort if newest observer bar is older th
 DEFAULT_HEARTBEAT_MAX_AGE_HOURS = 24  # abort if bar_decisions heartbeat is older than this
 
 
+# Minimum schema/engine contract a stored config MUST satisfy to be loaded. An older
+# (e.g. engine 0.1.0) config that predates the hardened provenance engine must fail loudly
+# and be archived + re-init'd, NOT run under the current engine (Blocker 2 / schema § 4-5).
+MIN_SCHEMA_VERSION = SCHEMA_VERSION
+EXPECTED_ENGINE_VERSION = PAPER_ENGINE_VERSION
+REQUIRED_CONFIG_FIELDS = (
+    "schema_version",
+    "engine_version",
+    "baseline_label",
+    "forward_start_ts",
+    "initial_equity_usd",
+    "notional_usd",
+    "fee_model",
+    "slippage_model",
+    "fill_model",
+    "funding_model",
+    "signal_source",
+    "freshness",
+    "config_hash",
+)
+REQUIRED_FRESHNESS_FIELDS = (
+    "bar_interval_hours",
+    "max_bar_staleness_hours",
+    "heartbeat_max_age_hours",
+)
+
+_REINIT_HINT = (
+    "Archive/delete the stale paper output dir and re-init a fresh write-once "
+    "paper_config.json (with a fresh future forward_start_ts) for this engine version."
+)
+
+
+class ConfigContractError(ValueError):
+    """Raised when a stored paper_config.json does not meet the current load contract."""
+
+
 def config_hash(config: dict[str, Any]) -> str:
     """SHA-256 over canonical JSON of the config (excluding config_hash itself)."""
     payload = {k: v for k, v in config.items() if k != "config_hash"}
     return hashlib.sha256(canonical_json_dumps(payload).encode("utf-8")).hexdigest()
+
+
+def validate_config_contract(config: dict[str, Any]) -> None:
+    """Reject any config that does not meet the current minimum schema/engine contract.
+
+    Old `0.1.0` configs (missing `baseline_label`/`freshness`, wrong engine_version) must
+    fail loudly here so they never run under the hardened provenance engine. Raises
+    ConfigContractError (a ValueError) on any violation.
+    """
+    if not isinstance(config, dict):
+        raise ConfigContractError(f"paper_config.json is not a JSON object. {_REINIT_HINT}")
+
+    missing = [f for f in REQUIRED_CONFIG_FIELDS if f not in config]
+    if missing:
+        raise ConfigContractError(
+            f"paper_config.json is missing required field(s) {missing} — it predates the "
+            f"current paper engine contract (schema {MIN_SCHEMA_VERSION}, engine "
+            f"{EXPECTED_ENGINE_VERSION}). {_REINIT_HINT}"
+        )
+
+    schema_v = config.get("schema_version")
+    if not isinstance(schema_v, int) or schema_v < MIN_SCHEMA_VERSION:
+        raise ConfigContractError(
+            f"paper_config.json schema_version {schema_v!r} < required minimum "
+            f"{MIN_SCHEMA_VERSION}. {_REINIT_HINT}"
+        )
+
+    engine_v = config.get("engine_version")
+    if engine_v != EXPECTED_ENGINE_VERSION:
+        raise ConfigContractError(
+            f"paper_config.json engine_version {engine_v!r} != expected "
+            f"{EXPECTED_ENGINE_VERSION}. A config built for a different engine version must "
+            f"not run under this engine (contradictory provenance / stale forward_start_ts). "
+            f"{_REINIT_HINT}"
+        )
+
+    if not config.get("baseline_label"):
+        raise ConfigContractError(
+            f"paper_config.json has an empty/missing baseline_label. {_REINIT_HINT}"
+        )
+
+    freshness = config.get("freshness")
+    if not isinstance(freshness, dict):
+        raise ConfigContractError(
+            f"paper_config.json freshness must be an object with "
+            f"{list(REQUIRED_FRESHNESS_FIELDS)}. {_REINIT_HINT}"
+        )
+    fresh_missing = [f for f in REQUIRED_FRESHNESS_FIELDS if f not in freshness]
+    if fresh_missing:
+        raise ConfigContractError(
+            f"paper_config.json freshness is missing {fresh_missing}. {_REINIT_HINT}"
+        )
 
 
 def build_config(
@@ -87,6 +175,9 @@ def load_config(output_dir: Path | None = None) -> dict[str, Any]:
     path = config_path(output_dir)
     with open(path, encoding="utf-8") as fh:
         config = json.load(fh)
+    # Contract gate first: an old/incompatible config must fail loudly with a re-init hint
+    # before we trust any of its fields.
+    validate_config_contract(config)
     expected = config_hash(config)
     if config.get("config_hash") != expected:
         raise ValueError(

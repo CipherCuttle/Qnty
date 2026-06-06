@@ -98,6 +98,32 @@ mkdir -p /srv/qnty/config
 mkdir -p /srv/qnty/backups
 ```
 
+### 3.5b Paper PnL config — archive stale output, re-init fresh
+
+The hardened paper engine (`engine_version 0.2.0`) **rejects any pre-existing
+`paper_config.json` that predates the current contract** (an old `0.1.0` config, or one
+missing `baseline_label` / `freshness`): `load_config` fails loudly and the run aborts.
+
+**Any stale `/srv/qnty/output/paper_pnl_v1/` content from before this patch (e.g. a lone
+`paper_config.json` with no fills/trades/equity) MUST be archived or deleted and re-init'd**
+with a **fresh, future `forward_start_ts`** — do not reuse a stale forward start:
+
+```bash
+# 1. Archive whatever is there (never silently overwrite a write-once config):
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+mv /srv/qnty/output/paper_pnl_v1 /srv/qnty/output/paper_pnl_v1.archived-$ts 2>/dev/null || true
+mkdir -p /srv/qnty/output/paper_pnl_v1
+
+# 2. Re-init the write-once config with a fresh FUTURE 8h boundary (no fill before it):
+cd /srv/qnty/repo
+QNTY_PAPER_OUTPUT_DIR=/srv/qnty/output/paper_pnl_v1 \
+  .venv/bin/python -m quantbot.paper.config --forward-start-ts <FUTURE_UTC_8H_BOUNDARY>
+```
+
+The paper timer remains disabled until the config is re-init'd against this engine version.
+A run against a stale/aborting config writes a clearly-marked `status: ABORTED` summary and
+**no** fills/trades/equity, so a stale config can never be mistaken for a FLAT/zero result.
+
 ### 3.6 Copy Systemd Units
 ```bash
 cp /srv/qnty/repo/ops/systemd/*.service /etc/systemd/system/

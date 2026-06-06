@@ -58,9 +58,21 @@ def reconcile(output_dir: Path) -> list[str]:
     if snap_dup_ts:
         failures.append(f"snapshots: duplicate bar_ts values {snap_dup_ts[:5]}")
     snap_ts = {s.get("bar_ts") for s in snaps}
+    equity_ts = {e["bar_ts"] for e in equity}
     for e in equity:
         if e["bar_ts"] not in snap_ts:
             failures.append(f"equity bar {e['bar_ts']} has no consumed-signal snapshot")
+    # Orphan-snapshot guard (Blocker 4): a committed snapshot must have its bar accounting
+    # (equity) row too. The crash-safe write order (snapshot after equity, state last) makes
+    # an orphan impossible in a clean run; if one exists, a crash/corruption left a snapshot
+    # without its ledger — fail loudly instead of reporting success. (No PENDING marker is
+    # written in v1; any orphan is a hard failure.)
+    for s in snaps:
+        if s.get("bar_ts") not in equity_ts:
+            failures.append(
+                f"snapshot {s.get('snapshot_id')} bar {s.get('bar_ts')} has no equity row "
+                f"(orphan snapshot — crash/corruption between equity and snapshot writes)"
+            )
 
     # --- backfill policy: no forward fill before forward_start_ts ---
     for f in fills:

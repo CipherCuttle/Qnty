@@ -8,6 +8,7 @@ receipt / provenance entry, and leaves the append-only ledgers and state untouch
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,8 +46,8 @@ def _abort(
     summary = provenance.aborted_summary(config, code, reason)
     ledger.write_json(out / "paper_pnl_summary.json", summary)
 
-    prov = provenance.build_provenance(obs_dir, out, data_dir, SYMBOLS, aborted=True,
-                                        abort_code=code, abort_reason=reason)
+    prov = provenance.build_provenance(obs_dir, out, data_dir, SYMBOLS, config=config,
+                                        aborted=True, abort_code=code, abort_reason=reason)
     ledger.write_json(out / "paper_provenance.json", prov)
     ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
 
@@ -73,18 +74,29 @@ def run_once(
 
     config = load_config(out)
     freshness_cfg = config.get("freshness", {})
+    forward_start_ts = config["forward_start_ts"]
 
     # --- inputs (read-only) ---
     obs_path = obs_dir / "observation_log.json"
-    obs_log = ledger.read_json(obs_path, default={})
+    # A malformed observation_log.json must NOT raise an uncaught JSONDecodeError before the
+    # gate (which would skip the ABORTED artifacts); convert it to a controlled abort.
+    try:
+        obs_log = ledger.read_json(obs_path, default={})
+    except (json.JSONDecodeError, ValueError) as exc:
+        return _abort(
+            out, obs_dir, data_dir, config,
+            "MALFORMED_OBSERVATION_LOG",
+            f"observation_log.json is not valid JSON: {exc}",
+        )
 
     # === HARD FRESHNESS GATE (before any ledger write) ===
-    fresh = freshness.check_freshness(obs_path, obs_log, obs_dir, now, freshness_cfg)
+    fresh = freshness.check_freshness(
+        obs_path, obs_log, obs_dir, now, freshness_cfg, forward_start_ts=forward_start_ts
+    )
     if fresh.aborted:
         return _abort(out, obs_dir, data_dir, config, fresh.code, fresh.reason)
 
     per_bar_obs = obs_log.get("per_bar_obs", [])
-    forward_start_ts = config["forward_start_ts"]
     forward_obs = [o for o in per_bar_obs if o.get("timestamp", "") >= forward_start_ts]
 
     # === SIGNAL SNAPSHOT DIVERGENCE GATE ===
@@ -107,7 +119,23 @@ def run_once(
     # --- engine ---
     result = run_engine(config, per_bar_obs, bars_by_symbol, funding_df, state)
 
-    # --- freeze consumed signal snapshots for every newly processed bar (once each) ---
+    # --- persist new rows idempotently (ids dedupe overlap) ---
+    # CRASH-SAFE ORDER (Blocker 4): the bar accounting rows (fills/trades/funding/positions/
+    # equity) are committed BEFORE the consumed-signal snapshot for that bar, and the state
+    # watermark is written LAST as the commit marker. Therefore:
+    #   - a committed snapshot for a bar implies its equity/ledger rows are also committed
+    #     (no orphan snapshot can report success), and
+    #   - a crash before the state write leaves the watermark un-advanced, so the next run
+    #     reprocesses the bar and idempotently completes any half-written ledger.
+    ledger.append_new(out / "paper_fills.jsonl", result.fills, "fill_id")
+    ledger.append_new(out / "paper_trades.jsonl", result.trades, "trade_id")
+    ledger.append_new(out / "paper_funding.jsonl", result.funding, "funding_id")
+    # positions/equity are per-bar snapshots keyed by bar_ts; the watermark guarantees a
+    # bar is snapshotted at most once, so a plain id-keyed append stays idempotent.
+    ledger.append_new(out / "paper_positions.jsonl", result.positions, "bar_ts")
+    ledger.append_new(out / "paper_equity.jsonl", result.equity, "bar_ts")
+
+    # --- freeze consumed signal snapshots AFTER the bar accounting rows are committed ---
     processed_bar_ts = {e["bar_ts"] for e in result.equity}
     existing_snapshot_ids = {
         s["snapshot_id"] for s in existing_snapshots if "snapshot_id" in s
@@ -118,14 +146,7 @@ def run_once(
     )
     ledger.append_new(out / snapshots.SNAPSHOT_FILE, new_snapshots, "snapshot_id")
 
-    # --- persist new rows idempotently (ids dedupe overlap) ---
-    ledger.append_new(out / "paper_fills.jsonl", result.fills, "fill_id")
-    ledger.append_new(out / "paper_trades.jsonl", result.trades, "trade_id")
-    ledger.append_new(out / "paper_funding.jsonl", result.funding, "funding_id")
-    # positions/equity are per-bar snapshots keyed by bar_ts; the watermark guarantees a
-    # bar is snapshotted at most once, so a plain id-keyed append stays idempotent.
-    ledger.append_new(out / "paper_positions.jsonl", result.positions, "bar_ts")
-    ledger.append_new(out / "paper_equity.jsonl", result.equity, "bar_ts")
+    # state (watermark) LAST — commit marker for the whole bar batch.
     ledger.write_json(state_path, state)
 
     # --- summary + provenance + receipt over the FULL ledgers ---
@@ -135,11 +156,16 @@ def run_once(
     funding_gaps = sum(1 for f in all_funding if not f.get("rate_available", True))
 
     summary = provenance.compute_summary(
-        config, all_trades, all_equity, state["open_positions"], state["bars_elapsed"]
+        config,
+        all_trades,
+        all_equity,
+        state["open_positions"],
+        state["bars_elapsed"],
+        funding_gaps=funding_gaps,
     )
     ledger.write_json(out / "paper_pnl_summary.json", summary)
 
-    prov = provenance.build_provenance(obs_dir, out, data_dir, SYMBOLS)
+    prov = provenance.build_provenance(obs_dir, out, data_dir, SYMBOLS, config=config)
     ledger.write_json(out / "paper_provenance.json", prov)
     ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
 

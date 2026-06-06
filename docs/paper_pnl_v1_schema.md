@@ -126,11 +126,23 @@ positions from earlier decisions that executed at or before `T`'s open). Funding
 `T` accrues on that pre-fill book. New fills are applied after the bar-`T` snapshot and
 first appear in bar `T+1`'s snapshot.
 
-**Funding accrual convention (v1):** a position entered at the `T+1` open is considered
-active for the `T+1` snapshot and accrues funding at the `T+1` bar boundary (its first
-snapshot), and likewise accrues through the exit-signal bar (the last pre-fill snapshot
-before its `T+1` exit fill). Funding is charged once per bar boundary the position is on
-the book at snapshot time; this is a deliberate v1 convention, not an exact venue match.
+**Funding accrual convention (v1):** funding is accrued over the **actual position holding
+interval**, from the entry **fill** timestamp (the `T+1` open) to the exit **fill**
+timestamp (its `T+1` exit open) / the current mark. Concretely:
+
+- The per-bar funding window `(bar_ts - interval, bar_ts]` is **clamped** so its start is no
+  earlier than the entry fill timestamp. No funding event before the position exists is ever
+  charged (e.g. a 12:00 event cannot be charged against a position whose entry fills at the
+  16:00 open).
+- On the bar a position is first filled, the held sub-interval is zero, so **no funding row**
+  is emitted for it that bar.
+- A position leaving `active_symbols` at the exit-signal bar is still held until its `T+1`
+  exit fill, so a **funding stub** for `(exit_signal_ts, exit_fill_ts]` is accrued at the
+  exit-signal bar (`funding_id = "{symbol}|{bar_ts}|exit"`). This closes the gap between the
+  exit signal and the actual exit fill.
+- Multiple events (1h / 4h / off-grid) inside the held interval are all summed.
+
+This is a deliberate v1 convention, not an exact venue match.
 
 ### 3.2 Equity definition (no double counting)
 
@@ -159,10 +171,10 @@ All JSONL ledgers are **append-only**, deterministic key order, never rewritten.
 | `paper_positions.jsonl` | append | `bar_ts, open_symbols, num_open, gross_exposure_usd` |
 | `paper_trades.jsonl` | append | `trade_id(=exit_fill_id), symbol, entry_fill_id, exit_fill_id, entry_bar_ts, exit_bar_ts, qty, entry_price, exit_price, gross_pnl, fees, funding, net_pnl, hold_bars, backfill=false` |
 | `paper_equity.jsonl` | append | `bar_ts, realized_gross_pnl, unrealized_pnl, funding_cum, fees_cum, equity, drawdown, num_open` |
-| `paper_funding.jsonl` | append | `funding_id(=symbol+bar_ts), symbol, bar_ts, window_start, notional_usd, funding_rate(Σ of events in interval), funding_events, rate_available, funding_amount` (section 11) |
+| `paper_funding.jsonl` | append | `funding_id(=symbol+bar_ts, or symbol+bar_ts+"\|exit" for the exit-tail stub), symbol, bar_ts, window_start, window_end, notional_usd, funding_rate(Σ of events in interval), funding_events, rate_available, funding_amount` (section 11) |
 | `paper_signal_snapshots.jsonl` | append | `snapshot_id, bar_ts, bar_index, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return, source_observation_digest, source_observation_mtime, run_ts, backfill=false` (section 10) |
-| `paper_pnl_summary.json` | overwrite | `status(OK/ABORTED), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, current_verdict, disclaimer` (ABORTED runs add `abort_code, abort_reason, aborted_at`) |
-| `paper_provenance.json` | overwrite | latest run: `status`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (incl. `paper_signal_snapshots.jsonl`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`) |
+| `paper_pnl_summary.json` | overwrite | `status(OK/ABORTED), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (ABORTED runs add `abort_code, abort_reason, aborted_at`) |
+| `paper_provenance.json` | overwrite | latest run: `status`, `baseline_label`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (incl. `paper_signal_snapshots.jsonl`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`) |
 | `paper_provenance_log.jsonl` | append | one provenance record per run (incl. aborted runs) |
 | `paper_receipt.md` | overwrite | human summary + loud disclaimer + baseline label + red flags (aborted runs render a 🛑 ABORTED receipt) |
 
@@ -172,8 +184,17 @@ All JSONL ledgers are **append-only**, deterministic key order, never rewritten.
 
 - `config_hash = sha256(canonical_json_dumps(config without config_hash))` via
   `quantbot.core.determinism.canonical_json_dumps`.
+- **Config load contract (`load_config`):** before the hash check, `validate_config_contract`
+  rejects any stored config that does not meet the **current minimum schema/engine contract**:
+  it must contain all required fields (incl. `baseline_label`, `freshness{bar_interval_hours,
+  max_bar_staleness_hours, heartbeat_max_age_hours}`), `schema_version >= MIN_SCHEMA_VERSION`,
+  and `engine_version == EXPECTED_ENGINE_VERSION`. An **old `0.1.0` config fails loudly** with a
+  re-init hint — it must never run under the hardened provenance engine (stale
+  `forward_start_ts` / contradictory provenance). Archive/delete the stale output dir and
+  re-init a fresh write-once config with a fresh future `forward_start_ts`.
 - `fill_id = sha256(f"{symbol}|{signal_bar_ts}|{side}|{kind}")[:16]`.
-- `trade_id = exit_fill_id`; `funding_id = f"{symbol}|{bar_ts}"`.
+- `trade_id = exit_fill_id`; `funding_id = f"{symbol}|{bar_ts}"` (exit-tail stub:
+  `f"{symbol}|{bar_ts}|exit"`).
 - Reruns are idempotent: append rows only for IDs not already present; the
   `watermark_bar_ts` in `paper_position_state.json` ensures already-resolved bars are not
   reprocessed. A byte-identical input set must yield byte-identical ledgers.
@@ -232,20 +253,29 @@ loudly to stderr, and the summary/receipt/provenance are written **clearly marke
 `status: ABORTED`** with an `abort_code`. Stale/missing/malformed observer output is **never**
 silently treated as a FLAT bar.
 
+All JSON parse failures (a malformed `observation_log.json`) are converted into a controlled
+abort (`MALFORMED_OBSERVATION_LOG`) **before** any uncaught exception — the ABORTED
+summary/receipt/provenance are still written. **Every consumed row** (`>= forward_start_ts`)
+is validated in full, not just the final row.
+
 Checks (thresholds from `config.freshness`, defaults `bar_interval_hours=8`,
-`max_bar_staleness_hours=24`, `heartbeat_max_age_hours=24`):
+`max_bar_staleness_hours=24`, `heartbeat_max_age_hours=24`, `max_future_skew_hours=1`):
 
 | Abort code | Condition |
 | --- | --- |
 | `MISSING_OBSERVATION_LOG` | `observation_log.json` does not exist. |
-| `MALFORMED_OBSERVATION_LOG` | No `per_bar_obs` key, or a row missing `timestamp` / bad `active_symbols`. |
+| `MALFORMED_OBSERVATION_LOG` | Not valid JSON, no `per_bar_obs` key, or any consumed row missing a required field (`bar_index, timestamp, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return`) or with a non-list `active_symbols` (missing/`null` `active_symbols` is **never** treated as `[]`/FLAT). |
 | `EMPTY_PER_BAR_OBS` | `per_bar_obs` missing, empty, or not a list. |
-| `MALFORMED_BAR_TIMESTAMP` | Latest `per_bar_obs[-1].timestamp` cannot be parsed. |
-| `OFF_GRID_BAR` | Latest bar is not on the 8h grid (minute/second ≠ 0 or `hour % 8 ≠ 0`). |
-| `STALE_OBSERVATION` | `now - latest_bar_ts > max_bar_staleness_hours`. |
-| `STALE_HEARTBEAT` | `bar_decisions.jsonl` heartbeat present but older than `heartbeat_max_age_hours`. |
+| `MALFORMED_BAR_TIMESTAMP` | Any consumed row's `timestamp` cannot be parsed. |
+| `OFF_GRID_BAR` | **Any** consumed bar (not just the last) is off the 8h grid (minute/second ≠ 0 or `hour % 8 ≠ 0`). |
+| `DUPLICATE_OBSERVATION_TS` | Two consumed rows share a `timestamp` (ambiguous observation set). |
+| `FUTURE_OBSERVATION` | A consumed bar is dated beyond `now + max_future_skew_hours` (a negative age must not pass as fresh). |
+| `STALE_OBSERVATION` | `now - latest_consumed_bar_ts > max_bar_staleness_hours`. |
+| `MALFORMED_HEARTBEAT` | `bar_decisions.jsonl` is present but unreadable / not valid JSON / has no `bar_processed_at` / an unparseable stamp (fail-closed, not silently "unavailable"). |
+| `STALE_HEARTBEAT` | `bar_decisions.jsonl` heartbeat present, parseable, but older than `heartbeat_max_age_hours`. |
 
-The heartbeat is only checked **if available** (the observer may not have written one yet).
+Only an **absent** heartbeat file is skipped (the observer may not have written one yet); a
+present-but-malformed heartbeat **fails closed** with `MALFORMED_HEARTBEAT`.
 
 ## 10. Consumed signal snapshots (`paper_signal_snapshots.jsonl`)
 
@@ -255,29 +285,57 @@ run. To defeat that provenance hole, every processed bar's exact consumed source
 frozen append-only:
 
 - **One snapshot per consumed bar**, keyed by `snapshot_id = sha256("snap|" + bar_ts)[:16]`.
-  Idempotent: a rerun appends nothing for an already-snapshotted bar.
+  Idempotent: a rerun appends nothing for an already-snapshotted bar. The in-memory dedupe
+  set is updated as snapshots are built, so a duplicate timestamp within a single run can
+  never yield two snapshots sharing one `snapshot_id` (the freshness gate also aborts
+  duplicate consumed timestamps with `DUPLICATE_OBSERVATION_TS`).
 - **Snapshots are never rewritten.**
-- `source_observation_digest = sha256(canonical(consumed fields))` over
-  `{active_symbols (sorted), bar_index, heat_cap_triggered, portfolio_heat, timestamp,
-  weighted_return}`.
+- `source_observation_digest = sha256(canonical_json_dumps(full source row))` — the **entire**
+  consumed `per_bar_obs` row, not a hand-picked subset. Any change to **any** field of an
+  already-consumed bar (including fields the paper layer does not use for sizing) is detected.
 - **Divergence gate:** before processing, every current forward obs row that already has a
   frozen snapshot is re-digested. If any differs from the frozen digest, the run aborts with
-  `SIGNAL_SNAPSHOT_DIVERGENCE` (no ledger rows written). This catches the rolling window
+  `SIGNAL_SNAPSHOT_DIVERGENCE` **before any ledger mutation**. This catches the rolling window
   recomputing history under us.
+- **Crash-safe write order:** within a run the bar accounting rows (fills/trades/funding/
+  positions/equity) are committed **before** the consumed-signal snapshot for that bar, and
+  the `paper_position_state.json` watermark is written **last** as the commit marker.
+  Therefore a committed snapshot always implies its equity/ledger rows exist (no orphan
+  snapshot can report success), and a crash before the state write leaves the watermark
+  un-advanced so the next run reprocesses and idempotently completes the bar.
+- **Reconcile orphan guard:** `reconcile` fails if any snapshot's `bar_ts` has no equity row
+  (orphan), in addition to requiring every equity bar to have a snapshot.
 
-## 11. Funding accrual (actual rows by timestamp)
+## 11. Funding accrual (actual rows over the held interval)
 
-Funding is **not** assumed to be a single 8h-aligned value. For each open position at bar
-`bar_ts`, `quantbot.paper.engine.funding_in_interval` sums **every** funding event whose
-timestamp falls in `(bar_ts - bar_interval_hours, bar_ts]`:
+Funding is **not** assumed to be a single 8h-aligned value, and is accrued over the **actual
+position holding interval** (entry fill → exit fill / current mark), not a holding-period-
+shifted window. For each open position at bar `bar_ts`,
+`quantbot.paper.engine.funding_in_interval` sums **every** funding event whose timestamp
+falls in the (exclusive-start) window `(window_start, window_end]`:
 
-- `funding_rate` in the ledger = Σ of the event rates in the interval; `funding_events` =
-  count; `funding_amount = notional_at_mark * funding_rate`.
-- Multiple events inside one interval (e.g. off-grid / sub-8h funding) are all accrued.
+- **Per-bar window:** `(max(bar_ts - bar_interval_hours, entry_fill_ts), bar_ts]`. The start
+  is clamped to the entry fill timestamp, so **no event before the position exists is ever
+  charged**. On the entry-fill bar the held sub-interval is zero and no row is emitted.
+- **Exit-tail stub:** at the exit-signal bar an extra window `(exit_signal_ts, exit_fill_ts]`
+  (`funding_id = "{symbol}|{bar_ts}|exit"`) is accrued, because the position is held until the
+  `T+1` exit fill. It is accrued at the exit-signal bar so the bar's equity `funding_cum`
+  stays exactly tied to the funding ledger sum.
+- `funding_rate` in the ledger = Σ of the event rates in the window; `funding_events` = count;
+  `funding_amount = notional_at_mark * funding_rate`. **Long pays when the rate is positive**
+  (funding reduces net PnL).
+- Multiple events inside one window (e.g. off-grid / sub-8h funding) are all accrued.
 - The window start is **exclusive** so a boundary event already charged on the previous bar
   is not double-counted.
-- If no event lands in the interval where one is needed, `rate_available=false` and the
-  amount is `0.0` **with the gap flag set** — never a silent zero.
+- If no event lands in a window where one is needed, `rate_available=false` and the amount is
+  `0.0` **with the gap flag set** (`funding_gap`/`funding_gap_count` in the summary) — never a
+  silent zero.
+
+**Mark approximation (v1):** the funding event notional uses the position quantity times the
+**available bar mark** — the `bar_ts` close for the per-bar window, and the exit-fill bar
+close for the exit-tail stub (falling back to the entry price if a close is unavailable).
+This is a deliberate v1 convention (mark at the bar boundary), not an exact per-event venue
+mark.
 
 ## 12. Runtime / service-user hygiene
 

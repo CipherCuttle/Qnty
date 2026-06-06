@@ -24,38 +24,21 @@ from quantbot.core.determinism import canonical_json_dumps
 
 SNAPSHOT_FILE = "paper_signal_snapshots.jsonl"
 
-# Fields of a per_bar_obs row that materially define the consumed signal. The digest over
-# these is what divergence is measured against (run_ts / mtime are intentionally excluded).
-_CONSUMED_FIELDS = (
-    "active_symbols",
-    "bar_index",
-    "heat_cap_triggered",
-    "portfolio_heat",
-    "timestamp",
-    "weighted_return",
-)
-
-
 def snapshot_id(bar_ts: str) -> str:
     """Stable id for a bar's snapshot (deterministic across runs -> idempotent append)."""
     return hashlib.sha256(f"snap|{bar_ts}".encode("utf-8")).hexdigest()[:16]
 
 
 def consumed_row_digest(obs: dict[str, Any]) -> str:
-    """SHA-256 over the canonical consumed fields of a per_bar_obs row.
+    """SHA-256 over the canonical FULL consumed source row of a per_bar_obs entry.
 
-    active_symbols is sorted so a pure reordering of the same set is not flagged as a
-    divergence; any value change (membership, heat, return, bar_index) is.
+    The digest covers the entire row (every field, canonical JSON) — not a hand-picked
+    subset — so ANY change to the recomputed observation (including a field the paper layer
+    does not directly consume for sizing) is detected as a divergence (Blocker 5). The row
+    is canonicalized with sorted keys; list values keep their order so a real reordering of
+    active_symbols is also treated as a change (fail-closed).
     """
-    payload = {
-        "active_symbols": sorted(obs.get("active_symbols", []) or []),
-        "bar_index": obs.get("bar_index"),
-        "heat_cap_triggered": obs.get("heat_cap_triggered"),
-        "portfolio_heat": obs.get("portfolio_heat"),
-        "timestamp": obs.get("timestamp"),
-        "weighted_return": obs.get("weighted_return"),
-    }
-    return hashlib.sha256(canonical_json_dumps(payload).encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_json_dumps(obs).encode("utf-8")).hexdigest()
 
 
 def check_divergence(
@@ -91,15 +74,23 @@ def build_snapshots(
     source_mtime: float | None,
     run_ts: str,
 ) -> list[dict[str, Any]]:
-    """Build snapshot rows for newly processed bars not already snapshotted."""
+    """Build snapshot rows for newly processed bars not already snapshotted.
+
+    `existing_ids` is updated in-memory as rows are built (Blocker 5) so a duplicate
+    timestamp within the SAME run can never produce two snapshots sharing one snapshot_id.
+    (The freshness gate already aborts duplicate consumed timestamps; this is defence in
+    depth so the snapshot writer is independently safe.)
+    """
+    seen = set(existing_ids)
     rows: list[dict[str, Any]] = []
     for obs in forward_obs:
         ts = obs.get("timestamp")
         if ts not in processed_bar_ts:
             continue
         sid = snapshot_id(ts)
-        if sid in existing_ids:
+        if sid in seen:
             continue
+        seen.add(sid)
         rows.append(
             {
                 "snapshot_id": sid,

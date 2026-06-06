@@ -34,6 +34,17 @@ def main(argv: list[str] | None = None) -> int:
         data_dir=Path(args.data_dir),
     )
 
+    # An aborted run (freshness/divergence gate) writes a minimal ABORTED summary with no
+    # bars_elapsed/closed_trades/etc. Handle it cleanly: do NOT claim "run complete" and do
+    # NOT KeyError on missing keys; exit non-zero so a caller/timer notices the abort.
+    if summary.get("status") == "ABORTED":
+        print("Paper accounting run ABORTED (SIMULATION) — no ledger rows written.")
+        print(f"  forward_start_ts: {summary.get('forward_start_ts')}")
+        print(f"  abort code:       {summary.get('abort_code')}")
+        print(f"  abort reason:     {summary.get('abort_reason')}")
+        print(f"  verdict:          {summary.get('current_verdict')}")
+        return 2
+
     print("Paper accounting run complete (SIMULATION).")
     print(f"  forward_start_ts: {summary['forward_start_ts']}")
     print(f"  bars elapsed:     {summary['bars_elapsed']}")
@@ -41,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  winrate:          {summary['winrate']}")
     print(f"  total PnL:        {summary['total_pnl']}")
     print(f"  max drawdown:     {summary['max_drawdown']}")
+    print(f"  funding gaps:     {summary.get('funding_gap_count', 0)}")
     print(f"  verdict:          {summary['current_verdict']}")
     return 0
 

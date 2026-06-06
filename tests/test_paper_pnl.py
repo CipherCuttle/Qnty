@@ -75,11 +75,23 @@ def _write_obs(forward_dir: Path, per_bar_obs):
     )
 
 
+def _obs_row(ts, active, bar_index=0):
+    """A full per_bar_obs row carrying the complete observer contract."""
+    return {
+        "timestamp": ts,
+        "bar_index": bar_index,
+        "active_symbols": list(active),
+        "portfolio_heat": 0.0,
+        "heat_cap_triggered": False,
+        "weighted_return": 0.0,
+    }
+
+
 def _obs(active_by_bar):
     """active_by_bar: list of active_symbols lists aligned with TS."""
     return [
-        {"timestamp": ts, "active_symbols": active}
-        for ts, active in zip(TS, active_by_bar)
+        _obs_row(ts, active, i)
+        for i, (ts, active) in enumerate(zip(TS, active_by_bar))
     ]
 
 
@@ -191,7 +203,7 @@ def test_long_only_invariant(tmp_path):
 
 
 def test_funding_gap_flagged_not_silently_zeroed(tmp_path):
-    out, _, _ = _setup(
+    out, _, summary = _setup(
         tmp_path, [[], ["AAA"], ["AAA"], [], [], []], funding=_empty_funding_df()
     )
     funding = _read(out / "paper_funding.jsonl")
@@ -200,6 +212,9 @@ def test_funding_gap_flagged_not_silently_zeroed(tmp_path):
     assert all(f["funding_amount"] == 0.0 for f in funding)
     trades = _read(out / "paper_trades.jsonl")
     assert trades[0]["funding"] == 0.0
+    # funding gap exposure must be visible in the summary, not only the receipt (Blocker 6)
+    assert summary["funding_gap"] is True
+    assert summary["funding_gap_count"] == len(funding)
     assert reconcile(out) == []
 
 
@@ -319,7 +334,7 @@ def test_off_grid_bar_aborts(tmp_path):
     fwd.mkdir(parents=True, exist_ok=True)
     write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
     # latest bar at 17:00 is not on the 8h grid (00/08/16)
-    obs = _obs([[], ["AAA"]]) + [{"timestamp": "2026-06-06T17:00:00", "active_symbols": []}]
+    obs = _obs([[], ["AAA"]]) + [_obs_row("2026-06-06T17:00:00", [], 2)]
     (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": obs}), encoding="utf-8")
     summary = run_once(
         output_dir=out,
@@ -408,27 +423,67 @@ def _funding_rows(symbol, pairs):
     )
 
 
-def test_funding_multiple_events_in_one_interval(tmp_path):
-    # Position entered at T2 open (signal at T1). Its first snapshot is T2, whose funding
-    # window is (T1, T2] = (08:00, 16:00] on 2026-06-05. Place TWO funding events inside it
-    # plus an off-grid one, all of which must be accrued (not just a single 8h value).
-    funding = _funding_rows(
-        "AAA",
-        [
-            ("2026-06-05T08:00:00", 0.0001),  # == window start, excluded
-            ("2026-06-05T12:00:00", 0.0002),  # inside (off the 8h grid)
-            ("2026-06-05T16:00:00", 0.0003),  # inside (window end)
-        ],
-    )
-    out, _, _ = _setup(
-        tmp_path, [[], ["AAA"], ["AAA"], [], [], []], funding=funding
-    )
+# Held-interval funding. Position: entry signal T1 -> entry FILL at T2 open
+# (2026-06-05T16:00); exit signal T4 -> exit FILL at T5 open (2026-06-06T16:00). The actual
+# holding interval is (T2, T5]. Funding must be accrued over exactly that interval — never
+# before the entry fill, and through the T+1 exit fill (Blocker 1 / schema § 11).
+_HELD_FUNDING = [
+    ("2026-06-05T12:00:00", 0.0001),  # BEFORE entry fill (in (T1,T2]) -> NOT charged
+    ("2026-06-05T20:00:00", 0.0001),  # in (T2,T3]  -> charged at T3 (off-grid)
+    ("2026-06-06T00:00:00", 0.0001),  # = T3        -> charged at T3
+    ("2026-06-06T04:00:00", 0.0001),  # in (T3,T4]  -> charged at T4 (off-grid)
+    ("2026-06-06T08:00:00", 0.0001),  # = T4        -> charged at T4
+    ("2026-06-06T12:00:00", 0.0001),  # in (T4,T5]  -> charged at exit stub (off-grid)
+    ("2026-06-06T16:00:00", 0.0001),  # = T5 fill   -> charged at exit stub
+    ("2026-06-06T20:00:00", 0.0001),  # AFTER exit fill -> NOT charged
+]
+_HELD_ACTIVE = [[], ["AAA"], ["AAA"], ["AAA"], [], []]
+
+
+def test_funding_event_before_entry_fill_not_charged(tmp_path):
+    out, _, _ = _setup(tmp_path, _HELD_ACTIVE, funding=_funding_rows("AAA", _HELD_FUNDING))
     funding_rows = _read(out / "paper_funding.jsonl")
-    t2 = next(f for f in funding_rows if f["bar_ts"] == TS[2])
-    assert t2["funding_events"] == 2  # 12:00 and 16:00, NOT the excluded 08:00 start
-    assert abs(t2["funding_rate"] - (0.0002 + 0.0003)) < 1e-12
-    assert abs(t2["funding_amount"] - t2["notional_usd"] * (0.0002 + 0.0003)) < 1e-6
-    assert t2["rate_available"] is True
+    # The position's first snapshot is the entry-fill bar T2 (16:00). The 12:00 event lands
+    # in (T1, T2] but BEFORE the position exists -> no funding row may cover it.
+    assert all(f["window_start"] >= TS[2] for f in funding_rows)
+    # No accrual is attributed at/before the entry fill bar T2.
+    assert not any(f["bar_ts"] == TS[2] for f in funding_rows)
+    assert reconcile(out) == []
+
+
+def test_funding_after_entry_and_before_exit_is_charged(tmp_path):
+    out, _, _ = _setup(tmp_path, _HELD_ACTIVE, funding=_funding_rows("AAA", _HELD_FUNDING))
+    funding_rows = _read(out / "paper_funding.jsonl")
+    # T3 regular window (T2, T3] captures the 20:00 (off-grid) + 00:00 events.
+    t3 = next(f for f in funding_rows if f["bar_ts"] == TS[3] and not f["funding_id"].endswith("|exit"))
+    assert t3["funding_events"] == 2
+    assert t3["rate_available"] is True
+    assert reconcile(out) == []
+
+
+def test_funding_between_exit_signal_and_fill_is_charged(tmp_path):
+    out, _, _ = _setup(tmp_path, _HELD_ACTIVE, funding=_funding_rows("AAA", _HELD_FUNDING))
+    funding_rows = _read(out / "paper_funding.jsonl")
+    # The exit-tail stub covers (exit_signal=T4, exit_fill=T5]; events at 12:00 and 16:00
+    # on 2026-06-06 are still held and must be charged even though the position is "leaving".
+    stub = next(f for f in funding_rows if f["funding_id"].endswith("|exit"))
+    assert stub["window_start"] == TS[4]
+    assert stub["window_end"] == TS[5]
+    assert stub["funding_events"] == 2
+    assert stub["rate_available"] is True
+    assert reconcile(out) == []
+
+
+def test_funding_multiple_offgrid_events_summed_over_held_interval(tmp_path):
+    out, _, _ = _setup(tmp_path, _HELD_ACTIVE, funding=_funding_rows("AAA", _HELD_FUNDING))
+    funding_rows = _read(out / "paper_funding.jsonl")
+    trades = _read(out / "paper_trades.jsonl")
+    # Exactly the six in-interval events (1h/4h/off-grid) are summed; the two outside the
+    # actual holding interval (before entry fill, after exit fill) are excluded.
+    assert sum(f["funding_events"] for f in funding_rows) == 6
+    # Long pays positive funding -> sign reduces net PnL; funding charged is positive.
+    assert trades[0]["funding"] > 0
+    assert abs(trades[0]["funding"] - sum(f["funding_amount"] for f in funding_rows)) < 1e-9
     assert reconcile(out) == []
 
 
@@ -447,3 +502,226 @@ def test_receipt_and_summary_label_fixed_notional_baseline(tmp_path):
 
     config = load_config(out)
     assert config["baseline_label"] == "fixed_notional_active_symbols_paper_v1"
+
+
+def test_provenance_includes_baseline_label(tmp_path):
+    out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    prov = json.loads((out / "paper_provenance.json").read_text())
+    # every provenance artifact must carry the baseline label (Blocker 6 / schema § 8)
+    assert prov["baseline_label"] == "fixed_notional_active_symbols_paper_v1"
+    log = _read(out / "paper_provenance_log.jsonl")
+    assert log and all(r.get("baseline_label") for r in log)
+
+
+# --------------------------------------------------- hardening: config contract (Blocker 2)
+
+
+def test_old_engine_config_fails_contract(tmp_path):
+    out = tmp_path / "paper"
+    out.mkdir(parents=True)
+    # An old 0.1.0-style config: validated hash present but missing baseline_label/freshness
+    # and a stale engine_version. It must fail loudly and demand archive/re-init.
+    old = {
+        "schema_version": 1,
+        "engine_version": "0.1.0",
+        "forward_start_ts": TS[0],
+        "initial_equity_usd": 10000.0,
+        "notional_usd": 1000.0,
+    }
+    (out / "paper_config.json").write_text(json.dumps(old), encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_config(out)
+    assert "re-init" in str(exc.value).lower() or "archive" in str(exc.value).lower()
+
+
+def test_config_wrong_engine_version_fails(tmp_path):
+    out = tmp_path / "paper"
+    out.mkdir(parents=True)
+    config = build_config(forward_start_ts=TS[0])
+    config["engine_version"] = "0.1.0"  # mismatched engine
+    config["config_hash"] = __import__("quantbot.paper.config", fromlist=["config_hash"]).config_hash(config)
+    (out / "paper_config.json").write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_config(out)
+
+
+# ------------------------------------------------- hardening: freshness depth (Blocker 3)
+
+
+def _run(out, fwd, now=NOW):
+    return run_once(
+        output_dir=out,
+        forward_obs_dir=fwd,
+        bars_by_symbol={"AAA": _bars(AAA_PRICES)},
+        funding_df=_funding_df(),
+        now=now,
+    )
+
+
+def test_malformed_json_observation_log_aborts(tmp_path):
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    (fwd / "observation_log.json").write_text("{ this is not valid json", encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "MALFORMED_OBSERVATION_LOG"
+    assert _no_ledger_rows(out)
+
+
+def test_null_active_symbols_aborts(tmp_path):
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    rows = _obs([[], ["AAA"], ["AAA"]])
+    rows[1]["active_symbols"] = None  # null -> must NOT be interpreted as []/FLAT
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": rows}), encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "MALFORMED_OBSERVATION_LOG"
+    assert _no_ledger_rows(out)
+
+
+def test_missing_active_symbols_aborts(tmp_path):
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    rows = _obs([[], ["AAA"], ["AAA"]])
+    del rows[1]["active_symbols"]  # missing -> must abort, never default to FLAT
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": rows}), encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "MALFORMED_OBSERVATION_LOG"
+    assert _no_ledger_rows(out)
+
+
+def test_earlier_off_grid_row_aborts(tmp_path):
+    # An off-grid row EARLIER in the consumed stream (not just the final row) must abort.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    rows = [_obs_row(TS[0], [], 0), _obs_row("2026-06-05T01:00:00", [], 1), _obs_row(TS[1], [], 2)]
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": rows}), encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "OFF_GRID_BAR"
+    assert _no_ledger_rows(out)
+
+
+def test_future_observation_aborts(tmp_path):
+    # A future-dated (2099) on-grid bar must abort: a negative age must not pass as fresh.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    rows = _obs([[], ["AAA"]]) + [_obs_row("2099-01-01T00:00:00", [], 2)]
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": rows}), encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "FUTURE_OBSERVATION"
+    assert _no_ledger_rows(out)
+
+
+def test_duplicate_observation_timestamp_aborts(tmp_path):
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    rows = [_obs_row(TS[0], [], 0), _obs_row(TS[1], ["AAA"], 1), _obs_row(TS[1], [], 2)]
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": rows}), encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "DUPLICATE_OBSERVATION_TS"
+    assert _no_ledger_rows(out)
+
+
+def test_malformed_heartbeat_fails_closed(tmp_path):
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+    # A present-but-malformed heartbeat must abort, not be silently treated as unavailable.
+    (fwd / "bar_decisions.jsonl").write_text("{ not json\n", encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "MALFORMED_HEARTBEAT"
+    assert _no_ledger_rows(out)
+
+
+# -------------------------------------------- hardening: snapshot crash safety (Blocker 4/5)
+
+
+def test_full_row_change_triggers_divergence(tmp_path):
+    # Divergence must be measured over the FULL consumed source row, not a hand-picked
+    # subset: adding/changing ANY field of an already-consumed bar must abort.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    digests_before = {n: sha256_file(out / n) for n in _LEDGER_FILES}
+    rows = _obs([[], ["AAA"], ["AAA"], [], [], []])
+    rows[2]["extra_observer_field"] = 123  # field outside the old selected-fields digest
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": rows}), encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "SIGNAL_SNAPSHOT_DIVERGENCE"
+    assert {n: sha256_file(out / n) for n in _LEDGER_FILES} == digests_before
+
+
+def test_orphan_snapshot_detected_by_reconcile(tmp_path):
+    # Simulate a crash that committed a snapshot without its equity row. Reconcile must NOT
+    # return [] — an orphan snapshot can never report success (Blocker 4).
+    from quantbot.paper import ledger, snapshots
+
+    out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []  # clean baseline
+    orphan_ts = "2026-06-07T00:00:00"
+    ledger.append_rows(
+        out / snapshots.SNAPSHOT_FILE,
+        [{"snapshot_id": snapshots.snapshot_id(orphan_ts), "bar_ts": orphan_ts, "backfill": False}],
+    )
+    failures = reconcile(out)
+    assert any("orphan" in f.lower() for f in failures)
+
+
+def test_no_snapshot_without_equity_in_clean_run(tmp_path):
+    out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    snaps = _read(out / "paper_signal_snapshots.jsonl")
+    equity_ts = {e["bar_ts"] for e in _read(out / "paper_equity.jsonl")}
+    # every committed snapshot has its equity row (snapshot is written AFTER equity)
+    assert all(s["bar_ts"] in equity_ts for s in snaps)
+
+
+# -------------------------------------------------------- hardening: CLI abort (Blocker 6)
+
+
+def test_cli_handles_abort_without_keyerror(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    # no observation_log.json -> the run aborts at the freshness gate
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 2, proc.stderr
+    assert "ABORTED" in proc.stdout
+    assert "run complete" not in proc.stdout
+    assert "KeyError" not in proc.stderr
+    assert "bars_elapsed" not in proc.stderr
