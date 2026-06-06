@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from quantbot.core.determinism import canonical_json_dumps
-from quantbot.paper import SCHEMA_VERSION, PAPER_ENGINE_VERSION, paper_output_dir
+from quantbot.paper import (
+    BASELINE_LABEL,
+    PAPER_ENGINE_VERSION,
+    SCHEMA_VERSION,
+    paper_output_dir,
+)
 
 # v1 defaults (see schema doc section 2/3)
 DEFAULT_INITIAL_EQUITY_USD = 10_000.0
@@ -23,6 +28,11 @@ DEFAULT_FEE_BPS = 5.0  # 0.05% taker per side
 DEFAULT_SLIPPAGE_BPS = 5.0  # 5 bps per side
 FILL_MODEL = "next_bar_open_pessimistic"
 SIGNAL_SOURCE = "observation_log.json:per_bar_obs"
+
+# Freshness-gate defaults (see schema doc section 9 and quantbot/paper/freshness.py).
+DEFAULT_BAR_INTERVAL_HOURS = 8  # 8h grid (00/08/16 UTC)
+DEFAULT_MAX_BAR_STALENESS_HOURS = 24  # abort if newest observer bar is older than this
+DEFAULT_HEARTBEAT_MAX_AGE_HOURS = 24  # abort if bar_decisions heartbeat is older than this
 
 
 def config_hash(config: dict[str, Any]) -> str:
@@ -38,11 +48,16 @@ def build_config(
     leverage: float = DEFAULT_LEVERAGE,
     fee_bps: float = DEFAULT_FEE_BPS,
     slippage_bps: float = DEFAULT_SLIPPAGE_BPS,
+    bar_interval_hours: int = DEFAULT_BAR_INTERVAL_HOURS,
+    max_bar_staleness_hours: float = DEFAULT_MAX_BAR_STALENESS_HOURS,
+    heartbeat_max_age_hours: float = DEFAULT_HEARTBEAT_MAX_AGE_HOURS,
 ) -> dict[str, Any]:
     """Construct the canonical paper config dict (with config_hash filled in)."""
     config: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "engine_version": PAPER_ENGINE_VERSION,
+        # This is a fixed-notional active-symbol baseline, NOT V2 volnorm PnL (section 8).
+        "baseline_label": BASELINE_LABEL,
         "forward_start_ts": forward_start_ts,
         "initial_equity_usd": float(initial_equity_usd),
         "notional_usd": float(notional_usd),
@@ -52,6 +67,13 @@ def build_config(
         "fill_model": FILL_MODEL,
         "funding_model": {"type": "accrual", "applied_as": "cash_flow"},
         "signal_source": SIGNAL_SOURCE,
+        # Hard pre-run freshness gate (section 9). Stale/missing/malformed observer output
+        # aborts the run before any ledger row is written.
+        "freshness": {
+            "bar_interval_hours": int(bar_interval_hours),
+            "max_bar_staleness_hours": float(max_bar_staleness_hours),
+            "heartbeat_max_age_hours": float(heartbeat_max_age_hours),
+        },
     }
     config["config_hash"] = config_hash(config)
     return config
@@ -104,6 +126,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--leverage", type=float, default=DEFAULT_LEVERAGE)
     parser.add_argument("--fee-bps", type=float, default=DEFAULT_FEE_BPS)
     parser.add_argument("--slippage-bps", type=float, default=DEFAULT_SLIPPAGE_BPS)
+    parser.add_argument("--bar-interval-hours", type=int, default=DEFAULT_BAR_INTERVAL_HOURS)
+    parser.add_argument(
+        "--max-bar-staleness-hours", type=float, default=DEFAULT_MAX_BAR_STALENESS_HOURS
+    )
+    parser.add_argument(
+        "--heartbeat-max-age-hours", type=float, default=DEFAULT_HEARTBEAT_MAX_AGE_HOURS
+    )
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
@@ -116,6 +145,9 @@ def main(argv: list[str] | None = None) -> int:
         leverage=args.leverage,
         fee_bps=args.fee_bps,
         slippage_bps=args.slippage_bps,
+        bar_interval_hours=args.bar_interval_hours,
+        max_bar_staleness_hours=args.max_bar_staleness_hours,
+        heartbeat_max_age_hours=args.heartbeat_max_age_hours,
     )
     path = write_config_once(config, out, force=args.force)
     print(f"Wrote {path}")

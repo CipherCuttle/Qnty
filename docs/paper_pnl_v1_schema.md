@@ -1,6 +1,6 @@
 # Paper PnL Ledger v1 — Schema Contract (`paper_pnl_v1`)
 
-`schema_version: 1`
+`schema_version: 1` · `engine_version: 0.2.0` · `baseline_label: fixed_notional_active_symbols_paper_v1`
 
 This document pins the input/output contract for the **strictly additive** paper PnL
 accounting layer. It converts the existing shadow observer's forward signals into
@@ -9,6 +9,11 @@ deterministic simulated fills, positions, trades, equity, and funding.
 > **This is a simulation.** Every number produced by this layer is paper PnL on a
 > frozen research observer. It is NOT live trading, NOT realized money, and a positive
 > paper result does not prove real-money profitability or deployment readiness.
+>
+> **This is a fixed-notional active-symbol baseline, NOT faithful Package V2 PnL.** It
+> trades a flat `$notional` per active symbol and does **not** reproduce V2's
+> vol-normalized weights or portfolio-heat sizing. A green paper result does **not**
+> validate the V2 vol-normalized edge. See section 8 for the full adapter contract.
 
 ---
 
@@ -28,6 +33,7 @@ deterministic simulated fills, positions, trades, equity, and funding.
 ## 1. Consumed inputs (read-only)
 
 ### 1.1 Signal source — `forward_obs_v1/observation_log.json`
+
 Produced by `scripts/run_validation_v2.py`. Authoritative shape (committed sample
 `output/validation_v2/observation_log.json`):
 
@@ -63,20 +69,25 @@ recompute, full-overwrite** over the historical CSVs every run. Most rows are hi
 backfill. The paper layer consumes only rows with `timestamp >= forward_start_ts`.
 
 ### 1.2 Price source — `data/<SYMBOL>_8h_ohlcv.csv`
+
 Loaded via `quantbot.data.multi_asset_loader.load_all_ohlcv()`. Header:
 `timestamp,open,high,low,close,volume`. `timestamp` = bar open time. The **fill price**
 for a signal at decision bar `T` is the **open of the next bar** (`T+1`), i.e. the OHLCV
 row immediately after `T` for that symbol.
 
 ### 1.3 Funding source — `data/<SYMBOL>_8h_funding.csv`
-Loaded via `quantbot.data.funding_loader.load_all_funding()`. Per-bar funding rate is the
-most recent `fundingRate` at or before the bar timestamp. If none exists for a symbol at a
-bar, `rate_available=false` and the amount is recorded as `0.0` **with the flag set** —
-never silently zeroed without the flag.
+
+Loaded via `quantbot.data.funding_loader.load_all_funding()`. Funding is accrued by
+**actual row timestamp**: every funding event in the held interval `(bar_ts - interval,
+bar_ts]` is summed (section 11). It does **not** assume one 8h-aligned value, and does not
+assume symbols settle only at 00/08/16. If no funding row lands in the interval where one
+is needed, `rate_available=false` and the amount is recorded as `0.0` **with the gap flag
+set** — never silently zeroed without the flag.
 
 ### 1.4 Heartbeat — `forward_obs_v1/bar_decisions.jsonl`
+
 `{bar_processed_at, commit_sha}` per run. **Heartbeat/provenance only.** Digested into
-provenance; never parsed for signals.
+provenance and checked by the freshness gate (section 9); never parsed for signals.
 
 ---
 
@@ -108,6 +119,7 @@ provenance; never parsed for signals.
   deliberately NOT inferred from `weighted_return`.
 
 ### 3.1 Timing / off-by-one
+
 At decision bar `T`: positions opened/closed by `T`'s signal **execute at `T+1` open**.
 Therefore the per-bar snapshot for bar `T` reflects the book *before* `T`'s fills (i.e.
 positions from earlier decisions that executed at or before `T`'s open). Funding for bar
@@ -121,7 +133,8 @@ before its `T+1` exit fill). Funding is charged once per bar boundary the positi
 the book at snapshot time; this is a deliberate v1 convention, not an exact venue match.
 
 ### 3.2 Equity definition (no double counting)
-```
+
+```text
 equity(T) = initial_equity_usd
           + realized_gross_cum     # Σ gross PnL of closed trades up to T
           - fees_cum               # Σ all fees paid (entry+exit closed, entry of open)
@@ -129,6 +142,7 @@ equity(T) = initial_equity_usd
           + unrealized_gross(T)    # Σ (close(T) - entry_price) * qty over open positions
 drawdown(T) = (peak(equity) - equity(T)) / peak(equity)
 ```
+
 `net_pnl` of a closed trade `= gross_pnl - entry_fee - exit_fee - funding_accrued`.
 
 ---
@@ -139,17 +153,18 @@ All JSONL ledgers are **append-only**, deterministic key order, never rewritten.
 
 | File | Kind | Key fields |
 | --- | --- | --- |
-| `paper_config.json` | write-once | `schema_version, forward_start_ts, initial_equity_usd, notional_usd, leverage, fee_model, slippage_model, fill_model, funding_model, signal_source, engine_version, config_hash` |
+| `paper_config.json` | write-once | `schema_version, baseline_label, forward_start_ts, initial_equity_usd, notional_usd, leverage, fee_model, slippage_model, fill_model, funding_model, signal_source, freshness{bar_interval_hours, max_bar_staleness_hours, heartbeat_max_age_hours}, engine_version, config_hash` |
 | `paper_fills.jsonl` | append | `fill_id, signal_bar_ts, fill_ts, symbol, side(BUY/SELL), kind(entry/exit), qty, open_price, fill_price, slippage_bps, fee, backfill=false` |
 | `paper_position_state.json` | mutable anchor | `watermark_bar_ts, open_positions{symbol->{entry_fill_id, entry_price, qty, entry_bar_ts, funding_accrued}}, accumulators{realized_gross, fees_cum, funding_cum}` |
 | `paper_positions.jsonl` | append | `bar_ts, open_symbols, num_open, gross_exposure_usd` |
 | `paper_trades.jsonl` | append | `trade_id(=exit_fill_id), symbol, entry_fill_id, exit_fill_id, entry_bar_ts, exit_bar_ts, qty, entry_price, exit_price, gross_pnl, fees, funding, net_pnl, hold_bars, backfill=false` |
 | `paper_equity.jsonl` | append | `bar_ts, realized_gross_pnl, unrealized_pnl, funding_cum, fees_cum, equity, drawdown, num_open` |
-| `paper_funding.jsonl` | append | `funding_id(=symbol|bar_ts), symbol, bar_ts, notional_usd, funding_rate, rate_available, funding_amount` |
-| `paper_pnl_summary.json` | overwrite | `closed_trades, winrate(null until closed_trades>0), net_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, current_verdict, disclaimer` |
-| `paper_provenance.json` | overwrite | latest run: input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests, `engine_version`, `git_sha`, `run_ts` |
-| `paper_provenance_log.jsonl` | append | one provenance record per run |
-| `paper_receipt.md` | overwrite | human summary + loud disclaimer + red flags |
+| `paper_funding.jsonl` | append | `funding_id(=symbol+bar_ts), symbol, bar_ts, window_start, notional_usd, funding_rate(Σ of events in interval), funding_events, rate_available, funding_amount` (section 11) |
+| `paper_signal_snapshots.jsonl` | append | `snapshot_id, bar_ts, bar_index, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return, source_observation_digest, source_observation_mtime, run_ts, backfill=false` (section 10) |
+| `paper_pnl_summary.json` | overwrite | `status(OK/ABORTED), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, current_verdict, disclaimer` (ABORTED runs add `abort_code, abort_reason, aborted_at`) |
+| `paper_provenance.json` | overwrite | latest run: `status`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (incl. `paper_signal_snapshots.jsonl`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`) |
+| `paper_provenance_log.jsonl` | append | one provenance record per run (incl. aborted runs) |
+| `paper_receipt.md` | overwrite | human summary + loud disclaimer + baseline label + red flags (aborted runs render a 🛑 ABORTED receipt) |
 
 ---
 
@@ -174,11 +189,107 @@ All JSONL ledgers are **append-only**, deterministic key order, never rewritten.
 ---
 
 ## 6. Backfill policy
+
 No `backfill=false` record may have `fill_ts < forward_start_ts`. Historical/backfill
 simulations go to `paper_pnl_v1_backfill/` only, labeled `mode=backfill_simulation`,
 `backfill=true`. Forward and backfill ledgers are never merged.
 
 ## 7. 4h policy (not implemented)
+
 Defer a 4h observer until the 8h paper ledger has >= 90 bars / 45 days of stable forward
 accounting. A future 4h track needs its own observer output, paper output, config,
 provenance, and a fresh `forward_start_ts`.
+
+## 8. Baseline labeling / adapter contract
+
+`baseline_label = fixed_notional_active_symbols_paper_v1`. This layer is an **adapter** over
+the Package V2 observer's `active_symbols` set, not a reproduction of V2's PnL. State plainly
+in every artifact (config, summary, receipt, provenance): this is **not** "V2 volnorm paper
+PnL".
+
+What this baseline deliberately loses vs Package V2:
+
+- **Vol-normalized weights are not reproduced.** V2 sizes positions by inverse volatility;
+  this layer does not.
+- **Portfolio heat / weights are not used for sizing.** `portfolio_heat`,
+  `heat_cap_triggered`, `weighted_return` are recorded for provenance only, never for sizing.
+- **A fixed `$notional` per active symbol is substituted** (`qty = notional_usd /
+  entry_fill_price`).
+- **No compounding** — notional is flat, not a fraction of current equity.
+- **No shorting** — long-only; the observer is long-only against this strategy.
+
+Therefore the result tests **only the active-symbol fixed-notional baseline**. A green paper
+PnL does **NOT** validate the V2 vol-normalized edge, and is not a live-trading or
+deployment approval. A faithful V2 PnL track would require the observer to emit per-symbol
+target weights; that is out of scope for v1.
+
+## 9. Freshness gate (hard pre-run check)
+
+Before any ledger row is written, `quantbot.paper.freshness.check_freshness` validates the
+observer output. Any failure **aborts the run**: no fills/trades/equity/positions/funding/
+snapshot rows are written, the watermark and state are untouched, the failure is logged
+loudly to stderr, and the summary/receipt/provenance are written **clearly marked
+`status: ABORTED`** with an `abort_code`. Stale/missing/malformed observer output is **never**
+silently treated as a FLAT bar.
+
+Checks (thresholds from `config.freshness`, defaults `bar_interval_hours=8`,
+`max_bar_staleness_hours=24`, `heartbeat_max_age_hours=24`):
+
+| Abort code | Condition |
+| --- | --- |
+| `MISSING_OBSERVATION_LOG` | `observation_log.json` does not exist. |
+| `MALFORMED_OBSERVATION_LOG` | No `per_bar_obs` key, or a row missing `timestamp` / bad `active_symbols`. |
+| `EMPTY_PER_BAR_OBS` | `per_bar_obs` missing, empty, or not a list. |
+| `MALFORMED_BAR_TIMESTAMP` | Latest `per_bar_obs[-1].timestamp` cannot be parsed. |
+| `OFF_GRID_BAR` | Latest bar is not on the 8h grid (minute/second ≠ 0 or `hour % 8 ≠ 0`). |
+| `STALE_OBSERVATION` | `now - latest_bar_ts > max_bar_staleness_hours`. |
+| `STALE_HEARTBEAT` | `bar_decisions.jsonl` heartbeat present but older than `heartbeat_max_age_hours`. |
+
+The heartbeat is only checked **if available** (the observer may not have written one yet).
+
+## 10. Consumed signal snapshots (`paper_signal_snapshots.jsonl`)
+
+`observation_log.json` is a rolling 500-bar **recompute + full-overwrite** (section 1.1 / 5),
+so an already-consumed forward bar can be silently recomputed to different values on a later
+run. To defeat that provenance hole, every processed bar's exact consumed source row is
+frozen append-only:
+
+- **One snapshot per consumed bar**, keyed by `snapshot_id = sha256("snap|" + bar_ts)[:16]`.
+  Idempotent: a rerun appends nothing for an already-snapshotted bar.
+- **Snapshots are never rewritten.**
+- `source_observation_digest = sha256(canonical(consumed fields))` over
+  `{active_symbols (sorted), bar_index, heat_cap_triggered, portfolio_heat, timestamp,
+  weighted_return}`.
+- **Divergence gate:** before processing, every current forward obs row that already has a
+  frozen snapshot is re-digested. If any differs from the frozen digest, the run aborts with
+  `SIGNAL_SNAPSHOT_DIVERGENCE` (no ledger rows written). This catches the rolling window
+  recomputing history under us.
+
+## 11. Funding accrual (actual rows by timestamp)
+
+Funding is **not** assumed to be a single 8h-aligned value. For each open position at bar
+`bar_ts`, `quantbot.paper.engine.funding_in_interval` sums **every** funding event whose
+timestamp falls in `(bar_ts - bar_interval_hours, bar_ts]`:
+
+- `funding_rate` in the ledger = Σ of the event rates in the interval; `funding_events` =
+  count; `funding_amount = notional_at_mark * funding_rate`.
+- Multiple events inside one interval (e.g. off-grid / sub-8h funding) are all accrued.
+- The window start is **exclusive** so a boundary event already charged on the previous bar
+  is not double-counted.
+- If no event lands in the interval where one is needed, `rate_available=false` and the
+  amount is `0.0` **with the gap flag set** — never a silent zero.
+
+## 12. Runtime / service-user hygiene
+
+The committed systemd unit templates (`ops/systemd/qnty-paper-pnl.service`,
+`qnty-shadow-run.service`) declare `User=qnty`. **The production VM currently runs these
+services as `viktor`, not `qnty`** (see `docs/ops/VM_90D_RUNBOOK.md` § Service user). Do not
+hardcode a VM-specific user into strategy logic. When deploying, either:
+
+- align the paper service's `User=`/`Group=` with the **existing shadow service's** runtime
+  user on the target VM, or
+- ship a documented systemd drop-in override
+  (`/etc/systemd/system/qnty-paper-pnl.service.d/override.conf` setting `User=`/`Group=`).
+
+A template whose `User=` does not exist on the VM fails silently at activation — the paper
+timer would never produce a ledger. The deployment must reconcile the user explicitly.

@@ -37,6 +37,7 @@ def reconcile(output_dir: Path) -> list[str]:
     equity = ledger.read_jsonl(output_dir / "paper_equity.jsonl")
     funding = ledger.read_jsonl(output_dir / "paper_funding.jsonl")
     positions = ledger.read_jsonl(output_dir / "paper_positions.jsonl")
+    snaps = ledger.read_jsonl(output_dir / "paper_signal_snapshots.jsonl")
     summary = ledger.read_json(output_dir / "paper_pnl_summary.json", default={})
 
     # --- uniqueness / append-only ---
@@ -46,10 +47,20 @@ def reconcile(output_dir: Path) -> list[str]:
         (funding, "funding_id", "funding"),
         (equity, "bar_ts", "equity"),
         (positions, "bar_ts", "positions"),
+        (snaps, "snapshot_id", "snapshots"),
     ]:
         dups = _dup_ids(rows, key)
         if dups:
             failures.append(f"{name}: duplicate {key} values {dups[:5]}")
+
+    # --- one frozen snapshot per consumed (equity) bar; never more than one per bar_ts ---
+    snap_dup_ts = _dup_ids(snaps, "bar_ts")
+    if snap_dup_ts:
+        failures.append(f"snapshots: duplicate bar_ts values {snap_dup_ts[:5]}")
+    snap_ts = {s.get("bar_ts") for s in snaps}
+    for e in equity:
+        if e["bar_ts"] not in snap_ts:
+            failures.append(f"equity bar {e['bar_ts']} has no consumed-signal snapshot")
 
     # --- backfill policy: no forward fill before forward_start_ts ---
     for f in fills:

@@ -105,12 +105,16 @@ cp /srv/qnty/repo/ops/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 ```
 
-The committed unit files use the canonical `qnty` system user. If a VM was
-intentionally built under an operator user such as `viktor`, keep the committed
-unit files canonical and add local systemd drop-ins instead:
+The committed unit files use the canonical `qnty` system user. **The current
+production VM runs these services as `viktor`, not `qnty`.** Keep the committed
+unit files canonical and add local systemd drop-ins instead — this is the
+documented deployment override referenced by `docs/paper_pnl_v1_schema.md`
+section 12. The loop below includes `qnty-paper-pnl` so the paper service runs as
+the **same user as the shadow service**; a unit whose `User=` does not exist on
+the VM fails silently at activation and its timer would never produce output:
 
 ```bash
-for svc in qnty-data-refresh qnty-shadow-run qnty-healthcheck qnty-daily-summary; do
+for svc in qnty-data-refresh qnty-shadow-run qnty-healthcheck qnty-daily-summary qnty-paper-pnl; do
   mkdir -p /etc/systemd/system/${svc}.service.d
   cat > /etc/systemd/system/${svc}.service.d/user.conf <<'EOF'
 [Service]
@@ -123,7 +127,9 @@ systemctl daemon-reload
 ```
 
 This makes local user drift visible in `systemctl cat` without changing the
-repo's production baseline.
+repo's production baseline. Verify after deploy with
+`systemctl show -p User,Group qnty-paper-pnl.service` and confirm it matches
+`qnty-shadow-run.service`.
 
 ### 3.7 Enable and Start Timers
 ```bash

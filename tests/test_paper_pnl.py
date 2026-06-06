@@ -6,6 +6,7 @@ until closed trades, write-once config, and reconcile invariants.
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -26,6 +27,10 @@ TS = [
     "2026-06-06T08:00:00",
     "2026-06-06T16:00:00",
 ]
+
+# Deterministic "now" for the freshness gate: 5 minutes after the last grid bar, so the
+# observer output is fresh regardless of the wall clock. (Hardening: section 9.)
+NOW = datetime(2026, 6, 6, 16, 5, 0, tzinfo=timezone.utc)
 
 # Rising AAA prices: (open, close) per bar
 AAA_PRICES = [
@@ -78,7 +83,9 @@ def _obs(active_by_bar):
     ]
 
 
-def _setup(tmp_path, active_by_bar, forward_start_ts=TS[0], funding=None, bars=None):
+def _setup(
+    tmp_path, active_by_bar, forward_start_ts=TS[0], funding=None, bars=None, now=NOW
+):
     out = tmp_path / "paper"
     fwd = tmp_path / "fwd"
     write_config_once(build_config(forward_start_ts=forward_start_ts), output_dir=out)
@@ -88,6 +95,7 @@ def _setup(tmp_path, active_by_bar, forward_start_ts=TS[0], funding=None, bars=N
         forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(bars or AAA_PRICES)},
         funding_df=funding if funding is not None else _funding_df(),
+        now=now,
     )
     return out, fwd, summary
 
@@ -156,6 +164,7 @@ def test_idempotent_rerun_identical_digests(tmp_path):
         forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(AAA_PRICES)},
         funding_df=_funding_df(),
+        now=NOW,
     )
     after = {n: sha256_file(out / n) for n in deterministic}
     assert before == after
@@ -233,3 +242,208 @@ def test_config_write_once_and_hash_validation(tmp_path):
     path.write_text(json.dumps(data))
     with pytest.raises(ValueError):
         load_config(out)
+
+
+# ------------------------------------------------------- hardening: freshness gate
+
+
+_LEDGER_FILES = [
+    "paper_fills.jsonl",
+    "paper_trades.jsonl",
+    "paper_equity.jsonl",
+    "paper_positions.jsonl",
+    "paper_funding.jsonl",
+    "paper_signal_snapshots.jsonl",
+]
+
+
+def _no_ledger_rows(out: Path) -> bool:
+    return all(_read(out / name) == [] for name in _LEDGER_FILES)
+
+
+def test_stale_observation_aborts_without_writing(tmp_path):
+    # now is 5 days after the latest bar -> beyond the 24h staleness threshold.
+    stale_now = NOW + timedelta(days=5)
+    out, _, summary = _setup(
+        tmp_path, [[], ["AAA"], ["AAA"], [], [], []], now=stale_now
+    )
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "STALE_OBSERVATION"
+    assert _no_ledger_rows(out)
+    # an aborted run must NOT be mistaken for a FLAT result
+    assert "FLAT" not in summary["current_verdict"]
+
+
+def test_missing_observation_log_aborts(tmp_path):
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    # no observation_log.json written
+    summary = run_once(
+        output_dir=out,
+        forward_obs_dir=fwd,
+        bars_by_symbol={"AAA": _bars(AAA_PRICES)},
+        funding_df=_funding_df(),
+        now=NOW,
+    )
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "MISSING_OBSERVATION_LOG"
+    assert _no_ledger_rows(out)
+
+
+def test_malformed_per_bar_obs_aborts(tmp_path):
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    # per_bar_obs present but rows are malformed (missing timestamp)
+    (fwd / "observation_log.json").write_text(
+        json.dumps({"per_bar_obs": [{"active_symbols": ["AAA"]}]}), encoding="utf-8"
+    )
+    summary = run_once(
+        output_dir=out,
+        forward_obs_dir=fwd,
+        bars_by_symbol={"AAA": _bars(AAA_PRICES)},
+        funding_df=_funding_df(),
+        now=NOW,
+    )
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "MALFORMED_OBSERVATION_LOG"
+    assert _no_ledger_rows(out)
+
+
+def test_off_grid_bar_aborts(tmp_path):
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    # latest bar at 17:00 is not on the 8h grid (00/08/16)
+    obs = _obs([[], ["AAA"]]) + [{"timestamp": "2026-06-06T17:00:00", "active_symbols": []}]
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": obs}), encoding="utf-8")
+    summary = run_once(
+        output_dir=out,
+        forward_obs_dir=fwd,
+        bars_by_symbol={"AAA": _bars(AAA_PRICES)},
+        funding_df=_funding_df(),
+        now=NOW,
+    )
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "OFF_GRID_BAR"
+    assert _no_ledger_rows(out)
+
+
+# --------------------------------------------- hardening: consumed-signal snapshots
+
+
+def test_snapshot_written_once_per_consumed_bar(tmp_path):
+    out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    snaps = _read(out / "paper_signal_snapshots.jsonl")
+    equity = _read(out / "paper_equity.jsonl")
+    # exactly one snapshot per consumed (equity-snapshotted) bar
+    assert {s["bar_ts"] for s in snaps} == {e["bar_ts"] for e in equity}
+    assert len(snaps) == len(equity)
+    # snapshot freezes the exact consumed source row
+    for s in snaps:
+        assert s["backfill"] is False
+        assert "source_observation_digest" in s
+        assert "active_symbols" in s and "weighted_return" in s
+    assert reconcile(out) == []
+
+
+def test_no_duplicate_snapshots_on_rerun(tmp_path):
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    before = sha256_file(out / "paper_signal_snapshots.jsonl")
+    run_once(
+        output_dir=out,
+        forward_obs_dir=fwd,
+        bars_by_symbol={"AAA": _bars(AAA_PRICES)},
+        funding_df=_funding_df(),
+        now=NOW,
+    )
+    after = sha256_file(out / "paper_signal_snapshots.jsonl")
+    assert before == after  # rerun appended nothing
+    snaps = _read(out / "paper_signal_snapshots.jsonl")
+    assert len({s["snapshot_id"] for s in snaps}) == len(snaps)  # no dup ids
+    assert reconcile(out) == []
+
+
+def test_snapshot_divergence_aborts(tmp_path):
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    digests_before = {n: sha256_file(out / n) for n in _LEDGER_FILES}
+
+    # the rolling observer window recomputes an already-consumed bar (T2) differently
+    diverged = _obs([[], ["AAA"], [], [], [], []])  # T2 active_symbols changed
+    (fwd / "observation_log.json").write_text(
+        json.dumps({"per_bar_obs": diverged}), encoding="utf-8"
+    )
+    summary = run_once(
+        output_dir=out,
+        forward_obs_dir=fwd,
+        bars_by_symbol={"AAA": _bars(AAA_PRICES)},
+        funding_df=_funding_df(),
+        now=NOW,
+    )
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "SIGNAL_SNAPSHOT_DIVERGENCE"
+    # no append-only ledger was rewritten
+    assert {n: sha256_file(out / n) for n in _LEDGER_FILES} == digests_before
+
+
+# --------------------------------------------------------- hardening: funding audit
+
+
+def _funding_rows(symbol, pairs):
+    """pairs: list of (iso_ts, rate)."""
+    return pd.DataFrame(
+        [
+            {
+                "symbol": symbol,
+                "dt": pd.Timestamp(ts, tz="UTC"),
+                "fundingRate": rate,
+                "abs_rate": abs(rate),
+            }
+            for ts, rate in pairs
+        ]
+    )
+
+
+def test_funding_multiple_events_in_one_interval(tmp_path):
+    # Position entered at T2 open (signal at T1). Its first snapshot is T2, whose funding
+    # window is (T1, T2] = (08:00, 16:00] on 2026-06-05. Place TWO funding events inside it
+    # plus an off-grid one, all of which must be accrued (not just a single 8h value).
+    funding = _funding_rows(
+        "AAA",
+        [
+            ("2026-06-05T08:00:00", 0.0001),  # == window start, excluded
+            ("2026-06-05T12:00:00", 0.0002),  # inside (off the 8h grid)
+            ("2026-06-05T16:00:00", 0.0003),  # inside (window end)
+        ],
+    )
+    out, _, _ = _setup(
+        tmp_path, [[], ["AAA"], ["AAA"], [], [], []], funding=funding
+    )
+    funding_rows = _read(out / "paper_funding.jsonl")
+    t2 = next(f for f in funding_rows if f["bar_ts"] == TS[2])
+    assert t2["funding_events"] == 2  # 12:00 and 16:00, NOT the excluded 08:00 start
+    assert abs(t2["funding_rate"] - (0.0002 + 0.0003)) < 1e-12
+    assert abs(t2["funding_amount"] - t2["notional_usd"] * (0.0002 + 0.0003)) < 1e-6
+    assert t2["rate_available"] is True
+    assert reconcile(out) == []
+
+
+# ---------------------------------------------------- hardening: baseline labeling
+
+
+def test_receipt_and_summary_label_fixed_notional_baseline(tmp_path):
+    out, _, summary = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert summary["baseline_label"] == "fixed_notional_active_symbols_paper_v1"
+    # the disclaimer must deny that a green paper result validates the V2 volnorm edge
+    assert "does NOT validate the V2" in summary["disclaimer"]
+
+    receipt = (out / "paper_receipt.md").read_text()
+    assert "fixed_notional_active_symbols_paper_v1" in receipt
+    assert "NOT V2 volnorm live/PnL approval" in receipt
+
+    config = load_config(out)
+    assert config["baseline_label"] == "fixed_notional_active_symbols_paper_v1"

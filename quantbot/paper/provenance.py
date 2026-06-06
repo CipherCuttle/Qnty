@@ -13,12 +13,14 @@ from pathlib import Path
 from typing import Any
 
 from quantbot.core.determinism import sha256_file
-from quantbot.paper import PAPER_ENGINE_VERSION
+from quantbot.paper import BASELINE_LABEL, BASELINE_NOT_REPRODUCED, PAPER_ENGINE_VERSION
 
 DISCLAIMER = (
     "SIMULATION ONLY. These are paper fills on a frozen research observer. This is NOT "
     "live trading, NOT realized money, and a positive paper result does NOT prove "
-    "real-money profitability or deployment readiness."
+    "real-money profitability or deployment readiness. This is the "
+    f"'{BASELINE_LABEL}' baseline, NOT faithful Package V2 vol-normalized PnL: "
+    f"{BASELINE_NOT_REPRODUCED}"
 )
 
 
@@ -68,6 +70,9 @@ def compute_summary(
 
     return {
         "schema_version": config["schema_version"],
+        "status": "OK",
+        "baseline_label": config.get("baseline_label", BASELINE_LABEL),
+        "baseline_note": BASELINE_NOT_REPRODUCED,
         "forward_start_ts": config["forward_start_ts"],
         "bars_elapsed": bars_elapsed,
         "closed_trades": closed,
@@ -84,6 +89,24 @@ def compute_summary(
     }
 
 
+def aborted_summary(config: dict[str, Any], code: str, reason: str) -> dict[str, Any]:
+    """Summary written when a run aborts at the freshness/divergence gate.
+
+    Marked ABORTED so no downstream reader mistakes a stale/aborted run for a FLAT result.
+    """
+    return {
+        "schema_version": config["schema_version"],
+        "status": "ABORTED",
+        "baseline_label": config.get("baseline_label", BASELINE_LABEL),
+        "abort_code": code,
+        "abort_reason": reason,
+        "forward_start_ts": config["forward_start_ts"],
+        "aborted_at": _now_utc(),
+        "current_verdict": f"ABORTED — {code} (no ledger rows written this run)",
+        "disclaimer": DISCLAIMER,
+    }
+
+
 def _digest(path: Path) -> str:
     return sha256_file(path) if path.exists() else "absent"
 
@@ -93,6 +116,9 @@ def build_provenance(
     paper_dir: Path,
     data_dir: Path,
     symbols: list[str],
+    aborted: bool = False,
+    abort_code: str | None = None,
+    abort_reason: str | None = None,
 ) -> dict[str, Any]:
     inputs = {
         "bar_decisions.jsonl": _digest(forward_obs_dir / "bar_decisions.jsonl"),
@@ -109,18 +135,24 @@ def build_provenance(
         "paper_trades.jsonl",
         "paper_equity.jsonl",
         "paper_funding.jsonl",
+        "paper_signal_snapshots.jsonl",
         "paper_position_state.json",
         "paper_pnl_summary.json",
     ]
     outputs = {name: _digest(paper_dir / name) for name in output_files}
 
-    return {
+    record: dict[str, Any] = {
         "run_ts": _now_utc(),
         "engine_version": PAPER_ENGINE_VERSION,
         "git_sha": git_sha(),
+        "status": "ABORTED" if aborted else "OK",
         "input_digests": inputs,
         "output_digests": outputs,
     }
+    if aborted:
+        record["abort_code"] = abort_code
+        record["abort_reason"] = abort_reason
+    return record
 
 
 def render_receipt(
@@ -136,6 +168,8 @@ def render_receipt(
         "",
         f"> **{summary['disclaimer']}**",
         "",
+        f"- Baseline: `{summary.get('baseline_label', BASELINE_LABEL)}` "
+        "(fixed-notional active-symbol baseline — NOT V2 volnorm live/PnL approval)",
         f"- Generated (UTC): {_now_utc()}",
         f"- forward_start_ts: {summary['forward_start_ts']}",
         f"- Bars elapsed (forward): {summary['bars_elapsed']}",
@@ -176,3 +210,24 @@ def render_receipt(
         lines.append(f"- {f}")
     lines.append("")
     return "\n".join(lines)
+
+
+def render_aborted_receipt(summary: dict[str, Any], code: str, reason: str) -> str:
+    """Loud receipt for an aborted run: no ledger rows were written this pass."""
+    return "\n".join(
+        [
+            "# Paper PnL v1 — Receipt (ABORTED)",
+            "",
+            f"> **{summary['disclaimer']}**",
+            "",
+            f"## 🛑 RUN ABORTED — {code}",
+            "",
+            f"- Aborted (UTC): {summary.get('aborted_at', _now_utc())}",
+            f"- Reason: {reason}",
+            f"- forward_start_ts: {summary['forward_start_ts']}",
+            "- No fills/trades/equity/positions/funding/snapshot rows were written this run.",
+            "- The observer output was stale, missing, malformed, or diverged from a frozen "
+            "snapshot. This was NOT treated as a FLAT result.",
+            "",
+        ]
+    )

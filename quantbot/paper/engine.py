@@ -13,9 +13,12 @@ from __future__ import annotations
 import bisect
 import hashlib
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from quantbot.data.types import Bar
+
+_BAR_FMT = "%Y-%m-%dT%H:%M:%S"
 
 # ----------------------------------------------------------------------------- ids
 
@@ -77,22 +80,41 @@ def build_funding_index(funding_df) -> dict[str, list[tuple[str, float]]]:
     return index
 
 
-def funding_at(
-    index: dict[str, list[tuple[str, float]]], symbol: str, ts: str
-) -> tuple[float, bool]:
-    """Most recent funding rate at or before ts. Returns (rate, rate_available).
+def funding_in_interval(
+    index: dict[str, list[tuple[str, float]]],
+    symbol: str,
+    start_exclusive: str,
+    end_inclusive: str,
+) -> tuple[float, int, bool]:
+    """Sum every funding event in (start_exclusive, end_inclusive] for a symbol.
 
-    rate_available=False means no funding data exists for this symbol up to ts; the
-    rate is reported as 0.0 but the flag makes the gap explicit (never silently zeroed).
+    Returns (total_rate, num_events, rate_available). This accrues ALL actual funding rows
+    by their timestamp inside the held interval — it does NOT assume exactly one 8h-aligned
+    funding value, and does NOT assume symbols settle only at 00/08/16 (the interval window
+    captures sub-grid / multiple events too).
+
+    rate_available=False means no funding event landed in the interval (an expected funding
+    row is missing where one was needed). The amount is reported as 0.0 with the gap flag
+    set — never silently zeroed without the flag. (See schema doc section 1.3 / 11.)
     """
     series = index.get(symbol)
     if not series:
-        return 0.0, False
+        return 0.0, 0, False
     keys = [k for k, _ in series]
-    pos = bisect.bisect_right(keys, ts) - 1
-    if pos < 0:
-        return 0.0, False
-    return series[pos][1], True
+    lo = bisect.bisect_right(keys, start_exclusive)  # first event strictly after start
+    hi = bisect.bisect_right(keys, end_inclusive)  # first event after end (exclusive bound)
+    events = series[lo:hi]
+    if not events:
+        return 0.0, 0, False
+    total_rate = sum(rate for _, rate in events)
+    return total_rate, len(events), True
+
+
+def _interval_start(ts: str, interval_hours: int) -> str:
+    """Exclusive start of the funding window ending at bar `ts` (ts - interval_hours)."""
+    dt = datetime.strptime(ts.rstrip("Z"), _BAR_FMT).replace(tzinfo=timezone.utc)
+    start = dt - timedelta(hours=interval_hours)
+    return start.strftime(_BAR_FMT)
 
 
 # --------------------------------------------------------------------------- state
@@ -136,6 +158,7 @@ def run_engine(
     initial_equity = float(config["initial_equity_usd"])
     fee_rate = float(config["fee_model"]["fee_bps"]) / 10_000.0
     slip = float(config["slippage_model"]["slippage_bps"]) / 10_000.0
+    interval_hours = int(config.get("freshness", {}).get("bar_interval_hours", 8))
 
     prices = PriceBook(bars_by_symbol)
     funding_index = build_funding_index(funding_df)
@@ -177,13 +200,17 @@ def run_engine(
             break
 
         # --- 1. snapshot bar `ts` on the PRE-FILL book (funding + marks + equity) ---
+        window_start = _interval_start(ts, interval_hours)
         for sym in sorted(open_positions):
             pos = open_positions[sym]
             close_ts = prices.close_at(sym, ts)
             mark = close_ts if close_ts is not None else pos["entry_price"]
             notional_at = pos["qty"] * mark
-            rate, available = funding_at(funding_index, sym, ts)
-            amount = notional_at * rate if available else 0.0  # long pays when rate>0
+            # Accrue EVERY funding event in (ts - interval, ts]; long pays when rate>0.
+            rate, num_events, available = funding_in_interval(
+                funding_index, sym, window_start, ts
+            )
+            amount = notional_at * rate if available else 0.0
             pos["funding_accrued"] += amount
             pos["hold_bars"] += 1
             acc["funding_cum"] += amount
@@ -192,8 +219,10 @@ def run_engine(
                     "funding_id": f"{sym}|{ts}",
                     "symbol": sym,
                     "bar_ts": ts,
+                    "window_start": window_start,
                     "notional_usd": round(notional_at, 8),
-                    "funding_rate": rate,
+                    "funding_rate": round(rate, 12),
+                    "funding_events": num_events,
                     "rate_available": available,
                     "funding_amount": round(amount, 8),
                 }

@@ -11,7 +11,19 @@ import os
 from pathlib import Path
 
 SCHEMA_VERSION = 1
-PAPER_ENGINE_VERSION = "0.1.0"
+PAPER_ENGINE_VERSION = "0.2.0"
+
+# This layer is a FIXED-NOTIONAL ACTIVE-SYMBOL baseline, NOT a faithful reproduction of
+# the Package V2 vol-normalized portfolio. See docs/paper_pnl_v1_schema.md section 8.
+BASELINE_LABEL = "fixed_notional_active_symbols_paper_v1"
+
+# What this baseline deliberately does NOT reproduce from Package V2 (the adapter loss).
+BASELINE_NOT_REPRODUCED = (
+    "vol-normalized weights are not reproduced; portfolio heat/weights are not used for "
+    "sizing; a fixed $notional per active symbol is substituted; no compounding; no "
+    "shorting. This only tests the active-symbol fixed-notional baseline — a green paper "
+    "PnL does NOT validate the V2 vol-normalized edge."
+)
 
 
 def forward_obs_dir() -> Path:
