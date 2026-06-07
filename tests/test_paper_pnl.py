@@ -3162,3 +3162,272 @@ def test_cli_bundle_read_permission_error_exits_4_no_traceback(tmp_path):
     assert proc.returncode == 4, (proc.returncode, proc.stdout, proc.stderr)
     assert "Traceback" not in proc.stderr
     assert json.loads((out / "paper_pnl_summary.json").read_text())["status"] != "OK"
+
+
+# ==========================================================================================
+# FINAL INTEGRITY GATE (Codex re-review blockers)
+#   B1: a post-reconcile mutation (TOCTOU) before the final OK commit must yield CORRUPT_LEDGER,
+#       never a false OK. A final integrity gate re-validates every committed artifact and runs
+#       reconcile over the FINAL persisted ledgers immediately before the OK summary write.
+#   B2: the final bundle-build reads must deep-validate (no `[{}]` KeyError'ing while RUNNING).
+#   B3: the state must be FULLY tied to the ledger (open-position detail + peak_equity), not
+#       only the open-symbol set.
+#   B4: paper_provenance.json is authoritative for a prior OK commit (Option A): invalid JSON or
+#       a falsified summary/state digest fails closed as CORRUPT_LEDGER.
+# ==========================================================================================
+
+
+def _patch_reconcile_then(monkeypatch, action):
+    """Run `action()` exactly once AFTER the runner's post-mutation reconcile passes.
+
+    Reproduces the Codex TOCTOU: reconcile passes, a ledger is tampered, then the runner reaches
+    the OK-publication step. The runner's `reconcile` reference is the patch target; the final
+    integrity gate calls the real `quantbot.paper.reconcile.reconcile`, so it still re-validates
+    the tampered ledgers immediately before the OK commit.
+    """
+    from quantbot.paper import runner as _runner
+
+    real = _runner.reconcile
+    flag = {"done": False}
+
+    def _wrapped(o):
+        failures = real(o)
+        if not failures and not flag["done"]:
+            flag["done"] = True
+            action()
+        return failures
+
+    monkeypatch.setattr(_runner, "reconcile", _wrapped)
+
+
+# ---- B1: post-reconcile mutation before OK -> CORRUPT_LEDGER, no false OK ------------------
+
+
+def test_trade_net_pnl_mutated_after_reconcile_is_corrupt(tmp_path, monkeypatch):
+    # EXACT Codex case: reconcile passes, a trade net_pnl is mutated, the runner used to publish
+    # OK while an immediate re-reconcile reported inconsistency. The final gate must catch it.
+    out, fwd = _setup_ready_to_publish(tmp_path)
+
+    def _action():
+        rows = _read(out / "paper_trades.jsonl")
+        rows[0]["net_pnl"] = rows[0]["net_pnl"] + 100.0  # break net == gross - fees - funding
+        _rewrite_jsonl(out / "paper_trades.jsonl", rows)
+
+    _patch_reconcile_then(monkeypatch, _action)
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert not _summary_is_ok(out)
+    assert _summary_status(out) == "CORRUPT_LEDGER"
+    # no state/watermark false advancement to committed OK (first run -> no state file)
+    assert not (out / "paper_position_state.json").exists()
+
+
+def test_fill_fee_mutated_after_reconcile_is_corrupt(tmp_path, monkeypatch):
+    out, fwd = _setup_ready_to_publish(tmp_path)
+
+    def _action():
+        rows = _read(out / "paper_fills.jsonl")
+        rows[0]["fee"] = rows[0]["fee"] + 100.0  # state fees_cum no longer == Σ committed fills
+        _rewrite_jsonl(out / "paper_fills.jsonl", rows)
+
+    _patch_reconcile_then(monkeypatch, _action)
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert not _summary_is_ok(out)
+    assert not (out / "paper_position_state.json").exists()
+
+
+def test_equity_mutated_after_reconcile_is_corrupt(tmp_path, monkeypatch):
+    out, fwd = _setup_ready_to_publish(tmp_path)
+
+    def _action():
+        rows = _read(out / "paper_equity.jsonl")
+        rows[0]["equity"] = rows[0]["equity"] + 12345.0  # break the equity recomputation
+        _rewrite_jsonl(out / "paper_equity.jsonl", rows)
+
+    _patch_reconcile_then(monkeypatch, _action)
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert not _summary_is_ok(out)
+    assert not (out / "paper_position_state.json").exists()
+
+
+def test_clean_run_still_ok_with_final_integrity_gate(tmp_path):
+    # Control: an untampered run still reaches OK through the final integrity gate.
+    out, fwd, summary = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert summary["status"] == "OK"
+    assert _summary_is_ok(out)
+    assert reconcile(out) == []
+    assert (out / "paper_position_state.json").exists()
+
+
+def test_post_reconcile_mutation_then_clean_retry_recovers_to_ok(tmp_path, monkeypatch):
+    # After the final gate fails closed (no state advance), a clean retry must reach OK.
+    out, fwd = _setup_ready_to_publish(tmp_path)
+
+    def _action():
+        rows = _read(out / "paper_trades.jsonl")
+        rows[0]["net_pnl"] = rows[0]["net_pnl"] + 100.0
+        _rewrite_jsonl(out / "paper_trades.jsonl", rows)
+
+    _patch_reconcile_then(monkeypatch, _action)
+    assert _run(out, fwd)["status"] == "CORRUPT_LEDGER"
+    assert not (out / "paper_position_state.json").exists()
+
+    # restore the tampered trade row, undo the patch, retry -> clean OK
+    monkeypatch.undo()
+    # the tampering persists on disk; repair it the same way the reconcile recomputation expects
+    rows = _read(out / "paper_trades.jsonl")
+    rows[0]["net_pnl"] = round(rows[0]["gross_pnl"] - rows[0]["fees"] - rows[0]["funding"], 8)
+    _rewrite_jsonl(out / "paper_trades.jsonl", rows)
+    s2 = _run(out, fwd)
+    assert s2["status"] == "OK"
+    assert reconcile(out) == []
+
+
+# ---- B2: final bundle-build reads deep-validate ([{}] -> CORRUPT, no traceback) ------------
+
+
+@pytest.mark.parametrize("ledger_name", _COMMIT_ROW_FILES)
+def test_empty_object_injected_after_reconcile_is_corrupt(tmp_path, monkeypatch, ledger_name):
+    # EXACT Codex case: injecting `[{}]` as a post-reconcile ledger read raised KeyError while
+    # the visible status stayed RUNNING. Every final bundle/gate read now deep-validates, so a
+    # `{}` row fails closed as CORRUPT_LEDGER (no traceback, no false OK).
+    out, fwd = _setup_ready_to_publish(tmp_path)
+
+    def _action():
+        (out / ledger_name).write_text("{}\n", encoding="utf-8")
+
+    _patch_reconcile_then(monkeypatch, _action)
+    summary = _run(out, fwd)  # must NOT raise
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert not _summary_is_ok(out)
+    assert not (out / "paper_position_state.json").exists()
+
+
+# ---- B3: state fully tied to ledger-derived open positions + peak_equity -------------------
+
+
+def _seed_ok_run_open(tmp_path):
+    """A completed OK run leaving AAA OPEN at rest (for open-position detail checks)."""
+    out, fwd, summary = _setup(tmp_path, [[], ["AAA"], ["AAA"], ["AAA"], ["AAA"], ["AAA"]])
+    assert summary["status"] == "OK"
+    assert reconcile(out) == []
+    state = json.loads((out / "paper_position_state.json").read_text())
+    assert "AAA" in state["open_positions"]
+    return out, fwd
+
+
+def test_open_position_double_qty_is_corrupt(tmp_path):
+    # EXACT Codex case: doubling an open position qty still returned OK (only the symbol set was
+    # checked). It must now fail closed.
+    out, fwd = _seed_ok_run_open(tmp_path)
+    _mutate_state(out, lambda s: s["open_positions"]["AAA"].__setitem__(
+        "qty", s["open_positions"]["AAA"]["qty"] * 2
+    ))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_open_position_wrong_entry_fill_id_is_corrupt(tmp_path):
+    out, fwd = _seed_ok_run_open(tmp_path)
+    _mutate_state(out, lambda s: s["open_positions"]["AAA"].__setitem__(
+        "entry_fill_id", "deadbeefdeadbeef"
+    ))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_open_position_wrong_entry_price_is_corrupt(tmp_path):
+    out, fwd = _seed_ok_run_open(tmp_path)
+    _mutate_state(out, lambda s: s["open_positions"]["AAA"].__setitem__(
+        "entry_price", s["open_positions"]["AAA"]["entry_price"] * 2
+    ))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_open_position_wrong_funding_accrued_is_corrupt(tmp_path):
+    out, fwd = _seed_ok_run_open(tmp_path)
+    _mutate_state(out, lambda s: s["open_positions"]["AAA"].__setitem__(
+        "funding_accrued", s["open_positions"]["AAA"]["funding_accrued"] + 100.0
+    ))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_open_position_wrong_hold_bars_is_corrupt(tmp_path):
+    out, fwd = _seed_ok_run_open(tmp_path)
+    _mutate_state(out, lambda s: s["open_positions"]["AAA"].__setitem__(
+        "hold_bars", s["open_positions"]["AAA"]["hold_bars"] + 5
+    ))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_peak_equity_too_high_is_corrupt(tmp_path):
+    # EXACT Codex case: peak_equity ~$1M too high still returned OK. Must fail closed.
+    out, fwd = _seed_ok_run_open(tmp_path)
+    _mutate_state(out, lambda s: s.__setitem__("peak_equity", s["peak_equity"] + 1_000_000.0))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_peak_equity_too_low_is_corrupt(tmp_path):
+    out, fwd = _seed_ok_run_open(tmp_path)
+    _mutate_state(out, lambda s: s.__setitem__("peak_equity", s["peak_equity"] - 1_000_000.0))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_clean_open_state_ledger_passes(tmp_path):
+    # Control: an untouched OK run with an OPEN position re-runs to OK (detail + peak tie out).
+    out, fwd = _seed_ok_run_open(tmp_path)
+    summary = _run(out, fwd)
+    assert summary["status"] == "OK"
+    assert _summary_is_ok(out)
+    assert reconcile(out) == []
+
+
+# ---- B4: provenance is authoritative for a prior OK commit (Option A) ----------------------
+
+
+def test_prior_ok_invalid_provenance_json_is_corrupt(tmp_path):
+    # EXACT Codex case: an invalid paper_provenance.json was silently overwritten and the next
+    # run returned OK. With Option A it fails closed as CORRUPT_LEDGER.
+    out, fwd = _seed_ok_run(tmp_path)
+    (out / "paper_provenance.json").write_text("{ not valid json\n", encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any("paper_provenance.json" in f for f in summary.get("reconcile_failures", []))
+    assert not _summary_is_ok(out)
+
+
+def test_prior_ok_provenance_state_digest_mismatch_is_corrupt(tmp_path):
+    # EXACT Codex case: a falsified state digest in provenance must fail closed.
+    out, fwd = _seed_ok_run(tmp_path)
+    prov = json.loads((out / "paper_provenance.json").read_text())
+    prov["output_digests"]["paper_position_state.json"] = "deadbeef" * 8
+    (out / "paper_provenance.json").write_text(json.dumps(prov), encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any("paper_provenance.json" in f for f in summary.get("reconcile_failures", []))
+
+
+def test_prior_ok_provenance_summary_digest_mismatch_is_corrupt(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    prov = json.loads((out / "paper_provenance.json").read_text())
+    prov["output_digests"]["paper_pnl_summary.json"] = "deadbeef" * 8
+    (out / "paper_provenance.json").write_text(json.dumps(prov), encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any("paper_provenance.json" in f for f in summary.get("reconcile_failures", []))
+
+
+def test_prior_ok_missing_provenance_is_corrupt(tmp_path):
+    # provenance is part of the OK commit proof: deleting it after an OK commit fails closed.
+    out, fwd = _seed_ok_run(tmp_path)
+    (out / "paper_provenance.json").unlink()
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any("paper_provenance.json" in f for f in summary.get("reconcile_failures", []))
+
+
+def test_prior_ok_clean_provenance_passes(tmp_path):
+    # Control: untouched provenance after an OK commit re-runs to OK.
+    out, fwd = _seed_ok_run(tmp_path)
+    assert _run(out, fwd)["status"] == "OK"
+    assert reconcile(out) == []

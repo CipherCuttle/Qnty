@@ -29,7 +29,12 @@ from quantbot.paper import ledger
 from quantbot.paper.ledger import LedgerCorruptionError
 from quantbot.paper import provenance
 from quantbot.paper import snapshots
-from quantbot.paper.reconcile import check_existing_ledgers, reconcile
+from quantbot.paper.reconcile import (
+    check_existing_ledgers,
+    final_integrity_gate,
+    read_ledger_validated,
+    reconcile,
+)
 
 
 def _now_utc_str() -> str:
@@ -408,30 +413,38 @@ def run_once(
 
     # === OK EVIDENCE PUBLICATION PROTOCOL (Blocker 1) =================================
     # A run may NEVER leave a final `status: OK` summary unless the WHOLE OK evidence bundle
-    # (provenance + receipt + state/watermark + summary) was published successfully. Chosen
-    # invariant (documented in schema doc § 5): paper_pnl_summary.json is the authoritative
-    # current status, and the FINAL `OK` summary write is the single commit marker. Sequence:
-    #   1. Build the entire bundle IN MEMORY first. If any content generation raises, nothing
-    #      new is published; the on-disk status is still RUNNING (set above) — never a false OK.
-    #   2. Serialize the summary to its exact on-disk bytes and pin THAT digest into provenance,
-    #      so provenance reflects the new summary even though the summary is written last.
-    #   3. Publish provenance + receipt, THEN write the state/watermark, THEN the `OK` summary
-    #      LAST. Writing state BEFORE the final OK summary closes the Codex blocker where a
-    #      state-write failure left an already-OK summary: now if the state write fails, the
-    #      visible status is still RUNNING. If the very last OK-summary write fails, the state
-    #      may be advanced but the visible status is RUNNING (not OK); the next run finds no new
-    #      bars to process, re-runs the publication, and self-heals to OK. In every failure case
-    #      the visible authoritative status is RUNNING/ABORTED/CORRUPT_LEDGER — never stale OK.
+    # (provenance + receipt + state/watermark + summary) was published successfully AND a final
+    # integrity gate re-validated every committed artifact immediately before the OK commit.
+    # Chosen invariant (schema doc § 5): paper_pnl_summary.json is the authoritative current
+    # status, and the FINAL `OK` summary write is the single commit marker. Sequence:
+    #   1. Build the entire bundle IN MEMORY first (deep-validating reads — Blocker 2). If any
+    #      content generation raises, nothing new is published; the on-disk status is still
+    #      RUNNING (set above) — never a false OK. A fail-closed read becomes CORRUPT_LEDGER.
+    #   2. Serialize the summary/state/receipt to their exact on-disk bytes and pin THOSE digests
+    #      into provenance, so provenance reflects the committed bundle even though state/summary
+    #      are written last. Publish provenance + receipt (terminal-overwritable artifacts).
+    #   3. FINAL INTEGRITY GATE (Blocker 1): re-read + deep-validate every persisted ledger, run
+    #      reconcile over the FINAL ledgers, tie the in-memory state about to be committed STRICTLY
+    #      to those ledgers, and check the provenance/summary/receipt commit semantics. This closes
+    #      the TOCTOU gap where a post-reconcile mutation (e.g. a tampered trade net_pnl) could
+    #      still publish OK. Any failure -> CORRUPT_LEDGER, the state/watermark is NOT advanced.
+    #   4. ONLY AFTER the gate passes: write the state/watermark, then the `OK` summary LAST.
+    #      These are writes of pre-validated in-memory bytes — there is NO read of a mutable
+    #      artifact after the gate, so nothing can change the verdict between the gate and the OK
+    #      commit. A state-write failure leaves the visible status RUNNING (never a false OK); an
+    #      OK-summary-write failure leaves state ahead but status RUNNING, and the next run finds
+    #      no new bars, re-runs the publication, and self-heals to OK.
     # --- 1. build the whole bundle in memory (no writes yet) ---
-    # The post-reconcile re-reads can themselves fail closed (PermissionError / other OSError /
-    # bad UTF-8 / non-object row) — read_jsonl normalizes those to LedgerCorruptionError. That
-    # must NOT propagate as a traceback after RUNNING was written (Blocker 4): convert it to a
-    # CORRUPT_LEDGER publication (CLI exit 4). The state/watermark is not written below, so the
-    # visible status becomes CORRUPT_LEDGER (never OK) and the next run reprocesses idempotently.
+    # The post-reconcile re-reads fail closed via the SAME deep schema as the gates (Blocker 2):
+    # an injected `[{}]`/non-object/NaN row, bad UTF-8, or a PermissionError/other OSError raises
+    # LedgerCorruptionError/OSError here instead of KeyError'ing deep in compute_summary AFTER
+    # RUNNING was written. That must NOT propagate as a traceback: convert it to a CORRUPT_LEDGER
+    # publication (CLI exit 4). The state/watermark is not written below, so the visible status
+    # becomes CORRUPT_LEDGER (never OK) and the next run reprocesses idempotently.
     try:
-        all_trades = ledger.read_jsonl(out / "paper_trades.jsonl")
-        all_equity = ledger.read_jsonl(out / "paper_equity.jsonl")
-        all_funding = ledger.read_jsonl(out / "paper_funding.jsonl")
+        all_trades = read_ledger_validated(out, "paper_trades.jsonl")
+        all_equity = read_ledger_validated(out, "paper_equity.jsonl")
+        all_funding = read_ledger_validated(out, "paper_funding.jsonl")
         funding_gaps = sum(1 for f in all_funding if not f.get("rate_available", True))
 
         summary = provenance.compute_summary(
@@ -469,13 +482,30 @@ def run_once(
              f"({type(exc).__name__}: {exc})"],
         )
 
-    # --- 3. publish: provenance + receipt, then state, then the OK summary LAST ---
-    # The receipt/state are written from the EXACT bytes whose digests were pinned in provenance
-    # above (write_text_atomic / write_json_atomic emit byte-identical content to receipt_bytes /
-    # state_bytes), so provenance stays a faithful manifest of the committed files.
+    # --- 2. publish provenance + receipt (NOT state/OK yet) ---
+    # The receipt is written from the EXACT bytes whose digest provenance pinned above, so the
+    # final integrity gate can verify the on-disk receipt against the manifest. provenance.json
+    # is published here too so the gate can validate its commit semantics from disk.
     ledger.write_json_atomic(out / "paper_provenance.json", prov)
-    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
     ledger.write_text_atomic(out / "paper_receipt.md", receipt)
+
+    # --- 3. FINAL INTEGRITY GATE — the last validation before the OK commit (Blocker 1) ---
+    # Re-derive the verdict from the FINAL persisted artifacts so OK is impossible unless they
+    # STILL deep-validate, reconcile, tie the state to the ledgers, and pass commit semantics.
+    final_failures = final_integrity_gate(
+        out,
+        state=state,
+        initial_equity=float(config["initial_equity_usd"]),
+        summary_bytes=summary_bytes,
+        state_bytes=state_bytes,
+        receipt_bytes=receipt_bytes,
+    )
+    if final_failures:
+        return _corrupt(out, obs_dir, data_dir, config, final_failures)
+
+    # --- 4. commit: append the audit log, write state, then the OK summary LAST ---
+    # Only writes of already-validated in-memory bytes happen past the gate (no mutable reads).
+    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
     # state (watermark) is written BEFORE the final OK summary so a state-write failure leaves
     # the visible status at RUNNING (not OK). The OK summary is the single commit marker.
     ledger.write_json_atomic(state_path, state)
