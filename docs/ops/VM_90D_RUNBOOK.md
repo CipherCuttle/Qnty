@@ -129,11 +129,25 @@ exit code. **`exit 0` is NOT proof a normal accounting run happened** — it cov
 journald log, never the exit code alone:
 
 **`paper_pnl_summary.json` is the single authoritative current-run status** (the run
-transaction). Before a run mutates anything (after config + the pre-run health/freshness/
-divergence gates pass) it overwrites the summary atomically with `status: RUNNING`; the **final
-`OK` summary write is the single commit marker**, written **after** the state/watermark. A stale
-previous `OK` can therefore never remain visible once a new run starts mutating, and no false
-`OK` can survive a failed state/publication step. Read this file's `status`, not `exit 0` alone.
+transaction). A run overwrites the summary atomically with `status: RUNNING` (`phase: preflight`)
+as its **first** write — **before** the pre-run existing-ledger health gate and the
+freshness/divergence gates, not after. This matters: those gates each publish their own
+`CORRUPT_LEDGER`/`ABORTED` bundle, and if that publication itself fails part-way a previous `OK`
+would otherwise stay visible. Writing `RUNNING` first means a stale `OK` is superseded the instant
+a run begins, so a **failed `CORRUPT_LEDGER`/`ABORTED`/`NO_ELIGIBLE_BARS_YET` publication can never
+leave the old `OK` visible**. Even a **config load failure** supersedes a stale `OK` (a minimal
+`RUNNING`/`phase: preflight_config_error` marker, written only when a summary already exists — a
+first-run config error in a fresh dir still writes nothing). The **final `OK` summary write is the
+single commit marker**, written **after** the state/watermark, so no false `OK` can survive a
+failed state/publication step either. Read this file's `status`, not `exit 0` alone.
+
+**Persisted artifacts are schema-validated, not just parse-validated.** Every reader checks the
+deep shape of each row/object — required fields present, finite numbers (no `bool`/`NaN`/`inf`),
+non-empty string ids/timestamps, lists-of-strings for `open_symbols`/`active_symbols`, real
+booleans, enumerated `side`/`kind`, an `OK` summary's `disclaimer`, an `open_positions` entry's
+full field set, and a parseable (or empty) `watermark_bar_ts`. A malformed persisted artifact
+therefore produces `CORRUPT_LEDGER` (exit 4) and an operator stop/review — it is never silently
+normalized into `OK` or republished.
 
 | `status` | exit | meaning | writes |
 | --- | --- | --- | --- |
@@ -141,7 +155,7 @@ previous `OK` can therefore never remain visible once a new run starts mutating,
 | `RUNNING` | (in flight; CLI returns `2` if it ever **returns** RUNNING) | **transaction in flight** — the authoritative marker written before any mutation, superseding any prior `OK`. A clean run replaces it with `OK` within the same invocation. A `RUNNING` summary **left on disk** means a run crashed/was killed mid-commit: the state may or may not have advanced, but **no OK was committed**. | `RUNNING` summary only (overwrites prior summary) |
 | `NO_ELIGIBLE_BARS_YET` | `0` | **healthy no-op** — observer output is clean/fresh/on-grid and the existing ledgers reconcile, but no bar has reached `forward_start_ts` yet. NOT a FLAT/zero result. | summary/receipt/provenance only; **no** ledger rows, **no** state/watermark |
 | `ABORTED` | `2` | freshness/divergence gate abort (config valid, observer output stale/missing/malformed/diverged). | clearly-marked `ABORTED` summary/receipt/provenance; **no** fills/trades/equity |
-| `CONFIG_ERROR` (`ConfigContractError`) | `3` | the `paper_config.json` that *defines* the output contract is itself **missing**, stale, or malformed (not found, invalid UTF-8, bad JSON, old `0.1.0`, wrong `schema_version`/`engine_version`/`baseline_label`, a `bool` where an int/number is required — incl. `schema_version: true`, missing/non-finite `freshness`, or hash mismatch). Clean operator message + init/archive/re-init guidance, **no Python traceback**. | **nothing** — no ledger/state/summary/provenance/receipt |
+| `CONFIG_ERROR` (`ConfigContractError`) | `3` | the `paper_config.json` that *defines* the output contract is itself **missing**, stale, or malformed (not found, invalid UTF-8, bad JSON, old `0.1.0`, wrong `schema_version`/`engine_version`/`baseline_label`, a `bool` where an int/number is required — incl. `schema_version: true`, missing/non-finite `freshness`, or hash mismatch). Clean operator message + init/archive/re-init guidance, **no Python traceback**. | **no ledger/state/provenance/receipt.** If a prior summary exists it is superseded by a minimal `RUNNING`/`phase: preflight_config_error` marker (a stale `OK` must not survive); a **first-run** config error in a fresh dir writes **nothing**. |
 | `CORRUPT_LEDGER` | `4` | a persisted artifact failed closed: an existing ledger is unreadable (**invalid UTF-8, invalid JSON, or a valid-JSON non-object row such as `[]`/`123`/`"x"`**), **structurally malformed/partial** (a `{}` JSONL row or one missing required fields / with a non-finite numeric), a **`{}`/malformed/non-object/wrong-typed `paper_pnl_summary.json`**, a **`{}`/partial/malformed `paper_position_state.json`** (`{}` is corrupt, **not** treated as absent), **or** a reconcile invariant fails (orphan fill/snapshot, disagreeing `bar_commit_id`, partial bar). Caught either on the **pre-run existing-ledger health gate** (before any new mutation, no-op, or divergence abort) **or** the **post-mutation reconcile**. No traceback. The watermark is **NOT** advanced and **no** `OK` is published. | `CORRUPT_LEDGER` summary/receipt/provenance surfacing the reconcile failures; **no** new ledger rows, **no** state |
 
 So: `exit 0` = `OK` run **or** healthy `NO_ELIGIBLE_BARS_YET` no-op (read the status) · `exit 2`

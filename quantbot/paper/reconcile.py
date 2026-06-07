@@ -15,42 +15,60 @@ from quantbot.paper.ledger import LedgerCorruptionError
 
 EPS = 1e-6
 
-# Per-artifact required-field + numeric-field contract for every append-only JSONL ledger
-# (Blocker 2). Each row must be an object (read_jsonl), contain all required fields, and have
-# finite numbers in the numeric fields — otherwise the row is malformed/partial and fails
-# closed as CORRUPT_LEDGER instead of KeyError'ing/TypeError'ing in the checks below. The
-# fields mirror what the engine emits (quantbot/paper/engine.py) and what reconcile / the
-# summary / the receipt index without `.get`. bar_commit_id well-formedness (16-hex) is left
-# to the structural pass so it reports a per-row message; its mere presence is required here.
-LEDGER_JSONL_SCHEMAS: dict[str, dict[str, tuple[str, ...]]] = {
+# Per-artifact shape contract for every append-only JSONL ledger (Blocker 2). Each row must be
+# an object (read_jsonl) and pass a DEEP type check against this spec — required fields present,
+# finite numbers where numbers are needed (no bool/NaN/inf/str), finite >= 0 where non-negative,
+# non-empty strings where strings are needed, lists-of-strings where lists are needed, real
+# bools, and enumerated side/kind values — otherwise the row is malformed/partial and fails
+# closed as CORRUPT_LEDGER instead of KeyError'ing/TypeError'ing in the checks below or in the
+# summary/receipt. The fields mirror exactly what the engine emits (quantbot/paper/engine.py)
+# and what reconcile / the summary / the receipt index without `.get`. bar_commit_id
+# well-formedness (16-hex) is left to the structural pass so it reports a per-row message; only
+# its presence is required here (so empty/malformed ids surface there, not as a generic read
+# error — see tests for the empty/`not-16-hex` cases). Spec keys: required / numeric / nonneg /
+# strings / str_lists / bools / enums (see ledger.read_jsonl_validated).
+LEDGER_JSONL_SCHEMAS: dict[str, dict[str, Any]] = {
     "paper_fills.jsonl": {
         "required": (
             "fill_id", "bar_commit_id", "signal_bar_ts", "fill_ts", "symbol",
-            "side", "kind", "qty", "fill_price",
+            "side", "kind", "qty", "open_price", "fill_price", "slippage_bps", "fee", "backfill",
         ),
-        "numeric": ("qty", "fill_price"),
+        "numeric": ("qty", "open_price", "fill_price"),
+        "nonneg": ("slippage_bps", "fee"),
+        "strings": ("fill_id", "signal_bar_ts", "fill_ts", "symbol"),
+        "bools": ("backfill",),
+        "enums": {"side": frozenset({"BUY", "SELL"}), "kind": frozenset({"entry", "exit"})},
     },
     "paper_trades.jsonl": {
         "required": (
             "trade_id", "bar_commit_id", "symbol", "entry_fill_id", "exit_fill_id",
             "entry_bar_ts", "exit_bar_ts", "qty", "entry_price", "exit_price",
-            "gross_pnl", "fees", "funding", "net_pnl", "hold_bars",
+            "gross_pnl", "fees", "funding", "net_pnl", "hold_bars", "backfill",
         ),
         "numeric": (
             "qty", "entry_price", "exit_price", "gross_pnl", "fees", "funding",
             "net_pnl", "hold_bars",
         ),
+        "strings": (
+            "trade_id", "symbol", "entry_fill_id", "exit_fill_id", "entry_bar_ts", "exit_bar_ts",
+        ),
+        "bools": ("backfill",),
     },
     "paper_funding.jsonl": {
         "required": (
             "funding_id", "bar_ts", "bar_commit_id", "symbol", "window_start",
-            "window_end", "notional_usd", "funding_rate", "rate_available", "funding_amount",
+            "window_end", "notional_usd", "funding_rate", "funding_events",
+            "rate_available", "funding_amount",
         ),
-        "numeric": ("notional_usd", "funding_rate", "funding_amount"),
+        "numeric": ("notional_usd", "funding_rate", "funding_events", "funding_amount"),
+        "strings": ("funding_id", "bar_ts", "symbol", "window_start", "window_end"),
+        "bools": ("rate_available",),
     },
     "paper_positions.jsonl": {
         "required": ("bar_ts", "bar_commit_id", "open_symbols", "num_open", "gross_exposure_usd"),
         "numeric": ("num_open", "gross_exposure_usd"),
+        "strings": ("bar_ts",),
+        "str_lists": ("open_symbols",),
     },
     "paper_equity.jsonl": {
         "required": (
@@ -61,10 +79,18 @@ LEDGER_JSONL_SCHEMAS: dict[str, dict[str, tuple[str, ...]]] = {
             "realized_gross_pnl", "unrealized_pnl", "funding_cum", "fees_cum",
             "equity", "drawdown", "num_open",
         ),
+        "strings": ("bar_ts",),
     },
     "paper_signal_snapshots.jsonl": {
-        "required": ("snapshot_id", "bar_ts", "bar_commit_id", "source_observation_digest"),
-        "numeric": (),
+        "required": (
+            "snapshot_id", "bar_ts", "bar_commit_id", "bar_index", "active_symbols",
+            "portfolio_heat", "heat_cap_triggered", "weighted_return",
+            "source_observation_digest", "source_observation_mtime", "run_ts", "backfill",
+        ),
+        "numeric": ("bar_index", "portfolio_heat", "weighted_return"),
+        "strings": ("snapshot_id", "bar_ts", "source_observation_digest", "run_ts"),
+        "str_lists": ("active_symbols",),
+        "bools": ("heat_cap_triggered", "backfill"),
     },
 }
 
@@ -73,13 +99,11 @@ LEDGER_JSONL_FILES = tuple(LEDGER_JSONL_SCHEMAS)
 
 
 def _read_ledger_validated(output_dir: Path, fname: str) -> list[dict[str, Any]]:
-    """Read one JSONL ledger with parse + shape validation (fails closed, Blocker 2)."""
-    spec = LEDGER_JSONL_SCHEMAS[fname]
+    """Read one JSONL ledger with parse + deep shape validation (fails closed, Blocker 2)."""
     return ledger.read_jsonl_validated(
         output_dir / fname,
         name=fname,
-        required=spec["required"],
-        numeric=spec["numeric"],
+        spec=LEDGER_JSONL_SCHEMAS[fname],
     )
 
 # bar_commit_id = sha256(...)[:16] (see quantbot/paper/snapshots.py) -> 16 lowercase hex

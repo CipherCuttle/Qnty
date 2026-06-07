@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from quantbot.core.determinism import sha256_file
-from quantbot.paper import BASELINE_LABEL, BASELINE_NOT_REPRODUCED, PAPER_ENGINE_VERSION
+from quantbot.paper import (
+    BASELINE_LABEL,
+    BASELINE_NOT_REPRODUCED,
+    PAPER_ENGINE_VERSION,
+    SCHEMA_VERSION,
+)
 
 DISCLAIMER = (
     "SIMULATION ONLY. These are paper fills on a frozen research observer. This is NOT "
@@ -98,16 +103,20 @@ def running_summary(
     run_id: str,
     started_at: str,
     previous_watermark: str,
+    phase: str = "preflight",
 ) -> dict[str, Any]:
-    """Authoritative in-flight RUN marker, written BEFORE any ledger/snapshot/state mutation.
+    """Authoritative in-flight RUN marker, written as the FIRST summary write of a run.
 
-    This is the run-transaction protocol for the OK path (Blocker 1 / schema doc § 5). The
-    moment a new run begins mutating, `paper_pnl_summary.json` is overwritten atomically with
-    `status: RUNNING`, so a stale previous `OK` summary can NEVER remain visible as current
-    truth while the new run is in flight or after it fails part-way through publication. Only
-    after the state/watermark is written and the full evidence bundle is on disk is this marker
-    replaced by the final `OK` summary (the commit marker). A RUNNING summary that outlives one
-    timer interval signals a crashed/incomplete run for operator review.
+    This is the run-transaction protocol (Blocker 1 / schema doc § 5). The marker is written
+    BEFORE the ledger-health / freshness / divergence gates and their abort/corrupt publications
+    (and before any ledger/snapshot/state mutation), so a stale previous `OK` summary can NEVER
+    remain visible as current truth once a new run begins — not even if a pre-run gate's own
+    ABORTED/CORRUPT_LEDGER publication fails part-way. `phase` records how far the run got
+    (`preflight` before the gates; the value is informational only). Only after the state/
+    watermark is written and the full evidence bundle is on disk is this marker replaced by the
+    final `OK` summary (the commit marker), or by a terminal ABORTED/CORRUPT_LEDGER/
+    NO_ELIGIBLE_BARS_YET status. A RUNNING summary that outlives one timer interval signals a
+    crashed/incomplete run for operator review.
     """
     return {
         "schema_version": config["schema_version"],
@@ -116,10 +125,39 @@ def running_summary(
         "forward_start_ts": config["forward_start_ts"],
         "run_id": run_id,
         "started_at": started_at,
+        "phase": phase,
         "previous_watermark": previous_watermark,
         "current_verdict": (
-            "RUNNING — run in flight; ledger mutation started, final OK not yet committed. "
-            "A stale OK (if any) has been superseded by this marker."
+            "RUNNING — run in flight; pre-run gates/ledger mutation started, final OK not yet "
+            "committed. A stale OK (if any) has been superseded by this marker."
+        ),
+        "disclaimer": DISCLAIMER,
+    }
+
+
+def config_error_preflight_marker(run_id: str, started_at: str) -> dict[str, Any]:
+    """Minimal authoritative RUNNING marker when the config itself cannot be loaded (Blocker 1).
+
+    A stale/missing/malformed `paper_config.json` *defines* the output contract, so no valid
+    summary can be built from it. But a previously-visible `OK` summary must STILL not survive a
+    config-error run. The runner writes this minimal marker (only when a summary file already
+    exists — a first-run config error in a fresh dir writes nothing, preserving the exit-3
+    "no writes" contract) to supersede any stale OK before re-raising the ConfigContractError.
+    The config is untrusted, so the marker carries engine constants and a placeholder
+    `forward_start_ts` rather than any config value.
+    """
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": "RUNNING",
+        "baseline_label": BASELINE_LABEL,
+        "forward_start_ts": "unknown",
+        "run_id": run_id,
+        "started_at": started_at,
+        "phase": "preflight_config_error",
+        "current_verdict": (
+            "RUNNING — preflight aborted: paper_config.json could not be loaded/validated. Any "
+            "stale OK has been superseded; this run wrote no ledger/state rows. Re-init the "
+            "write-once config (CONFIG_ERROR, CLI exit 3) and review before the next run."
         ),
         "disclaimer": DISCLAIMER,
     }

@@ -687,7 +687,14 @@ def test_orphan_snapshot_detected_by_reconcile(tmp_path):
             "snapshot_id": snapshots.snapshot_id(orphan_ts),
             "bar_ts": orphan_ts,
             "bar_commit_id": "aaaa0000aaaa0000",
+            "bar_index": 99,
+            "active_symbols": [],
+            "portfolio_heat": 0.0,
+            "heat_cap_triggered": False,
+            "weighted_return": 0.0,
             "source_observation_digest": "deadbeef" * 8,
+            "source_observation_mtime": 0.0,
+            "run_ts": "2026-06-07T00:00:00Z",
             "backfill": False,
         }],
     )
@@ -790,8 +797,9 @@ def test_orphan_fill_without_snapshot_fails_reconcile(tmp_path):
                 "side": "BUY",
                 "kind": "entry",
                 "qty": 1.0,
-                "fill_price": 100.0,
                 "open_price": 100.0,
+                "fill_price": 100.0,
+                "slippage_bps": 5.0,
                 "fee": 0.0,
                 "backfill": False,
             }
@@ -1109,7 +1117,11 @@ def _future_grid_boundary(days_ahead: int = 5) -> str:
 
 
 def _orphan_fill_row(signal_bar_ts, fill_ts, commit_id="aaaa0000aaaa0000"):
-    """A fill with no consumed-signal snapshot — a partial bar left by a simulated crash."""
+    """A fill with no consumed-signal snapshot — a partial bar left by a simulated crash.
+
+    Structurally COMPLETE under the fills schema (Blocker 2) so reconcile flags it as an orphan
+    (no frozen snapshot), NOT as a malformed/partial row — this isolates the orphan invariant.
+    """
     return {
         "fill_id": "deadbeefdeadbeef",
         "bar_commit_id": commit_id,
@@ -1119,8 +1131,9 @@ def _orphan_fill_row(signal_bar_ts, fill_ts, commit_id="aaaa0000aaaa0000"):
         "side": "BUY",
         "kind": "entry",
         "qty": 1.0,
-        "fill_price": 100.0,
         "open_price": 100.0,
+        "fill_price": 100.0,
+        "slippage_bps": 5.0,
         "fee": 0.0,
         "backfill": False,
     }
@@ -2508,3 +2521,215 @@ def test_cli_invalid_utf8_config_exits_3_no_traceback(tmp_path):
     assert "ABORTED" in proc.stdout
     assert _no_ledger_rows(out)
     assert not (out / "paper_pnl_summary.json").exists()
+
+
+# ==========================================================================================
+# ADVERSARIAL REGRESSION v5 — Codex rejection of bf8aa9c ("Add paper run transaction status").
+#   B1: a FAILED pre-run CORRUPT/ABORTED/CONFIG publication must NEVER leave a stale `OK`
+#       visible. The runner writes an authoritative RUNNING preflight marker BEFORE the
+#       ledger-health / freshness / divergence gates (and before re-raising a config error),
+#       so any prior OK is superseded the instant a run begins — even if the gate's own
+#       abort/corrupt publication then fails part-way.
+#   B2: every persisted JSONL/summary/state artifact is DEEP shape-validated (not just
+#       parse-validated): missing/NaN numerics, a scalar where a list is required, a missing
+#       required field, a partial open position, and an unparseable watermark all fail closed
+#       as CORRUPT_LEDGER (exit 4) with no stale OK and no new ledger/state mutation.
+# ==========================================================================================
+
+
+def _seed_ok_run(tmp_path):
+    """A completed OK run: real OK summary + state + reconciling ledgers on disk."""
+    out, fwd, summary = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert summary["status"] == "OK"
+    assert _summary_is_ok(out)
+    assert reconcile(out) == []
+    return out, fwd
+
+
+def _raise_runtime(*a, **k):
+    raise RuntimeError("injected pre-run publication failure")
+
+
+# ---- B1: failed pre-run abort/corrupt publication can't leave a stale OK ------------------
+
+
+def test_prev_ok_corrupt_ledger_failed_corrupt_publish_not_stale_ok(tmp_path, monkeypatch):
+    # Codex EXACT case: previous OK + a corrupt ledger + the CORRUPT_LEDGER publication itself
+    # fails. The stale OK must be GONE (superseded by the preflight RUNNING marker) — the health
+    # gate's failed publication can no longer leave the old OK visible.
+    from quantbot.paper import provenance as _prov
+
+    out, fwd = _seed_ok_run(tmp_path)
+    state_before = (out / "paper_position_state.json").read_text()
+    counts_before = {n: len(_read(out / n)) for n in _LEDGER_FILES}
+    with open(out / "paper_equity.jsonl", "a", encoding="utf-8") as fh:
+        fh.write("{}\n")  # structurally malformed row -> health gate fails closed
+
+    monkeypatch.setattr(_prov, "build_provenance", _raise_runtime)
+    with pytest.raises(RuntimeError):
+        _run(out, fwd)
+
+    assert not _summary_is_ok(out)
+    assert _summary_status(out) == "RUNNING"
+    # watermark/state untouched and no new ledger rows written (besides the injected corrupt one)
+    assert (out / "paper_position_state.json").read_text() == state_before
+    counts_now = {n: len(_read(out / n)) for n in _LEDGER_FILES}
+    assert counts_now["paper_equity.jsonl"] == counts_before["paper_equity.jsonl"] + 1
+    for n in _LEDGER_FILES:
+        if n != "paper_equity.jsonl":
+            assert counts_now[n] == counts_before[n]
+
+
+def test_prev_ok_stale_observation_failed_abort_publish_not_stale_ok(tmp_path, monkeypatch):
+    # Codex EXACT case: previous OK + a stale observation + the ABORTED publication itself fails.
+    # The freshness gate's failed publication must not leave the old OK visible.
+    from quantbot.paper import provenance as _prov
+
+    out, fwd = _seed_ok_run(tmp_path)
+    state_before = (out / "paper_position_state.json").read_text()
+    monkeypatch.setattr(_prov, "build_provenance", _raise_runtime)
+
+    far_future = NOW + timedelta(days=10)  # makes the newest observed bar STALE_OBSERVATION
+    with pytest.raises(RuntimeError):
+        _run(out, fwd, now=far_future)
+
+    assert not _summary_is_ok(out)
+    assert _summary_status(out) == "RUNNING"
+    assert (out / "paper_position_state.json").read_text() == state_before
+
+
+def test_prev_ok_then_malformed_config_not_stale_ok(tmp_path):
+    # Previous OK + a now-malformed config (invalid UTF-8). No valid summary can be built, but the
+    # stale OK must still be superseded by a minimal RUNNING preflight marker before re-raising.
+    out, fwd = _seed_ok_run(tmp_path)
+    (out / "paper_config.json").write_bytes(b"\xff\xfe not valid utf-8")
+    with pytest.raises(ConfigContractError):
+        _run(out, fwd)
+    assert not _summary_is_ok(out)
+    assert _summary_status(out) == "RUNNING"
+    # config error wrote no ledger rows / no new state
+    state = json.loads((out / "paper_position_state.json").read_text())
+    assert state["watermark_bar_ts"] == TS[5]  # unchanged from the seeded OK run
+
+
+def test_prev_ok_then_missing_config_not_stale_ok(tmp_path):
+    # Previous OK + the config file deleted. Output dir exists with a stale OK -> it must be
+    # superseded (not left visible) even though the run can write no valid summary.
+    out, fwd = _seed_ok_run(tmp_path)
+    (out / "paper_config.json").unlink()
+    with pytest.raises(ConfigContractError):
+        _run(out, fwd)
+    assert not _summary_is_ok(out)
+    assert _summary_status(out) == "RUNNING"
+
+
+def test_fresh_dir_config_error_writes_no_summary(tmp_path):
+    # Contract preserved (Blocker 1): a FIRST-run config error in a fresh dir (no prior summary)
+    # writes NOTHING — the minimal preflight marker only ever supersedes an EXISTING summary.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    out.mkdir(parents=True)
+    fwd.mkdir(parents=True, exist_ok=True)  # no paper_config.json
+    with pytest.raises(ConfigContractError):
+        _run(out, fwd)
+    assert not (out / "paper_pnl_summary.json").exists()
+    assert _no_ledger_rows(out)
+    assert not (out / "paper_position_state.json").exists()
+
+
+def test_prev_ok_corrupt_ledger_publishes_corrupt_not_ok(tmp_path):
+    # Non-injected control: previous OK + a corrupt ledger publishes a CORRUPT_LEDGER summary
+    # (the preflight reordering did not break the normal fail-closed path).
+    out, fwd = _seed_ok_run(tmp_path)
+    with open(out / "paper_equity.jsonl", "a", encoding="utf-8") as fh:
+        fh.write("{}\n")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert _summary_status(out) == "CORRUPT_LEDGER"
+    assert not _summary_is_ok(out)
+
+
+# ---- B2: deep schema validation of every persisted artifact ------------------------------
+
+
+def _corrupt_first_row(out, fname, mutate):
+    """Read a JSONL ledger, mutate row 0 in place, rewrite. (NaN round-trips via json.dumps.)"""
+    rows = _read(out / fname)
+    assert rows, f"{fname} has no rows to corrupt"
+    mutate(rows[0])
+    _rewrite_jsonl(out / fname, rows)
+
+
+def _assert_corrupt_mentions(summary, fname):
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any(fname in f for f in summary.get("reconcile_failures", []))
+
+
+def test_fill_missing_fee_is_corrupt_ledger(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _corrupt_first_row(out, "paper_fills.jsonl", lambda r: r.pop("fee"))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_fills.jsonl")
+
+
+def test_fill_fee_nan_is_corrupt_ledger(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _corrupt_first_row(out, "paper_fills.jsonl", lambda r: r.__setitem__("fee", float("nan")))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_fills.jsonl")
+
+
+def test_fill_open_price_nan_is_corrupt_ledger(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _corrupt_first_row(out, "paper_fills.jsonl", lambda r: r.__setitem__("open_price", float("nan")))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_fills.jsonl")
+
+
+def test_funding_funding_events_nan_is_corrupt_ledger(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _corrupt_first_row(out, "paper_funding.jsonl", lambda r: r.__setitem__("funding_events", float("nan")))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_funding.jsonl")
+
+
+def test_positions_open_symbols_string_is_corrupt_ledger(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _corrupt_first_row(out, "paper_positions.jsonl", lambda r: r.__setitem__("open_symbols", "AAA"))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_positions.jsonl")
+
+
+def test_snapshot_missing_active_symbols_is_corrupt_ledger(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _corrupt_first_row(out, "paper_signal_snapshots.jsonl", lambda r: r.pop("active_symbols"))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_signal_snapshots.jsonl")
+
+
+def test_snapshot_weighted_return_nan_is_corrupt_ledger(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _corrupt_first_row(out, "paper_signal_snapshots.jsonl", lambda r: r.__setitem__("weighted_return", float("nan")))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_signal_snapshots.jsonl")
+
+
+def test_summary_missing_disclaimer_is_corrupt_ledger(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    summ = json.loads((out / "paper_pnl_summary.json").read_text())
+    summ.pop("disclaimer")
+    (out / "paper_pnl_summary.json").write_text(json.dumps(summ), encoding="utf-8")
+    _assert_corrupt_mentions(_run(out, fwd), "paper_pnl_summary.json")
+
+
+def test_open_position_empty_object_is_corrupt_ledger(tmp_path):
+    # Codex EXACT case: open_positions.AAA={} passed the health gate then KeyError'd on hold_bars.
+    out, fwd = _seed_ok_run(tmp_path)
+    state = json.loads((out / "paper_position_state.json").read_text())
+    state["open_positions"] = {"AAA": {}}
+    (out / "paper_position_state.json").write_text(json.dumps(state), encoding="utf-8")
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_unparseable_watermark_is_corrupt_ledger(tmp_path):
+    # Codex EXACT case: watermark_bar_ts="not-a-timestamp" passed and was republished as OK.
+    out, fwd = _seed_ok_run(tmp_path)
+    state = json.loads((out / "paper_position_state.json").read_text())
+    state["watermark_bar_ts"] = "not-a-timestamp"
+    (out / "paper_position_state.json").write_text(json.dumps(state), encoding="utf-8")
+    summary = _run(out, fwd)
+    _assert_corrupt_mentions(summary, "paper_position_state.json")
+    assert not _summary_is_ok(out)

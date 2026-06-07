@@ -21,10 +21,11 @@ from quantbot.data.funding_loader import load_all_funding
 from quantbot.data.types import Bar
 from quantbot.paper import forward_obs_dir as default_forward_obs_dir
 from quantbot.paper import paper_output_dir as default_paper_output_dir
-from quantbot.paper.config import load_config
+from quantbot.paper.config import ConfigContractError, load_config
 from quantbot.paper.engine import new_state, run_engine
 from quantbot.paper import freshness
 from quantbot.paper import ledger
+from quantbot.paper.ledger import LedgerCorruptionError
 from quantbot.paper import provenance
 from quantbot.paper import snapshots
 from quantbot.paper.reconcile import check_existing_ledgers, reconcile
@@ -32,6 +33,58 @@ from quantbot.paper.reconcile import check_existing_ledgers, reconcile
 
 def _now_utc_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+SUMMARY_FILE = "paper_pnl_summary.json"
+
+
+def _previous_watermark(out: Path) -> str:
+    """Best-effort read of the pre-run watermark for the RUNNING marker (Blocker 1).
+
+    A corrupt/partial state is surfaced by the existing-ledger health gate, NOT here — so this
+    swallows LedgerCorruptionError and falls back to "" rather than masking or duplicating the
+    corruption signal. (The marker's `previous_watermark` is informational.)
+    """
+    try:
+        st = ledger.read_state_obj(out / "paper_position_state.json")
+    except LedgerCorruptionError:
+        return ""
+    return str((st or {}).get("watermark_bar_ts", "") or "")
+
+
+def _write_preflight_marker(
+    out: Path, config: dict[str, Any], run_id: str, started_at: str
+) -> None:
+    """Invalidate any stale `OK` by writing the authoritative RUNNING preflight marker (Blocker 1).
+
+    This is the FIRST summary write of a run, performed BEFORE any abort/corrupt publication can
+    fail (i.e. before the `_corrupt`/`_abort`/`_no_eligible_bars` publications and before any
+    ledger/snapshot/state mutation). The existing-ledger reads that compute the health-gate
+    failures do NOT publish anything, so reading them just before this write cannot leave a stale
+    OK; only the publications that follow this marker can fail, and if any does the visible status
+    stays RUNNING — never the superseded OK. Atomic write (temp + os.replace).
+    """
+    marker = provenance.running_summary(
+        config, run_id, started_at, _previous_watermark(out), phase="preflight"
+    )
+    ledger.write_json_atomic(out / SUMMARY_FILE, marker)
+
+
+def _invalidate_stale_ok_on_config_error(out: Path, run_id: str, started_at: str) -> None:
+    """Supersede any stale `OK` when the config itself cannot be loaded (Blocker 1).
+
+    The invalid config defines the output contract, so no valid summary can be built and the CLI
+    exits 3 writing nothing for a first-run config error. But if a summary already exists (e.g. a
+    previous `OK`), it MUST NOT remain visible after the config later goes missing/malformed.
+    Only overwrite an EXISTING summary — never create one in a fresh dir — so the exit-3
+    "no writes" contract is preserved for first-run config errors.
+    """
+    summary_path = out / SUMMARY_FILE
+    if not summary_path.exists():
+        return
+    ledger.write_json_atomic(
+        summary_path, provenance.config_error_preflight_marker(run_id, started_at)
+    )
 
 
 def _abort(
@@ -136,7 +189,19 @@ def run_once(
     obs_dir = forward_obs_dir or default_forward_obs_dir()
     now = now or datetime.now(timezone.utc)
 
-    config = load_config(out)
+    run_id = uuid.uuid4().hex
+    started_at = _now_utc_str()
+
+    # === CONFIG (fail closed; never leave a stale OK visible) =========================
+    # The config defines the output contract, so a missing/malformed config cannot build a valid
+    # summary and the CLI exits 3 (CONFIG_ERROR) writing nothing for a FIRST-run config error.
+    # But a previously-visible `OK` summary must NOT survive a now-broken config (Blocker 1), so
+    # before re-raising we supersede an EXISTING summary with a minimal RUNNING preflight marker.
+    try:
+        config = load_config(out)
+    except ConfigContractError:
+        _invalidate_stale_ok_on_config_error(out, run_id, started_at)
+        raise
     freshness_cfg = config.get("freshness", {})
     forward_start_ts = config["forward_start_ts"]
 
@@ -146,7 +211,20 @@ def run_once(
     # must fail closed as CORRUPT_LEDGER here — before we write any new snapshot/row, before a
     # NO_ELIGIBLE_BARS_YET no-op, and before the divergence gate — so existing corruption can
     # never be masked as a benign no-op/divergence or silently overwritten with fresh rows.
+    # These are pure READS of the existing artifacts (incl. the existing summary, so a `{}`/
+    # malformed prior summary is still detected as corrupt below); they publish nothing.
     existing_failures = check_existing_ledgers(out)
+
+    # === RUN-TRANSACTION PREFLIGHT MARKER (Blocker 1) =================================
+    # Authoritative current-status protocol: invalidate any stale `OK` NOW, before ANY abort/
+    # corrupt/no-op publication that could itself fail part-way. The health-gate reads above
+    # never publish, so a stale OK was still visible until this point; from here on the visible
+    # status is RUNNING until a terminal status (OK/ABORTED/CORRUPT_LEDGER/NO_ELIGIBLE_BARS_YET)
+    # is fully published. Codex's exact case — a previous OK plus a failed CORRUPT/ABORTED
+    # publication — can no longer leave the old OK visible: if `_corrupt`/`_abort` below raise
+    # mid-publish, the on-disk status is this RUNNING marker, never the superseded OK.
+    _write_preflight_marker(out, config, run_id, started_at)
+
     if existing_failures:
         return _corrupt(out, obs_dir, data_dir, config, existing_failures)
 
@@ -203,21 +281,12 @@ def run_once(
     )
 
     # --- engine ---
+    # The authoritative RUNNING marker was already written in preflight (Blocker 1), before the
+    # health/freshness/divergence gates — so the visible status has been RUNNING (never the stale
+    # OK) since the start of this run. The mutations below proceed under that marker; only the
+    # final `OK` summary (written last, as the commit marker) flips the visible status back to
+    # OK, and only after the watermark + the full evidence bundle are already on disk.
     result = run_engine(config, per_bar_obs, bars_by_symbol, funding_df, state)
-
-    # === RUN-TRANSACTION MARKER (Blocker 1) ===========================================
-    # Authoritative current-status protocol: BEFORE any ledger/snapshot/state mutation (and
-    # only after config + the pre-run health/freshness/divergence gates passed), overwrite
-    # paper_pnl_summary.json atomically with `status: RUNNING`. This is the single authoritative
-    # current-run status. A stale previous `OK` summary therefore can NEVER remain visible as
-    # current truth once a new run starts mutating: if any later publication/state step fails,
-    # the visible status is RUNNING (not a false OK). The final `OK` summary (written last, as
-    # the commit marker) is the ONLY thing that flips the visible status back to OK, and only
-    # after the watermark and the full evidence bundle are already on disk.
-    run_id = uuid.uuid4().hex
-    previous_watermark = str(state.get("watermark_bar_ts", "") or "")
-    running = provenance.running_summary(config, run_id, _now_utc_str(), previous_watermark)
-    ledger.write_json_atomic(out / "paper_pnl_summary.json", running)
 
     # --- persist new rows idempotently (ids dedupe overlap) ---
     # CRASH-SAFE ORDER (Blocker 1): the immutable consumed-signal snapshot for a bar is

@@ -175,7 +175,7 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
 | `paper_equity.jsonl` | append | `bar_ts, bar_commit_id, realized_gross_pnl, unrealized_pnl, funding_cum, fees_cum, equity, drawdown, num_open` |
 | `paper_funding.jsonl` | append | `funding_id(=symbol+bar_ts, or symbol+bar_ts+"\|exit" for the exit-tail stub), bar_commit_id, symbol, bar_ts, window_start, window_end, notional_usd, funding_rate(Σ of events in interval), funding_events, rate_available, funding_amount` (section 11) |
 | `paper_signal_snapshots.jsonl` | append | `snapshot_id, bar_ts, bar_commit_id, bar_index, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return, source_observation_digest, source_observation_mtime, run_ts, backfill=false` (section 10) |
-| `paper_pnl_summary.json` | overwrite (**authoritative current-run status**) | `status(OK / RUNNING / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (RUNNING runs carry `run_id, started_at, previous_watermark`; ABORTED runs add `abort_code, abort_reason, aborted_at`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count, detected_at`; NO_ELIGIBLE_BARS_YET runs add `reason, checked_at`). This file is the single authoritative current-run status (see § 5, run transaction): a `RUNNING` marker is written **before** any mutation and the final `OK` write is the commit marker. |
+| `paper_pnl_summary.json` | overwrite (**authoritative current-run status**) | `status(OK / RUNNING / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (RUNNING runs carry `run_id, started_at, phase, previous_watermark` — `phase` is `preflight` for a normal run, `preflight_config_error` for the minimal stale-OK-superseding marker written when the config itself cannot be loaded; ABORTED runs add `abort_code, abort_reason, aborted_at`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count, detected_at`; NO_ELIGIBLE_BARS_YET runs add `reason, checked_at`). This file is the single authoritative current-run status (see § 5, run transaction): a `RUNNING` marker is written **before** the pre-run health/freshness/divergence gates (so a failed abort/corrupt publication never leaves a stale OK), and the final `OK` write is the commit marker. |
 | `paper_provenance.json` | overwrite | latest run: `status(OK / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET)`, `baseline_label`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (incl. `paper_signal_snapshots.jsonl`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count`) |
 | `paper_provenance_log.jsonl` | append | one provenance record per run (incl. aborted runs) |
 | `paper_receipt.md` | overwrite | human summary + loud disclaimer + baseline label + red flags (aborted runs render a 🛑 ABORTED receipt) |
@@ -222,14 +222,26 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
   source of truth, with `OK` as the commit marker):** "write the OK summary last" is **not**
   sufficient on its own (a stale prior `OK` would stay visible if a new run failed before
   re-writing it, and a state-write failure after an `OK` summary would leave a false `OK`).
-  Instead the runner runs an explicit transaction whose authoritative status lives in
-  `paper_pnl_summary.json`:
-  1. **`RUNNING` marker before any mutation.** After config + the pre-run existing-ledger health
-     gate + freshness/divergence gates pass, and **before** any snapshot/ledger/state write, the
-     runner overwrites `paper_pnl_summary.json` **atomically** with `status: RUNNING` (carrying
-     `run_id`, `started_at`, `previous_watermark`, `baseline_label`). A stale previous `OK` is
-     therefore superseded the instant a new run begins mutating — it can never remain visible as
-     current truth.
+  Neither is "write `RUNNING` after the pre-run gates pass": the existing-ledger health gate and
+  the freshness/divergence gates each publish their own `CORRUPT_LEDGER`/`ABORTED` bundle, and
+  **if that publication itself fails part-way a previous `OK` would still be visible**. So the
+  `RUNNING` marker is written **before** those gates (Blocker 1). The runner runs an explicit
+  transaction whose authoritative status lives in `paper_pnl_summary.json`:
+  1. **`RUNNING` preflight marker before any gate or mutation.** As the **first** summary write
+     of a run — **before** the existing-ledger health gate, the freshness/divergence gates, and
+     any snapshot/ledger/state write — the runner overwrites `paper_pnl_summary.json`
+     **atomically** with `status: RUNNING` (carrying `run_id`, `started_at`, `phase: preflight`,
+     `previous_watermark`, `baseline_label`). The health-gate reads that compute the failures are
+     pure reads (they publish nothing), so reading them just before this marker cannot leave a
+     stale `OK`; **only** the gate publications that follow this marker can fail, and if any does
+     the visible status stays `RUNNING` — never the superseded `OK`. A stale previous `OK` is
+     therefore superseded the instant a run begins, so a failed `CORRUPT_LEDGER`/`ABORTED`/
+     `NO_ELIGIBLE_BARS_YET` publication can never leave the old `OK` visible. **Even a config
+     load failure** invalidates a stale `OK`: if `paper_config.json` is missing/malformed, the
+     runner writes a minimal `status: RUNNING` (`phase: preflight_config_error`) marker —
+     **but only when a summary file already exists** (a first-run config error in a fresh dir
+     writes nothing, preserving the `CONFIG_ERROR` exit-3 "no writes" contract) — then re-raises
+     `ConfigContractError`.
   2. **Append + reconcile.** The bar rows are appended (snapshot-first, see § 10); `reconcile()`
      runs over the full ledger *post-mutation*. On any failure the runner writes a
      `CORRUPT_LEDGER` summary/receipt/provenance, **does not advance** the `watermark_bar_ts`/
@@ -251,18 +263,33 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
   signals a crashed/incomplete run for operator stop/review (see `docs/ops/VM_90D_RUNBOOK.md`
   § 3.5b).
 - **Fail-closed artifact reads (`CORRUPT_LEDGER`):** every persisted-artifact reader validates
-  **parse AND shape** (not just "is it a JSON object"). A malformed JSONL ledger (invalid UTF-8,
-  invalid JSON, or a valid-JSON **non-object** row such as `[]`/`123`/`"x"`), a **structurally
-  malformed/partial** JSONL row (an empty `{}` row, a row missing a required field, or a non-finite
-  number where a finite one is required), a `{}`/malformed/non-object/wrong-typed
-  `paper_pnl_summary.json`, a `{}`/partial/malformed `paper_position_state.json` (**`{}` is corrupt,
-  never silently treated as "absent" and reinitialized**), or a pre-existing reconcile failure
-  (orphan fill/snapshot, disagreeing `bar_commit_id`) all fail closed as `CORRUPT_LEDGER` — caught
-  on the **pre-run existing-ledger health gate** (before any new snapshot/ledger/state mutation, and
-  before any `NO_ELIGIBLE_BARS_YET` no-op or divergence abort) **or** the post-mutation reconcile
-  gate. The CLI exits **4** with no traceback and requires operator review; the watermark is never
-  advanced. (Per-artifact required-field/numeric contracts live in
-  `quantbot.paper.reconcile.LEDGER_JSONL_SCHEMAS` and the `validate_summary_shape` /
+  **parse AND deep shape** (not just "is it a JSON object" and not just "is the file parseable").
+  A malformed JSONL ledger (invalid UTF-8, invalid JSON, or a valid-JSON **non-object** row such
+  as `[]`/`123`/`"x"`) and a **structurally malformed/partial** JSONL row all fail closed. The
+  per-row contract is **field-level and type-level**, mirroring exactly what the engine emits:
+  - **required fields present** (an empty `{}` row, or one missing e.g. a fill's `fee`/`open_price`/
+    `slippage_bps`/`backfill`, a snapshot's `active_symbols`, etc., is corrupt);
+  - **finite numbers** where numbers are needed (no `bool`/`NaN`/`inf`/`-inf`/string — e.g. a fill
+    `fee=NaN`/`open_price=NaN`, a funding `funding_events=NaN`, a snapshot `weighted_return=NaN`);
+  - **non-negative finite numbers** for `fee`/`slippage_bps`;
+  - **non-empty strings** for ids/timestamps/symbols;
+  - **lists of strings** for `open_symbols`/`active_symbols` (a scalar such as `open_symbols="AAA"`
+    is corrupt);
+  - **real booleans** for `backfill`/`rate_available`/`heat_cap_triggered`;
+  - **enumerated** `side` ∈ {BUY, SELL} and `kind` ∈ {entry, exit}.
+
+  The summary and state files are validated the same way: a `{}`/malformed/non-object/wrong-typed
+  `paper_pnl_summary.json` (incl. an `OK` summary with a wrong-typed numeric or **missing
+  `disclaimer`**, an unknown `status`), a `{}`/partial/malformed `paper_position_state.json`
+  (**`{}` is corrupt, never silently treated as "absent" and reinitialized**; a partial state, an
+  **`open_positions` entry that is `{}`/partial**, or an **unparseable `watermark_bar_ts`** such as
+  `"not-a-timestamp"` — only `""` or a parseable bar timestamp is accepted), or a pre-existing
+  reconcile failure (orphan fill/snapshot, disagreeing `bar_commit_id`) all fail closed as
+  `CORRUPT_LEDGER` — caught on the **pre-run existing-ledger health gate** (before any new
+  snapshot/ledger/state mutation, and before any `NO_ELIGIBLE_BARS_YET` no-op or divergence abort)
+  **or** the post-mutation reconcile gate. The CLI exits **4** with no traceback and requires
+  operator review; the watermark is never advanced. (Per-artifact required-field/type contracts
+  live in `quantbot.paper.reconcile.LEDGER_JSONL_SCHEMAS` and the `validate_summary_shape` /
   `validate_state_shape` helpers in `quantbot.paper.ledger`.)
 - **`NO_ELIGIBLE_BARS_YET` no-op:** when the freshness gate returns the controlled
   `NO_ELIGIBLE_BARS_YET` (clean file, no bar past `forward_start_ts`), the runner writes a
