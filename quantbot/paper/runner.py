@@ -25,7 +25,7 @@ from quantbot.paper import freshness
 from quantbot.paper import ledger
 from quantbot.paper import provenance
 from quantbot.paper import snapshots
-from quantbot.paper.reconcile import reconcile
+from quantbot.paper.reconcile import check_existing_ledgers, reconcile
 
 
 def _now_utc_str() -> str:
@@ -143,6 +143,16 @@ def run_once(
     freshness_cfg = config.get("freshness", {})
     forward_start_ts = config["forward_start_ts"]
 
+    # === EXISTING-LEDGER HEALTH GATE (before ANY mutation OR healthy no-op) ===========
+    # Blocker 2/3: check the already-persisted ledgers FIRST. A malformed JSONL ledger or a
+    # pre-existing reconcile failure (e.g. an orphan fill/snapshot left by a crashed prior run)
+    # must fail closed as CORRUPT_LEDGER here — before we write any new snapshot/row, before a
+    # NO_ELIGIBLE_BARS_YET no-op, and before the divergence gate — so existing corruption can
+    # never be masked as a benign no-op/divergence or silently overwritten with fresh rows.
+    existing_failures = check_existing_ledgers(out)
+    if existing_failures:
+        return _corrupt(out, obs_dir, data_dir, config, existing_failures)
+
     # --- inputs (read-only) ---
     obs_path = obs_dir / "observation_log.json"
     # A malformed observation_log.json must NOT raise an uncaught JSONDecodeError before the
@@ -242,11 +252,10 @@ def run_once(
     if recon_failures:
         return _corrupt(out, obs_dir, data_dir, config, recon_failures)
 
-    # state (watermark) LAST — commit marker for the whole bar batch, only after reconcile
-    # passes (high-level rule 6: state/watermark write is last).
-    ledger.write_json(state_path, state)
-
-    # --- summary + provenance + receipt over the FULL ledgers ---
+    # --- summary + provenance + receipt over the FULL ledgers (BEFORE the state write) ---
+    # The summary uses the in-memory `state` (open_positions/bars_elapsed); it does not need
+    # the state file on disk. We compute and persist the summary/provenance/receipt FIRST so
+    # that the state watermark is the very last mutation (Blocker 1, high-level rule 6).
     all_trades = ledger.read_jsonl(out / "paper_trades.jsonl")
     all_equity = ledger.read_jsonl(out / "paper_equity.jsonl")
     all_funding = ledger.read_jsonl(out / "paper_funding.jsonl")
@@ -273,5 +282,14 @@ def run_once(
         deferred_bar_ts=result.deferred_bar_ts,
     )
     (out / "paper_receipt.md").write_text(receipt, encoding="utf-8")
+
+    # state (watermark) is the FINAL mutation — the commit marker for the whole bar batch.
+    # It is written ONLY after reconcile passed AND the summary/provenance/receipt were all
+    # written successfully (Blocker 1). If any of those writes raises, the watermark is NOT
+    # advanced, so the next run reprocesses the bar batch and idempotently re-publishes the
+    # evidence. (The provenance digest of paper_position_state.json therefore reflects the
+    # PRIOR run's state by one run; this is the deliberate cost of making the watermark the
+    # strictly-last write, and self-heals on the next successful run.)
+    ledger.write_json(state_path, state)
 
     return summary

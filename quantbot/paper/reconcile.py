@@ -11,8 +11,19 @@ from typing import Any
 
 from quantbot.paper.config import load_config
 from quantbot.paper import ledger
+from quantbot.paper.ledger import LedgerCorruptionError
 
 EPS = 1e-6
+
+# Every append-only JSONL ledger that must be readable before a run may proceed (Blocker 2/3).
+LEDGER_JSONL_FILES = (
+    "paper_fills.jsonl",
+    "paper_trades.jsonl",
+    "paper_funding.jsonl",
+    "paper_positions.jsonl",
+    "paper_equity.jsonl",
+    "paper_signal_snapshots.jsonl",
+)
 
 # bar_commit_id = sha256(...)[:16] (see quantbot/paper/snapshots.py) -> 16 lowercase hex
 # chars. A missing/null/empty/malformed id must never be accepted (Blocker 2).
@@ -37,6 +48,33 @@ def _dup_ids(rows: list[dict[str, Any]], key: str) -> list[str]:
             dups.append(v)
         seen.add(v)
     return dups
+
+
+def check_existing_ledgers(output_dir: Path) -> list[str]:
+    """Fail-closed integrity + reconcile over the ALREADY-PERSISTED ledgers (Blocker 2/3).
+
+    Run BEFORE any new ledger/snapshot/state mutation and before any healthy no-op
+    (NO_ELIGIBLE_BARS_YET) or benign abort (e.g. signal-snapshot divergence) can be returned.
+    A malformed JSONL ledger or any pre-existing reconcile failure (e.g. an orphan fill from a
+    crashed prior run) is surfaced here so it can never be masked as a benign no-op/divergence
+    or silently overwritten with fresh rows.
+
+    Returns failure strings; empty == the existing ledgers are clean. Never raises on corrupt
+    JSONL — a parse failure is captured as a failure string.
+    """
+    failures: list[str] = []
+    # 1. Parse integrity first: an unreadable ledger can't be reconciled. If ANY ledger is
+    #    corrupt we stop here (do not attempt structural reconcile over partial reads).
+    for fname in LEDGER_JSONL_FILES:
+        try:
+            ledger.read_jsonl(output_dir / fname)
+        except LedgerCorruptionError as exc:
+            failures.append(str(exc))
+    if failures:
+        return failures
+    # 2. Structural reconcile over the existing rows (all ledgers parsed cleanly above).
+    failures.extend(reconcile(output_dir))
+    return failures
 
 
 def reconcile(output_dir: Path) -> list[str]:

@@ -122,23 +122,30 @@ QNTY_PAPER_OUTPUT_DIR=/srv/qnty/output/paper_pnl_v1 \
 
 The paper timer remains disabled until the config is re-init'd against this engine version.
 
-**Two distinct abort behaviors (do not conflate them):**
+**Paper accounting status / exit-code matrix (do not conflate them).** `scripts/qnty-paper-accounting.py`
+writes a `status` into `paper_pnl_summary.json` (and `paper_provenance.json`) and returns an
+exit code. **`exit 0` is NOT proof a normal accounting run happened** — it covers both a real
+`OK` run *and* a healthy `NO_ELIGIBLE_BARS_YET` no-op. Always read the summary `status` /
+journald log, never the exit code alone:
 
-- **Config-contract abort (stale/incompatible `paper_config.json`).** The config that *defines*
-  the output contract is itself invalid (old `0.1.0`, wrong `schema_version`/`engine_version`/
-  `baseline_label`, missing `freshness`), so **no** valid summary can be built from it. The CLI
-  (`scripts/qnty-paper-accounting.py`) catches `ConfigContractError`, prints a clean operator
-  message with archive/re-init guidance (**no Python traceback**), and **exits 3**. It writes
-  **no** ledger, state, summary, provenance, or receipt rows. The absence of any FLAT/zero
-  summary, plus the loud `exit 3` + archive/re-init message, means a stale config can never be
-  mistaken for a FLAT/zero result.
-- **Freshness/divergence gate abort (config loads, observer output is bad).** Here the config
-  is valid but the observer output is stale/missing/malformed/diverged. The run writes a
-  clearly-marked `status: ABORTED` summary/receipt/provenance and **no** fills/trades/equity,
-  and **exits 2**.
+| `status` | exit | meaning | writes |
+| --- | --- | --- | --- |
+| `OK` | `0` | completed accounting: freshness + config + existing-ledger health + post-mutation reconcile all passed; the watermark advanced. | full ledger rows + state + summary/receipt/provenance |
+| `NO_ELIGIBLE_BARS_YET` | `0` | **healthy no-op** — observer output is clean/fresh/on-grid and the existing ledgers reconcile, but no bar has reached `forward_start_ts` yet. NOT a FLAT/zero result. | summary/receipt/provenance only; **no** ledger rows, **no** state/watermark |
+| `ABORTED` | `2` | freshness/divergence gate abort (config valid, observer output stale/missing/malformed/diverged). | clearly-marked `ABORTED` summary/receipt/provenance; **no** fills/trades/equity |
+| `CONFIG_ERROR` (`ConfigContractError`) | `3` | the `paper_config.json` that *defines* the output contract is itself stale/malformed (old `0.1.0`, wrong `schema_version`/`engine_version`/`baseline_label`, missing/non-finite `freshness`, bad JSON, or hash mismatch). Clean operator message + archive/re-init guidance, **no Python traceback**. | **nothing** — no ledger/state/summary/provenance/receipt |
+| `CORRUPT_LEDGER` | `4` | an existing ledger is unreadable (malformed JSONL) **or** a reconcile invariant fails (orphan fill/snapshot, disagreeing `bar_commit_id`, partial bar) — caught either on the pre-run existing-ledger health gate or the post-mutation reconcile. The watermark is **NOT** advanced and **no** `OK` is published. | `CORRUPT_LEDGER` summary/receipt/provenance surfacing the reconcile failures; **no** new ledger rows, **no** state |
 
-So: `exit 0` = run complete · `exit 2` = gate-aborted with an `ABORTED` summary · `exit 3` =
-stale-config abort with **no** writes (re-init required).
+So: `exit 0` = `OK` run **or** healthy `NO_ELIGIBLE_BARS_YET` no-op (read the status) · `exit 2`
+= gate-aborted with an `ABORTED` summary · `exit 3` = stale/malformed-config abort with **no**
+writes (re-init required) · `exit 4` = `CORRUPT_LEDGER`.
+
+**`CORRUPT_LEDGER` (exit 4) is an operator-action stop, not a transient.** It means the
+persisted ledger is partial/unreadable. **Pause the paper timer** (`systemctl stop
+qnty-paper-pnl.timer`) and review `paper_pnl_summary.json` → `reconcile_failures` before any
+further run. Do NOT delete or "fix" ledger rows by hand on the VM; capture the corrupt files
+and the summary for off-VM review. The watermark was not advanced, so once the underlying
+corruption is understood and resolved off-VM the run can be retried safely.
 
 ### 3.6 Copy Systemd Units
 ```bash

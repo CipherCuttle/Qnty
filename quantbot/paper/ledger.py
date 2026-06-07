@@ -11,16 +11,37 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
+class LedgerCorruptionError(ValueError):
+    """A persisted JSONL ledger is unreadable (a line is not valid JSON).
+
+    Reads of existing ledgers must fail CLOSED (Blocker 2): a malformed line can never be
+    silently skipped or allowed to traceback as a bare JSONDecodeError. The runner converts
+    this into a CORRUPT_LEDGER status (CLI exit 4) before any new ledger/snapshot/state row is
+    written.
+    """
+
+
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Read all rows from a JSONL file. Missing file -> empty list."""
+    """Read all rows from a JSONL file. Missing file -> empty list.
+
+    A malformed line raises LedgerCorruptionError (fail closed), never a bare JSONDecodeError
+    and never a silent skip — a corrupt ledger must surface as CORRUPT_LEDGER (Blocker 2).
+    """
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
     with open(path, encoding="utf-8") as fh:
-        for line in fh:
+        for lineno, line in enumerate(fh, start=1):
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 rows.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise LedgerCorruptionError(
+                    f"{path.name}: line {lineno} is not valid JSON ({exc}); refusing to "
+                    f"read a corrupt ledger"
+                ) from exc
     return rows
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -72,13 +73,28 @@ class ConfigContractError(ValueError):
 
 
 def _is_positive_number(v: Any) -> bool:
-    """True iff v is an int/float (not bool) strictly greater than 0."""
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+    """True iff v is a FINITE int/float (not bool) strictly greater than 0.
+
+    Non-finite values (inf/-inf/NaN) are rejected (Blocker 4): JSON's default decoder accepts
+    `Infinity`/`NaN` tokens, and `inf > 0` is True, so without an explicit isfinite check a
+    `bar_interval_hours: Infinity` would pass and later traceback (e.g. timedelta(hours=inf)).
+    """
+    return (
+        isinstance(v, (int, float))
+        and not isinstance(v, bool)
+        and math.isfinite(v)
+        and v > 0
+    )
 
 
 def _is_nonneg_number(v: Any) -> bool:
-    """True iff v is an int/float (not bool) greater than or equal to 0."""
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+    """True iff v is a FINITE int/float (not bool) >= 0 (inf/-inf/NaN rejected — Blocker 4)."""
+    return (
+        isinstance(v, (int, float))
+        and not isinstance(v, bool)
+        and math.isfinite(v)
+        and v >= 0
+    )
 
 
 def config_hash(config: dict[str, Any]) -> str:
@@ -212,17 +228,29 @@ def config_path(output_dir: Path | None = None) -> Path:
 
 
 def load_config(output_dir: Path | None = None) -> dict[str, Any]:
+    """Load + fully validate the write-once paper config, failing CLOSED on every fault.
+
+    Every failure mode raises ConfigContractError (a ValueError) so the CLI can catch a single
+    type and exit cleanly (exit 3) with archive/re-init guidance and NO traceback (Blocker 4):
+    a malformed JSON file, a contract violation (missing fields / wrong schema-engine-baseline /
+    non-finite or out-of-range freshness numbers), and a config_hash mismatch all fail closed.
+    """
     path = config_path(output_dir)
-    with open(path, encoding="utf-8") as fh:
-        config = json.load(fh)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            config = json.load(fh)
+    except json.JSONDecodeError as exc:
+        raise ConfigContractError(
+            f"paper_config.json is not valid JSON: {exc}. {_REINIT_HINT}"
+        ) from exc
     # Contract gate first: an old/incompatible config must fail loudly with a re-init hint
     # before we trust any of its fields.
     validate_config_contract(config)
     expected = config_hash(config)
     if config.get("config_hash") != expected:
-        raise ValueError(
+        raise ConfigContractError(
             f"paper_config.json hash mismatch: stored {config.get('config_hash')} "
-            f"!= recomputed {expected} (config was mutated)"
+            f"!= recomputed {expected} (config was mutated). {_REINIT_HINT}"
         )
     return config
 

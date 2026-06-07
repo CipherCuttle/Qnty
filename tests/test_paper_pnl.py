@@ -793,10 +793,15 @@ def test_orphan_fill_without_snapshot_fails_reconcile(tmp_path):
     assert any("snapshot" in f.lower() for f in failures)
 
 
-def test_changed_source_after_partial_commit_aborts_next_run(tmp_path):
+def test_changed_source_after_partial_commit_fails_closed_not_masked(tmp_path):
     # A bar's snapshot is frozen FIRST. Simulate a crash that froze the snapshot (and rolled
     # the watermark back) but never finished the bar; the rolling observer then recomputes
-    # the same bar to different values. The next run MUST abort on divergence, not continue.
+    # the same bar to different values. There are TWO problems at once: an existing reconcile
+    # error (orphan snapshot with no equity) AND a source divergence.
+    #
+    # The existing-ledger health gate runs BEFORE the divergence gate (Blocker 3), so the
+    # pre-existing ledger corruption is surfaced as CORRUPT_LEDGER and is NEVER masked as a
+    # benign SIGNAL_SNAPSHOT_DIVERGENCE abort. The watermark must not advance.
     out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
     assert reconcile(out) == []
 
@@ -820,8 +825,14 @@ def test_changed_source_after_partial_commit_aborts_next_run(tmp_path):
     (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": diverged}), encoding="utf-8")
 
     summary = _run(out, fwd)
-    assert summary["status"] == "ABORTED"
-    assert summary["abort_code"] == "SIGNAL_SNAPSHOT_DIVERGENCE"
+    # The pre-existing reconcile failure is surfaced, NOT masked as a benign divergence abort.
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert summary["status"] != "ABORTED"
+    assert summary.get("reconcile_failure_count", 0) >= 1
+    assert any("orphan" in f.lower() for f in summary.get("reconcile_failures", []))
+    # the watermark was not advanced past the kept (partial) bar
+    state_after = json.loads((out / "paper_position_state.json").read_text())
+    assert state_after["watermark_bar_ts"] == (kept_equity[-1]["bar_ts"] if kept_equity else "")
 
 
 def test_full_bar_commit_reconciles_and_ids_agree(tmp_path):
@@ -1394,6 +1405,259 @@ def test_cli_malformed_freshness_config_aborts_cleanly_no_traceback(tmp_path):
     assert "ABORTED" in proc.stdout
     assert "archive" in proc.stdout.lower()
     # No ledger / state / summary rows written.
+    assert _no_ledger_rows(out)
+    assert not (out / "paper_position_state.json").exists()
+    assert not (out / "paper_pnl_summary.json").exists()
+
+
+# ==========================================================================================
+# ADVERSARIAL REGRESSION v3 — Codex reproductions of the a815159 rejection ("fail closed on
+# paper ledger corruption"). Each test reproduces a remaining unsafe path Codex found; none is
+# a happy path. Invariants reinforced here:
+#   B1: the state/watermark write is the STRICTLY-LAST mutation, after summary/provenance/
+#       receipt all succeed; a failure after reconcile must not advance the watermark.
+#   B2: reads of existing JSONL ledgers fail CLOSED -> CORRUPT_LEDGER (exit 4), never traceback,
+#       never write new snapshots/rows/state over an unreadable ledger.
+#   B3: existing-ledger integrity is checked BEFORE any healthy no-op or benign abort, so
+#       corruption can't hide behind NO_ELIGIBLE_BARS_YET or a signal-snapshot divergence.
+#   B4: malformed/non-finite/hash-mismatch configs fail the contract and the CLI exits cleanly.
+# ==========================================================================================
+
+
+# ---- Blocker 1: watermark is the strictly-last mutation ----------------------------------
+
+
+def test_failure_after_reconcile_before_summary_does_not_advance_state(tmp_path, monkeypatch):
+    # Inject a failure AFTER the post-mutation reconcile passes but BEFORE summary/provenance/
+    # receipt are written. The state/watermark (the strictly-last write) must NOT advance, and
+    # the next run must be able to retry safely to a clean OK.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+
+    from quantbot.paper import provenance as _prov
+
+    injected = {"called": False}
+
+    def _boom(*args, **kwargs):
+        injected["called"] = True
+        raise RuntimeError("injected failure after reconcile, before summary")
+
+    # compute_summary is the first step after the reconcile gate; patching it lands the failure
+    # exactly between "reconcile passed" and "summary/provenance/receipt written".
+    monkeypatch.setattr(_prov, "compute_summary", _boom)
+
+    with pytest.raises(RuntimeError):
+        _run(out, fwd)
+    assert injected["called"]
+    # the watermark is the strictly-last mutation -> the state file was never written this run
+    assert not (out / "paper_position_state.json").exists()
+    # the mutations BEFORE reconcile are on disk and self-consistent (reconcile still passes)
+    assert reconcile(out) == []
+
+    # next run retries safely: unpatch -> OK, no duplicate rows, watermark now advances
+    monkeypatch.undo()
+    counts_before = {n: len(_read(out / n)) for n in _LEDGER_FILES}
+    summary = _run(out, fwd)
+    assert summary["status"] == "OK"
+    assert {n: len(_read(out / n)) for n in _LEDGER_FILES} == counts_before  # idempotent retry
+    assert reconcile(out) == []
+    state = json.loads((out / "paper_position_state.json").read_text())
+    assert state["watermark_bar_ts"]  # advanced on the successful retry
+
+
+# ---- Blocker 2: corrupt existing JSONL ledgers fail closed (no traceback, no new writes) ---
+
+
+@pytest.mark.parametrize(
+    "ledger_name",
+    ["paper_fills.jsonl", "paper_equity.jsonl", "paper_signal_snapshots.jsonl"],
+)
+def test_corrupt_existing_ledger_is_corrupt_ledger_no_traceback(tmp_path, ledger_name):
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+    state_before = json.loads((out / "paper_position_state.json").read_text())
+    counts_before = {n: len(_read(out / n)) for n in _LEDGER_FILES}
+
+    # Append a malformed (non-JSON) line to an existing ledger -> unreadable.
+    with open(out / ledger_name, "a", encoding="utf-8") as fh:
+        fh.write("{ this is not valid json\n")
+
+    # run_once must NOT raise (no traceback) and must return a CORRUPT_LEDGER summary.
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert summary.get("reconcile_failure_count", 0) >= 1
+    # no NEW ledger rows were written over the corrupt ledger (other ledgers unchanged)
+    for n in _LEDGER_FILES:
+        if n == ledger_name:
+            continue
+        assert len(_read(out / n)) == counts_before[n]
+    # state/watermark not advanced
+    assert json.loads((out / "paper_position_state.json").read_text()) == state_before
+    # the CORRUPT_LEDGER evidence names the corrupt file
+    assert any(ledger_name in f for f in summary.get("reconcile_failures", []))
+
+
+# ---- Blocker 3: existing corruption is not masked by a healthy no-op ---------------------
+
+
+def test_future_start_with_orphan_fill_is_corrupt_not_no_eligible(tmp_path):
+    # forward_start in the future -> no eligible bars. But an orphan fill from a crashed prior
+    # run already sits in the ledger. The existing-ledger health gate must surface CORRUPT_LEDGER
+    # instead of the benign NO_ELIGIBLE_BARS_YET no-op.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=_FUTURE_START), output_dir=out)
+    _ledger.append_rows(out / "paper_fills.jsonl", [_orphan_fill_row(TS[1], TS[2])])
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert summary["status"] != "NO_ELIGIBLE_BARS_YET"
+    assert summary.get("reconcile_failure_count", 0) >= 1
+    # no position state created
+    assert not (out / "paper_position_state.json").exists()
+
+
+def test_corrupt_jsonl_with_future_start_is_corrupt_not_no_eligible(tmp_path):
+    # Same masking risk but via an unreadable ledger rather than a structural orphan.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=_FUTURE_START), output_dir=out)
+    (out / "paper_equity.jsonl").write_text("{ not valid json\n", encoding="utf-8")
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert summary["status"] != "NO_ELIGIBLE_BARS_YET"
+    assert not (out / "paper_position_state.json").exists()
+
+
+# ---- Blocker 4: non-finite / malformed-JSON / hash-mismatch configs fail closed ----------
+
+
+def test_config_inf_freshness_value_rejected(tmp_path):
+    # EXACT Codex case: +inf passes `> 0` and would later traceback (timedelta(hours=inf)).
+    def m(c):
+        c["freshness"]["bar_interval_hours"] = float("inf")
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_negative_inf_freshness_value_rejected(tmp_path):
+    def m(c):
+        c["freshness"]["heartbeat_max_age_hours"] = float("-inf")
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_nan_freshness_value_rejected(tmp_path):
+    def m(c):
+        c["freshness"]["max_bar_staleness_hours"] = float("nan")
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_inf_max_future_skew_rejected(tmp_path):
+    # Optional skew field, if present, must also reject non-finite values.
+    def m(c):
+        c["freshness"]["max_future_skew_hours"] = float("inf")
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_malformed_json_raises_config_contract_error(tmp_path):
+    out = tmp_path / "paper"
+    out.mkdir(parents=True)
+    (out / "paper_config.json").write_text("{ this is not valid json", encoding="utf-8")
+    with pytest.raises(ConfigContractError):
+        load_config(out)
+
+
+def test_config_hash_mismatch_raises_config_contract_error(tmp_path):
+    # A mutated-without-rehash config must fail the contract (ConfigContractError), so the CLI
+    # catches a single type and exits 3 cleanly instead of tracebacking on a bare ValueError.
+    out = tmp_path / "paper"
+    out.mkdir(parents=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    data = json.loads((out / "paper_config.json").read_text())
+    data["notional_usd"] = data["notional_usd"] + 1.0  # mutate, do NOT re-hash
+    (out / "paper_config.json").write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ConfigContractError):
+        load_config(out)
+
+
+def test_cli_malformed_json_config_exits_clean_no_traceback(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    out.mkdir(parents=True)
+    fwd.mkdir(parents=True, exist_ok=True)
+    (out / "paper_config.json").write_text("{ not valid json", encoding="utf-8")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 3, (proc.returncode, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert "ABORTED" in proc.stdout
+    assert _no_ledger_rows(out)
+    assert not (out / "paper_position_state.json").exists()
+    assert not (out / "paper_pnl_summary.json").exists()
+
+
+def test_cli_inf_freshness_config_exits_clean_no_traceback(tmp_path):
+    # Previously +inf passed the contract and tracebacked later; now it exits 3 cleanly.
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    out.mkdir(parents=True)
+    fwd.mkdir(parents=True, exist_ok=True)
+
+    def m(c):
+        c["freshness"]["bar_interval_hours"] = float("inf")
+    _write_hashed_config(out, m)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 3, (proc.returncode, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert "ABORTED" in proc.stdout
     assert _no_ledger_rows(out)
     assert not (out / "paper_position_state.json").exists()
     assert not (out / "paper_pnl_summary.json").exists()
