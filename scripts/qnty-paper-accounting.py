@@ -22,10 +22,20 @@ from quantbot.paper.config import ConfigContractError
 from quantbot.paper.runner import run_once
 
 # Exit codes (documented in docs/paper_pnl_v1_schema.md § 5 / docs/ops/VM_90D_RUNBOOK.md § 3.5b):
-#   0 = run complete OR NO_ELIGIBLE_BARS_YET healthy no-op (no ledger rows written)
-#   2 = freshness/divergence gate ABORTED (ABORTED summary written)
-#   3 = stale/incompatible paper_config.json — clean abort, NO ledger or summary writes
-#   4 = CORRUPT_LEDGER — post-mutation reconcile failed; watermark NOT advanced, no OK
+#   0 = OK run (full OK evidence bundle published) OR NO_ELIGIBLE_BARS_YET healthy no-op.
+#       An `OK` summary means the WHOLE evidence bundle (summary + provenance + receipt) was
+#       published and reconcile passed — never a partial/standalone summary.
+#   2 = freshness/divergence gate ABORTED (ABORTED summary written, no ledger rows)
+#   3 = CONFIG_ERROR — stale/incompatible/malformed paper_config.json (missing/extra-strict
+#       fields, wrong schema/engine/baseline, non-finite or out-of-range numeric, bad
+#       fill_model/signal_source/funding_model, numeric/off-grid forward_start_ts, bad JSON, or
+#       hash mismatch). Clean abort, NO ledger/state/summary writes, NO traceback.
+#   4 = CORRUPT_LEDGER — a persisted artifact failed closed. Covers BOTH (a) the pre-run
+#       existing-ledger health gate (a malformed JSONL ledger: bad UTF-8, invalid JSON, a
+#       valid-JSON non-object row like `[]`, a malformed summary/position-state, or a
+#       pre-existing reconcile failure such as an orphan fill/snapshot) AND (b) the
+#       post-mutation reconcile gate. In every case the watermark is NOT advanced and no `OK`
+#       is published; operator review is required (see runbook § 3.5b).
 EXIT_CONFIG_CONTRACT = 3
 EXIT_CORRUPT_LEDGER = 4
 

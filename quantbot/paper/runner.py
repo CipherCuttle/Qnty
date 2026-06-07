@@ -8,6 +8,7 @@ receipt / provenance entry, and leaves the append-only ledgers and state untouch
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -45,15 +46,14 @@ def _abort(
     print(f"[paper-pnl][ABORT] {code}: {reason}", file=sys.stderr, flush=True)
 
     summary = provenance.aborted_summary(config, code, reason)
-    ledger.write_json(out / "paper_pnl_summary.json", summary)
-
     prov = provenance.build_provenance(obs_dir, out, data_dir, SYMBOLS, config=config,
                                         aborted=True, abort_code=code, abort_reason=reason)
-    ledger.write_json(out / "paper_provenance.json", prov)
-    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
-
     receipt = provenance.render_aborted_receipt(summary, code, reason)
-    (out / "paper_receipt.md").write_text(receipt, encoding="utf-8")
+    # Atomic writes so a crash mid-publish never leaves a half-written ABORTED artifact.
+    ledger.write_json_atomic(out / "paper_provenance.json", prov)
+    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
+    ledger.write_text_atomic(out / "paper_receipt.md", receipt)
+    ledger.write_json_atomic(out / "paper_pnl_summary.json", summary)
     return summary
 
 
@@ -80,17 +80,15 @@ def _corrupt(
         print(f"[paper-pnl][CORRUPT_LEDGER]   - {f}", file=sys.stderr, flush=True)
 
     summary = provenance.corrupt_summary(config, failures)
-    ledger.write_json(out / "paper_pnl_summary.json", summary)
-
     prov = provenance.build_provenance(
         obs_dir, out, data_dir, SYMBOLS, config=config,
         status="CORRUPT_LEDGER", reconcile_failures=failures,
     )
-    ledger.write_json(out / "paper_provenance.json", prov)
-    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
-
     receipt = provenance.render_corrupt_receipt(summary, failures)
-    (out / "paper_receipt.md").write_text(receipt, encoding="utf-8")
+    ledger.write_json_atomic(out / "paper_provenance.json", prov)
+    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
+    ledger.write_text_atomic(out / "paper_receipt.md", receipt)
+    ledger.write_json_atomic(out / "paper_pnl_summary.json", summary)
     return summary
 
 
@@ -110,16 +108,14 @@ def _no_eligible_bars(
     print(f"[paper-pnl][NO_ELIGIBLE_BARS_YET] {reason}", file=sys.stderr, flush=True)
 
     summary = provenance.no_eligible_bars_summary(config, reason)
-    ledger.write_json(out / "paper_pnl_summary.json", summary)
-
     prov = provenance.build_provenance(
         obs_dir, out, data_dir, SYMBOLS, config=config, status="NO_ELIGIBLE_BARS_YET",
     )
-    ledger.write_json(out / "paper_provenance.json", prov)
-    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
-
     receipt = provenance.render_no_eligible_receipt(summary, reason)
-    (out / "paper_receipt.md").write_text(receipt, encoding="utf-8")
+    ledger.write_json_atomic(out / "paper_provenance.json", prov)
+    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
+    ledger.write_text_atomic(out / "paper_receipt.md", receipt)
+    ledger.write_json_atomic(out / "paper_pnl_summary.json", summary)
     return summary
 
 
@@ -195,8 +191,11 @@ def run_once(
         funding_df = load_all_funding()
 
     # --- state ---
+    # The existing-ledger health gate above already validated paper_position_state.json as a
+    # JSON object (fail-closed CORRUPT_LEDGER otherwise), so this read cannot traceback on a
+    # corrupt state file; read_json_obj keeps it fail-closed as defence in depth (Blocker 2).
     state_path = out / "paper_position_state.json"
-    state = ledger.read_json(state_path, default=None) or new_state(
+    state = ledger.read_json_obj(state_path, default=None) or new_state(
         float(config["initial_equity_usd"])
     )
 
@@ -252,15 +251,24 @@ def run_once(
     if recon_failures:
         return _corrupt(out, obs_dir, data_dir, config, recon_failures)
 
-    # --- summary + provenance + receipt over the FULL ledgers (BEFORE the state write) ---
-    # The summary uses the in-memory `state` (open_positions/bars_elapsed); it does not need
-    # the state file on disk. We compute and persist the summary/provenance/receipt FIRST so
-    # that the state watermark is the very last mutation (Blocker 1, high-level rule 6).
+    # === OK EVIDENCE PUBLICATION PROTOCOL (Blocker 1) =================================
+    # A run may NEVER leave a final `status: OK` summary unless the WHOLE OK evidence bundle
+    # (summary + provenance + receipt) was published successfully. To guarantee that:
+    #   1. Build the entire bundle IN MEMORY first. If any content generation raises, nothing
+    #      is published and (because the state watermark is written last) the next run
+    #      reprocesses the bar batch idempotently and republishes.
+    #   2. Serialize the summary to its exact on-disk bytes and pin THAT digest into provenance,
+    #      so provenance reflects the new summary even though the summary is written last.
+    #   3. Publish provenance + receipt FIRST (atomic temp+rename), then the OK summary LAST —
+    #      the summary is the marker that the bundle is complete, so an `OK` summary can never
+    #      exist on disk without its provenance/receipt already present. A failure during any
+    #      step leaves no `OK` summary and does not advance the watermark.
     all_trades = ledger.read_jsonl(out / "paper_trades.jsonl")
     all_equity = ledger.read_jsonl(out / "paper_equity.jsonl")
     all_funding = ledger.read_jsonl(out / "paper_funding.jsonl")
     funding_gaps = sum(1 for f in all_funding if not f.get("rate_available", True))
 
+    # --- 1. build the whole bundle in memory (no writes yet) ---
     summary = provenance.compute_summary(
         config,
         all_trades,
@@ -269,27 +277,36 @@ def run_once(
         state["bars_elapsed"],
         funding_gaps=funding_gaps,
     )
-    ledger.write_json(out / "paper_pnl_summary.json", summary)
-
-    prov = provenance.build_provenance(obs_dir, out, data_dir, SYMBOLS, config=config)
-    ledger.write_json(out / "paper_provenance.json", prov)
-    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
-
     receipt = provenance.render_receipt(
         summary,
         last_trades=all_trades[-5:],
         funding_gaps=funding_gaps,
         deferred_bar_ts=result.deferred_bar_ts,
     )
-    (out / "paper_receipt.md").write_text(receipt, encoding="utf-8")
+    # 2. exact on-disk summary bytes + their digest, so provenance pins the NEW summary even
+    # though the summary file itself is written last.
+    summary_bytes = ledger.json_bytes(summary)
+    summary_digest = hashlib.sha256(summary_bytes).hexdigest()
+    prov = provenance.build_provenance(
+        obs_dir, out, data_dir, SYMBOLS, config=config,
+        output_digest_overrides={"paper_pnl_summary.json": summary_digest},
+    )
 
-    # state (watermark) is the FINAL mutation — the commit marker for the whole bar batch.
-    # It is written ONLY after reconcile passed AND the summary/provenance/receipt were all
-    # written successfully (Blocker 1). If any of those writes raises, the watermark is NOT
+    # --- 3. publish: provenance + receipt FIRST, then the OK summary LAST ---
+    ledger.write_json_atomic(out / "paper_provenance.json", prov)
+    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
+    ledger.write_text_atomic(out / "paper_receipt.md", receipt)
+    # The OK summary is the LAST evidence write — an atomic rename, so the final summary path is
+    # only ever observed as fully-old or the complete OK bundle, never half-written (Blocker 1).
+    ledger.write_bytes_atomic(out / "paper_pnl_summary.json", summary_bytes)
+
+    # state (watermark) is the FINAL mutation — the commit marker for the whole bar batch. It
+    # is written ONLY after reconcile passed AND the full OK bundle (provenance/receipt/summary)
+    # was published successfully (Blocker 1). If any earlier step raises, the watermark is NOT
     # advanced, so the next run reprocesses the bar batch and idempotently re-publishes the
-    # evidence. (The provenance digest of paper_position_state.json therefore reflects the
-    # PRIOR run's state by one run; this is the deliberate cost of making the watermark the
+    # evidence. (The provenance digest of paper_position_state.json therefore reflects the PRIOR
+    # run's state by one run; this is the deliberate cost of making the watermark the
     # strictly-last write, and self-heals on the next successful run.)
-    ledger.write_json(state_path, state)
+    ledger.write_json_atomic(state_path, state)
 
     return summary

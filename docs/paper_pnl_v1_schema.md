@@ -198,30 +198,63 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
   `forward_start_ts` / contradictory provenance). Failures raise `ConfigContractError`.
   Archive/delete the stale output dir and re-init a fresh write-once config with a fresh future
   `forward_start_ts`.
-- **Config contract type/range checks (`validate_config_contract`):** every required
-  `freshness` numeric is **type- and range-checked** — `bar_interval_hours`,
-  `max_bar_staleness_hours`, `heartbeat_max_age_hours` must each be an int/float **> 0** (a
-  string/null/negative/zero/bool fails closed), and an optional `max_future_skew_hours`, if
-  present, must be an int/float **>= 0**. A malformed value (e.g. `bar_interval_hours="bad"`)
-  is rejected by the config contract instead of tracebacking later in the freshness gate.
-- **Reconcile-before-OK (fail-closed publish):** a run may publish an `OK` summary/receipt/
-  provenance **only after** `reconcile()` passes over the full ledger *post-mutation*. The
-  runner appends the bar rows, then reconciles; if any invariant fails it writes a
-  `CORRUPT_LEDGER` summary/receipt/provenance (surfacing the reconcile failures), **does not
-  advance** the `watermark_bar_ts`/state, and the CLI exits **4**. An existing partial/corrupt
-  ledger therefore can never be silently normalized into `OK`. The `paper_position_state.json`
-  watermark write is always the **last** mutation and happens only on a clean reconcile.
+- **Config contract value checks (`validate_config_contract`):** *every* required value is
+  **deeply type/range-checked** — not only the freshness block — so a correctly-hashed but
+  unsafe config fails closed as `ConfigContractError` (CLI exit 3) instead of writing NaN
+  PnL/state or tracebacking deep in the engine:
+  - `schema_version` == exact `SCHEMA_VERSION` (int); `engine_version`/`baseline_label`/
+    `fill_model`/`signal_source` == their exact expected strings; `funding_model` == the exact
+    `{"type":"accrual","applied_as":"cash_flow"}` object; `fee_model`/`slippage_model` must be
+    objects with the exact `type` (`flat_taker`/`fixed`).
+  - `initial_equity_usd`, `notional_usd`, `leverage` must each be a **finite number > 0**;
+    `fee_model.fee_bps` and `slippage_model.slippage_bps` must be **finite numbers >= 0**. All
+    of `NaN`, `inf`, `-inf`, strings, `bool` (a subclass of `int`), and `null` are rejected.
+  - every required `freshness` numeric (`bar_interval_hours`, `max_bar_staleness_hours`,
+    `heartbeat_max_age_hours`) must be an int/float **> 0**, and an optional
+    `max_future_skew_hours`, if present, must be an int/float **>= 0**.
+  - `forward_start_ts` must be a **parseable ISO bar-timestamp string on the configured
+    `bar_interval_hours` grid** (00/08/16 UTC). A numeric (`123`), unparseable, or off-grid
+    value fails closed (it would otherwise traceback in the freshness gate or silently shift
+    the no-fill boundary).
+- **Reconcile-then-publish-OK (fail-closed, all-or-nothing publish):** a run may publish an
+  `OK` result **only after** `reconcile()` passes over the full ledger *post-mutation*, and an
+  `OK` `paper_pnl_summary.json` **means the whole OK evidence bundle was published** — never a
+  standalone/partial summary. The runner: appends the bar rows; reconciles (on any failure it
+  writes a `CORRUPT_LEDGER` summary/receipt/provenance, **does not advance** the
+  `watermark_bar_ts`/state, and the CLI exits **4**); then builds the entire OK bundle
+  (summary + provenance + receipt) **in memory** and publishes it **atomically** (temp file +
+  `os.replace`) with the **OK `paper_pnl_summary.json` written LAST** — provenance and receipt
+  are always already on disk before an `OK` summary exists. Provenance pins the summary's
+  digest from the exact in-memory bytes (the summary is written last). The
+  `paper_position_state.json` watermark write is the **strictly-last** mutation and happens
+  only after the full OK bundle published; a failure during *any* generation/publication step
+  therefore leaves **no** `OK` summary and does **not** advance the watermark, so the next run
+  reprocesses the batch idempotently and republishes. An existing partial/corrupt ledger can
+  never be silently normalized into `OK`.
+- **Fail-closed artifact reads (`CORRUPT_LEDGER`):** every persisted-artifact reader validates
+  **parse AND shape**. A malformed JSONL ledger (invalid UTF-8, invalid JSON, or a valid-JSON
+  **non-object** row such as `[]`/`123`), a malformed/non-object `paper_pnl_summary.json` or
+  `paper_position_state.json`, or a pre-existing reconcile failure (orphan fill/snapshot,
+  disagreeing `bar_commit_id`) all fail closed as `CORRUPT_LEDGER` — caught on the **pre-run
+  existing-ledger health gate** (before any new snapshot/ledger/state mutation, and before any
+  `NO_ELIGIBLE_BARS_YET` no-op or divergence abort) **or** the post-mutation reconcile gate.
+  The CLI exits **4** with no traceback and requires operator review; the watermark is never
+  advanced.
 - **`NO_ELIGIBLE_BARS_YET` no-op:** when the freshness gate returns the controlled
   `NO_ELIGIBLE_BARS_YET` (clean file, no bar past `forward_start_ts`), the runner writes a
   clearly-labeled `NO_ELIGIBLE_BARS_YET` summary/receipt/provenance and **does not** write any
   ledger row or create/mutate the position state/watermark. The CLI exits **0** (healthy
   no-op) but prints `No eligible bars yet; no ledger rows written` — never "run complete".
-- **Stale-config CLI behavior:** because the invalid config *defines* the output contract, no
-  valid `ABORTED` summary can be built. `scripts/qnty-paper-accounting.py` catches
-  `ConfigContractError`, prints clean archive/re-init guidance (no traceback), and **exits 3**
-  writing **no** ledger/state/summary/provenance/receipt rows. (Exit codes: `0` complete **or
-  NO_ELIGIBLE_BARS_YET no-op**, `2` freshness/divergence gate abort with an `ABORTED` summary,
-  `3` stale-config abort with no writes, `4` `CORRUPT_LEDGER` — post-mutation reconcile failed,
+- **Stale/malformed-config CLI behavior (`CONFIG_ERROR`):** because the invalid config
+  *defines* the output contract, no valid `ABORTED` summary can be built.
+  `scripts/qnty-paper-accounting.py` catches `ConfigContractError` (bad JSON, missing fields,
+  wrong schema/engine/baseline, non-finite/out-of-range numeric, bad
+  fill_model/signal_source/funding_model, numeric/off-grid `forward_start_ts`, or hash
+  mismatch), prints clean archive/re-init guidance (no traceback), and **exits 3** writing
+  **no** ledger/state/summary/provenance/receipt rows. (Exit codes: `0` `OK` run with the full
+  evidence bundle published **or** `NO_ELIGIBLE_BARS_YET` no-op, `2` freshness/divergence gate
+  abort with an `ABORTED` summary, `3` `CONFIG_ERROR` stale/malformed-config abort with no
+  writes, `4` `CORRUPT_LEDGER` — pre-run health-gate **or** post-mutation reconcile failure,
   watermark not advanced. See `docs/ops/VM_90D_RUNBOOK.md` § 3.5b.)
 - `fill_id = sha256(f"{symbol}|{signal_bar_ts}|{side}|{kind}")[:16]`.
 - `trade_id = exit_fill_id`; `funding_id = f"{symbol}|{bar_ts}"` (exit-tail stub:

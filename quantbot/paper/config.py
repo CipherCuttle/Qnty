@@ -48,6 +48,7 @@ REQUIRED_CONFIG_FIELDS = (
     "forward_start_ts",
     "initial_equity_usd",
     "notional_usd",
+    "leverage",
     "fee_model",
     "slippage_model",
     "fill_model",
@@ -61,6 +62,15 @@ REQUIRED_FRESHNESS_FIELDS = (
     "max_bar_staleness_hours",
     "heartbeat_max_age_hours",
 )
+
+# Exact allowed values for the enumerated accounting-contract fields (Blocker 3). A config that
+# claims a different fill/signal/funding/fee/slippage model must fail closed — it would silently
+# change how PnL is computed if accepted.
+EXPECTED_FILL_MODEL = FILL_MODEL
+EXPECTED_SIGNAL_SOURCE = SIGNAL_SOURCE
+EXPECTED_FEE_MODEL_TYPE = "flat_taker"
+EXPECTED_SLIPPAGE_MODEL_TYPE = "fixed"
+EXPECTED_FUNDING_MODEL = {"type": "accrual", "applied_as": "cash_flow"}
 
 _REINIT_HINT = (
     "Archive/delete the stale paper output dir and re-init a fresh write-once "
@@ -183,6 +193,95 @@ def validate_config_contract(config: dict[str, Any]) -> None:
                 f"paper_config.json freshness.max_future_skew_hours must be a number >= 0 "
                 f"(got {skew!r} of type {type(skew).__name__}). {_REINIT_HINT}"
             )
+
+    # --- accounting-value contract (Blocker 3) ----------------------------------------
+    # Every value the engine multiplies/divides/compares must be deeply type/range-checked
+    # here. A correctly-hashed config with `initial_equity_usd: NaN`, `notional_usd: "bad"`,
+    # `leverage: false`, or `fee_bps: NaN` would otherwise pass and either write NaN PnL/state
+    # or traceback deep in the engine. Fail closed as ConfigContractError (CLI exit 3) — no
+    # NaN/inf/string/bool/null/off-grid value is ever accepted.
+    for fld in ("initial_equity_usd", "notional_usd", "leverage"):
+        val = config.get(fld)
+        if not _is_positive_number(val):
+            raise ConfigContractError(
+                f"paper_config.json {fld} must be a finite number > 0 "
+                f"(got {val!r} of type {type(val).__name__}; NaN/inf/string/bool/null "
+                f"rejected). {_REINIT_HINT}"
+            )
+
+    # fee_model / slippage_model: exact `type` + a finite non-negative bps (0 is valid).
+    fee_model = config.get("fee_model")
+    if not isinstance(fee_model, dict) or fee_model.get("type") != EXPECTED_FEE_MODEL_TYPE:
+        raise ConfigContractError(
+            f"paper_config.json fee_model must be an object with type "
+            f"{EXPECTED_FEE_MODEL_TYPE!r} (got {fee_model!r}). {_REINIT_HINT}"
+        )
+    if not _is_nonneg_number(fee_model.get("fee_bps")):
+        raise ConfigContractError(
+            f"paper_config.json fee_model.fee_bps must be a finite number >= 0 "
+            f"(got {fee_model.get('fee_bps')!r}; NaN/inf/string/bool/null rejected). "
+            f"{_REINIT_HINT}"
+        )
+    slippage_model = config.get("slippage_model")
+    if (
+        not isinstance(slippage_model, dict)
+        or slippage_model.get("type") != EXPECTED_SLIPPAGE_MODEL_TYPE
+    ):
+        raise ConfigContractError(
+            f"paper_config.json slippage_model must be an object with type "
+            f"{EXPECTED_SLIPPAGE_MODEL_TYPE!r} (got {slippage_model!r}). {_REINIT_HINT}"
+        )
+    if not _is_nonneg_number(slippage_model.get("slippage_bps")):
+        raise ConfigContractError(
+            f"paper_config.json slippage_model.slippage_bps must be a finite number >= 0 "
+            f"(got {slippage_model.get('slippage_bps')!r}; NaN/inf/string/bool/null "
+            f"rejected). {_REINIT_HINT}"
+        )
+
+    # fill_model / signal_source: exact enumerated values.
+    if config.get("fill_model") != EXPECTED_FILL_MODEL:
+        raise ConfigContractError(
+            f"paper_config.json fill_model {config.get('fill_model')!r} != required exact "
+            f"{EXPECTED_FILL_MODEL!r}. {_REINIT_HINT}"
+        )
+    if config.get("signal_source") != EXPECTED_SIGNAL_SOURCE:
+        raise ConfigContractError(
+            f"paper_config.json signal_source {config.get('signal_source')!r} != required "
+            f"exact {EXPECTED_SIGNAL_SOURCE!r}. {_REINIT_HINT}"
+        )
+
+    # funding_model: exact allowed object.
+    if config.get("funding_model") != EXPECTED_FUNDING_MODEL:
+        raise ConfigContractError(
+            f"paper_config.json funding_model {config.get('funding_model')!r} != required "
+            f"exact {EXPECTED_FUNDING_MODEL!r}. {_REINIT_HINT}"
+        )
+
+    # forward_start_ts: a parseable ISO bar timestamp ON the configured grid (Blocker 3). A
+    # numeric (`123`), unparseable, or off-grid value would otherwise traceback in the freshness
+    # gate or silently shift the no-fill boundary. The grid uses the config's own
+    # bar_interval_hours (validated finite > 0 above).
+    fwd = config.get("forward_start_ts")
+    if not isinstance(fwd, str):
+        raise ConfigContractError(
+            f"paper_config.json forward_start_ts must be an ISO timestamp string "
+            f"(got {fwd!r} of type {type(fwd).__name__}). {_REINIT_HINT}"
+        )
+    # Lazy import: freshness has no dependency on config, so this cannot cycle.
+    from quantbot.paper import freshness as _freshness
+
+    try:
+        fwd_dt = _freshness._parse_bar(fwd)
+    except (TypeError, ValueError):
+        raise ConfigContractError(
+            f"paper_config.json forward_start_ts {fwd!r} is not a parseable bar timestamp "
+            f"(expected e.g. 2026-06-05T00:00:00). {_REINIT_HINT}"
+        )
+    if not _freshness._on_grid(fwd_dt, int(freshness["bar_interval_hours"])):
+        raise ConfigContractError(
+            f"paper_config.json forward_start_ts {fwd!r} is not on the "
+            f"{freshness['bar_interval_hours']}h boundary grid (00/08/16 UTC). {_REINIT_HINT}"
+        )
 
 
 def build_config(

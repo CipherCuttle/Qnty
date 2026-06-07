@@ -173,6 +173,7 @@ def build_provenance(
     abort_reason: str | None = None,
     status: str | None = None,
     reconcile_failures: list[str] | None = None,
+    output_digest_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     inputs = {
         "bar_decisions.jsonl": _digest(forward_obs_dir / "bar_decisions.jsonl"),
@@ -194,6 +195,11 @@ def build_provenance(
         "paper_pnl_summary.json",
     ]
     outputs = {name: _digest(paper_dir / name) for name in output_files}
+    # The OK summary is published LAST (Blocker 1), so on a successful run it is not yet on disk
+    # when provenance is built. The caller passes the digest of the exact in-memory summary
+    # bytes here so provenance pins the NEW summary, not the stale prior file.
+    if output_digest_overrides:
+        outputs.update(output_digest_overrides)
 
     record: dict[str, Any] = {
         "run_ts": _now_utc(),

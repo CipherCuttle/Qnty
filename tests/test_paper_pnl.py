@@ -1661,3 +1661,415 @@ def test_cli_inf_freshness_config_exits_clean_no_traceback(tmp_path):
     assert _no_ledger_rows(out)
     assert not (out / "paper_position_state.json").exists()
     assert not (out / "paper_pnl_summary.json").exists()
+
+
+# ==========================================================================================
+# ADVERSARIAL REGRESSION v4 — Codex reproductions of the 7083cf5 rejection ("close paper PnL
+# recovery edge cases"). Each test below reproduces a remaining unsafe path Codex found; none
+# is a happy path.
+#   B1: a run NEVER leaves a final `status: OK` summary unless the WHOLE OK evidence bundle
+#       (provenance + receipt + summary) published; a failure during provenance/receipt/summary
+#       generation/publication leaves no OK and does not advance the watermark; retry is safe.
+#   B2: every persisted artifact reader validates parse AND shape — a valid-JSON non-object
+#       JSONL row (`[]`), invalid UTF-8, and a malformed summary all fail closed as
+#       CORRUPT_LEDGER (exit 4), before any new mutation, with no traceback.
+#   B3: the config contract deeply validates every required accounting field — NaN/inf/string/
+#       bool initial_equity/notional/leverage/fee/slippage, a numeric/off-grid forward_start_ts,
+#       and bad fill_model/signal_source/funding_model all fail closed as CONFIG_ERROR (exit 3).
+# ==========================================================================================
+
+
+# ---- Blocker 1: failed evidence publication must never leave a false OK summary -----------
+
+
+def _summary_is_ok(out: Path) -> bool:
+    """True iff a final paper_pnl_summary.json exists AND has status == OK."""
+    p = out / "paper_pnl_summary.json"
+    if not p.exists():
+        return False
+    try:
+        return json.loads(p.read_text()).get("status") == "OK"
+    except (json.JSONDecodeError, ValueError):
+        return False
+
+
+def _setup_ready_to_publish(tmp_path):
+    """A run that will reach the OK-publication step (config + fresh observation written)."""
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+    return out, fwd
+
+
+def _assert_clean_failed_publish_then_retry(out, fwd, monkeypatch):
+    """Shared assertions: no false OK, watermark not advanced, ledgers consistent, retry OK."""
+    # No final OK summary was left behind ...
+    assert not _summary_is_ok(out)
+    # ... and the state/watermark (strictly-last mutation) did not advance.
+    assert not (out / "paper_position_state.json").exists()
+    # The pre-reconcile ledger rows are on disk and self-consistent (reconcile passes), so the
+    # next run can retry safely rather than re-deriving from a corrupt partial.
+    assert reconcile(out) == []
+    # Retry after removing the injected failure -> a clean OK, idempotent, watermark advances.
+    monkeypatch.undo()
+    counts_before = {n: len(_read(out / n)) for n in _LEDGER_FILES}
+    summary = _run(out, fwd)
+    assert summary["status"] == "OK"
+    assert _summary_is_ok(out)
+    assert {n: len(_read(out / n)) for n in _LEDGER_FILES} == counts_before  # idempotent
+    assert reconcile(out) == []
+    assert json.loads((out / "paper_position_state.json").read_text())["watermark_bar_ts"]
+
+
+def test_failure_during_provenance_generation_leaves_no_ok(tmp_path, monkeypatch):
+    # EXACT Codex case: failure injected during provenance generation AFTER reconcile passes.
+    # Previously the OK summary was already on disk (no provenance/receipt/state) -> a FALSE OK.
+    from quantbot.paper import provenance as _prov
+
+    out, fwd = _setup_ready_to_publish(tmp_path)
+
+    def _boom(*a, **k):
+        raise RuntimeError("injected failure during provenance generation")
+
+    monkeypatch.setattr(_prov, "build_provenance", _boom)
+    with pytest.raises(RuntimeError):
+        _run(out, fwd)
+    _assert_clean_failed_publish_then_retry(out, fwd, monkeypatch)
+
+
+def test_failure_during_receipt_generation_leaves_no_ok(tmp_path, monkeypatch):
+    from quantbot.paper import provenance as _prov
+
+    out, fwd = _setup_ready_to_publish(tmp_path)
+
+    def _boom(*a, **k):
+        raise RuntimeError("injected failure during receipt generation")
+
+    monkeypatch.setattr(_prov, "render_receipt", _boom)
+    with pytest.raises(RuntimeError):
+        _run(out, fwd)
+    _assert_clean_failed_publish_then_retry(out, fwd, monkeypatch)
+
+
+def test_failure_during_summary_publication_leaves_no_ok(tmp_path, monkeypatch):
+    # Inject a failure at the very last evidence write (the OK summary). Because the summary is
+    # published LAST via an atomic rename, the final summary path is never a half-written OK.
+    out, fwd = _setup_ready_to_publish(tmp_path)
+
+    def _boom(*a, **k):
+        raise RuntimeError("injected failure during summary publication")
+
+    monkeypatch.setattr(_ledger, "write_bytes_atomic", _boom)
+    with pytest.raises(RuntimeError):
+        _run(out, fwd)
+    _assert_clean_failed_publish_then_retry(out, fwd, monkeypatch)
+
+
+def test_ok_provenance_pins_published_summary_digest(tmp_path):
+    # The OK summary is written last, but provenance must still pin the NEW summary's digest
+    # (from the in-memory bytes), not a stale prior file digest.
+    out, _, summary = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert summary["status"] == "OK"
+    prov = json.loads((out / "paper_provenance.json").read_text())
+    assert prov["status"] == "OK"
+    assert prov["output_digests"]["paper_pnl_summary.json"] == sha256_file(
+        out / "paper_pnl_summary.json"
+    )
+
+
+# ---- Blocker 2: non-object JSONL rows / bad UTF-8 / malformed summary fail closed ----------
+
+
+_RUNNER_READ_JSONL = [
+    "paper_fills.jsonl",
+    "paper_trades.jsonl",
+    "paper_funding.jsonl",
+    "paper_positions.jsonl",
+    "paper_equity.jsonl",
+    "paper_signal_snapshots.jsonl",
+]
+
+
+@pytest.mark.parametrize("ledger_name", _RUNNER_READ_JSONL)
+def test_non_object_jsonl_row_is_corrupt_ledger(tmp_path, ledger_name):
+    # EXACT Codex case: a valid-JSON but non-object row `[]` in a JSONL ledger previously
+    # tracebacked with AttributeError on `.get`. It must fail closed as CORRUPT_LEDGER, before
+    # any new mutation, with no state advance.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+    state_before = json.loads((out / "paper_position_state.json").read_text())
+    counts_before = {n: len(_read(out / n)) for n in _LEDGER_FILES}
+
+    with open(out / ledger_name, "a", encoding="utf-8") as fh:
+        fh.write("[]\n")  # valid JSON, NOT an object
+
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert summary.get("reconcile_failure_count", 0) >= 1
+    assert any(ledger_name in f for f in summary.get("reconcile_failures", []))
+    # no new rows written over the corrupt ledger; state/watermark not advanced
+    for n in _LEDGER_FILES:
+        if n == ledger_name:
+            continue
+        assert len(_read(out / n)) == counts_before[n]
+    assert json.loads((out / "paper_position_state.json").read_text()) == state_before
+
+
+@pytest.mark.parametrize("ledger_name", _RUNNER_READ_JSONL)
+def test_scalar_jsonl_row_is_corrupt_ledger(tmp_path, ledger_name):
+    # A bare scalar row (`123`) is also valid JSON but not an object -> fail closed.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    with open(out / ledger_name, "a", encoding="utf-8") as fh:
+        fh.write("123\n")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+
+
+@pytest.mark.parametrize("ledger_name", ["paper_fills.jsonl", "paper_equity.jsonl"])
+def test_invalid_utf8_ledger_is_corrupt_ledger(tmp_path, ledger_name):
+    # EXACT Codex case: invalid UTF-8 bytes in a ledger previously exited 1 (UnicodeDecodeError
+    # escaped the LedgerCorruptionError net). Must fail closed as CORRUPT_LEDGER.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    state_before = json.loads((out / "paper_position_state.json").read_text())
+    with open(out / ledger_name, "ab") as fh:
+        fh.write(b"\xff\xfe not valid utf-8\n")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    # watermark not advanced
+    assert json.loads((out / "paper_position_state.json").read_text()) == state_before
+
+
+def test_invalid_utf8_ledger_with_future_start_is_corrupt_not_no_eligible(tmp_path):
+    # EXACT Codex case: invalid UTF-8 + future boundary. The existing-ledger health gate runs
+    # before the NO_ELIGIBLE_BARS_YET no-op, so this is CORRUPT_LEDGER, never a benign no-op or
+    # an exit-1 traceback.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=_FUTURE_START), output_dir=out)
+    (out / "paper_equity.jsonl").write_bytes(b"\xff\xfe\x00 bad\n")
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert summary["status"] != "NO_ELIGIBLE_BARS_YET"
+    assert not (out / "paper_position_state.json").exists()
+
+
+def test_malformed_summary_json_is_corrupt_ledger(tmp_path):
+    # EXACT Codex case: a malformed paper_pnl_summary.json previously raised an uncaught
+    # JSONDecodeError. It must fail closed as CORRUPT_LEDGER on the existing-ledger health gate.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+    (out / "paper_pnl_summary.json").write_text("{ this is not valid json", encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any("paper_pnl_summary.json" in f for f in summary.get("reconcile_failures", []))
+
+
+def test_non_object_summary_json_is_corrupt_ledger(tmp_path):
+    # A valid-JSON but non-object summary (`[]`) must also fail closed.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    (out / "paper_pnl_summary.json").write_text("[]\n", encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+
+
+def test_malformed_position_state_is_corrupt_ledger(tmp_path):
+    # A malformed paper_position_state.json must fail closed too (read before re-use).
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    (out / "paper_position_state.json").write_text("{ not valid json", encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+
+
+def test_cli_non_object_row_exits_4_no_traceback(tmp_path):
+    # CLI must exit 4 with NO traceback when a JSONL ledger has a non-object row.
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    bars = _recent_grid_bars(3)
+    write_config_once(build_config(forward_start_ts=bars[0]), output_dir=out)
+    (out / "paper_equity.jsonl").write_text("[]\n", encoding="utf-8")  # non-object row
+    rows = [_obs_row(b, ["AAA"], i) for i, b in enumerate(bars)]
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": rows}), encoding="utf-8")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 4, (proc.returncode, proc.stdout, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert "CORRUPT_LEDGER" in proc.stdout
+    assert not (out / "paper_position_state.json").exists()
+
+
+# ---- Blocker 3: config contract deeply validates every required accounting field ----------
+
+
+def test_config_initial_equity_nan_rejected(tmp_path):
+    # EXACT Codex case: a correctly-hashed config with initial_equity_usd=NaN previously exited
+    # 0 and wrote OK with NaN total_pnl/state. It must fail the contract.
+    def m(c):
+        c["initial_equity_usd"] = float("nan")
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_initial_equity_inf_rejected(tmp_path):
+    def m(c):
+        c["initial_equity_usd"] = float("inf")
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_notional_string_rejected(tmp_path):
+    def m(c):
+        c["notional_usd"] = "bad"
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_notional_zero_rejected(tmp_path):
+    def m(c):
+        c["notional_usd"] = 0
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_leverage_false_rejected(tmp_path):
+    # bool is a subclass of int but is not a valid leverage -> reject.
+    def m(c):
+        c["leverage"] = False
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_leverage_missing_rejected(tmp_path):
+    def m(c):
+        del c["leverage"]
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_fee_bps_nan_rejected(tmp_path):
+    def m(c):
+        c["fee_model"]["fee_bps"] = float("nan")
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_slippage_bps_string_rejected(tmp_path):
+    def m(c):
+        c["slippage_model"]["slippage_bps"] = "bad"
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_invalid_fill_model_rejected(tmp_path):
+    def m(c):
+        c["fill_model"] = "magic_perfect_fill"
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_invalid_signal_source_rejected(tmp_path):
+    def m(c):
+        c["signal_source"] = "some_other_source"
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_invalid_funding_model_rejected(tmp_path):
+    def m(c):
+        c["funding_model"] = {"type": "accrual", "applied_as": "ignored"}
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_forward_start_ts_numeric_rejected(tmp_path):
+    # EXACT Codex case: forward_start_ts=123 previously tracebacked. Must fail the contract.
+    def m(c):
+        c["forward_start_ts"] = 123
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_forward_start_ts_off_grid_rejected(tmp_path):
+    # An off-grid (01:00) forward_start_ts must fail the contract (no silent boundary shift).
+    def m(c):
+        c["forward_start_ts"] = "2026-06-05T01:00:00"
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_forward_start_ts_unparseable_rejected(tmp_path):
+    def m(c):
+        c["forward_start_ts"] = "not-a-timestamp"
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_cli_nan_equity_config_exits_3_no_traceback_no_writes(tmp_path):
+    # EXACT Codex case end-to-end: a correctly-hashed NaN-equity config must NOT exit 0 / write
+    # an OK summary with NaN PnL. The CLI exits 3 cleanly (CONFIG_ERROR) with no writes.
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    out.mkdir(parents=True)
+    fwd.mkdir(parents=True, exist_ok=True)
+
+    def m(c):
+        c["initial_equity_usd"] = float("nan")
+    _write_hashed_config(out, m)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 3, (proc.returncode, proc.stdout, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert "ABORTED" in proc.stdout
+    assert _no_ledger_rows(out)
+    assert not (out / "paper_position_state.json").exists()
+    assert not (out / "paper_pnl_summary.json").exists()
