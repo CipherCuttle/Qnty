@@ -14,6 +14,19 @@ from quantbot.paper import ledger
 
 EPS = 1e-6
 
+# bar_commit_id = sha256(...)[:16] (see quantbot/paper/snapshots.py) -> 16 lowercase hex
+# chars. A missing/null/empty/malformed id must never be accepted (Blocker 2).
+_HEXDIGITS = set("0123456789abcdef")
+
+
+def _valid_commit_id(v: Any) -> bool:
+    """True iff v is a well-formed 16-char lowercase-hex bar_commit_id.
+
+    Rejects missing (None), empty, non-string, and malformed values so reconcile can never
+    let a `None == None` comparison pass as agreement between artifacts (Blocker 2).
+    """
+    return isinstance(v, str) and len(v) == 16 and all(c in _HEXDIGITS for c in v)
+
 
 def _dup_ids(rows: list[dict[str, Any]], key: str) -> list[str]:
     seen: set[str] = set()
@@ -63,8 +76,9 @@ def reconcile(output_dir: Path) -> list[str]:
         if e["bar_ts"] not in snap_ts:
             failures.append(f"equity bar {e['bar_ts']} has no consumed-signal snapshot")
     # Orphan-snapshot guard (Blocker 4): a committed snapshot must have its bar accounting
-    # (equity) row too. The crash-safe write order (snapshot after equity, state last) makes
-    # an orphan impossible in a clean run; if one exists, a crash/corruption left a snapshot
+    # (equity) row too. The crash-safe write order is snapshot-FIRST, then the bar accounting
+    # rows, then the state watermark LAST; a clean run therefore always lands the equity row
+    # for every snapshot. If an orphan snapshot exists, a crash/corruption left a snapshot
     # without its ledger — fail loudly instead of reporting success. (No PENDING marker is
     # written in v1; any orphan is a hard failure.)
     for s in snaps:
@@ -74,14 +88,23 @@ def reconcile(output_dir: Path) -> list[str]:
                 f"(orphan snapshot — crash/corruption between snapshot and equity writes)"
             )
 
-    # --- per-bar atomic commit (Blocker 1) ---------------------------------------------
+    # --- per-bar atomic commit (Blocker 1 + Blocker 2) ---------------------------------
     # The snapshot is frozen FIRST and is the immutable source-of-truth for a bar. Every
     # accounting row (fills/trades/funding/positions/equity) for a processed bar must:
-    #   (a) have a matching frozen snapshot for that exact bar_ts, AND
-    #   (b) carry the SAME bar_commit_id as that snapshot.
-    # A partial bar — fills/equity written by a crash before the snapshot, or rows left over
-    # from a now-recomputed source row — therefore fails loudly here instead of reconciling
-    # clean against changed source evidence.
+    #   (a) carry a WELL-FORMED bar_commit_id (mandatory — never null/empty/malformed), AND
+    #   (b) have a matching frozen snapshot for that exact bar_ts, AND
+    #   (c) carry the SAME bar_commit_id as that snapshot.
+    # bar_commit_id is mandatory on every participating row, including the snapshot itself: a
+    # `None == None` comparison must never pass as agreement (Blocker 2). A partial bar —
+    # fills/equity written by a crash before the snapshot, rows left over from a now-recomputed
+    # source row, or artifacts with the id stripped out — fails loudly here instead of
+    # reconciling clean against changed/absent source evidence.
+    for s in snaps:
+        if not _valid_commit_id(s.get("bar_commit_id")):
+            failures.append(
+                f"snapshot {s.get('snapshot_id')} bar {s.get('bar_ts')} has missing/malformed "
+                f"bar_commit_id {s.get('bar_commit_id')!r} (mandatory on every committed bar)"
+            )
     commit_by_bar = {s.get("bar_ts"): s.get("bar_commit_id") for s in snaps}
     for rows, bar_key, id_key, name in [
         (fills, "signal_bar_ts", "fill_id", "fill"),
@@ -93,6 +116,12 @@ def reconcile(output_dir: Path) -> list[str]:
         for r in rows:
             bt = r.get(bar_key)
             rid = r.get(id_key)
+            got = r.get("bar_commit_id")
+            if not _valid_commit_id(got):
+                failures.append(
+                    f"{name} {rid} bar {bt} has missing/malformed bar_commit_id {got!r} "
+                    f"(mandatory on every accounting row of a committed bar)"
+                )
             if bt not in commit_by_bar:
                 failures.append(
                     f"{name} {rid} bar {bt} has no consumed-signal snapshot "
@@ -100,7 +129,10 @@ def reconcile(output_dir: Path) -> list[str]:
                 )
                 continue
             expected = commit_by_bar.get(bt)
-            got = r.get("bar_commit_id")
+            # If either side is missing/malformed it was already flagged above; do NOT fall
+            # through to a `None == None`/garbage equality that would mask the corruption.
+            if not _valid_commit_id(got) or not _valid_commit_id(expected):
+                continue
             if got != expected:
                 failures.append(
                     f"{name} {rid} bar {bt} bar_commit_id {got} != snapshot {expected} "

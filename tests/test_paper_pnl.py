@@ -690,7 +690,9 @@ def test_no_snapshot_without_equity_in_clean_run(tmp_path):
     out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
     snaps = _read(out / "paper_signal_snapshots.jsonl")
     equity_ts = {e["bar_ts"] for e in _read(out / "paper_equity.jsonl")}
-    # every committed snapshot has its equity row (snapshot is written AFTER equity)
+    # every committed snapshot has its equity row. The crash-safe order is snapshot-FIRST,
+    # then the bar accounting rows (incl. equity), then the state watermark LAST; a clean run
+    # therefore always lands the equity row for each frozen snapshot.
     assert all(s["bar_ts"] in equity_ts for s in snaps)
 
 
@@ -904,16 +906,20 @@ def test_zero_consumed_with_fresh_observation_is_controlled_no_op(tmp_path):
     res = _check(tmp_path, _obs([[], ["AAA"], ["AAA"], [], [], []]), forward_start_ts=_FUTURE_START)
     assert res.ok is True
     assert res.code == "NO_ELIGIBLE_BARS_YET"
-    # end-to-end: run_once writes zero ledger rows and reconcile passes
+    # end-to-end: run_once is a controlled no-op — clearly labeled NO_ELIGIBLE_BARS_YET (NOT
+    # a misleading OK), writes zero ledger rows, creates NO state/watermark, reconcile passes.
     out = tmp_path / "paper"
     fwd = tmp_path / "fwd"
     fwd.mkdir(parents=True, exist_ok=True)
     write_config_once(build_config(forward_start_ts=_FUTURE_START), output_dir=out)
     _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
     summary = _run(out, fwd)
-    assert summary["status"] == "OK"
+    assert summary["status"] == "NO_ELIGIBLE_BARS_YET"
+    assert summary["status"] != "OK"
     assert summary["bars_elapsed"] == 0
     assert _no_ledger_rows(out)
+    # no position state/watermark created or mutated
+    assert not (out / "paper_position_state.json").exists()
     assert reconcile(out) == []
 
 
@@ -1049,6 +1055,344 @@ def test_cli_stale_config_aborts_cleanly_with_reinit_guidance(tmp_path):
     assert "archive" in proc.stdout.lower()
     assert "forward-start-ts" in proc.stdout.lower() or "forward_start" in proc.stdout.lower()
     assert "future" in proc.stdout.lower()
+    # No ledger / state / summary rows written.
+    assert _no_ledger_rows(out)
+    assert not (out / "paper_position_state.json").exists()
+    assert not (out / "paper_pnl_summary.json").exists()
+
+
+# ==========================================================================================
+# ADVERSARIAL REGRESSION v2 — Codex reproductions of the 0a8a815 rejection. Each test below
+# reproduces an unsafe path Codex found in the "evidence atomicity" commit; none is a happy
+# path. A run may only emit OK if: freshness passed, config contract passed, no partial/corrupt
+# existing ledger, new mutations have matching snapshots, reconcile passes after mutation, and
+# the state/watermark write is last. If any fails -> fail closed.
+# ==========================================================================================
+
+
+def _recent_grid_bars(n: int = 3) -> list[str]:
+    """Most recent `n` on-grid 8h bars at/just-before wall-clock now (UTC), oldest first.
+
+    Used by CLI subprocess tests where `now` is the real wall clock (not injectable): the bars
+    must be fresh (<= 24h old) and not future, so they pass the freshness gate end-to-end.
+    """
+    now = datetime.now(timezone.utc)
+    latest = now.replace(hour=(now.hour // 8) * 8, minute=0, second=0, microsecond=0)
+    bars = sorted(latest - timedelta(hours=8 * i) for i in range(n))
+    return [b.strftime("%Y-%m-%dT%H:%M:%S") for b in bars]
+
+
+def _future_grid_boundary(days_ahead: int = 5) -> str:
+    """An on-grid 8h boundary `days_ahead` days after the latest recent grid bar (future)."""
+    latest = datetime.strptime(_recent_grid_bars(1)[0], "%Y-%m-%dT%H:%M:%S")
+    return (latest + timedelta(days=days_ahead)).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _orphan_fill_row(signal_bar_ts, fill_ts, commit_id="aaaa0000aaaa0000"):
+    """A fill with no consumed-signal snapshot — a partial bar left by a simulated crash."""
+    return {
+        "fill_id": "deadbeefdeadbeef",
+        "bar_commit_id": commit_id,
+        "signal_bar_ts": signal_bar_ts,
+        "fill_ts": fill_ts,
+        "symbol": "AAA",
+        "side": "BUY",
+        "kind": "entry",
+        "qty": 1.0,
+        "fill_price": 100.0,
+        "open_price": 100.0,
+        "fee": 0.0,
+        "backfill": False,
+    }
+
+
+# ---- Blocker 1: runner must reconcile BEFORE publishing OK --------------------------------
+
+
+def test_orphan_fill_source_a_then_source_b_retry_fails_closed_not_ok(tmp_path):
+    # EXACT Codex case: an orphan fill from source row A (a crash left a fill with no
+    # snapshot/equity/state); the rolling observer recomputes to source B; the run retries.
+    # The run MUST NOT publish OK — reconcile runs BEFORE OK, the watermark does not advance,
+    # and the reconcile errors are surfaced in summary/receipt/provenance.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+
+    # Orphan entry fill for bar TS[1] tagged with a bar_commit_id from "source row A".
+    _ledger.append_rows(out / "paper_fills.jsonl", [_orphan_fill_row(TS[1], TS[2])])
+
+    # Source B: a fresh observation set (recomputed). The leftover orphan fill from A can never
+    # reconcile clean against B's frozen snapshots.
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+    summary = _run(out, fwd)
+
+    # summary is NOT OK
+    assert summary["status"] != "OK"
+    assert summary["status"] == "CORRUPT_LEDGER"
+    # reconcile errors surfaced in the summary ...
+    assert summary.get("reconcile_failure_count", 0) >= 1
+    assert summary.get("reconcile_failures")
+    # ... and in the receipt ...
+    receipt = (out / "paper_receipt.md").read_text()
+    assert "CORRUPT_LEDGER" in receipt
+    assert any(("snapshot" in ln.lower() or "bar_commit_id" in ln) for ln in receipt.splitlines())
+    # ... and in the provenance.
+    prov = json.loads((out / "paper_provenance.json").read_text())
+    assert prov["status"] == "CORRUPT_LEDGER"
+    assert prov.get("reconcile_failure_count", 0) >= 1
+    # state/watermark did NOT advance (no state file written this run).
+    assert not (out / "paper_position_state.json").exists()
+
+
+def test_cli_corrupt_ledger_exits_nonzero(tmp_path):
+    # CLI must exit non-zero (4) and not say "run complete" when reconcile fails. Uses
+    # wall-clock-fresh bars so the freshness gate passes and the run reaches reconcile.
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    bars = _recent_grid_bars(3)
+    write_config_once(build_config(forward_start_ts=bars[0]), output_dir=out)
+    # Orphan fill for the middle fresh bar; AAA has no real OHLCV so the bar defers and never
+    # produces a snapshot -> the orphan fill can never reconcile clean.
+    _ledger.append_rows(out / "paper_fills.jsonl", [_orphan_fill_row(bars[1], bars[2])])
+    rows = [_obs_row(bars[0], [], 0), _obs_row(bars[1], ["AAA"], 1), _obs_row(bars[2], ["AAA"], 2)]
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": rows}), encoding="utf-8")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 4, (proc.returncode, proc.stdout, proc.stderr)
+    assert "CORRUPT_LEDGER" in proc.stdout
+    assert "run complete" not in proc.stdout
+    assert not (out / "paper_position_state.json").exists()
+
+
+# ---- Blocker 2: bar_commit_id mandatory on every committed-bar row ------------------------
+
+
+def _rewrite_jsonl(path: Path, rows):
+    path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows), encoding="utf-8")
+
+
+_COMMIT_ROW_FILES = [
+    "paper_signal_snapshots.jsonl",
+    "paper_fills.jsonl",
+    "paper_trades.jsonl",
+    "paper_funding.jsonl",
+    "paper_positions.jsonl",
+    "paper_equity.jsonl",
+]
+
+
+def test_reconcile_fails_when_all_bar_commit_ids_missing(tmp_path):
+    # EXACT Codex case: strip bar_commit_id from EVERY snapshot AND accounting row.
+    # `None == None` must NOT pass as agreement; reconcile must fail.
+    out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+    for name in _COMMIT_ROW_FILES:
+        rows = _read(out / name)
+        for r in rows:
+            r.pop("bar_commit_id", None)
+        _rewrite_jsonl(out / name, rows)
+    failures = reconcile(out)
+    assert failures, "all bar_commit_id missing must fail reconcile"
+    assert any("bar_commit_id" in f for f in failures)
+
+
+def test_reconcile_fails_when_one_bar_commit_id_missing(tmp_path):
+    out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+    equity = _read(out / "paper_equity.jsonl")
+    equity[-1].pop("bar_commit_id", None)  # a single row loses its id
+    _rewrite_jsonl(out / "paper_equity.jsonl", equity)
+    failures = reconcile(out)
+    assert any("bar_commit_id" in f for f in failures)
+
+
+def test_reconcile_fails_when_snapshot_bar_commit_id_empty_or_malformed(tmp_path):
+    out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+    snaps = _read(out / "paper_signal_snapshots.jsonl")
+    snaps[0]["bar_commit_id"] = ""  # empty
+    snaps[-1]["bar_commit_id"] = "not-16-hex!"  # malformed
+    _rewrite_jsonl(out / "paper_signal_snapshots.jsonl", snaps)
+    failures = reconcile(out)
+    assert sum("bar_commit_id" in f for f in failures) >= 2
+
+
+def test_reconcile_passes_with_valid_bar_commit_id_everywhere(tmp_path):
+    # Positive control: a clean full bar commit reconciles, and every snapshot + accounting
+    # row carries a well-formed 16-hex bar_commit_id.
+    out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+    for name in _COMMIT_ROW_FILES:
+        for r in _read(out / name):
+            cid = r.get("bar_commit_id")
+            assert isinstance(cid, str) and len(cid) == 16 and all(c in "0123456789abcdef" for c in cid)
+
+
+# ---- Blocker 3: NO_ELIGIBLE_BARS_YET is a labeled no-op, not OK, and mutates nothing ------
+
+
+def test_no_eligible_bars_status_no_ledger_no_state(tmp_path):
+    # Fresh observation but all rows before forward_start_ts -> NO_ELIGIBLE_BARS_YET.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=_FUTURE_START), output_dir=out)
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+    summary = _run(out, fwd)
+    assert summary["status"] == "NO_ELIGIBLE_BARS_YET"
+    assert summary["status"] != "OK"
+    # no fills/trades/equity/positions/funding/snapshots
+    assert _no_ledger_rows(out)
+    # no state file created or mutated
+    assert not (out / "paper_position_state.json").exists()
+    # summary + receipt + provenance clearly say no eligible bars
+    assert "NO_ELIGIBLE_BARS_YET" in summary["current_verdict"]
+    receipt = (out / "paper_receipt.md").read_text()
+    assert "NO ELIGIBLE BARS YET" in receipt
+    prov = json.loads((out / "paper_provenance.json").read_text())
+    assert prov["status"] == "NO_ELIGIBLE_BARS_YET"
+
+
+def test_cli_no_eligible_bars_exit_zero_clean_message(tmp_path):
+    # CLI exits 0 (healthy no-op) but the message must NOT imply accounting ran.
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    bars = _recent_grid_bars(3)
+    future_start = _future_grid_boundary(5)  # all recent bars are before this
+    write_config_once(build_config(forward_start_ts=future_start), output_dir=out)
+    rows = [_obs_row(b, [], i) for i, b in enumerate(bars)]
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": rows}), encoding="utf-8")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert "No eligible bars yet; no ledger rows written" in proc.stdout
+    assert "run complete" not in proc.stdout
+    assert _no_ledger_rows(out)
+    assert not (out / "paper_position_state.json").exists()
+
+
+# ---- Blocker 4: freshness fields must be type/range-checked in the config contract --------
+
+
+def _write_hashed_config(out: Path, mutate):
+    out.mkdir(parents=True, exist_ok=True)
+    config = build_config(forward_start_ts=TS[0])
+    mutate(config)
+    config["config_hash"] = config_hash(config)  # correctly re-hashed
+    (out / "paper_config.json").write_text(json.dumps(config), encoding="utf-8")
+
+
+def test_config_string_freshness_value_rejected(tmp_path):
+    # EXACT Codex case: a correctly-hashed config with freshness.bar_interval_hours="bad".
+    def m(c):
+        c["freshness"]["bar_interval_hours"] = "bad"
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_negative_freshness_value_rejected(tmp_path):
+    def m(c):
+        c["freshness"]["max_bar_staleness_hours"] = -1
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_zero_freshness_value_rejected(tmp_path):
+    def m(c):
+        c["freshness"]["bar_interval_hours"] = 0
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_missing_freshness_subfield_rejected(tmp_path):
+    def m(c):
+        del c["freshness"]["heartbeat_max_age_hours"]
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_bool_freshness_value_rejected(tmp_path):
+    # bool is a subclass of int but is not a valid hours value -> reject.
+    def m(c):
+        c["freshness"]["max_bar_staleness_hours"] = True
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_cli_malformed_freshness_config_aborts_cleanly_no_traceback(tmp_path):
+    # EXACT Codex case: previously this passed config load and the CLI exited 1 with a
+    # traceback from int("bad") in the freshness gate. Now it fails the config contract and
+    # the CLI exits 3 cleanly with archive/re-init guidance and NO writes.
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    out.mkdir(parents=True)
+    fwd.mkdir(parents=True, exist_ok=True)
+
+    def m(c):
+        c["freshness"]["bar_interval_hours"] = "bad"
+    _write_hashed_config(out, m)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 3, (proc.returncode, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert "ABORTED" in proc.stdout
+    assert "archive" in proc.stdout.lower()
     # No ledger / state / summary rows written.
     assert _no_ledger_rows(out)
     assert not (out / "paper_position_state.json").exists()

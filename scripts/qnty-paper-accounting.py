@@ -21,10 +21,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from quantbot.paper.config import ConfigContractError
 from quantbot.paper.runner import run_once
 
-# Exit codes (documented in docs/ops/VM_90D_RUNBOOK.md § 3.5b):
-#   0 = run complete   2 = freshness/divergence gate ABORTED (ABORTED summary written)
+# Exit codes (documented in docs/paper_pnl_v1_schema.md § 5 / docs/ops/VM_90D_RUNBOOK.md § 3.5b):
+#   0 = run complete OR NO_ELIGIBLE_BARS_YET healthy no-op (no ledger rows written)
+#   2 = freshness/divergence gate ABORTED (ABORTED summary written)
 #   3 = stale/incompatible paper_config.json — clean abort, NO ledger or summary writes
+#   4 = CORRUPT_LEDGER — post-mutation reconcile failed; watermark NOT advanced, no OK
 EXIT_CONFIG_CONTRACT = 3
+EXIT_CORRUPT_LEDGER = 4
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,13 +60,35 @@ def main(argv: list[str] | None = None) -> int:
     # An aborted run (freshness/divergence gate) writes a minimal ABORTED summary with no
     # bars_elapsed/closed_trades/etc. Handle it cleanly: do NOT claim "run complete" and do
     # NOT KeyError on missing keys; exit non-zero so a caller/timer notices the abort.
-    if summary.get("status") == "ABORTED":
+    status = summary.get("status")
+
+    if status == "ABORTED":
         print("Paper accounting run ABORTED (SIMULATION) — no ledger rows written.")
         print(f"  forward_start_ts: {summary.get('forward_start_ts')}")
         print(f"  abort code:       {summary.get('abort_code')}")
         print(f"  abort reason:     {summary.get('abort_reason')}")
         print(f"  verdict:          {summary.get('current_verdict')}")
         return 2
+
+    # CORRUPT_LEDGER (Blocker 1): post-mutation reconcile failed. Do NOT claim "run complete";
+    # the watermark was not advanced. Surface the reconcile failures and exit non-zero.
+    if status == "CORRUPT_LEDGER":
+        print("Paper accounting FAILED CLOSED — CORRUPT_LEDGER (SIMULATION).")
+        print("  Watermark NOT advanced; no OK summary published.")
+        print(f"  forward_start_ts:   {summary.get('forward_start_ts')}")
+        print(f"  reconcile failures: {summary.get('reconcile_failure_count')}")
+        for f in summary.get("reconcile_failures", [])[:10]:
+            print(f"    - {f}")
+        print(f"  verdict:            {summary.get('current_verdict')}")
+        return EXIT_CORRUPT_LEDGER
+
+    # NO_ELIGIBLE_BARS_YET (Blocker 3): healthy controlled no-op. Exit 0, but the message must
+    # NOT imply accounting ran. No ledger rows / no state were written.
+    if status == "NO_ELIGIBLE_BARS_YET":
+        print("No eligible bars yet; no ledger rows written (SIMULATION).")
+        print(f"  forward_start_ts: {summary.get('forward_start_ts')}")
+        print(f"  verdict:          {summary.get('current_verdict')}")
+        return 0
 
     print("Paper accounting run complete (SIMULATION).")
     print(f"  forward_start_ts: {summary['forward_start_ts']}")

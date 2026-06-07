@@ -111,6 +111,53 @@ def aborted_summary(config: dict[str, Any], code: str, reason: str) -> dict[str,
     }
 
 
+def corrupt_summary(config: dict[str, Any], failures: list[str]) -> dict[str, Any]:
+    """Summary written when post-mutation reconcile fails (Blocker 1).
+
+    Marked CORRUPT_LEDGER so no reader mistakes a partial/corrupt ledger for an OK or FLAT
+    result. The watermark/state is NOT advanced when this is written; the reconcile failures
+    are surfaced here (and in the receipt/provenance) so the corruption is never silent.
+    """
+    return {
+        "schema_version": config["schema_version"],
+        "status": "CORRUPT_LEDGER",
+        "baseline_label": config.get("baseline_label", BASELINE_LABEL),
+        "forward_start_ts": config["forward_start_ts"],
+        "detected_at": _now_utc(),
+        "reconcile_failures": list(failures),
+        "reconcile_failure_count": len(failures),
+        "current_verdict": (
+            f"CORRUPT_LEDGER — {len(failures)} reconcile failure(s); watermark NOT advanced, "
+            f"no OK published"
+        ),
+        "disclaimer": DISCLAIMER,
+    }
+
+
+def no_eligible_bars_summary(config: dict[str, Any], reason: str) -> dict[str, Any]:
+    """Summary for a controlled NO_ELIGIBLE_BARS_YET no-op run (Blocker 3).
+
+    The observer output validated clean but no bar has reached forward_start_ts. This is NOT
+    an OK accounting run: no ledger rows were written and no position state/watermark was
+    created or mutated. Clearly labeled so a fresh future-boundary re-init can never be
+    mistaken for a FLAT/zero result.
+    """
+    return {
+        "schema_version": config["schema_version"],
+        "status": "NO_ELIGIBLE_BARS_YET",
+        "baseline_label": config.get("baseline_label", BASELINE_LABEL),
+        "forward_start_ts": config["forward_start_ts"],
+        "checked_at": _now_utc(),
+        "bars_elapsed": 0,
+        "reason": reason,
+        "current_verdict": (
+            "NO_ELIGIBLE_BARS_YET — no bar has reached forward_start_ts; no ledger rows "
+            "written and no state/watermark created"
+        ),
+        "disclaimer": DISCLAIMER,
+    }
+
+
 def _digest(path: Path) -> str:
     return sha256_file(path) if path.exists() else "absent"
 
@@ -124,6 +171,8 @@ def build_provenance(
     aborted: bool = False,
     abort_code: str | None = None,
     abort_reason: str | None = None,
+    status: str | None = None,
+    reconcile_failures: list[str] | None = None,
 ) -> dict[str, Any]:
     inputs = {
         "bar_decisions.jsonl": _digest(forward_obs_dir / "bar_decisions.jsonl"),
@@ -152,13 +201,16 @@ def build_provenance(
         # baseline_label must appear in every provenance artifact (Blocker 6 / schema § 8).
         "baseline_label": (config or {}).get("baseline_label", BASELINE_LABEL),
         "git_sha": git_sha(),
-        "status": "ABORTED" if aborted else "OK",
+        "status": status or ("ABORTED" if aborted else "OK"),
         "input_digests": inputs,
         "output_digests": outputs,
     }
     if aborted:
         record["abort_code"] = abort_code
         record["abort_reason"] = abort_reason
+    if reconcile_failures is not None:
+        record["reconcile_failures"] = list(reconcile_failures)
+        record["reconcile_failure_count"] = len(reconcile_failures)
     return record
 
 
@@ -235,6 +287,52 @@ def render_aborted_receipt(summary: dict[str, Any], code: str, reason: str) -> s
             "- No fills/trades/equity/positions/funding/snapshot rows were written this run.",
             "- The observer output was stale, missing, malformed, or diverged from a frozen "
             "snapshot. This was NOT treated as a FLAT result.",
+            "",
+        ]
+    )
+
+
+def render_corrupt_receipt(summary: dict[str, Any], failures: list[str]) -> str:
+    """Loud receipt for a CORRUPT_LEDGER run: reconcile failed, watermark NOT advanced."""
+    lines = [
+        "# Paper PnL v1 — Receipt (CORRUPT_LEDGER)",
+        "",
+        f"> **{summary['disclaimer']}**",
+        "",
+        "## 🛑 RUN FAILED CLOSED — CORRUPT_LEDGER",
+        "",
+        f"- Detected (UTC): {summary.get('detected_at', _now_utc())}",
+        f"- forward_start_ts: {summary['forward_start_ts']}",
+        f"- Reconcile failures: {summary.get('reconcile_failure_count', len(failures))}",
+        "- The position state/watermark was NOT advanced and NO OK summary was published.",
+        "- Existing partial/corrupt ledger rows were NOT silently normalized into an OK or "
+        "FLAT result.",
+        "",
+        "### Reconcile failures",
+    ]
+    for f in failures:
+        lines.append(f"- {f}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_no_eligible_receipt(summary: dict[str, Any], reason: str) -> str:
+    """Receipt for a controlled NO_ELIGIBLE_BARS_YET no-op: nothing written, nothing mutated."""
+    return "\n".join(
+        [
+            "# Paper PnL v1 — Receipt (NO_ELIGIBLE_BARS_YET)",
+            "",
+            f"> **{summary['disclaimer']}**",
+            "",
+            "## ⏳ NO ELIGIBLE BARS YET — controlled no-op",
+            "",
+            f"- Checked (UTC): {summary.get('checked_at', _now_utc())}",
+            f"- forward_start_ts: {summary['forward_start_ts']}",
+            f"- {reason}",
+            "- No fills/trades/equity/positions/funding/snapshot rows were written, and the "
+            "position state/watermark was NOT created or mutated.",
+            "- This is NOT a FLAT/zero accounting result; no bar has reached forward_start_ts "
+            "yet.",
             "",
         ]
     )

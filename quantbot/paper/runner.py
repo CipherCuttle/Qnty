@@ -25,6 +25,7 @@ from quantbot.paper import freshness
 from quantbot.paper import ledger
 from quantbot.paper import provenance
 from quantbot.paper import snapshots
+from quantbot.paper.reconcile import reconcile
 
 
 def _now_utc_str() -> str:
@@ -52,6 +53,72 @@ def _abort(
     ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
 
     receipt = provenance.render_aborted_receipt(summary, code, reason)
+    (out / "paper_receipt.md").write_text(receipt, encoding="utf-8")
+    return summary
+
+
+def _corrupt(
+    out: Path,
+    obs_dir: Path,
+    data_dir: Path,
+    config: dict[str, Any],
+    failures: list[str],
+) -> dict[str, Any]:
+    """Persist a CORRUPT_LEDGER summary/receipt/provenance; never advance the watermark.
+
+    Called when post-mutation reconcile fails (Blocker 1). The state/watermark is NOT written,
+    so the next run reprocesses; the reconcile failures are surfaced loudly here so a partial/
+    corrupt ledger can never be silently normalized into OK.
+    """
+    print(
+        f"[paper-pnl][CORRUPT_LEDGER] {len(failures)} reconcile failure(s); watermark NOT "
+        f"advanced, no OK published",
+        file=sys.stderr,
+        flush=True,
+    )
+    for f in failures:
+        print(f"[paper-pnl][CORRUPT_LEDGER]   - {f}", file=sys.stderr, flush=True)
+
+    summary = provenance.corrupt_summary(config, failures)
+    ledger.write_json(out / "paper_pnl_summary.json", summary)
+
+    prov = provenance.build_provenance(
+        obs_dir, out, data_dir, SYMBOLS, config=config,
+        status="CORRUPT_LEDGER", reconcile_failures=failures,
+    )
+    ledger.write_json(out / "paper_provenance.json", prov)
+    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
+
+    receipt = provenance.render_corrupt_receipt(summary, failures)
+    (out / "paper_receipt.md").write_text(receipt, encoding="utf-8")
+    return summary
+
+
+def _no_eligible_bars(
+    out: Path,
+    obs_dir: Path,
+    data_dir: Path,
+    config: dict[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    """Persist a NO_ELIGIBLE_BARS_YET no-op summary/receipt/provenance (Blocker 3).
+
+    No ledger rows are written and NO position state/watermark is created or mutated. The run
+    is clearly labeled so a fresh future-boundary re-init can never be mistaken for a FLAT/zero
+    accounting result.
+    """
+    print(f"[paper-pnl][NO_ELIGIBLE_BARS_YET] {reason}", file=sys.stderr, flush=True)
+
+    summary = provenance.no_eligible_bars_summary(config, reason)
+    ledger.write_json(out / "paper_pnl_summary.json", summary)
+
+    prov = provenance.build_provenance(
+        obs_dir, out, data_dir, SYMBOLS, config=config, status="NO_ELIGIBLE_BARS_YET",
+    )
+    ledger.write_json(out / "paper_provenance.json", prov)
+    ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
+
+    receipt = provenance.render_no_eligible_receipt(summary, reason)
     (out / "paper_receipt.md").write_text(receipt, encoding="utf-8")
     return summary
 
@@ -95,6 +162,13 @@ def run_once(
     )
     if fresh.aborted:
         return _abort(out, obs_dir, data_dir, config, fresh.code, fresh.reason)
+
+    # Controlled no-op (Blocker 3): the file validated clean but no bar has reached
+    # forward_start_ts. Write a clearly-labeled NO_ELIGIBLE_BARS_YET status WITHOUT creating
+    # or mutating any ledger row or the position state/watermark, then return before the
+    # engine runs. This must never be reported as a normal OK accounting run.
+    if fresh.code == "NO_ELIGIBLE_BARS_YET":
+        return _no_eligible_bars(out, obs_dir, data_dir, config, fresh.reason)
 
     per_bar_obs = obs_log.get("per_bar_obs", [])
     forward_obs = [o for o in per_bar_obs if o.get("timestamp", "") >= forward_start_ts]
@@ -156,7 +230,20 @@ def run_once(
     ledger.append_new(out / "paper_positions.jsonl", result.positions, "bar_ts")
     ledger.append_new(out / "paper_equity.jsonl", result.equity, "bar_ts")
 
-    # state (watermark) LAST — commit marker for the whole bar batch.
+    # === RECONCILE GATE BEFORE OK (Blocker 1) =========================================
+    # The mutations above are on disk (idempotent appends), but a run may only emit OK if the
+    # FULL ledger reconciles. Reconcile runs the internal invariants over everything just
+    # written PLUS any pre-existing partial/corrupt rows. If it finds any error, fail closed:
+    # write a CORRUPT_LEDGER summary/receipt/provenance, do NOT advance the watermark/state
+    # (so the next run reprocesses), and return a non-OK status. An OK summary/receipt/
+    # provenance is NEVER published ahead of this check, so a partial bar (e.g. an orphan fill
+    # from a now-recomputed source row) can no longer slip through as OK.
+    recon_failures = reconcile(out)
+    if recon_failures:
+        return _corrupt(out, obs_dir, data_dir, config, recon_failures)
+
+    # state (watermark) LAST — commit marker for the whole bar batch, only after reconcile
+    # passes (high-level rule 6: state/watermark write is last).
     ledger.write_json(state_path, state)
 
     # --- summary + provenance + receipt over the FULL ledgers ---

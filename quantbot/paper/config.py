@@ -71,6 +71,16 @@ class ConfigContractError(ValueError):
     """Raised when a stored paper_config.json does not meet the current load contract."""
 
 
+def _is_positive_number(v: Any) -> bool:
+    """True iff v is an int/float (not bool) strictly greater than 0."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+
+
+def _is_nonneg_number(v: Any) -> bool:
+    """True iff v is an int/float (not bool) greater than or equal to 0."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+
+
 def config_hash(config: dict[str, Any]) -> str:
     """SHA-256 over canonical JSON of the config (excluding config_hash itself)."""
     payload = {k: v for k, v in config.items() if k != "config_hash"}
@@ -136,6 +146,27 @@ def validate_config_contract(config: dict[str, Any]) -> None:
         raise ConfigContractError(
             f"paper_config.json freshness is missing {fresh_missing}. {_REINIT_HINT}"
         )
+
+    # Type/range-check every freshness numeric (Blocker 4). A string/null/negative/zero value
+    # here would otherwise pass the presence check and then traceback later in the freshness
+    # gate (e.g. int("bad") / timedelta(hours="bad")). Fail closed in the config contract so
+    # the CLI reports a clean stale-config abort (exit 3) with re-init guidance, not a crash.
+    # bool is rejected explicitly (it is a subclass of int).
+    for fld in REQUIRED_FRESHNESS_FIELDS:
+        val = freshness.get(fld)
+        if not _is_positive_number(val):
+            raise ConfigContractError(
+                f"paper_config.json freshness.{fld} must be a number > 0 "
+                f"(got {val!r} of type {type(val).__name__}). {_REINIT_HINT}"
+            )
+    # Optional clock-skew tolerance, if present, must be a non-negative number (>= 0 valid).
+    if "max_future_skew_hours" in freshness:
+        skew = freshness.get("max_future_skew_hours")
+        if not _is_nonneg_number(skew):
+            raise ConfigContractError(
+                f"paper_config.json freshness.max_future_skew_hours must be a number >= 0 "
+                f"(got {skew!r} of type {type(skew).__name__}). {_REINIT_HINT}"
+            )
 
 
 def build_config(

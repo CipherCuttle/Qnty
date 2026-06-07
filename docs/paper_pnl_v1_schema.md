@@ -168,15 +168,15 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
 | File | Kind | Key fields |
 | --- | --- | --- |
 | `paper_config.json` | write-once | `schema_version, baseline_label, forward_start_ts, initial_equity_usd, notional_usd, leverage, fee_model, slippage_model, fill_model, funding_model, signal_source, freshness{bar_interval_hours, max_bar_staleness_hours, heartbeat_max_age_hours}, engine_version, config_hash` |
-| `paper_fills.jsonl` | append | `fill_id, signal_bar_ts, fill_ts, symbol, side(BUY/SELL), kind(entry/exit), qty, open_price, fill_price, slippage_bps, fee, backfill=false` |
+| `paper_fills.jsonl` | append | `fill_id, bar_commit_id, signal_bar_ts, fill_ts, symbol, side(BUY/SELL), kind(entry/exit), qty, open_price, fill_price, slippage_bps, fee, backfill=false` |
 | `paper_position_state.json` | mutable anchor | `watermark_bar_ts, open_positions{symbol->{entry_fill_id, entry_price, qty, entry_bar_ts, funding_accrued}}, accumulators{realized_gross, fees_cum, funding_cum}` |
-| `paper_positions.jsonl` | append | `bar_ts, open_symbols, num_open, gross_exposure_usd` |
-| `paper_trades.jsonl` | append | `trade_id(=exit_fill_id), symbol, entry_fill_id, exit_fill_id, entry_bar_ts, exit_bar_ts, qty, entry_price, exit_price, gross_pnl, fees, funding, net_pnl, hold_bars, backfill=false` |
-| `paper_equity.jsonl` | append | `bar_ts, realized_gross_pnl, unrealized_pnl, funding_cum, fees_cum, equity, drawdown, num_open` |
-| `paper_funding.jsonl` | append | `funding_id(=symbol+bar_ts, or symbol+bar_ts+"\|exit" for the exit-tail stub), symbol, bar_ts, window_start, window_end, notional_usd, funding_rate(Σ of events in interval), funding_events, rate_available, funding_amount` (section 11) |
+| `paper_positions.jsonl` | append | `bar_ts, bar_commit_id, open_symbols, num_open, gross_exposure_usd` |
+| `paper_trades.jsonl` | append | `trade_id(=exit_fill_id), bar_commit_id, symbol, entry_fill_id, exit_fill_id, entry_bar_ts, exit_bar_ts, qty, entry_price, exit_price, gross_pnl, fees, funding, net_pnl, hold_bars, backfill=false` |
+| `paper_equity.jsonl` | append | `bar_ts, bar_commit_id, realized_gross_pnl, unrealized_pnl, funding_cum, fees_cum, equity, drawdown, num_open` |
+| `paper_funding.jsonl` | append | `funding_id(=symbol+bar_ts, or symbol+bar_ts+"\|exit" for the exit-tail stub), bar_commit_id, symbol, bar_ts, window_start, window_end, notional_usd, funding_rate(Σ of events in interval), funding_events, rate_available, funding_amount` (section 11) |
 | `paper_signal_snapshots.jsonl` | append | `snapshot_id, bar_ts, bar_commit_id, bar_index, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return, source_observation_digest, source_observation_mtime, run_ts, backfill=false` (section 10) |
-| `paper_pnl_summary.json` | overwrite | `status(OK/ABORTED), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (ABORTED runs add `abort_code, abort_reason, aborted_at`) |
-| `paper_provenance.json` | overwrite | latest run: `status`, `baseline_label`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (incl. `paper_signal_snapshots.jsonl`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`) |
+| `paper_pnl_summary.json` | overwrite | `status(OK / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (ABORTED runs add `abort_code, abort_reason, aborted_at`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count, detected_at`; NO_ELIGIBLE_BARS_YET runs add `reason, checked_at`) |
+| `paper_provenance.json` | overwrite | latest run: `status(OK / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET)`, `baseline_label`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (incl. `paper_signal_snapshots.jsonl`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count`) |
 | `paper_provenance_log.jsonl` | append | one provenance record per run (incl. aborted runs) |
 | `paper_receipt.md` | overwrite | human summary + loud disclaimer + baseline label + red flags (aborted runs render a 🛑 ABORTED receipt) |
 
@@ -198,12 +198,31 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
   `forward_start_ts` / contradictory provenance). Failures raise `ConfigContractError`.
   Archive/delete the stale output dir and re-init a fresh write-once config with a fresh future
   `forward_start_ts`.
+- **Config contract type/range checks (`validate_config_contract`):** every required
+  `freshness` numeric is **type- and range-checked** — `bar_interval_hours`,
+  `max_bar_staleness_hours`, `heartbeat_max_age_hours` must each be an int/float **> 0** (a
+  string/null/negative/zero/bool fails closed), and an optional `max_future_skew_hours`, if
+  present, must be an int/float **>= 0**. A malformed value (e.g. `bar_interval_hours="bad"`)
+  is rejected by the config contract instead of tracebacking later in the freshness gate.
+- **Reconcile-before-OK (fail-closed publish):** a run may publish an `OK` summary/receipt/
+  provenance **only after** `reconcile()` passes over the full ledger *post-mutation*. The
+  runner appends the bar rows, then reconciles; if any invariant fails it writes a
+  `CORRUPT_LEDGER` summary/receipt/provenance (surfacing the reconcile failures), **does not
+  advance** the `watermark_bar_ts`/state, and the CLI exits **4**. An existing partial/corrupt
+  ledger therefore can never be silently normalized into `OK`. The `paper_position_state.json`
+  watermark write is always the **last** mutation and happens only on a clean reconcile.
+- **`NO_ELIGIBLE_BARS_YET` no-op:** when the freshness gate returns the controlled
+  `NO_ELIGIBLE_BARS_YET` (clean file, no bar past `forward_start_ts`), the runner writes a
+  clearly-labeled `NO_ELIGIBLE_BARS_YET` summary/receipt/provenance and **does not** write any
+  ledger row or create/mutate the position state/watermark. The CLI exits **0** (healthy
+  no-op) but prints `No eligible bars yet; no ledger rows written` — never "run complete".
 - **Stale-config CLI behavior:** because the invalid config *defines* the output contract, no
   valid `ABORTED` summary can be built. `scripts/qnty-paper-accounting.py` catches
   `ConfigContractError`, prints clean archive/re-init guidance (no traceback), and **exits 3**
-  writing **no** ledger/state/summary/provenance/receipt rows. (Exit codes: `0` complete,
-  `2` freshness/divergence gate abort with an `ABORTED` summary, `3` stale-config abort with no
-  writes. See `docs/ops/VM_90D_RUNBOOK.md` § 3.5b.)
+  writing **no** ledger/state/summary/provenance/receipt rows. (Exit codes: `0` complete **or
+  NO_ELIGIBLE_BARS_YET no-op**, `2` freshness/divergence gate abort with an `ABORTED` summary,
+  `3` stale-config abort with no writes, `4` `CORRUPT_LEDGER` — post-mutation reconcile failed,
+  watermark not advanced. See `docs/ops/VM_90D_RUNBOOK.md` § 3.5b.)
 - `fill_id = sha256(f"{symbol}|{signal_bar_ts}|{side}|{kind}")[:16]`.
 - `trade_id = exit_fill_id`; `funding_id = f"{symbol}|{bar_ts}"` (exit-tail stub:
   `f"{symbol}|{bar_ts}|exit"`).
@@ -295,7 +314,7 @@ Checks (thresholds from `config.freshness`, defaults `bar_interval_hours=8`,
 | `MALFORMED_HEARTBEAT` | `bar_decisions.jsonl` is present but unreadable / not valid JSON / a row is not an **object** (e.g. `[]`) / a row is missing `bar_processed_at` or `commit_sha` / an unparseable stamp (fail-closed, not silently "unavailable"). |
 | `FUTURE_HEARTBEAT` | `bar_decisions.jsonl` heartbeat is dated beyond `now + max_future_skew_hours` (fail-closed). |
 | `STALE_HEARTBEAT` | `bar_decisions.jsonl` heartbeat present, parseable, but older than `heartbeat_max_age_hours`. |
-| `NO_ELIGIBLE_BARS_YET` | **`ok=True` controlled no-op** (not an abort): the whole file validated clean but no bar has reached `forward_start_ts`. The engine writes zero ledger rows. |
+| `NO_ELIGIBLE_BARS_YET` | **`ok=True` controlled no-op** (not an abort, and **not** an `OK` accounting run): the whole file validated clean but no bar has reached `forward_start_ts`. The runner writes a clearly-labeled `NO_ELIGIBLE_BARS_YET` summary/receipt/provenance, writes **zero** ledger rows, and **does not create or mutate** the position state/watermark. The CLI exits `0` with `No eligible bars yet; no ledger rows written`. |
 
 Only an **absent** heartbeat file is skipped (the observer may not have written one yet); a
 present-but-malformed/future heartbeat **fails closed** (`MALFORMED_HEARTBEAT`/`FUTURE_HEARTBEAT`).
@@ -340,10 +359,17 @@ frozen append-only:
     **aborts** instead of continuing;
   - a crash before the state write leaves the watermark un-advanced, so the next run
     reprocesses and idempotently completes the bar (no duplicate rows).
+- **`bar_commit_id` is mandatory (never null/empty/malformed):** `reconcile` requires a
+  well-formed 16-char hex `bar_commit_id` on **every** snapshot and **every** accounting row
+  (fills/trades/funding/positions/equity) of a committed bar. A missing/null/empty/malformed id
+  fails closed — a `None == None` comparison must never be accepted as agreement. Stripping the
+  id from every (or any) row therefore fails reconcile, not passes it.
 - **Reconcile orphan / partial-bar guards:** `reconcile` fails if any snapshot's `bar_ts` has
   no equity row (orphan), if any equity bar has no snapshot, if **any** accounting row
   (fill/trade/funding/positions/equity) references a `bar_ts` with no frozen snapshot
-  (orphan/partial bar), or if any row's `bar_commit_id` disagrees with its snapshot.
+  (orphan/partial bar), or if any row's `bar_commit_id` disagrees with its snapshot. The runner
+  runs this **before** publishing `OK` (reconcile-before-OK, section 5); a failure yields
+  `CORRUPT_LEDGER` and the watermark is not advanced.
 
 ## 11. Funding accrual (actual rows over the held interval)
 
