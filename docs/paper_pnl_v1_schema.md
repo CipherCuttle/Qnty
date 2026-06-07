@@ -176,8 +176,8 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
 | `paper_funding.jsonl` | append | `funding_id(=symbol+bar_ts, or symbol+bar_ts+"\|exit" for the exit-tail stub), bar_commit_id, symbol, bar_ts, window_start, window_end, notional_usd, funding_rate(Σ of events in interval), funding_events, rate_available, funding_amount` (section 11) |
 | `paper_signal_snapshots.jsonl` | append | `snapshot_id, bar_ts, bar_commit_id, bar_index, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return, source_observation_digest, source_observation_mtime, run_ts, backfill=false` (section 10) |
 | `paper_pnl_summary.json` | overwrite (**authoritative current-run status**) | `status(OK / RUNNING / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (RUNNING runs carry `run_id, started_at, phase, previous_watermark` — `phase` is `preflight` for a normal run, `preflight_config_error` for the minimal stale-OK-superseding marker written when the config itself cannot be loaded; ABORTED runs add `abort_code, abort_reason, aborted_at`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count, detected_at`; NO_ELIGIBLE_BARS_YET runs add `reason, checked_at`). `CONFIG_ERROR` is a reserved persisted-summary status with `config_error, detected_at`; the current runner instead writes `RUNNING/phase=preflight_config_error` when replacing an existing stale summary. This file is the single authoritative current-run status (see § 5, run transaction): a `RUNNING` marker is written **before** the pre-run health/freshness/divergence gates (so a failed abort/corrupt publication never leaves a stale OK), and the final `OK` write is the commit marker. |
-| `paper_provenance.json` | overwrite | latest run: `status(OK / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET)`, `baseline_label`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (incl. `paper_signal_snapshots.jsonl`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count`) |
-| `paper_provenance_log.jsonl` | append | one provenance record per run (incl. aborted runs) |
+| `paper_provenance.json` | overwrite | latest run: `status(OK / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET)`, `baseline_label`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (a manifest of **every** output incl. `paper_signal_snapshots.jsonl`, `paper_position_state.json`, `paper_pnl_summary.json`, and `paper_receipt.md`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count`). **Provenance digests the EXACT final artifacts of the run, not stale/preceding files.** The summary, state, and receipt are published *after* provenance is generated (the `OK` summary is the last write of all; on a terminal run the summary is also written after provenance, after the `RUNNING` preflight marker), so the runner builds those bundle members **in memory first** and pins the sha256 of their exact bytes into the manifest via in-memory digest overrides. Thus an `OK` provenance pins the **committed** state digest (never `absent`, even on a first run) and the new summary/receipt; an `ABORTED`/`CORRUPT_LEDGER`/`NO_ELIGIBLE_BARS_YET` provenance pins the **terminal** summary/receipt bytes (never the preceding `RUNNING` marker), and digests the existing on-disk state (unchanged, since a terminal run never advances it). |
+| `paper_provenance_log.jsonl` | append | one provenance record per run (incl. aborted runs). **Audit-only / non-gating:** this append-only log is a historical trail; it is NOT read by the pre-run health gate or reconcile, so a corrupt/partial line in it does not by itself abort a run (the authoritative current-run evidence is `paper_provenance.json` + `paper_pnl_summary.json`, both validated). |
 | `paper_receipt.md` | overwrite | human summary + loud disclaimer + baseline label + red flags (aborted runs render a 🛑 ABORTED receipt) |
 
 ---
@@ -214,6 +214,12 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
   - every required `freshness` numeric (`bar_interval_hours`, `max_bar_staleness_hours`,
     `heartbeat_max_age_hours`) must be an int/float **> 0**, and an optional
     `max_future_skew_hours`, if present, must be an int/float **>= 0**.
+  - `freshness.bar_interval_hours` must equal **exactly `8`** for paper_pnl_v1 (`8` int or `8.0`
+    float). The engine and freshness gate cast it with `int(...)`, so a correctly-hashed
+    fractional value (e.g. `8.5`) would be **silently truncated to `8`** and the funding window /
+    grid check / no-fill boundary would then disagree with the stored config. Any non-8 interval
+    (`4`, `8.5`, a string/bool/NaN/inf) fails closed; a future interval needs explicit support,
+    not a silent truncation.
   - `forward_start_ts` must be a **parseable ISO bar-timestamp string on the configured
     `bar_interval_hours` grid** (00/08/16 UTC). A numeric (`123`), unparseable, or off-grid
     value fails closed (it would otherwise traceback in the freshness gate or silently shift
@@ -250,11 +256,16 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
      `CORRUPT_LEDGER` summary/receipt/provenance, **does not advance** the `watermark_bar_ts`/
      state, and the CLI exits **4**.
   3. **Publish bundle, then state, then the `OK` summary LAST.** The whole bundle (summary,
-     receipt, provenance) is built **in memory** (provenance pins the summary's digest from its
-     exact in-memory bytes). It is then published in this fixed order: provenance + receipt →
-     **state/watermark** → **`OK` `paper_pnl_summary.json` LAST** (atomic temp + `os.replace`).
-     The **final `OK` summary write is the single commit marker**: it appears only after
-     provenance + receipt + the advanced state are already on disk.
+     receipt, provenance) is built **in memory** (provenance pins the summary, **state**, and
+     receipt digests from their exact in-memory bytes — see § 4 `paper_provenance.json`). It is
+     then published in this fixed order: provenance + receipt → **state/watermark** → **`OK`
+     `paper_pnl_summary.json` LAST** (atomic temp + `os.replace`). The **final `OK` summary write
+     is the single commit marker**: it appears only after provenance + receipt + the advanced
+     state are already on disk. The post-reconcile bundle-build **re-reads** of the ledgers fail
+     **closed**: any `OSError`/`PermissionError`/UTF-8/JSON/shape fault while assembling the `OK`
+     bundle is converted to a `CORRUPT_LEDGER` publication (CLI exit **4**, no traceback), never a
+     stray traceback and never a false `OK` — the state/watermark is not written, so the next run
+     reprocesses idempotently.
   Failure semantics (every step): if generation or the provenance/receipt/state write fails, the
   visible status stays `RUNNING` and the watermark does not advance, so the next run reprocesses
   the batch idempotently and republishes. **State is written before the final `OK` summary**, so
@@ -301,6 +312,24 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
   operator review; the watermark is never advanced. (Per-artifact required-field/type contracts
   live in `quantbot.paper.reconcile.LEDGER_JSONL_SCHEMAS` and the `validate_summary_shape` /
   `validate_state_shape` helpers in `quantbot.paper.ledger`.)
+- **State-vs-ledger consistency (`CORRUPT_LEDGER`):** beyond per-artifact shape, the pre-run
+  health gate ties `paper_position_state.json` to the committed ledgers via
+  `quantbot.paper.reconcile.reconcile_state_against_ledgers` so a **shape-valid but
+  ledger-inconsistent** state can never be normalized into `OK`. **Always** enforced: the
+  `watermark_bar_ts` is never strictly **after** the latest committed `paper_equity.jsonl`
+  `bar_ts` (a future/ahead watermark such as `2030` is rejected even if the summary was also
+  tampered to non-OK), and a non-empty watermark requires at least one committed equity row.
+  When the **prior visible summary was `OK`** (so the last run committed at rest), the state must
+  be in **exact lockstep**: `watermark_bar_ts` **equals** the latest committed equity `bar_ts`
+  (not earlier, not later), `bars_elapsed` equals the committed equity row count, the
+  `accumulators` (`realized_gross`/`fees_cum`/`funding_cum`) equal the **sums** of the committed
+  `paper_trades`/`paper_fills`/`paper_funding` rows, and `open_positions` equals the long-only
+  book reconstructed from the committed fills (entries minus exits — off-by-one-safe vs the
+  pre-fill positions snapshot, § 3.1). When the prior summary is **non-OK** (a mid-commit failure
+  / first run), the state is allowed to **lag** the ledgers (equity may be ahead of the watermark,
+  to be repaired by the next idempotent reprocess) so a legitimate recovery state is not
+  mis-flagged as corrupt; only the always-true invariants apply. Any violation fails closed as
+  `CORRUPT_LEDGER` (exit 4); the watermark is never advanced.
 - **`NO_ELIGIBLE_BARS_YET` no-op:** when the freshness gate returns the controlled
   `NO_ELIGIBLE_BARS_YET` (clean file, no bar past `forward_start_ts`), the runner writes a
   clearly-labeled `NO_ELIGIBLE_BARS_YET` summary/receipt/provenance and **does not** write any

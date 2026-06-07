@@ -187,6 +187,25 @@ def validate_config_contract(config: dict[str, Any]) -> None:
                 f"paper_config.json freshness.{fld} must be a number > 0 "
                 f"(got {val!r} of type {type(val).__name__}). {_REINIT_HINT}"
             )
+
+    # bar_interval_hours is pinned to EXACTLY 8 for paper_pnl_v1 (Blocker 3). The engine and
+    # freshness gate cast it with int(...), so a correctly-hashed fractional value (e.g. 8.5)
+    # would be SILENTLY TRUNCATED to 8 — funding windows, the grid check, and the no-fill
+    # boundary would then disagree with the stored config. Reject any non-8 interval (4, 8.5,
+    # ...); `8` (int) and `8.0` (float) are the only accepted values. A future interval needs
+    # explicit support, not a silent truncation. (string/bool/NaN/inf already rejected above.)
+    bar_interval = freshness.get("bar_interval_hours")
+    if (
+        isinstance(bar_interval, bool)
+        or not isinstance(bar_interval, (int, float))
+        or not math.isfinite(bar_interval)
+        or bar_interval != 8
+    ):
+        raise ConfigContractError(
+            f"paper_config.json freshness.bar_interval_hours must be exactly 8 for "
+            f"paper_pnl_v1 (got {bar_interval!r}); fractional/other intervals are not "
+            f"supported and would be silently truncated by the engine. {_REINIT_HINT}"
+        )
     # Optional clock-skew tolerance, if present, must be a non-negative number (>= 0 valid).
     if "max_future_skew_hours" in freshness:
         skew = freshness.get("max_future_skew_hours")

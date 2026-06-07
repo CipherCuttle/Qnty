@@ -6,6 +6,7 @@ See docs/paper_pnl_v1_schema.md sections 3, 5, 6.
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,18 @@ from quantbot.paper import ledger
 from quantbot.paper.ledger import LedgerCorruptionError
 
 EPS = 1e-6
+# Tolerance for tying the state accumulators to the SUM of the rounded ledger rows. Each ledger
+# value is rounded to 8 decimals, so a long run accumulates a few * n * 5e-9 of slack; 1e-4 is
+# comfortably above that while still catching a tampered accumulator.
+STATE_ACC_EPS = 1e-4
+
+# state.accumulators key -> the committed ledger it must equal the SUM of (Blocker: state must
+# tie to the ledgers, not be normalized into OK from a shape-valid-but-inconsistent value).
+_STATE_ACC_TO_LEDGER = {
+    "realized_gross": ("paper_trades.jsonl", "gross_pnl"),
+    "fees_cum": ("paper_fills.jsonl", "fee"),
+    "funding_cum": ("paper_funding.jsonl", "funding_amount"),
+}
 
 # Per-artifact shape contract for every append-only JSONL ledger (Blocker 2). Each row must be
 # an object (read_jsonl) and pass a DEEP type check against this spec — required fields present,
@@ -173,11 +186,19 @@ def check_existing_ledgers(
             failures.append(str(exc))
     # The runner atomically stages the prior summary before publishing RUNNING, then passes the
     # staged path(s) here. This preserves status-shape validation without reading the old summary
-    # before the authoritative preflight marker is visible.
+    # before the authoritative preflight marker is visible. The prior committed status also tells
+    # us whether the state must be STRICTLY tied to the ledgers: only after an `OK` commit is the
+    # state guaranteed in lockstep with the ledgers. A non-OK prior (RUNNING/CORRUPT/ABORTED, or
+    # an absent summary) means a run may have failed mid-commit after appending equity but before
+    # writing the state/watermark, so the state is legitimately allowed to LAG the ledgers and is
+    # repaired by the next reprocess — it must not be flagged as corrupt for lagging.
+    prior_committed_ok = False
     summary_paths = prior_summary_paths or (output_dir / "paper_pnl_summary.json",)
     for summary_path in summary_paths:
         try:
-            ledger.read_summary_obj(summary_path)
+            prior = ledger.read_summary_obj(summary_path)
+            if prior.get("status") == "OK":
+                prior_committed_ok = True
         except (LedgerCorruptionError, OSError) as exc:
             failures.append(str(exc))
     # State: absent -> None (first run); present-but-`{}`/partial -> corrupt (never silently
@@ -190,6 +211,149 @@ def check_existing_ledgers(
         return failures
     # 2. Structural reconcile over the existing rows (all artifacts parsed cleanly above).
     failures.extend(reconcile(output_dir))
+    # 3. Tie the position state to the committed ledgers. A shape-valid state whose watermark/
+    #    accumulators/open_positions disagree with the committed equity/trades/fills/funding must
+    #    fail closed as CORRUPT_LEDGER, never be normalized into OK (Blocker: state vs ledgers).
+    failures.extend(
+        reconcile_state_against_ledgers(output_dir, require_committed=prior_committed_ok)
+    )
+    return failures
+
+
+def _ledger_sum(rows: list[dict[str, Any]], field: str) -> float:
+    return sum(float(r.get(field, 0.0)) for r in rows)
+
+
+def _open_symbols_from_fills(fills: list[dict[str, Any]]) -> set[str]:
+    """Reconstruct the open-position book from the committed fills ledger.
+
+    Long-only, no flips: a symbol is open iff it has more entry fills than exit fills. This is
+    independent of the per-bar positions snapshot's pre-fill off-by-one (schema § 3.1), so it
+    matches the engine's POST-fill book that the persisted state records.
+    """
+    entries = Counter(f.get("symbol") for f in fills if f.get("kind") == "entry")
+    exits = Counter(f.get("symbol") for f in fills if f.get("kind") == "exit")
+    return {sym for sym in entries if entries[sym] > exits[sym]}
+
+
+def reconcile_state_against_ledgers(
+    output_dir: Path, *, require_committed: bool
+) -> list[str]:
+    """Tie paper_position_state.json to the committed ledgers (fail-closed; never raises).
+
+    ``require_committed`` is True only when the prior visible summary was ``OK`` — i.e. the last
+    run committed cleanly, so the state MUST be in exact lockstep with the ledgers. When False
+    (a mid-commit failure / first run) the state is allowed to LAG the ledgers (equity may be
+    ahead of the watermark, to be repaired by the next reprocess); only the always-true
+    invariants are enforced so a legitimate recovery state is not mis-flagged as corrupt.
+
+    Always enforced (a committed watermark always has its equity row on disk, written before the
+    state):
+      - the watermark is never STRICTLY AFTER the latest committed equity bar (catches a
+        future/ahead watermark such as 2030 even if the summary was also tampered to non-OK);
+      - a non-empty watermark requires at least one committed equity row.
+
+    Enforced only when ``require_committed`` (the state is at rest after an OK commit):
+      - watermark == latest committed equity bar_ts (not earlier, not later);
+      - bars_elapsed == committed equity row count;
+      - accumulators (realized_gross/fees_cum/funding_cum) == the SUM of the committed
+        trades/fills/funding rows;
+      - open_positions == the book reconstructed from the committed fills;
+      - with no committed equity, the state is pristine (engine.new_state).
+    """
+    name = "paper_position_state.json"
+    try:
+        state = ledger.read_state_obj(output_dir / name)
+        equity = _read_ledger_validated(output_dir, "paper_equity.jsonl")
+    except (LedgerCorruptionError, OSError) as exc:
+        return [str(exc)]
+
+    if state is None:
+        # No committed state. After an OK commit a state file always exists; its absence with
+        # committed equity rows is corruption — but a mid-commit failure (non-OK prior) may
+        # legitimately have appended equity before the first state write, so allow it then.
+        if require_committed and equity:
+            return [
+                f"{name} is absent but paper_equity.jsonl has {len(equity)} committed row(s) "
+                f"(an OK run must leave a position state tying to the ledgers)"
+            ]
+        return []
+
+    failures: list[str] = []
+    watermark = state.get("watermark_bar_ts", "")
+    latest_equity_ts = max((e["bar_ts"] for e in equity), default=None)
+
+    # --- always-true invariants ---
+    if not equity:
+        if watermark != "":
+            failures.append(
+                f"{name} watermark_bar_ts {watermark!r} is set but no equity rows are "
+                f"committed (the engine never advances the watermark without an equity row)"
+            )
+    elif watermark != "" and watermark > latest_equity_ts:
+        failures.append(
+            f"{name} watermark_bar_ts {watermark!r} is after the latest committed equity bar "
+            f"{latest_equity_ts!r} (a future/ahead watermark is never valid)"
+        )
+
+    if not require_committed:
+        return failures
+
+    # --- strict at-rest invariants (prior run committed OK) ---
+    try:
+        trades = _read_ledger_validated(output_dir, "paper_trades.jsonl")
+        fills = _read_ledger_validated(output_dir, "paper_fills.jsonl")
+        funding = _read_ledger_validated(output_dir, "paper_funding.jsonl")
+    except (LedgerCorruptionError, OSError) as exc:
+        return failures + [str(exc)]
+
+    acc = state.get("accumulators", {})
+    open_positions = state.get("open_positions", {})
+    bars_elapsed = state.get("bars_elapsed", 0)
+
+    if not equity:
+        if watermark != "":
+            failures.append(f"{name} OK state has watermark {watermark!r} but no equity rows")
+        if bars_elapsed != 0:
+            failures.append(f"{name} OK state bars_elapsed {bars_elapsed} != 0 with no equity")
+        if open_positions:
+            failures.append(
+                f"{name} OK state has open_positions {sorted(open_positions)} but no equity rows"
+            )
+        return failures
+
+    if watermark != latest_equity_ts:
+        failures.append(
+            f"{name} watermark_bar_ts {watermark!r} != latest committed equity bar_ts "
+            f"{latest_equity_ts!r} (an OK state's watermark must equal the latest equity bar)"
+        )
+    if bars_elapsed != len(equity):
+        failures.append(
+            f"{name} bars_elapsed {bars_elapsed} != committed equity row count {len(equity)}"
+        )
+
+    ledger_sums = {
+        "realized_gross": _ledger_sum(trades, "gross_pnl"),
+        "fees_cum": _ledger_sum(fills, "fee"),
+        "funding_cum": _ledger_sum(funding, "funding_amount"),
+    }
+    for key, expected in ledger_sums.items():
+        got = acc.get(key)
+        if not isinstance(got, (int, float)) or isinstance(got, bool) or (
+            abs(float(got) - expected) > STATE_ACC_EPS
+        ):
+            failures.append(
+                f"{name} accumulator {key}={got!r} != committed ledger sum {expected} "
+                f"({_STATE_ACC_TO_LEDGER[key][0]}.{_STATE_ACC_TO_LEDGER[key][1]})"
+            )
+
+    open_from_fills = _open_symbols_from_fills(fills)
+    if set(open_positions) != open_from_fills:
+        failures.append(
+            f"{name} open_positions {sorted(open_positions)} != open book reconstructed from "
+            f"committed fills {sorted(open_from_fills)}"
+        )
+
     return failures
 
 

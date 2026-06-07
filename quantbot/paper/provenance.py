@@ -274,11 +274,16 @@ def build_provenance(
         "paper_signal_snapshots.jsonl",
         "paper_position_state.json",
         "paper_pnl_summary.json",
+        "paper_receipt.md",
     ]
     outputs = {name: _digest(paper_dir / name) for name in output_files}
-    # The OK summary is published LAST (Blocker 1), so on a successful run it is not yet on disk
-    # when provenance is built. The caller passes the digest of the exact in-memory summary
-    # bytes here so provenance pins the NEW summary, not the stale prior file.
+    # Provenance must pin the EXACT final artifacts produced by this run, not stale/preceding
+    # files (Blocker 1). The summary, state, and receipt are built in memory and published AFTER
+    # provenance is generated (the OK summary is the last write of all), so digesting them from
+    # disk here would record the previous/RUNNING summary, the pre-run state ("absent" on a first
+    # run even though the run writes one), and the old receipt. The caller passes the digests of
+    # the exact in-memory bytes for those artifacts as overrides so provenance reflects the
+    # committed run.
     if output_digest_overrides:
         outputs.update(output_digest_overrides)
 

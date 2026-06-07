@@ -2873,3 +2873,292 @@ def test_snapshot_bar_index_string_is_corrupt(tmp_path):
         lambda row: row.__setitem__("bar_index", "not-an-int"),
     )
     _assert_corrupt_mentions(_run(out, fwd), "paper_signal_snapshots.jsonl")
+
+
+# ==========================================================================================
+# ADVERSARIAL REGRESSION v7 — provenance-vs-committed-artifacts, state-vs-ledger consistency,
+# fractional bar interval, and post-reconcile bundle-read failures (Codex evidence-path blockers).
+#   B1: provenance must digest the EXACT final summary/state/receipt produced by the run, not the
+#       preceding RUNNING marker / pre-run state / stale receipt.
+#   B2: a shape-valid state whose watermark/accumulators/open_positions disagree with the
+#       committed ledgers fails closed as CORRUPT_LEDGER (never normalized into OK).
+#   B3: freshness.bar_interval_hours is pinned to EXACTLY 8 (no silent truncation of 8.5 -> 8).
+#   B4: an OSError/PermissionError during the OK bundle-build reads becomes CORRUPT_LEDGER
+#       (exit 4), never a traceback and never a false OK.
+# ==========================================================================================
+
+
+# ---- B1: provenance pins the exact final artifacts ---------------------------------------
+
+
+def test_ok_provenance_pins_committed_state_digest(tmp_path):
+    # First OK run: provenance must digest the COMMITTED state, not "absent" (the state is
+    # written after provenance is generated, so digesting from disk would record "absent").
+    out, _, summary = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert summary["status"] == "OK"
+    prov = json.loads((out / "paper_provenance.json").read_text())
+    state_digest = prov["output_digests"]["paper_position_state.json"]
+    assert state_digest != "absent"
+    assert state_digest == sha256_file(out / "paper_position_state.json")
+    # The receipt is likewise pinned to the committed file.
+    assert prov["output_digests"]["paper_receipt.md"] == sha256_file(out / "paper_receipt.md")
+
+
+def test_second_mutating_ok_provenance_pins_new_state_not_old(tmp_path):
+    # A second OK run that mutates the state (watermark advances) must pin the NEW committed
+    # state digest in provenance, not the previous run's state digest.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+
+    now1 = datetime(2026, 6, 5, 16, 5, 0, tzinfo=timezone.utc)  # fresh vs T2
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"]]))
+    s1 = run_once(
+        output_dir=out, forward_obs_dir=fwd,
+        bars_by_symbol={"AAA": _bars(AAA_PRICES)}, funding_df=_funding_df(), now=now1,
+    )
+    assert s1["status"] == "OK"
+    old_state_digest = sha256_file(out / "paper_position_state.json")
+    prov1 = json.loads((out / "paper_provenance.json").read_text())
+    assert prov1["output_digests"]["paper_position_state.json"] == old_state_digest
+
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+    s2 = _run(out, fwd)
+    assert s2["status"] == "OK"
+    new_state_digest = sha256_file(out / "paper_position_state.json")
+    assert new_state_digest != old_state_digest  # the state actually changed
+    prov2 = json.loads((out / "paper_provenance.json").read_text())
+    assert prov2["output_digests"]["paper_position_state.json"] == new_state_digest
+
+
+def test_aborted_provenance_pins_aborted_summary_digest(tmp_path):
+    # ABORTED provenance must digest the ABORTED summary it is about — not the preceding RUNNING
+    # preflight marker that the runner writes first.
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    (fwd / "observation_log.json").write_text("{ not valid json", encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "ABORTED"
+    prov = json.loads((out / "paper_provenance.json").read_text())
+    assert prov["status"] == "ABORTED"
+    assert prov["output_digests"]["paper_pnl_summary.json"] == sha256_file(
+        out / "paper_pnl_summary.json"
+    )
+    assert prov["output_digests"]["paper_receipt.md"] == sha256_file(out / "paper_receipt.md")
+
+
+def test_corrupt_provenance_pins_corrupt_summary_and_existing_state(tmp_path):
+    # CORRUPT_LEDGER provenance must digest the CORRUPT summary (not the preceding RUNNING
+    # marker) and the EXISTING on-disk state (which exists) — never report "absent" state.
+    out, fwd = _seed_ok_run(tmp_path)
+    with open(out / "paper_equity.jsonl", "a", encoding="utf-8") as fh:
+        fh.write("{}\n")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    prov = json.loads((out / "paper_provenance.json").read_text())
+    assert prov["status"] == "CORRUPT_LEDGER"
+    assert prov["output_digests"]["paper_pnl_summary.json"] == sha256_file(
+        out / "paper_pnl_summary.json"
+    )
+    state_digest = prov["output_digests"]["paper_position_state.json"]
+    assert state_digest != "absent"
+    assert state_digest == sha256_file(out / "paper_position_state.json")
+
+
+# ---- B2: state must tie to the committed ledgers -----------------------------------------
+
+
+def _mutate_state(out, mutate):
+    state = json.loads((out / "paper_position_state.json").read_text())
+    mutate(state)
+    (out / "paper_position_state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+def _valid_open_position():
+    """A structurally-complete open_positions entry (passes validate_state_shape)."""
+    return {
+        "entry_fill_id": "deadbeefdeadbeef",
+        "entry_price": 100.0,
+        "qty": 10.0,
+        "entry_bar_ts": TS[1],
+        "entry_fill_ts": TS[2],
+        "funding_accrued": 0.0,
+        "entry_fee": 0.5,
+        "hold_bars": 1,
+    }
+
+
+def test_state_watermark_earlier_than_equity_is_corrupt(tmp_path):
+    # Codex EXACT case: watermark moved from the latest bar to an earlier valid on-grid bar,
+    # while equity still had more rows -> returned OK. Must fail closed.
+    out, fwd = _seed_ok_run(tmp_path)
+    _mutate_state(out, lambda s: s.__setitem__("watermark_bar_ts", TS[2]))
+    summary = _run(out, fwd)
+    _assert_corrupt_mentions(summary, "paper_position_state.json")
+    assert not _summary_is_ok(out)
+
+
+def test_state_watermark_future_is_corrupt(tmp_path):
+    # Codex EXACT case: a future watermark (2030) persisted under OK. Must fail closed.
+    out, fwd = _seed_ok_run(tmp_path)
+    _mutate_state(out, lambda s: s.__setitem__("watermark_bar_ts", "2030-01-01T00:00:00"))
+    summary = _run(out, fwd)
+    _assert_corrupt_mentions(summary, "paper_position_state.json")
+    assert not _summary_is_ok(out)
+
+
+def test_state_bars_elapsed_disagrees_is_corrupt(tmp_path):
+    # Codex EXACT case: state bars_elapsed became 9 while equity had 6 rows. Must fail closed.
+    out, fwd = _seed_ok_run(tmp_path)
+    _mutate_state(out, lambda s: s.__setitem__("bars_elapsed", 9))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_state_accumulators_disagree_with_ledger_is_corrupt(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _mutate_state(out, lambda s: s["accumulators"].__setitem__("realized_gross", 999.0))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_state_open_positions_disagree_with_ledger_is_corrupt(tmp_path):
+    # After the seed run AAA is fully closed (entry+exit fills) -> the reconstructed book is
+    # empty. A state claiming AAA still open disagrees with the fills ledger.
+    out, fwd = _seed_ok_run(tmp_path)
+    _mutate_state(out, lambda s: s.__setitem__("open_positions", {"AAA": _valid_open_position()}))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_position_state.json")
+
+
+def test_clean_state_ledger_passes(tmp_path):
+    # The control: an untouched committed OK run re-runs to OK (state ties to the ledgers).
+    out, fwd = _seed_ok_run(tmp_path)
+    summary = _run(out, fwd)
+    assert summary["status"] == "OK"
+    assert _summary_is_ok(out)
+    assert reconcile(out) == []
+
+
+# ---- B3: bar_interval_hours pinned to exactly 8 ------------------------------------------
+
+
+def test_config_bar_interval_int_8_passes(tmp_path):
+    out = tmp_path / "paper"
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)  # default int 8
+    assert load_config(out)["freshness"]["bar_interval_hours"] == 8
+
+
+def test_config_bar_interval_float_8_passes(tmp_path):
+    def m(c):
+        c["freshness"]["bar_interval_hours"] = 8.0
+    _write_hashed_config(tmp_path / "paper", m)
+    assert load_config(tmp_path / "paper")["freshness"]["bar_interval_hours"] == 8.0
+
+
+def test_config_bar_interval_fractional_rejected(tmp_path):
+    # Codex EXACT case: a correctly-hashed bar_interval_hours=8.5 passed and was truncated to 8.
+    def m(c):
+        c["freshness"]["bar_interval_hours"] = 8.5
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_bar_interval_four_rejected(tmp_path):
+    def m(c):
+        c["freshness"]["bar_interval_hours"] = 4
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_bar_interval_string_rejected(tmp_path):
+    def m(c):
+        c["freshness"]["bar_interval_hours"] = "8"
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_bar_interval_bool_rejected(tmp_path):
+    def m(c):
+        c["freshness"]["bar_interval_hours"] = True
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+# ---- B4: post-reconcile bundle-read failure -> CORRUPT_LEDGER, no traceback, no false OK ---
+
+
+def test_permission_error_during_bundle_read_is_corrupt_not_ok(tmp_path, monkeypatch):
+    # Codex EXACT case: a PermissionError injected during the OK bundle-build reads (after
+    # reconcile passes) propagated as a traceback while the summary stayed RUNNING. It must be
+    # converted to CORRUPT_LEDGER (no traceback) with no state/OK advance, and a clean retry.
+    from quantbot.paper import runner as _runner
+
+    out, fwd = _setup_ready_to_publish(tmp_path)
+    phase = {"after_reconcile": False}
+    real_reconcile = _runner.reconcile
+    real_read_jsonl = _ledger.read_jsonl
+
+    def _recon(o):
+        result = real_reconcile(o)
+        phase["after_reconcile"] = True  # flip only after the post-mutation reconcile gate
+        return result
+
+    def _read(path):
+        if phase["after_reconcile"] and Path(path).name == "paper_trades.jsonl":
+            raise PermissionError("injected unreadable ledger during OK bundle build")
+        return real_read_jsonl(path)
+
+    monkeypatch.setattr(_runner, "reconcile", _recon)
+    monkeypatch.setattr(_ledger, "read_jsonl", _read)
+
+    # run_once must NOT raise (no traceback); it returns a CORRUPT_LEDGER summary.
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert not _summary_is_ok(out)
+    assert _summary_status(out) == "CORRUPT_LEDGER"
+    # no final OK state/watermark advance (first run -> no state file written)
+    assert not (out / "paper_position_state.json").exists()
+
+    # Retry after the permission is restored completes cleanly to OK (idempotent reprocess).
+    monkeypatch.undo()
+    s2 = _run(out, fwd)
+    assert s2["status"] == "OK"
+    assert _summary_is_ok(out)
+    assert reconcile(out) == []
+
+
+def test_cli_bundle_read_permission_error_exits_4_no_traceback(tmp_path):
+    # A pre-run unreadable ledger (chmod 0) is the closest CLI-reproducible read failure: it
+    # must exit 4 with no traceback and never a false OK (the in-process test above covers the
+    # post-reconcile bundle path specifically).
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out, fwd = _seed_ok_run(tmp_path)
+    ledger_path = out / "paper_trades.jsonl"
+    ledger_path.chmod(0)
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+                "--output-dir", str(out),
+                "--forward-obs-dir", str(fwd),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(repo_root),
+            env={**os.environ, "PYTHONPATH": str(repo_root)},
+        )
+    finally:
+        ledger_path.chmod(0o600)
+    assert proc.returncode == 4, (proc.returncode, proc.stdout, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert json.loads((out / "paper_pnl_summary.json").read_text())["status"] != "OK"
