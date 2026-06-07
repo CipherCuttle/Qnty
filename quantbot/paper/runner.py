@@ -120,13 +120,34 @@ def run_once(
     result = run_engine(config, per_bar_obs, bars_by_symbol, funding_df, state)
 
     # --- persist new rows idempotently (ids dedupe overlap) ---
-    # CRASH-SAFE ORDER (Blocker 4): the bar accounting rows (fills/trades/funding/positions/
-    # equity) are committed BEFORE the consumed-signal snapshot for that bar, and the state
-    # watermark is written LAST as the commit marker. Therefore:
-    #   - a committed snapshot for a bar implies its equity/ledger rows are also committed
-    #     (no orphan snapshot can report success), and
+    # CRASH-SAFE ORDER (Blocker 1): the immutable consumed-signal snapshot for a bar is
+    # frozen FIRST (it carries the bar_commit_id and the full source digest), THEN the bar
+    # accounting rows (fills/trades/funding/positions/equity) that must agree with it, and
+    # the state watermark is written LAST as the commit marker. Therefore:
+    #   - a bar can never have fills/trades/equity without a matching immutable snapshot for
+    #     the exact consumed row (snapshot precedes them);
+    #   - a crash AFTER the snapshot but BEFORE the accounting rows leaves an orphan snapshot
+    #     with no equity, which reconcile fails on loudly (a partial bar never reconciles
+    #     clean), and — because the snapshot is already frozen — if the rolling observer then
+    #     recomputes that bar, the next run's divergence gate ABORTS instead of continuing;
     #   - a crash before the state write leaves the watermark un-advanced, so the next run
     #     reprocesses the bar and idempotently completes any half-written ledger.
+    processed_bar_ts = {e["bar_ts"] for e in result.equity}
+    existing_snapshot_ids = {
+        s["snapshot_id"] for s in existing_snapshots if "snapshot_id" in s
+    }
+    source_mtime = obs_path.stat().st_mtime if obs_path.exists() else None
+    new_snapshots = snapshots.build_snapshots(
+        forward_obs,
+        processed_bar_ts,
+        existing_snapshot_ids,
+        source_mtime,
+        _now_utc_str(),
+        config["engine_version"],
+        config["config_hash"],
+    )
+    ledger.append_new(out / snapshots.SNAPSHOT_FILE, new_snapshots, "snapshot_id")
+
     ledger.append_new(out / "paper_fills.jsonl", result.fills, "fill_id")
     ledger.append_new(out / "paper_trades.jsonl", result.trades, "trade_id")
     ledger.append_new(out / "paper_funding.jsonl", result.funding, "funding_id")
@@ -134,17 +155,6 @@ def run_once(
     # bar is snapshotted at most once, so a plain id-keyed append stays idempotent.
     ledger.append_new(out / "paper_positions.jsonl", result.positions, "bar_ts")
     ledger.append_new(out / "paper_equity.jsonl", result.equity, "bar_ts")
-
-    # --- freeze consumed signal snapshots AFTER the bar accounting rows are committed ---
-    processed_bar_ts = {e["bar_ts"] for e in result.equity}
-    existing_snapshot_ids = {
-        s["snapshot_id"] for s in existing_snapshots if "snapshot_id" in s
-    }
-    source_mtime = obs_path.stat().st_mtime if obs_path.exists() else None
-    new_snapshots = snapshots.build_snapshots(
-        forward_obs, processed_bar_ts, existing_snapshot_ids, source_mtime, _now_utc_str()
-    )
-    ledger.append_new(out / snapshots.SNAPSHOT_FILE, new_snapshots, "snapshot_id")
 
     # state (watermark) LAST — commit marker for the whole bar batch.
     ledger.write_json(state_path, state)

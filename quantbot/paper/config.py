@@ -95,11 +95,15 @@ def validate_config_contract(config: dict[str, Any]) -> None:
             f"{EXPECTED_ENGINE_VERSION}). {_REINIT_HINT}"
         )
 
+    # Exact schema match: an unknown/future schema_version (e.g. 2) fails closed unless a
+    # migration is intentionally implemented for it. paper_pnl_v1 is pinned to one schema
+    # (Blocker 4) — a >= comparison would silently accept a future, unvalidated layout.
     schema_v = config.get("schema_version")
-    if not isinstance(schema_v, int) or schema_v < MIN_SCHEMA_VERSION:
+    if not isinstance(schema_v, int) or schema_v != SCHEMA_VERSION:
         raise ConfigContractError(
-            f"paper_config.json schema_version {schema_v!r} < required minimum "
-            f"{MIN_SCHEMA_VERSION}. {_REINIT_HINT}"
+            f"paper_config.json schema_version {schema_v!r} != required exact "
+            f"{SCHEMA_VERSION}. An unknown/future schema fails closed (no migration is "
+            f"implemented for paper_pnl_v1). {_REINIT_HINT}"
         )
 
     engine_v = config.get("engine_version")
@@ -111,9 +115,14 @@ def validate_config_contract(config: dict[str, Any]) -> None:
             f"{_REINIT_HINT}"
         )
 
-    if not config.get("baseline_label"):
+    # Exact baseline match: the label is part of the contract, not free text. A wrong label
+    # (e.g. "not_the_fixed_baseline") must fail closed so a config that claims a different
+    # baseline can never be run under this fixed-notional engine (Blocker 4).
+    baseline = config.get("baseline_label")
+    if baseline != BASELINE_LABEL:
         raise ConfigContractError(
-            f"paper_config.json has an empty/missing baseline_label. {_REINIT_HINT}"
+            f"paper_config.json baseline_label {baseline!r} != required exact "
+            f"{BASELINE_LABEL!r}. {_REINIT_HINT}"
         )
 
     freshness = config.get("freshness")

@@ -29,6 +29,29 @@ def snapshot_id(bar_ts: str) -> str:
     return hashlib.sha256(f"snap|{bar_ts}".encode("utf-8")).hexdigest()[:16]
 
 
+def bar_commit_id(
+    obs: dict[str, Any], bar_ts: str, engine_version: str, config_hash: str
+) -> str:
+    """Bar-level commit identity (Blocker 1 / schema § 10).
+
+    `bar_commit_id = sha256(full consumed row + bar_ts + engine_version + config_hash)`.
+
+    Every artifact written for a bar (fills/trades/funding/positions/equity AND the frozen
+    consumed-signal snapshot) carries this id. Reconcile requires all rows for a processed
+    bar to agree on it, so a partially-written bar (e.g. a crash that left fills from an
+    older source row tagged with a different id than a later snapshot) can never reconcile
+    clean. The full source row is included so any recompute of an already-consumed bar
+    changes the id (in lockstep with `source_observation_digest`).
+    """
+    payload = {
+        "row": obs,
+        "bar_ts": bar_ts,
+        "engine_version": engine_version,
+        "config_hash": config_hash,
+    }
+    return hashlib.sha256(canonical_json_dumps(payload).encode("utf-8")).hexdigest()[:16]
+
+
 def consumed_row_digest(obs: dict[str, Any]) -> str:
     """SHA-256 over the canonical FULL consumed source row of a per_bar_obs entry.
 
@@ -73,6 +96,8 @@ def build_snapshots(
     existing_ids: set[str],
     source_mtime: float | None,
     run_ts: str,
+    engine_version: str,
+    config_hash: str,
 ) -> list[dict[str, Any]]:
     """Build snapshot rows for newly processed bars not already snapshotted.
 
@@ -80,6 +105,11 @@ def build_snapshots(
     timestamp within the SAME run can never produce two snapshots sharing one snapshot_id.
     (The freshness gate already aborts duplicate consumed timestamps; this is defence in
     depth so the snapshot writer is independently safe.)
+
+    Each snapshot carries the bar-level `bar_commit_id` (Blocker 1). The snapshot is written
+    FIRST (before the accounting rows) and is the immutable source-of-truth a bar's
+    fills/trades/funding/positions/equity must agree with; reconcile fails on any partial
+    bar whose accounting rows disagree with — or lack — a frozen snapshot.
     """
     seen = set(existing_ids)
     rows: list[dict[str, Any]] = []
@@ -95,6 +125,7 @@ def build_snapshots(
             {
                 "snapshot_id": sid,
                 "bar_ts": ts,
+                "bar_commit_id": bar_commit_id(obs, ts, engine_version, config_hash),
                 "bar_index": obs.get("bar_index"),
                 "active_symbols": sorted(obs.get("active_symbols", []) or []),
                 "portfolio_heat": obs.get("portfolio_heat"),

@@ -18,7 +18,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from quantbot.paper.config import ConfigContractError
 from quantbot.paper.runner import run_once
+
+# Exit codes (documented in docs/ops/VM_90D_RUNBOOK.md § 3.5b):
+#   0 = run complete   2 = freshness/divergence gate ABORTED (ABORTED summary written)
+#   3 = stale/incompatible paper_config.json — clean abort, NO ledger or summary writes
+EXIT_CONFIG_CONTRACT = 3
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -28,11 +34,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir", default="data")
     args = parser.parse_args(argv)
 
-    summary = run_once(
-        output_dir=Path(args.output_dir) if args.output_dir else None,
-        forward_obs_dir=Path(args.forward_obs_dir) if args.forward_obs_dir else None,
-        data_dir=Path(args.data_dir),
-    )
+    try:
+        summary = run_once(
+            output_dir=Path(args.output_dir) if args.output_dir else None,
+            forward_obs_dir=Path(args.forward_obs_dir) if args.forward_obs_dir else None,
+            data_dir=Path(args.data_dir),
+        )
+    except ConfigContractError as exc:
+        # The config that DEFINES the output contract is itself stale/incompatible, so no
+        # valid ABORTED summary can be built and NO ledger/summary/state rows are written.
+        # Fail cleanly (no traceback) with explicit archive/re-init guidance, NOT exit 1.
+        print("Paper accounting ABORTED — stale/incompatible paper_config.json (SIMULATION).")
+        print("No fills/trades/equity/state/summary rows were written.")
+        print(f"  reason: {exc}")
+        print("  Fix: archive the stale paper output dir and re-init a fresh write-once")
+        print("  config with a fresh FUTURE forward_start_ts for this engine version, e.g.:")
+        print("    ts=$(date -u +%Y%m%dT%H%M%SZ)")
+        print("    mv <PAPER_OUTPUT_DIR> <PAPER_OUTPUT_DIR>.archived-$ts")
+        print("    python -m quantbot.paper.config --forward-start-ts <FUTURE_UTC_8H_BOUNDARY>")
+        return EXIT_CONFIG_CONTRACT
 
     # An aborted run (freshness/divergence gate) writes a minimal ABORTED summary with no
     # bars_elapsed/closed_trades/etc. Handle it cleanly: do NOT claim "run complete" and do

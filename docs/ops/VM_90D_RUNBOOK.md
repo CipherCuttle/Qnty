@@ -121,8 +121,24 @@ QNTY_PAPER_OUTPUT_DIR=/srv/qnty/output/paper_pnl_v1 \
 ```
 
 The paper timer remains disabled until the config is re-init'd against this engine version.
-A run against a stale/aborting config writes a clearly-marked `status: ABORTED` summary and
-**no** fills/trades/equity, so a stale config can never be mistaken for a FLAT/zero result.
+
+**Two distinct abort behaviors (do not conflate them):**
+
+- **Config-contract abort (stale/incompatible `paper_config.json`).** The config that *defines*
+  the output contract is itself invalid (old `0.1.0`, wrong `schema_version`/`engine_version`/
+  `baseline_label`, missing `freshness`), so **no** valid summary can be built from it. The CLI
+  (`scripts/qnty-paper-accounting.py`) catches `ConfigContractError`, prints a clean operator
+  message with archive/re-init guidance (**no Python traceback**), and **exits 3**. It writes
+  **no** ledger, state, summary, provenance, or receipt rows. The absence of any FLAT/zero
+  summary, plus the loud `exit 3` + archive/re-init message, means a stale config can never be
+  mistaken for a FLAT/zero result.
+- **Freshness/divergence gate abort (config loads, observer output is bad).** Here the config
+  is valid but the observer output is stale/missing/malformed/diverged. The run writes a
+  clearly-marked `status: ABORTED` summary/receipt/provenance and **no** fills/trades/equity,
+  and **exits 2**.
+
+So: `exit 0` = run complete · `exit 2` = gate-aborted with an `ABORTED` summary · `exit 3` =
+stale-config abort with **no** writes (re-init required).
 
 ### 3.6 Copy Systemd Units
 ```bash

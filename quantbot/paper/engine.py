@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from quantbot.data.types import Bar
+from quantbot.paper.snapshots import bar_commit_id
 
 _BAR_FMT = "%Y-%m-%dT%H:%M:%S"
 
@@ -159,6 +160,8 @@ def run_engine(
     fee_rate = float(config["fee_model"]["fee_bps"]) / 10_000.0
     slip = float(config["slippage_model"]["slippage_bps"]) / 10_000.0
     interval_hours = int(config.get("freshness", {}).get("bar_interval_hours", 8))
+    engine_version = config["engine_version"]
+    cfg_hash = config["config_hash"]
 
     prices = PriceBook(bars_by_symbol)
     funding_index = build_funding_index(funding_df)
@@ -179,6 +182,12 @@ def run_engine(
         ts = obs["timestamp"]
         if ts <= watermark:
             continue  # already processed in a prior run
+
+        # Bar-level commit identity (Blocker 1): every artifact this bar produces carries it,
+        # and it must equal the frozen snapshot's bar_commit_id (built from the same full
+        # source row). Reconcile rejects any bar whose rows disagree, so a partial/stale
+        # bar can never reconcile clean.
+        commit_id = bar_commit_id(obs, ts, engine_version, cfg_hash)
 
         desired = set(obs.get("active_symbols", []))
         current = set(open_positions)
@@ -228,6 +237,7 @@ def run_engine(
                     "funding_id": f"{sym}|{ts}",
                     "symbol": sym,
                     "bar_ts": ts,
+                    "bar_commit_id": commit_id,
                     "window_start": eff_start,
                     "window_end": ts,
                     "notional_usd": round(notional_at, 8),
@@ -261,6 +271,7 @@ def run_engine(
                     "funding_id": f"{sym}|{ts}|exit",
                     "symbol": sym,
                     "bar_ts": ts,
+                    "bar_commit_id": commit_id,
                     "window_start": ts,
                     "window_end": next_ts,
                     "notional_usd": round(stub_notional, 8),
@@ -294,6 +305,7 @@ def run_engine(
         result.equity.append(
             {
                 "bar_ts": ts,
+                "bar_commit_id": commit_id,
                 "realized_gross_pnl": round(realized_gross, 8),
                 "unrealized_pnl": round(unreal, 8),
                 "funding_cum": round(acc["funding_cum"], 8),
@@ -306,6 +318,7 @@ def run_engine(
         result.positions.append(
             {
                 "bar_ts": ts,
+                "bar_commit_id": commit_id,
                 "open_symbols": sorted(open_positions),
                 "num_open": len(open_positions),
                 "gross_exposure_usd": round(gross_exposure, 8),
@@ -325,6 +338,7 @@ def run_engine(
             result.fills.append(
                 {
                     "fill_id": fid,
+                    "bar_commit_id": commit_id,
                     "signal_bar_ts": ts,
                     "fill_ts": next_ts,
                     "symbol": sym,
@@ -346,6 +360,7 @@ def run_engine(
             result.trades.append(
                 {
                     "trade_id": fid,
+                    "bar_commit_id": commit_id,
                     "symbol": sym,
                     "entry_fill_id": pos["entry_fill_id"],
                     "exit_fill_id": fid,
@@ -373,6 +388,7 @@ def run_engine(
             result.fills.append(
                 {
                     "fill_id": fid,
+                    "bar_commit_id": commit_id,
                     "signal_bar_ts": ts,
                     "fill_ts": next_ts,
                     "symbol": sym,

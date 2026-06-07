@@ -71,8 +71,41 @@ def reconcile(output_dir: Path) -> list[str]:
         if s.get("bar_ts") not in equity_ts:
             failures.append(
                 f"snapshot {s.get('snapshot_id')} bar {s.get('bar_ts')} has no equity row "
-                f"(orphan snapshot — crash/corruption between equity and snapshot writes)"
+                f"(orphan snapshot — crash/corruption between snapshot and equity writes)"
             )
+
+    # --- per-bar atomic commit (Blocker 1) ---------------------------------------------
+    # The snapshot is frozen FIRST and is the immutable source-of-truth for a bar. Every
+    # accounting row (fills/trades/funding/positions/equity) for a processed bar must:
+    #   (a) have a matching frozen snapshot for that exact bar_ts, AND
+    #   (b) carry the SAME bar_commit_id as that snapshot.
+    # A partial bar — fills/equity written by a crash before the snapshot, or rows left over
+    # from a now-recomputed source row — therefore fails loudly here instead of reconciling
+    # clean against changed source evidence.
+    commit_by_bar = {s.get("bar_ts"): s.get("bar_commit_id") for s in snaps}
+    for rows, bar_key, id_key, name in [
+        (fills, "signal_bar_ts", "fill_id", "fill"),
+        (trades, "exit_bar_ts", "trade_id", "trade"),
+        (funding, "bar_ts", "funding_id", "funding"),
+        (positions, "bar_ts", "bar_ts", "positions"),
+        (equity, "bar_ts", "bar_ts", "equity"),
+    ]:
+        for r in rows:
+            bt = r.get(bar_key)
+            rid = r.get(id_key)
+            if bt not in commit_by_bar:
+                failures.append(
+                    f"{name} {rid} bar {bt} has no consumed-signal snapshot "
+                    f"(orphan/partial bar — accounting row without a frozen source snapshot)"
+                )
+                continue
+            expected = commit_by_bar.get(bt)
+            got = r.get("bar_commit_id")
+            if got != expected:
+                failures.append(
+                    f"{name} {rid} bar {bt} bar_commit_id {got} != snapshot {expected} "
+                    f"(rows for a processed bar disagree — partial/stale commit)"
+                )
 
     # --- backfill policy: no forward fill before forward_start_ts ---
     for f in fills:

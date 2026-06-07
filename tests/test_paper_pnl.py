@@ -334,7 +334,7 @@ def test_off_grid_bar_aborts(tmp_path):
     fwd.mkdir(parents=True, exist_ok=True)
     write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
     # latest bar at 17:00 is not on the 8h grid (00/08/16)
-    obs = _obs([[], ["AAA"]]) + [_obs_row("2026-06-06T17:00:00", [], 2)]
+    obs = _obs([[], ["AAA"], ["AAA"], [], []]) + [_obs_row("2026-06-06T17:00:00", [], 5)]
     (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": obs}), encoding="utf-8")
     summary = run_once(
         output_dir=out,
@@ -725,3 +725,331 @@ def test_cli_handles_abort_without_keyerror(tmp_path):
     assert "run complete" not in proc.stdout
     assert "KeyError" not in proc.stderr
     assert "bars_elapsed" not in proc.stderr
+
+
+# ==========================================================================================
+# ADVERSARIAL REGRESSION — Codex reproductions of the e9bd67b rejection. Each test below
+# reproduces an unsafe path Codex found; none is a happy path.
+# ==========================================================================================
+
+from quantbot.paper import freshness as _freshness
+from quantbot.paper import ledger as _ledger
+from quantbot.paper import snapshots as _snapshots
+from quantbot.paper.config import ConfigContractError, config_hash
+
+_DEFAULT_FRESH = {
+    "bar_interval_hours": 8,
+    "max_bar_staleness_hours": 24,
+    "heartbeat_max_age_hours": 24,
+}
+
+
+def _check(tmp_path, per_bar, now=NOW, forward_start_ts=TS[0], heartbeat_lines=None):
+    """Call the freshness gate directly over a written observation file."""
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    obs_path = fwd / "observation_log.json"
+    obs_log = {"per_bar_obs": per_bar}
+    obs_path.write_text(json.dumps(obs_log), encoding="utf-8")
+    if heartbeat_lines is not None:
+        (fwd / "bar_decisions.jsonl").write_text(heartbeat_lines, encoding="utf-8")
+    return _freshness.check_freshness(
+        obs_path, obs_log, fwd, now, _DEFAULT_FRESH, forward_start_ts=forward_start_ts
+    )
+
+
+# ---- Blocker 1: per-bar atomic commit / partial ledger can't reconcile clean -------------
+
+
+def test_orphan_fill_without_snapshot_fails_reconcile(tmp_path):
+    # Simulate a crash after fills were written but before the (snapshot-first) snapshot/
+    # equity/state — a partial bar. Reconcile MUST NOT return [].
+    out = tmp_path / "paper"
+    out.mkdir(parents=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    _ledger.append_rows(
+        out / "paper_fills.jsonl",
+        [
+            {
+                "fill_id": "deadbeefdeadbeef",
+                "bar_commit_id": "0000aaaa1111bbbb",
+                "signal_bar_ts": TS[1],
+                "fill_ts": TS[2],
+                "symbol": "AAA",
+                "side": "BUY",
+                "kind": "entry",
+                "qty": 1.0,
+                "fill_price": 100.0,
+                "open_price": 100.0,
+                "fee": 0.0,
+                "backfill": False,
+            }
+        ],
+    )
+    failures = reconcile(out)
+    assert failures, "a fill with no consumed-signal snapshot must fail reconcile"
+    assert any("snapshot" in f.lower() for f in failures)
+
+
+def test_changed_source_after_partial_commit_aborts_next_run(tmp_path):
+    # A bar's snapshot is frozen FIRST. Simulate a crash that froze the snapshot (and rolled
+    # the watermark back) but never finished the bar; the rolling observer then recomputes
+    # the same bar to different values. The next run MUST abort on divergence, not continue.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+
+    # Crash simulation: drop the last consumed bar's equity/fills (partial) and roll the
+    # watermark back, but KEEP its frozen snapshot.
+    equity = _read(out / "paper_equity.jsonl")
+    last_bar = equity[-1]["bar_ts"]
+    kept_equity = [e for e in equity if e["bar_ts"] != last_bar]
+    (out / "paper_equity.jsonl").write_text(
+        "".join(json.dumps(e, sort_keys=True) + "\n" for e in kept_equity), encoding="utf-8"
+    )
+    state = json.loads((out / "paper_position_state.json").read_text())
+    state["watermark_bar_ts"] = kept_equity[-1]["bar_ts"] if kept_equity else ""
+    (out / "paper_position_state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    # Source for the already-snapshotted last bar is recomputed differently.
+    diverged = _obs([[], ["AAA"], ["AAA"], [], [], []])
+    for row in diverged:
+        if row["timestamp"] == last_bar:
+            row["weighted_return"] = 0.123456  # recomputed value
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": diverged}), encoding="utf-8")
+
+    summary = _run(out, fwd)
+    assert summary["status"] == "ABORTED"
+    assert summary["abort_code"] == "SIGNAL_SNAPSHOT_DIVERGENCE"
+
+
+def test_full_bar_commit_reconciles_and_ids_agree(tmp_path):
+    # A successful full bar commit: every accounting row carries the SAME bar_commit_id as
+    # its frozen snapshot, and reconcile passes.
+    out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+    snaps = _read(out / "paper_signal_snapshots.jsonl")
+    commit_by_bar = {s["bar_ts"]: s["bar_commit_id"] for s in snaps}
+    assert all(commit_by_bar.values())  # every snapshot carries a bar_commit_id
+    for e in _read(out / "paper_equity.jsonl"):
+        assert e["bar_commit_id"] == commit_by_bar[e["bar_ts"]]
+    for f in _read(out / "paper_fills.jsonl"):
+        assert f["bar_commit_id"] == commit_by_bar[f["signal_bar_ts"]]
+
+
+def test_disagreeing_bar_commit_id_fails_reconcile(tmp_path):
+    # If an accounting row's bar_commit_id disagrees with its snapshot (e.g. a stale row from
+    # a different source version retained across a crash), reconcile MUST fail.
+    out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+    equity = _read(out / "paper_equity.jsonl")
+    equity[-1]["bar_commit_id"] = "tamperedcommit00"
+    (out / "paper_equity.jsonl").write_text(
+        "".join(json.dumps(e, sort_keys=True) + "\n" for e in equity), encoding="utf-8"
+    )
+    failures = reconcile(out)
+    assert any("bar_commit_id" in f for f in failures)
+
+
+def test_idempotent_retry_no_duplicate_rows(tmp_path):
+    # Retrying a fully committed bar appends nothing (no duplicate fills/snapshots/equity).
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    counts_before = {
+        n: len(_read(out / n))
+        for n in ("paper_fills.jsonl", "paper_equity.jsonl", "paper_signal_snapshots.jsonl")
+    }
+    _run(out, fwd)
+    counts_after = {n: len(_read(out / n)) for n in counts_before}
+    assert counts_before == counts_after
+    assert reconcile(out) == []
+
+
+# ---- Blocker 2: freshness must validate the whole file, not just consumed rows -----------
+
+# forward_start_ts in the FUTURE -> every TS bar is pre-forward (zero consumed).
+_FUTURE_START = "2026-06-10T00:00:00"
+
+
+def test_pre_forward_off_grid_row_aborts(tmp_path):
+    rows = _obs([[], ["AAA"], ["AAA"], [], []]) + [_obs_row("2026-06-06T17:00:00", [], 5)]
+    res = _check(tmp_path, rows, forward_start_ts=_FUTURE_START)
+    assert res.aborted and res.code == "OFF_GRID_BAR"
+
+
+def test_pre_forward_duplicate_timestamp_aborts(tmp_path):
+    rows = [_obs_row(TS[0], [], 0), _obs_row(TS[1], ["AAA"], 1), _obs_row(TS[1], [], 2)]
+    res = _check(tmp_path, rows, forward_start_ts=_FUTURE_START)
+    assert res.aborted and res.code == "DUPLICATE_OBSERVATION_TS"
+
+
+def test_pre_forward_stale_latest_bar_aborts(tmp_path):
+    # All rows pre-forward AND the observer is dead (latest bar far older than staleness).
+    stale_now = NOW + timedelta(days=5)
+    res = _check(tmp_path, _obs([[], ["AAA"], ["AAA"], [], [], []]), now=stale_now, forward_start_ts=_FUTURE_START)
+    assert res.aborted and res.code == "STALE_OBSERVATION"
+
+
+def test_pre_forward_malformed_heartbeat_aborts(tmp_path):
+    res = _check(
+        tmp_path,
+        _obs([[], ["AAA"], ["AAA"], [], [], []]),
+        forward_start_ts=_FUTURE_START,
+        heartbeat_lines="{ not json\n",
+    )
+    assert res.aborted and res.code == "MALFORMED_HEARTBEAT"
+
+
+def test_zero_consumed_with_fresh_observation_is_controlled_no_op(tmp_path):
+    # Clean, fresh, on-grid file with nothing past forward_start_ts -> controlled no-op, NOT
+    # a normal misleading OK and NOT an abort.
+    res = _check(tmp_path, _obs([[], ["AAA"], ["AAA"], [], [], []]), forward_start_ts=_FUTURE_START)
+    assert res.ok is True
+    assert res.code == "NO_ELIGIBLE_BARS_YET"
+    # end-to-end: run_once writes zero ledger rows and reconcile passes
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=_FUTURE_START), output_dir=out)
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+    summary = _run(out, fwd)
+    assert summary["status"] == "OK"
+    assert summary["bars_elapsed"] == 0
+    assert _no_ledger_rows(out)
+    assert reconcile(out) == []
+
+
+# ---- Blocker 3: malformed freshness inputs must not crash --------------------------------
+
+
+def test_heartbeat_empty_array_row_fails_closed(tmp_path):
+    # `[]` is valid JSON but not an object -> would AttributeError on .get; must fail closed.
+    res = _check(tmp_path, _obs([[], ["AAA"], ["AAA"], [], [], []]), heartbeat_lines="[]\n")
+    assert res.aborted and res.code == "MALFORMED_HEARTBEAT"
+
+
+def test_heartbeat_object_missing_fields_fails_closed(tmp_path):
+    res = _check(
+        tmp_path,
+        _obs([[], ["AAA"], ["AAA"], [], [], []]),
+        heartbeat_lines=json.dumps({"bar_processed_at": "2026-06-06T16:00:00Z"}) + "\n",
+    )
+    assert res.aborted and res.code == "MALFORMED_HEARTBEAT"
+
+
+def test_heartbeat_future_timestamp_fails_closed(tmp_path):
+    future_hb = json.dumps({"bar_processed_at": "2099-01-01T00:00:00Z", "commit_sha": "abc"})
+    res = _check(
+        tmp_path, _obs([[], ["AAA"], ["AAA"], [], [], []]), heartbeat_lines=future_hb + "\n"
+    )
+    assert res.aborted and res.code == "FUTURE_HEARTBEAT"
+
+
+def test_active_symbols_list_of_objects_fails_closed(tmp_path):
+    rows = _obs([[], ["AAA"], ["AAA"], [], [], []])
+    rows[1]["active_symbols"] = [{}]  # list, but not list of strings
+    res = _check(tmp_path, rows)
+    assert res.aborted and res.code == "MALFORMED_OBSERVATION_LOG"
+
+
+def test_active_symbols_list_of_ints_fails_closed(tmp_path):
+    rows = _obs([[], ["AAA"], ["AAA"], [], [], []])
+    rows[1]["active_symbols"] = [123]
+    res = _check(tmp_path, rows)
+    assert res.aborted and res.code == "MALFORMED_OBSERVATION_LOG"
+
+
+def test_active_symbols_valid_string_list_passes(tmp_path):
+    rows = _obs([[], ["BTCUSDT"], ["BTCUSDT"], [], [], []])
+    res = _check(tmp_path, rows)
+    assert res.ok and res.code == "OK"
+
+
+def test_valid_heartbeat_with_required_fields_passes(tmp_path):
+    hb = json.dumps({"bar_processed_at": "2026-06-06T16:00:00Z", "commit_sha": "abc123"})
+    res = _check(tmp_path, _obs([[], ["AAA"], ["AAA"], [], [], []]), heartbeat_lines=hb + "\n")
+    assert res.ok and res.code == "OK"
+
+
+# ---- Blocker 4: config contract must be exact -------------------------------------------
+
+
+def test_config_future_schema_version_rejected(tmp_path):
+    out = tmp_path / "paper"
+    out.mkdir(parents=True)
+    config = build_config(forward_start_ts=TS[0])
+    config["schema_version"] = 2  # unknown/future schema -> fail closed (no migration)
+    config["config_hash"] = config_hash(config)
+    (out / "paper_config.json").write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ConfigContractError):
+        load_config(out)
+
+
+def test_config_wrong_baseline_label_rejected(tmp_path):
+    out = tmp_path / "paper"
+    out.mkdir(parents=True)
+    config = build_config(forward_start_ts=TS[0])
+    config["baseline_label"] = "not_the_fixed_baseline"
+    config["config_hash"] = config_hash(config)
+    (out / "paper_config.json").write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ConfigContractError):
+        load_config(out)
+
+
+def test_config_missing_freshness_rejected(tmp_path):
+    out = tmp_path / "paper"
+    out.mkdir(parents=True)
+    config = build_config(forward_start_ts=TS[0])
+    del config["freshness"]
+    config["config_hash"] = config_hash(config)
+    (out / "paper_config.json").write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ConfigContractError):
+        load_config(out)
+
+
+# ---- Blocker 5: stale-config CLI must abort cleanly (no traceback), matching the runbook --
+
+
+def test_cli_stale_config_aborts_cleanly_with_reinit_guidance(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    out.mkdir(parents=True)
+    fwd.mkdir(parents=True, exist_ok=True)
+    # An old 0.1.0-style config that fails the load contract.
+    old = {
+        "schema_version": 1,
+        "engine_version": "0.1.0",
+        "forward_start_ts": TS[0],
+        "initial_equity_usd": 10000.0,
+        "notional_usd": 1000.0,
+    }
+    (out / "paper_config.json").write_text(json.dumps(old), encoding="utf-8")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    # Clean documented exit (3), NOT a traceback / exit 1.
+    assert proc.returncode == 3, (proc.returncode, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert "ConfigContractError" not in proc.stderr
+    assert "ABORTED" in proc.stdout
+    # Operator guidance: archive + re-init + fresh future boundary.
+    assert "archive" in proc.stdout.lower()
+    assert "forward-start-ts" in proc.stdout.lower() or "forward_start" in proc.stdout.lower()
+    assert "future" in proc.stdout.lower()
+    # No ledger / state / summary rows written.
+    assert _no_ledger_rows(out)
+    assert not (out / "paper_position_state.json").exists()
+    assert not (out / "paper_pnl_summary.json").exists()

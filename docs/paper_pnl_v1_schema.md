@@ -161,7 +161,9 @@ drawdown(T) = (peak(equity) - equity(T)) / peak(equity)
 
 ## 4. Produced outputs (`paper_pnl_v1/`)
 
-All JSONL ledgers are **append-only**, deterministic key order, never rewritten.
+All JSONL ledgers are **append-only**, deterministic key order, never rewritten. Every per-bar
+accounting row (fills, trades, funding, positions, equity) and its consumed-signal snapshot
+also carries a `bar_commit_id` (section 10) tying it to the exact consumed source row.
 
 | File | Kind | Key fields |
 | --- | --- | --- |
@@ -172,7 +174,7 @@ All JSONL ledgers are **append-only**, deterministic key order, never rewritten.
 | `paper_trades.jsonl` | append | `trade_id(=exit_fill_id), symbol, entry_fill_id, exit_fill_id, entry_bar_ts, exit_bar_ts, qty, entry_price, exit_price, gross_pnl, fees, funding, net_pnl, hold_bars, backfill=false` |
 | `paper_equity.jsonl` | append | `bar_ts, realized_gross_pnl, unrealized_pnl, funding_cum, fees_cum, equity, drawdown, num_open` |
 | `paper_funding.jsonl` | append | `funding_id(=symbol+bar_ts, or symbol+bar_ts+"\|exit" for the exit-tail stub), symbol, bar_ts, window_start, window_end, notional_usd, funding_rate(Σ of events in interval), funding_events, rate_available, funding_amount` (section 11) |
-| `paper_signal_snapshots.jsonl` | append | `snapshot_id, bar_ts, bar_index, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return, source_observation_digest, source_observation_mtime, run_ts, backfill=false` (section 10) |
+| `paper_signal_snapshots.jsonl` | append | `snapshot_id, bar_ts, bar_commit_id, bar_index, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return, source_observation_digest, source_observation_mtime, run_ts, backfill=false` (section 10) |
 | `paper_pnl_summary.json` | overwrite | `status(OK/ABORTED), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (ABORTED runs add `abort_code, abort_reason, aborted_at`) |
 | `paper_provenance.json` | overwrite | latest run: `status`, `baseline_label`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (incl. `paper_signal_snapshots.jsonl`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`) |
 | `paper_provenance_log.jsonl` | append | one provenance record per run (incl. aborted runs) |
@@ -185,13 +187,23 @@ All JSONL ledgers are **append-only**, deterministic key order, never rewritten.
 - `config_hash = sha256(canonical_json_dumps(config without config_hash))` via
   `quantbot.core.determinism.canonical_json_dumps`.
 - **Config load contract (`load_config`):** before the hash check, `validate_config_contract`
-  rejects any stored config that does not meet the **current minimum schema/engine contract**:
+  rejects any stored config that does not meet the **current exact schema/engine contract**:
   it must contain all required fields (incl. `baseline_label`, `freshness{bar_interval_hours,
-  max_bar_staleness_hours, heartbeat_max_age_hours}`), `schema_version >= MIN_SCHEMA_VERSION`,
-  and `engine_version == EXPECTED_ENGINE_VERSION`. An **old `0.1.0` config fails loudly** with a
+  max_bar_staleness_hours, heartbeat_max_age_hours}`), and match **exactly**:
+  `schema_version == SCHEMA_VERSION` (an unknown/**future** `schema_version` such as `2` fails
+  closed — no migration is implemented), `engine_version == EXPECTED_ENGINE_VERSION`, and
+  `baseline_label == "fixed_notional_active_symbols_paper_v1"` (a wrong label such as
+  `"not_the_fixed_baseline"` fails closed). An **old `0.1.0` config fails loudly** with a
   re-init hint — it must never run under the hardened provenance engine (stale
-  `forward_start_ts` / contradictory provenance). Archive/delete the stale output dir and
-  re-init a fresh write-once config with a fresh future `forward_start_ts`.
+  `forward_start_ts` / contradictory provenance). Failures raise `ConfigContractError`.
+  Archive/delete the stale output dir and re-init a fresh write-once config with a fresh future
+  `forward_start_ts`.
+- **Stale-config CLI behavior:** because the invalid config *defines* the output contract, no
+  valid `ABORTED` summary can be built. `scripts/qnty-paper-accounting.py` catches
+  `ConfigContractError`, prints clean archive/re-init guidance (no traceback), and **exits 3**
+  writing **no** ledger/state/summary/provenance/receipt rows. (Exit codes: `0` complete,
+  `2` freshness/divergence gate abort with an `ABORTED` summary, `3` stale-config abort with no
+  writes. See `docs/ops/VM_90D_RUNBOOK.md` § 3.5b.)
 - `fill_id = sha256(f"{symbol}|{signal_bar_ts}|{side}|{kind}")[:16]`.
 - `trade_id = exit_fill_id`; `funding_id = f"{symbol}|{bar_ts}"` (exit-tail stub:
   `f"{symbol}|{bar_ts}|exit"`).
@@ -255,27 +267,39 @@ silently treated as a FLAT bar.
 
 All JSON parse failures (a malformed `observation_log.json`) are converted into a controlled
 abort (`MALFORMED_OBSERVATION_LOG`) **before** any uncaught exception — the ABORTED
-summary/receipt/provenance are still written. **Every consumed row** (`>= forward_start_ts`)
-is validated in full, not just the final row.
+summary/receipt/provenance are still written.
+
+**The whole observation file needed for trust is validated — not only consumed rows.** Every
+row (including **pre-`forward_start_ts`** rows) is checked for required fields, a list-of-
+**strings** `active_symbols`, and a parseable, on-grid, non-duplicate, non-future `timestamp`;
+the latest bar in the file must be fresh; and a configured heartbeat must be present-valid-
+fresh. A stale/off-grid/duplicate/future observation therefore **aborts even before the
+forward boundary** — it is never silently returned as a normal `OK`. When the whole file is
+clean but **no bar has reached `forward_start_ts` yet**, the gate returns a controlled
+`ok=True` / `NO_ELIGIBLE_BARS_YET` **no-op** (the engine then writes zero ledger rows); this is
+distinct from a misleading `OK` and from an abort.
 
 Checks (thresholds from `config.freshness`, defaults `bar_interval_hours=8`,
 `max_bar_staleness_hours=24`, `heartbeat_max_age_hours=24`, `max_future_skew_hours=1`):
 
-| Abort code | Condition |
+| Code | Condition |
 | --- | --- |
 | `MISSING_OBSERVATION_LOG` | `observation_log.json` does not exist. |
-| `MALFORMED_OBSERVATION_LOG` | Not valid JSON, no `per_bar_obs` key, or any consumed row missing a required field (`bar_index, timestamp, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return`) or with a non-list `active_symbols` (missing/`null` `active_symbols` is **never** treated as `[]`/FLAT). |
+| `MALFORMED_OBSERVATION_LOG` | Not valid JSON, no `per_bar_obs` key, or **any** row (consumed or pre-forward) missing a required field (`bar_index, timestamp, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return`) or whose `active_symbols` is not a **list of strings** (missing/`null`/list-of-objects/list-of-ints is **never** treated as `[]`/FLAT). |
 | `EMPTY_PER_BAR_OBS` | `per_bar_obs` missing, empty, or not a list. |
-| `MALFORMED_BAR_TIMESTAMP` | Any consumed row's `timestamp` cannot be parsed. |
-| `OFF_GRID_BAR` | **Any** consumed bar (not just the last) is off the 8h grid (minute/second ≠ 0 or `hour % 8 ≠ 0`). |
-| `DUPLICATE_OBSERVATION_TS` | Two consumed rows share a `timestamp` (ambiguous observation set). |
-| `FUTURE_OBSERVATION` | A consumed bar is dated beyond `now + max_future_skew_hours` (a negative age must not pass as fresh). |
-| `STALE_OBSERVATION` | `now - latest_consumed_bar_ts > max_bar_staleness_hours`. |
-| `MALFORMED_HEARTBEAT` | `bar_decisions.jsonl` is present but unreadable / not valid JSON / has no `bar_processed_at` / an unparseable stamp (fail-closed, not silently "unavailable"). |
+| `MALFORMED_BAR_TIMESTAMP` | **Any** row's `timestamp` cannot be parsed. |
+| `OFF_GRID_BAR` | **Any** bar (consumed or pre-forward, not just the last) is off the 8h grid (minute/second ≠ 0 or `hour % 8 ≠ 0`). |
+| `DUPLICATE_OBSERVATION_TS` | **Any** two rows share a `timestamp` (ambiguous observation set). |
+| `FUTURE_OBSERVATION` | **Any** bar is dated beyond `now + max_future_skew_hours` (a negative age must not pass as fresh). |
+| `STALE_OBSERVATION` | `now - latest_bar_ts > max_bar_staleness_hours` (latest **consumed** bar if any, else latest **overall** — a dead observer aborts even pre-boundary). |
+| `MALFORMED_HEARTBEAT` | `bar_decisions.jsonl` is present but unreadable / not valid JSON / a row is not an **object** (e.g. `[]`) / a row is missing `bar_processed_at` or `commit_sha` / an unparseable stamp (fail-closed, not silently "unavailable"). |
+| `FUTURE_HEARTBEAT` | `bar_decisions.jsonl` heartbeat is dated beyond `now + max_future_skew_hours` (fail-closed). |
 | `STALE_HEARTBEAT` | `bar_decisions.jsonl` heartbeat present, parseable, but older than `heartbeat_max_age_hours`. |
+| `NO_ELIGIBLE_BARS_YET` | **`ok=True` controlled no-op** (not an abort): the whole file validated clean but no bar has reached `forward_start_ts`. The engine writes zero ledger rows. |
 
 Only an **absent** heartbeat file is skipped (the observer may not have written one yet); a
-present-but-malformed heartbeat **fails closed** with `MALFORMED_HEARTBEAT`.
+present-but-malformed/future heartbeat **fails closed** (`MALFORMED_HEARTBEAT`/`FUTURE_HEARTBEAT`).
+Heartbeat validation runs even when there are zero consumed bars.
 
 ## 10. Consumed signal snapshots (`paper_signal_snapshots.jsonl`)
 
@@ -297,14 +321,29 @@ frozen append-only:
   frozen snapshot is re-digested. If any differs from the frozen digest, the run aborts with
   `SIGNAL_SNAPSHOT_DIVERGENCE` **before any ledger mutation**. This catches the rolling window
   recomputing history under us.
-- **Crash-safe write order:** within a run the bar accounting rows (fills/trades/funding/
-  positions/equity) are committed **before** the consumed-signal snapshot for that bar, and
-  the `paper_position_state.json` watermark is written **last** as the commit marker.
-  Therefore a committed snapshot always implies its equity/ledger rows exist (no orphan
-  snapshot can report success), and a crash before the state write leaves the watermark
-  un-advanced so the next run reprocesses and idempotently completes the bar.
-- **Reconcile orphan guard:** `reconcile` fails if any snapshot's `bar_ts` has no equity row
-  (orphan), in addition to requiring every equity bar to have a snapshot.
+- **Bar-level commit identity (atomicity):**
+  `bar_commit_id = sha256(full consumed row + bar_ts + engine_version + config_hash)[:16]`.
+  **Every** artifact written for a bar — the frozen snapshot **and** that bar's
+  fills/trades/funding/positions/equity — carries the same `bar_commit_id`. Reconcile requires
+  all rows for a processed bar to **agree** on it, so a partial bar (e.g. stale fills retained
+  from a now-recomputed source row across a crash) can never reconcile clean against changed
+  source evidence.
+- **Crash-safe write order (snapshot-first):** within a run the immutable consumed-signal
+  snapshot for a bar is frozen **first** (it carries the `bar_commit_id` and the full source
+  digest), **then** the bar accounting rows that must agree with it, and the
+  `paper_position_state.json` watermark is written **last** as the commit marker. Therefore:
+  - a bar can never have fills/trades/equity **without** a matching immutable snapshot for the
+    exact consumed row (the snapshot precedes them);
+  - a crash **after** the snapshot but **before** the accounting rows leaves an orphan snapshot
+    with no equity, which reconcile fails on loudly — and because the snapshot is already
+    frozen, if the rolling observer then recomputes that bar the next run's divergence gate
+    **aborts** instead of continuing;
+  - a crash before the state write leaves the watermark un-advanced, so the next run
+    reprocesses and idempotently completes the bar (no duplicate rows).
+- **Reconcile orphan / partial-bar guards:** `reconcile` fails if any snapshot's `bar_ts` has
+  no equity row (orphan), if any equity bar has no snapshot, if **any** accounting row
+  (fill/trade/funding/positions/equity) references a `bar_ts` with no frozen snapshot
+  (orphan/partial bar), or if any row's `bar_commit_id` disagrees with its snapshot.
 
 ## 11. Funding accrual (actual rows over the held interval)
 
