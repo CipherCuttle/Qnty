@@ -15,23 +15,72 @@ from quantbot.paper.ledger import LedgerCorruptionError
 
 EPS = 1e-6
 
-# Every append-only JSONL ledger that must be readable before a run may proceed (Blocker 2/3).
-LEDGER_JSONL_FILES = (
-    "paper_fills.jsonl",
-    "paper_trades.jsonl",
-    "paper_funding.jsonl",
-    "paper_positions.jsonl",
-    "paper_equity.jsonl",
-    "paper_signal_snapshots.jsonl",
-)
+# Per-artifact required-field + numeric-field contract for every append-only JSONL ledger
+# (Blocker 2). Each row must be an object (read_jsonl), contain all required fields, and have
+# finite numbers in the numeric fields — otherwise the row is malformed/partial and fails
+# closed as CORRUPT_LEDGER instead of KeyError'ing/TypeError'ing in the checks below. The
+# fields mirror what the engine emits (quantbot/paper/engine.py) and what reconcile / the
+# summary / the receipt index without `.get`. bar_commit_id well-formedness (16-hex) is left
+# to the structural pass so it reports a per-row message; its mere presence is required here.
+LEDGER_JSONL_SCHEMAS: dict[str, dict[str, tuple[str, ...]]] = {
+    "paper_fills.jsonl": {
+        "required": (
+            "fill_id", "bar_commit_id", "signal_bar_ts", "fill_ts", "symbol",
+            "side", "kind", "qty", "fill_price",
+        ),
+        "numeric": ("qty", "fill_price"),
+    },
+    "paper_trades.jsonl": {
+        "required": (
+            "trade_id", "bar_commit_id", "symbol", "entry_fill_id", "exit_fill_id",
+            "entry_bar_ts", "exit_bar_ts", "qty", "entry_price", "exit_price",
+            "gross_pnl", "fees", "funding", "net_pnl", "hold_bars",
+        ),
+        "numeric": (
+            "qty", "entry_price", "exit_price", "gross_pnl", "fees", "funding",
+            "net_pnl", "hold_bars",
+        ),
+    },
+    "paper_funding.jsonl": {
+        "required": (
+            "funding_id", "bar_ts", "bar_commit_id", "symbol", "window_start",
+            "window_end", "notional_usd", "funding_rate", "rate_available", "funding_amount",
+        ),
+        "numeric": ("notional_usd", "funding_rate", "funding_amount"),
+    },
+    "paper_positions.jsonl": {
+        "required": ("bar_ts", "bar_commit_id", "open_symbols", "num_open", "gross_exposure_usd"),
+        "numeric": ("num_open", "gross_exposure_usd"),
+    },
+    "paper_equity.jsonl": {
+        "required": (
+            "bar_ts", "bar_commit_id", "realized_gross_pnl", "unrealized_pnl",
+            "funding_cum", "fees_cum", "equity", "drawdown", "num_open",
+        ),
+        "numeric": (
+            "realized_gross_pnl", "unrealized_pnl", "funding_cum", "fees_cum",
+            "equity", "drawdown", "num_open",
+        ),
+    },
+    "paper_signal_snapshots.jsonl": {
+        "required": ("snapshot_id", "bar_ts", "bar_commit_id", "source_observation_digest"),
+        "numeric": (),
+    },
+}
 
-# Persisted JSON-OBJECT artifacts (not JSONL) that must parse and be objects before a run may
-# proceed. A malformed summary or position-state file must fail closed as CORRUPT_LEDGER, not
-# traceback as a bare JSONDecodeError (Blocker 2).
-LEDGER_JSON_OBJECT_FILES = (
-    "paper_pnl_summary.json",
-    "paper_position_state.json",
-)
+# Every append-only JSONL ledger that must be readable before a run may proceed (Blocker 2/3).
+LEDGER_JSONL_FILES = tuple(LEDGER_JSONL_SCHEMAS)
+
+
+def _read_ledger_validated(output_dir: Path, fname: str) -> list[dict[str, Any]]:
+    """Read one JSONL ledger with parse + shape validation (fails closed, Blocker 2)."""
+    spec = LEDGER_JSONL_SCHEMAS[fname]
+    return ledger.read_jsonl_validated(
+        output_dir / fname,
+        name=fname,
+        required=spec["required"],
+        numeric=spec["numeric"],
+    )
 
 # bar_commit_id = sha256(...)[:16] (see quantbot/paper/snapshots.py) -> 16 lowercase hex
 # chars. A missing/null/empty/malformed id must never be accepted (Blocker 2).
@@ -72,19 +121,27 @@ def check_existing_ledgers(output_dir: Path) -> list[str]:
     """
     failures: list[str] = []
     # 1. Parse + shape integrity first: an unreadable/wrong-shape artifact can't be reconciled.
-    #    Every JSONL row must be an object and every JSON artifact must be an object; invalid
-    #    UTF-8 / JSON / a non-object row or summary all fail closed here (Blocker 2). If ANY
-    #    artifact is corrupt we stop (do not attempt structural reconcile over partial reads).
+    #    Every JSONL row must be an object AND carry its required fields with finite numerics;
+    #    the summary and position-state files must be objects of the right shape. Invalid UTF-8 /
+    #    JSON / a non-object row, a structurally malformed/partial row (e.g. `{}`), a `{}`/partial
+    #    summary or state all fail closed here (Blocker 2). If ANY artifact is corrupt we stop
+    #    (do not attempt structural reconcile over partial reads).
     for fname in LEDGER_JSONL_FILES:
         try:
-            ledger.read_jsonl(output_dir / fname)
+            _read_ledger_validated(output_dir, fname)
         except LedgerCorruptionError as exc:
             failures.append(str(exc))
-    for fname in LEDGER_JSON_OBJECT_FILES:
-        try:
-            ledger.read_json_obj(output_dir / fname, default={})
-        except LedgerCorruptionError as exc:
-            failures.append(str(exc))
+    # Summary: absent -> {} (first run); present-but-`{}`/unknown-status/wrong-typed -> corrupt.
+    try:
+        ledger.read_summary_obj(output_dir / "paper_pnl_summary.json")
+    except LedgerCorruptionError as exc:
+        failures.append(str(exc))
+    # State: absent -> None (first run); present-but-`{}`/partial -> corrupt (never silently
+    # reinitialized).
+    try:
+        ledger.read_state_obj(output_dir / "paper_position_state.json")
+    except LedgerCorruptionError as exc:
+        failures.append(str(exc))
     if failures:
         return failures
     # 2. Structural reconcile over the existing rows (all artifacts parsed cleanly above).
@@ -103,13 +160,13 @@ def reconcile(output_dir: Path) -> list[str]:
     # post-mutation reconcile gate converts it to CORRUPT_LEDGER (exit 4) without a traceback
     # (Blocker 2). reconcile() therefore NEVER raises on corruption.
     try:
-        fills = ledger.read_jsonl(output_dir / "paper_fills.jsonl")
-        trades = ledger.read_jsonl(output_dir / "paper_trades.jsonl")
-        equity = ledger.read_jsonl(output_dir / "paper_equity.jsonl")
-        funding = ledger.read_jsonl(output_dir / "paper_funding.jsonl")
-        positions = ledger.read_jsonl(output_dir / "paper_positions.jsonl")
-        snaps = ledger.read_jsonl(output_dir / "paper_signal_snapshots.jsonl")
-        summary = ledger.read_json_obj(output_dir / "paper_pnl_summary.json", default={})
+        fills = _read_ledger_validated(output_dir, "paper_fills.jsonl")
+        trades = _read_ledger_validated(output_dir, "paper_trades.jsonl")
+        equity = _read_ledger_validated(output_dir, "paper_equity.jsonl")
+        funding = _read_ledger_validated(output_dir, "paper_funding.jsonl")
+        positions = _read_ledger_validated(output_dir, "paper_positions.jsonl")
+        snaps = _read_ledger_validated(output_dir, "paper_signal_snapshots.jsonl")
+        summary = ledger.read_summary_obj(output_dir / "paper_pnl_summary.json")
     except LedgerCorruptionError as exc:
         return [str(exc)]
 

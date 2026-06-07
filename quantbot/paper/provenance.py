@@ -93,6 +93,38 @@ def compute_summary(
     }
 
 
+def running_summary(
+    config: dict[str, Any],
+    run_id: str,
+    started_at: str,
+    previous_watermark: str,
+) -> dict[str, Any]:
+    """Authoritative in-flight RUN marker, written BEFORE any ledger/snapshot/state mutation.
+
+    This is the run-transaction protocol for the OK path (Blocker 1 / schema doc § 5). The
+    moment a new run begins mutating, `paper_pnl_summary.json` is overwritten atomically with
+    `status: RUNNING`, so a stale previous `OK` summary can NEVER remain visible as current
+    truth while the new run is in flight or after it fails part-way through publication. Only
+    after the state/watermark is written and the full evidence bundle is on disk is this marker
+    replaced by the final `OK` summary (the commit marker). A RUNNING summary that outlives one
+    timer interval signals a crashed/incomplete run for operator review.
+    """
+    return {
+        "schema_version": config["schema_version"],
+        "status": "RUNNING",
+        "baseline_label": config.get("baseline_label", BASELINE_LABEL),
+        "forward_start_ts": config["forward_start_ts"],
+        "run_id": run_id,
+        "started_at": started_at,
+        "previous_watermark": previous_watermark,
+        "current_verdict": (
+            "RUNNING — run in flight; ledger mutation started, final OK not yet committed. "
+            "A stale OK (if any) has been superseded by this marker."
+        ),
+        "disclaimer": DISCLAIMER,
+    }
+
+
 def aborted_summary(config: dict[str, Any], code: str, reason: str) -> dict[str, Any]:
     """Summary written when a run aborts at the freshness/divergence gate.
 

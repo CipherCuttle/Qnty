@@ -128,17 +128,34 @@ exit code. **`exit 0` is NOT proof a normal accounting run happened** — it cov
 `OK` run *and* a healthy `NO_ELIGIBLE_BARS_YET` no-op. Always read the summary `status` /
 journald log, never the exit code alone:
 
+**`paper_pnl_summary.json` is the single authoritative current-run status** (the run
+transaction). Before a run mutates anything (after config + the pre-run health/freshness/
+divergence gates pass) it overwrites the summary atomically with `status: RUNNING`; the **final
+`OK` summary write is the single commit marker**, written **after** the state/watermark. A stale
+previous `OK` can therefore never remain visible once a new run starts mutating, and no false
+`OK` can survive a failed state/publication step. Read this file's `status`, not `exit 0` alone.
+
 | `status` | exit | meaning | writes |
 | --- | --- | --- | --- |
-| `OK` | `0` | completed accounting: freshness + config + existing-ledger health + post-mutation reconcile all passed, **and the full OK evidence bundle published** (provenance + receipt + summary, with the `OK` summary written **last** via atomic rename). An `OK` summary therefore proves the whole bundle exists, never a partial/standalone summary. The watermark advanced (strictly-last mutation). | full ledger rows + state + summary/receipt/provenance |
+| `OK` | `0` | completed accounting: freshness + config + existing-ledger health + post-mutation reconcile all passed, the state/watermark advanced, **and the full evidence bundle published** (provenance + receipt + state, then the `OK` summary **last** as the commit marker). The `OK` summary is the final commit marker: it appears only after provenance + receipt + state are already on disk, so it proves the whole bundle exists. | full ledger rows + state + summary/receipt/provenance |
+| `RUNNING` | (in flight; CLI returns `2` if it ever **returns** RUNNING) | **transaction in flight** — the authoritative marker written before any mutation, superseding any prior `OK`. A clean run replaces it with `OK` within the same invocation. A `RUNNING` summary **left on disk** means a run crashed/was killed mid-commit: the state may or may not have advanced, but **no OK was committed**. | `RUNNING` summary only (overwrites prior summary) |
 | `NO_ELIGIBLE_BARS_YET` | `0` | **healthy no-op** — observer output is clean/fresh/on-grid and the existing ledgers reconcile, but no bar has reached `forward_start_ts` yet. NOT a FLAT/zero result. | summary/receipt/provenance only; **no** ledger rows, **no** state/watermark |
 | `ABORTED` | `2` | freshness/divergence gate abort (config valid, observer output stale/missing/malformed/diverged). | clearly-marked `ABORTED` summary/receipt/provenance; **no** fills/trades/equity |
-| `CONFIG_ERROR` (`ConfigContractError`) | `3` | the `paper_config.json` that *defines* the output contract is itself stale/malformed (old `0.1.0`, wrong `schema_version`/`engine_version`/`baseline_label`, missing/non-finite `freshness`, bad JSON, or hash mismatch). Clean operator message + archive/re-init guidance, **no Python traceback**. | **nothing** — no ledger/state/summary/provenance/receipt |
-| `CORRUPT_LEDGER` | `4` | a persisted artifact failed closed: an existing ledger is unreadable (**invalid UTF-8, invalid JSON, or a valid-JSON non-object row such as `[]`/`123`**), a **malformed/non-object `paper_pnl_summary.json` or `paper_position_state.json`**, **or** a reconcile invariant fails (orphan fill/snapshot, disagreeing `bar_commit_id`, partial bar). Caught either on the **pre-run existing-ledger health gate** (before any new mutation, no-op, or divergence abort) **or** the **post-mutation reconcile**. No traceback. The watermark is **NOT** advanced and **no** `OK` is published. | `CORRUPT_LEDGER` summary/receipt/provenance surfacing the reconcile failures; **no** new ledger rows, **no** state |
+| `CONFIG_ERROR` (`ConfigContractError`) | `3` | the `paper_config.json` that *defines* the output contract is itself **missing**, stale, or malformed (not found, invalid UTF-8, bad JSON, old `0.1.0`, wrong `schema_version`/`engine_version`/`baseline_label`, a `bool` where an int/number is required — incl. `schema_version: true`, missing/non-finite `freshness`, or hash mismatch). Clean operator message + init/archive/re-init guidance, **no Python traceback**. | **nothing** — no ledger/state/summary/provenance/receipt |
+| `CORRUPT_LEDGER` | `4` | a persisted artifact failed closed: an existing ledger is unreadable (**invalid UTF-8, invalid JSON, or a valid-JSON non-object row such as `[]`/`123`/`"x"`**), **structurally malformed/partial** (a `{}` JSONL row or one missing required fields / with a non-finite numeric), a **`{}`/malformed/non-object/wrong-typed `paper_pnl_summary.json`**, a **`{}`/partial/malformed `paper_position_state.json`** (`{}` is corrupt, **not** treated as absent), **or** a reconcile invariant fails (orphan fill/snapshot, disagreeing `bar_commit_id`, partial bar). Caught either on the **pre-run existing-ledger health gate** (before any new mutation, no-op, or divergence abort) **or** the **post-mutation reconcile**. No traceback. The watermark is **NOT** advanced and **no** `OK` is published. | `CORRUPT_LEDGER` summary/receipt/provenance surfacing the reconcile failures; **no** new ledger rows, **no** state |
 
 So: `exit 0` = `OK` run **or** healthy `NO_ELIGIBLE_BARS_YET` no-op (read the status) · `exit 2`
-= gate-aborted with an `ABORTED` summary · `exit 3` = stale/malformed-config abort with **no**
-writes (re-init required) · `exit 4` = `CORRUPT_LEDGER`.
+= gate-aborted with an `ABORTED` summary (or a RUNNING/unknown status the CLI refuses to call
+complete) · `exit 3` = missing/stale/malformed-config abort with **no** writes (init/re-init
+required) · `exit 4` = `CORRUPT_LEDGER`.
+
+**A `RUNNING` summary older than one timer interval is an operator-action stop.** It means a run
+crashed or was killed mid-commit and never reached the final `OK` commit marker. The next timer
+firing normally supersedes it (it re-runs the publication and self-heals: if no new bars remain
+it republishes `OK`, otherwise it reprocesses the un-watermarked batch idempotently). If a
+`RUNNING` status persists across more than one interval, the timer is not firing or the run is
+failing repeatedly — **pause the paper timer** and review journald + `paper_pnl_summary.json`
+before any further run. Never hand-edit ledgers on the VM; capture the artifacts for off-VM review.
 
 **`CORRUPT_LEDGER` (exit 4) is an operator-action stop, not a transient.** It means the
 persisted ledger is partial/unreadable. **Pause the paper timer** (`systemctl stop

@@ -678,9 +678,18 @@ def test_orphan_snapshot_detected_by_reconcile(tmp_path):
     out, _, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
     assert reconcile(out) == []  # clean baseline
     orphan_ts = "2026-06-07T00:00:00"
+    # A STRUCTURALLY-COMPLETE snapshot (all required fields) that is genuinely orphaned (no
+    # equity row). This isolates the orphan-detection invariant from the shape validator
+    # (Blocker 2): the row is well-formed, so reconcile must still flag it as an orphan.
     ledger.append_rows(
         out / snapshots.SNAPSHOT_FILE,
-        [{"snapshot_id": snapshots.snapshot_id(orphan_ts), "bar_ts": orphan_ts, "backfill": False}],
+        [{
+            "snapshot_id": snapshots.snapshot_id(orphan_ts),
+            "bar_ts": orphan_ts,
+            "bar_commit_id": "aaaa0000aaaa0000",
+            "source_observation_digest": "deadbeef" * 8,
+            "backfill": False,
+        }],
     )
     failures = reconcile(out)
     assert any("orphan" in f.lower() for f in failures)
@@ -1703,12 +1712,35 @@ def _setup_ready_to_publish(tmp_path):
     return out, fwd
 
 
-def _assert_clean_failed_publish_then_retry(out, fwd, monkeypatch):
-    """Shared assertions: no false OK, watermark not advanced, ledgers consistent, retry OK."""
-    # No final OK summary was left behind ...
+def _summary_status(out: Path):
+    p = out / "paper_pnl_summary.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text()).get("status")
+    except (json.JSONDecodeError, ValueError):
+        return "UNREADABLE"
+
+
+def _assert_clean_failed_publish_then_retry(out, fwd, monkeypatch, state_should_persist=False):
+    """Shared assertions: no false OK, authoritative status is RUNNING, ledgers consistent, retry OK.
+
+    Chosen invariant (schema doc § 5): paper_pnl_summary.json is the authoritative current
+    status and the FINAL OK summary write is the commit marker. A RUNNING marker is written
+    before any mutation, so a failed publication NEVER leaves a stale/false OK. Depending on
+    where the failure lands, the state/watermark may or may not have been written (it is the
+    second-to-last write, before the OK summary) — `state_should_persist` captures which.
+    """
+    # No final OK summary was left behind; the authoritative status is the RUNNING marker.
     assert not _summary_is_ok(out)
-    # ... and the state/watermark (strictly-last mutation) did not advance.
-    assert not (out / "paper_position_state.json").exists()
+    assert _summary_status(out) == "RUNNING"
+    if state_should_persist:
+        # The failure landed AFTER the state write (only the final OK-summary write can fail
+        # here). State may be ahead, but the visible status is RUNNING, not OK.
+        assert (out / "paper_position_state.json").exists()
+    else:
+        # The failure landed before the state write -> watermark did not advance.
+        assert not (out / "paper_position_state.json").exists()
     # The pre-reconcile ledger rows are on disk and self-consistent (reconcile passes), so the
     # next run can retry safely rather than re-deriving from a corrupt partial.
     assert reconcile(out) == []
@@ -1764,7 +1796,9 @@ def test_failure_during_summary_publication_leaves_no_ok(tmp_path, monkeypatch):
     monkeypatch.setattr(_ledger, "write_bytes_atomic", _boom)
     with pytest.raises(RuntimeError):
         _run(out, fwd)
-    _assert_clean_failed_publish_then_retry(out, fwd, monkeypatch)
+    # The OK summary is the LAST write (the commit marker); state was already written just
+    # before it, so state persists but the visible status is RUNNING, never a false OK.
+    _assert_clean_failed_publish_then_retry(out, fwd, monkeypatch, state_should_persist=True)
 
 
 def test_ok_provenance_pins_published_summary_digest(tmp_path):
@@ -2072,4 +2106,405 @@ def test_cli_nan_equity_config_exits_3_no_traceback_no_writes(tmp_path):
     assert "ABORTED" in proc.stdout
     assert _no_ledger_rows(out)
     assert not (out / "paper_position_state.json").exists()
+    assert not (out / "paper_pnl_summary.json").exists()
+
+
+# ==========================================================================================
+# ADVERSARIAL REGRESSION v5 — Codex reproductions of the 8e9d3cd rejection. The fix replaces
+# "write OK summary last" with an explicit RUN TRANSACTION protocol: paper_pnl_summary.json is
+# the authoritative current status; a RUNNING marker is written before ANY mutation; the final
+# OK summary (written after state) is the single commit marker. A stale/partial OK can never
+# remain visible after a new run starts mutating, and no false OK can survive a failed
+# state/publication step. Plus: every persisted artifact reader validates shape (not just JSON
+# object), and the config loader fails closed on missing/invalid-UTF-8 configs and bool ints.
+# ==========================================================================================
+
+
+# ---- Blocker 1: a stale previous OK must not survive a new mutating run ---------------------
+
+
+def _setup_prev_ok_then_new_bars(tmp_path):
+    """Run 1 -> a real OK with watermark advanced; then stage run 2 with NEW bars to process.
+
+    Run 2 will mutate the ledger, so it exercises the run-transaction marker against an
+    ALREADY-PRESENT OK summary (the exact second-run case Codex flagged).
+    """
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
+    # run 1: only the first 4 bars are visible -> entry T1/exit T3 close, OK, watermark = T3.
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], []]))
+    s1 = _run(out, fwd)
+    assert s1["status"] == "OK"
+    assert _summary_is_ok(out)
+    # run 2: the full 6-bar observation introduces new bars (T4, T5) -> the next run mutates.
+    _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
+    return out, fwd
+
+
+def _assert_prev_ok_failed_then_retry(out, fwd, monkeypatch, *, watermark_advances):
+    """Prev-OK case: run 1 left a state file, so assert the watermark didn't advance (rather
+    than the file being absent), confirm the visible status is RUNNING (not the old OK), then
+    confirm a clean retry to OK."""
+    assert not _summary_is_ok(out)
+    assert _summary_status(out) == "RUNNING"
+    state_now = json.loads((out / "paper_position_state.json").read_text())
+    if watermark_advances:
+        # summary-write failure lands AFTER the state write -> watermark advanced to the batch end
+        assert state_now["watermark_bar_ts"] == TS[5]
+    else:
+        # provenance/receipt failure lands BEFORE the state write -> watermark still at run 1's T3
+        assert state_now["watermark_bar_ts"] == TS[3]
+    assert reconcile(out) == []
+    monkeypatch.undo()
+    summary = _run(out, fwd)
+    assert summary["status"] == "OK"
+    assert _summary_is_ok(out)
+    assert reconcile(out) == []
+    assert json.loads((out / "paper_position_state.json").read_text())["watermark_bar_ts"] == TS[5]
+
+
+def test_prev_ok_then_provenance_fail_not_stale_ok(tmp_path, monkeypatch):
+    from quantbot.paper import provenance as _prov
+
+    out, fwd = _setup_prev_ok_then_new_bars(tmp_path)
+
+    def _boom(*a, **k):
+        raise RuntimeError("injected provenance failure on the second (mutating) run")
+
+    monkeypatch.setattr(_prov, "build_provenance", _boom)
+    with pytest.raises(RuntimeError):
+        _run(out, fwd)
+    # the previously-visible OK is GONE — superseded by the RUNNING marker before mutation
+    _assert_prev_ok_failed_then_retry(out, fwd, monkeypatch, watermark_advances=False)
+
+
+def test_prev_ok_then_receipt_fail_not_stale_ok(tmp_path, monkeypatch):
+    from quantbot.paper import provenance as _prov
+
+    out, fwd = _setup_prev_ok_then_new_bars(tmp_path)
+
+    def _boom(*a, **k):
+        raise RuntimeError("injected receipt failure on the second (mutating) run")
+
+    monkeypatch.setattr(_prov, "render_receipt", _boom)
+    with pytest.raises(RuntimeError):
+        _run(out, fwd)
+    _assert_prev_ok_failed_then_retry(out, fwd, monkeypatch, watermark_advances=False)
+
+
+def test_prev_ok_then_summary_write_fail_not_stale_ok(tmp_path, monkeypatch):
+    out, fwd = _setup_prev_ok_then_new_bars(tmp_path)
+
+    def _boom(*a, **k):
+        raise RuntimeError("injected final summary-write failure on the second run")
+
+    monkeypatch.setattr(_ledger, "write_bytes_atomic", _boom)
+    with pytest.raises(RuntimeError):
+        _run(out, fwd)
+    # state was written just before the (failed) OK summary, but the visible status is RUNNING
+    _assert_prev_ok_failed_then_retry(out, fwd, monkeypatch, watermark_advances=True)
+
+
+def test_state_write_failure_cannot_leave_summary_provenance_receipt_ok(tmp_path, monkeypatch):
+    # State is the second-to-last write (before the OK summary commit marker). If it fails, the
+    # OK summary is never written -> the authoritative status is RUNNING, not a false OK, even
+    # though provenance.json/receipt.md are already on disk.
+    out, fwd = _setup_ready_to_publish(tmp_path)
+
+    real_write_json = _ledger.write_json_atomic
+
+    def _selective(path, obj):
+        if Path(path).name == "paper_position_state.json":
+            raise RuntimeError("injected state-write failure")
+        return real_write_json(path, obj)
+
+    monkeypatch.setattr(_ledger, "write_json_atomic", _selective)
+    with pytest.raises(RuntimeError):
+        _run(out, fwd)
+    # provenance + receipt may be on disk and say OK, but the authoritative summary is RUNNING.
+    assert not _summary_is_ok(out)
+    assert _summary_status(out) == "RUNNING"
+    assert not (out / "paper_position_state.json").exists()  # the state write failed
+    # retry self-heals
+    monkeypatch.undo()
+    summary = _run(out, fwd)
+    assert summary["status"] == "OK"
+    assert _summary_is_ok(out)
+    assert reconcile(out) == []
+
+
+def test_retry_after_running_status_completes(tmp_path):
+    # A leftover RUNNING marker (from a crashed prior run) must not block a clean retry: the
+    # next run supersedes it and commits a real OK.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert _summary_is_ok(out)
+    # simulate a crash that left a RUNNING marker as the last-written status
+    from quantbot.paper import provenance as _prov
+    cfg = load_config(out)
+    running = _prov.running_summary(cfg, "deadbeefrun", "2026-06-06T16:00:00Z", "")
+    _ledger.write_json_atomic(out / "paper_pnl_summary.json", running)
+    assert _summary_status(out) == "RUNNING"
+    # retry -> OK (no new bars to process; the publication re-runs and self-heals)
+    summary = _run(out, fwd)
+    assert summary["status"] == "OK"
+    assert _summary_is_ok(out)
+    assert reconcile(out) == []
+
+
+def test_retry_after_running_status_can_fail_closed(tmp_path):
+    # A RUNNING marker PLUS a corrupt ledger must fail closed (CORRUPT_LEDGER), never silently
+    # complete as OK.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    from quantbot.paper import provenance as _prov
+    cfg = load_config(out)
+    running = _prov.running_summary(cfg, "deadbeefrun", "2026-06-06T16:00:00Z", "")
+    _ledger.write_json_atomic(out / "paper_pnl_summary.json", running)
+    with open(out / "paper_equity.jsonl", "a", encoding="utf-8") as fh:
+        fh.write("{}\n")  # structurally malformed row
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+
+
+def test_cli_running_status_does_not_print_run_complete(tmp_path, capsys):
+    # The CLI must NOT print "run complete" / exit 0 when the authoritative status is RUNNING.
+    import importlib.util
+
+    repo_root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "qnty_paper_accounting_cli", repo_root / "scripts" / "qnty-paper-accounting.py"
+    )
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    out.mkdir(parents=True)
+    fwd.mkdir(parents=True, exist_ok=True)
+
+    def _fake_run_once(**kwargs):
+        return {
+            "status": "RUNNING",
+            "forward_start_ts": TS[0],
+            "current_verdict": "RUNNING — run in flight",
+        }
+
+    cli.run_once = _fake_run_once
+    rc = cli.main(["--output-dir", str(out), "--forward-obs-dir", str(fwd)])
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert rc == 2
+    assert "run complete" not in captured.out
+    assert "did NOT complete" in captured.out
+
+
+# ---- Blocker 2: empty-object / malformed-shape persisted artifacts fail closed --------------
+
+
+@pytest.mark.parametrize("ledger_name", _RUNNER_READ_JSONL)
+def test_empty_object_jsonl_row_is_corrupt_ledger(tmp_path, ledger_name):
+    # EXACT Codex case: a `{}` row in fills/trades/equity/funding/positions/snapshots previously
+    # KeyError'd in reconcile. It must fail closed as CORRUPT_LEDGER, before any new mutation.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    assert reconcile(out) == []
+    state_before = json.loads((out / "paper_position_state.json").read_text())
+    with open(out / ledger_name, "a", encoding="utf-8") as fh:
+        fh.write("{}\n")  # valid JSON object, but structurally empty (no required fields)
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any(ledger_name in f for f in summary.get("reconcile_failures", []))
+    assert json.loads((out / "paper_position_state.json").read_text()) == state_before
+
+
+@pytest.mark.parametrize("ledger_name", _RUNNER_READ_JSONL)
+def test_string_jsonl_row_is_corrupt_ledger(tmp_path, ledger_name):
+    # A bare JSON string row (`"x"`) is valid JSON but not an object -> fail closed.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    with open(out / ledger_name, "a", encoding="utf-8") as fh:
+        fh.write('"x"\n')
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+
+
+def test_malformed_summary_field_type_is_corrupt_ledger(tmp_path):
+    # EXACT Codex case: an OK summary with a wrong-typed numeric field (closed_trades="bad")
+    # previously TypeError'd. It must fail closed as CORRUPT_LEDGER on the health gate.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    summ = json.loads((out / "paper_pnl_summary.json").read_text())
+    summ["closed_trades"] = "bad"  # wrong type for an OK summary
+    (out / "paper_pnl_summary.json").write_text(json.dumps(summ), encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any("paper_pnl_summary.json" in f for f in summary.get("reconcile_failures", []))
+
+
+def test_empty_object_summary_is_corrupt_ledger(tmp_path):
+    # EXACT Codex case: a `{}` summary was silently overwritten with OK. It must fail closed.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    (out / "paper_pnl_summary.json").write_text("{}\n", encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any("paper_pnl_summary.json" in f for f in summary.get("reconcile_failures", []))
+
+
+def test_empty_object_state_is_corrupt_ledger(tmp_path):
+    # EXACT Codex case: a `{}` state was silently treated as absent and reinitialized. It must
+    # fail closed (`{}` is corrupt, not absent).
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    (out / "paper_position_state.json").write_text("{}\n", encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any("paper_position_state.json" in f for f in summary.get("reconcile_failures", []))
+
+
+def test_partial_state_is_corrupt_ledger(tmp_path):
+    # EXACT Codex case: a partial state (missing accumulators) previously KeyError'd in the
+    # engine. It must fail closed as CORRUPT_LEDGER.
+    out, fwd, _ = _setup(tmp_path, [[], ["AAA"], ["AAA"], [], [], []])
+    partial = {"watermark_bar_ts": TS[2], "open_positions": {}}  # missing accumulators/peak/etc.
+    (out / "paper_position_state.json").write_text(json.dumps(partial), encoding="utf-8")
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert any("paper_position_state.json" in f for f in summary.get("reconcile_failures", []))
+
+
+def test_empty_object_row_no_traceback_no_writes_cli(tmp_path):
+    # End-to-end: a `{}` ledger row must exit 4 with no traceback and no new state.
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    fwd.mkdir(parents=True, exist_ok=True)
+    bars = _recent_grid_bars(3)
+    write_config_once(build_config(forward_start_ts=bars[0]), output_dir=out)
+    (out / "paper_equity.jsonl").write_text("{}\n", encoding="utf-8")
+    rows = [_obs_row(b, ["AAA"], i) for i, b in enumerate(bars)]
+    (fwd / "observation_log.json").write_text(json.dumps({"per_bar_obs": rows}), encoding="utf-8")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 4, (proc.returncode, proc.stdout, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert "CORRUPT_LEDGER" in proc.stdout
+    assert not (out / "paper_position_state.json").exists()
+
+
+# ---- Blocker 3: config loader fails closed on missing/UTF-8/bool-int faults ----------------
+
+
+def test_config_missing_file_raises_config_contract_error(tmp_path):
+    # EXACT Codex case: a missing config previously exited 1 with a FileNotFoundError traceback.
+    out = tmp_path / "paper"
+    out.mkdir(parents=True)
+    with pytest.raises(ConfigContractError):
+        load_config(out)
+
+
+def test_config_invalid_utf8_raises_config_contract_error(tmp_path):
+    # EXACT Codex case: invalid UTF-8 config bytes previously exited 1 (UnicodeDecodeError).
+    out = tmp_path / "paper"
+    out.mkdir(parents=True)
+    (out / "paper_config.json").write_bytes(b"\xff\xfe not valid utf-8")
+    with pytest.raises(ConfigContractError):
+        load_config(out)
+
+
+def test_config_schema_version_true_rejected(tmp_path):
+    # EXACT Codex case: a correctly-hashed `schema_version: true` was accepted because bool
+    # passes the int check AND `True == 1`. It must be rejected.
+    def m(c):
+        c["schema_version"] = True
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_engine_version_non_string_rejected(tmp_path):
+    def m(c):
+        c["engine_version"] = 123
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_config_baseline_label_non_string_rejected(tmp_path):
+    def m(c):
+        c["baseline_label"] = 123
+    _write_hashed_config(tmp_path / "paper", m)
+    with pytest.raises(ConfigContractError):
+        load_config(tmp_path / "paper")
+
+
+def test_cli_missing_config_exits_3_no_traceback(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    out.mkdir(parents=True)
+    fwd.mkdir(parents=True, exist_ok=True)  # no paper_config.json written
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 3, (proc.returncode, proc.stdout, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert "ABORTED" in proc.stdout
+    assert _no_ledger_rows(out)
+    assert not (out / "paper_pnl_summary.json").exists()
+
+
+def test_cli_invalid_utf8_config_exits_3_no_traceback(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "paper"
+    fwd = tmp_path / "fwd"
+    out.mkdir(parents=True)
+    fwd.mkdir(parents=True, exist_ok=True)
+    (out / "paper_config.json").write_bytes(b"\xff\xfe not valid utf-8")
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+            "--output-dir", str(out),
+            "--forward-obs-dir", str(fwd),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode == 3, (proc.returncode, proc.stdout, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert "ABORTED" in proc.stdout
+    assert _no_ledger_rows(out)
     assert not (out / "paper_pnl_summary.json").exists()

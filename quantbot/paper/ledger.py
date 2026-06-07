@@ -7,10 +7,19 @@ Prior rows are never rewritten (see docs/paper_pnl_v1_schema.md section 5).
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
+
+# Authoritative current-run status values (schema doc § 5). RUNNING is the transient
+# in-flight marker written before any mutation; OK is the final commit marker. Every other
+# value is a terminal non-OK status. A persisted summary whose `status` is not one of these
+# is corrupt (Blocker 2).
+KNOWN_SUMMARY_STATUSES = frozenset(
+    {"OK", "RUNNING", "ABORTED", "CORRUPT_LEDGER", "NO_ELIGIBLE_BARS_YET"}
+)
 
 
 class LedgerCorruptionError(ValueError):
@@ -95,6 +104,167 @@ def read_json_obj(path: Path, default: Any = None) -> Any:
             f"{path.name} is valid JSON but not an object (got {type(obj).__name__}); "
             f"refusing to read a corrupt artifact"
         )
+    return obj
+
+
+def _finite_number(v: Any) -> bool:
+    """True iff v is a finite int/float (NOT bool; NaN/inf/-inf/str rejected)."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def read_jsonl_validated(
+    path: Path,
+    *,
+    name: str,
+    required: Sequence[str],
+    numeric: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    """Read a JSONL ledger and validate parse AND shape, failing CLOSED (Blocker 2).
+
+    On top of read_jsonl's dict-ness guarantee, every row must contain all `required` fields
+    and every `numeric` field must be a finite number (not bool/NaN/inf/str). A structurally
+    malformed row — e.g. an empty object ``{}`` (which would later KeyError in reconcile) or a
+    string/NaN where a number is needed (which would later TypeError) — raises
+    LedgerCorruptionError instead. The runner/health-gate convert this to CORRUPT_LEDGER
+    (exit 4) with no traceback. Well-formedness of bar_commit_id (16-hex) is intentionally
+    left to reconcile's structural pass so it can report a per-row message.
+    """
+    rows = read_jsonl(path)
+    for lineno, row in enumerate(rows, start=1):
+        missing = [f for f in required if f not in row]
+        if missing:
+            raise LedgerCorruptionError(
+                f"{name}: row {lineno} is missing required field(s) {missing} "
+                f"(malformed/partial ledger row); refusing to read a corrupt ledger"
+            )
+        for f in numeric:
+            if not _finite_number(row.get(f)):
+                raise LedgerCorruptionError(
+                    f"{name}: row {lineno} field {f!r} must be a finite number "
+                    f"(got {row.get(f)!r}); refusing to read a corrupt ledger"
+                )
+    return rows
+
+
+def validate_summary_shape(summary: dict[str, Any], *, name: str = "paper_pnl_summary.json") -> None:
+    """Fail CLOSED on a structurally malformed persisted summary (Blocker 2).
+
+    A persisted summary that parses to an object but is empty (``{}``), carries an unknown
+    `status`, or — for an `OK` summary — has wrong-typed numeric fields would otherwise be
+    silently overwritten with a fresh OK or TypeError deep in reconcile/CLI. Validate the
+    shape here so it surfaces as CORRUPT_LEDGER. Raises LedgerCorruptionError.
+    """
+    status = summary.get("status")
+    if status not in KNOWN_SUMMARY_STATUSES:
+        raise LedgerCorruptionError(
+            f"{name}: status {status!r} is missing/unknown (expected one of "
+            f"{sorted(KNOWN_SUMMARY_STATUSES)}); refusing to read a corrupt summary"
+        )
+    sv = summary.get("schema_version")
+    if isinstance(sv, bool) or not isinstance(sv, int):
+        raise LedgerCorruptionError(
+            f"{name}: schema_version must be an int (got {sv!r}); corrupt summary"
+        )
+    if not isinstance(summary.get("baseline_label"), str):
+        raise LedgerCorruptionError(
+            f"{name}: baseline_label must be a string; corrupt summary"
+        )
+    if not isinstance(summary.get("forward_start_ts"), str):
+        raise LedgerCorruptionError(
+            f"{name}: forward_start_ts must be a string; corrupt summary"
+        )
+    if status == "OK":
+        for fld in ("closed_trades", "bars_elapsed", "num_open"):
+            v = summary.get(fld)
+            if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+                raise LedgerCorruptionError(
+                    f"{name}: OK summary field {fld!r} must be a non-negative int "
+                    f"(got {v!r}); corrupt summary"
+                )
+        for fld in ("realized_net_pnl", "total_pnl", "max_drawdown"):
+            if not _finite_number(summary.get(fld)):
+                raise LedgerCorruptionError(
+                    f"{name}: OK summary field {fld!r} must be a finite number "
+                    f"(got {summary.get(fld)!r}); corrupt summary"
+                )
+        # winrate/profit_factor/expectancy are null until closed_trades > 0; if present and
+        # non-null they must be finite numbers.
+        for fld in ("winrate", "profit_factor", "expectancy"):
+            v = summary.get(fld)
+            if v is not None and not _finite_number(v):
+                raise LedgerCorruptionError(
+                    f"{name}: OK summary field {fld!r} must be null or a finite number "
+                    f"(got {v!r}); corrupt summary"
+                )
+
+
+def read_summary_obj(path: Path) -> dict[str, Any]:
+    """Read + shape-validate the persisted summary. Absent file -> ``{}`` (Blocker 2).
+
+    Distinguishes an absent summary (first run, returns ``{}``) from an on-disk empty object
+    ``{}`` (corrupt: it parses but has no status). A present file is read via read_json_obj
+    (object-ness fail-closed) then validate_summary_shape.
+    """
+    if not path.exists():
+        return {}
+    obj = read_json_obj(path)
+    validate_summary_shape(obj, name=path.name)
+    return obj
+
+
+# Required shape of paper_position_state.json (engine.new_state). A present-but-empty (`{}`)
+# or partial state must be CORRUPT, not silently reinitialized / KeyError'd later (Blocker 2).
+_STATE_ACCUMULATOR_KEYS = ("realized_gross", "fees_cum", "funding_cum")
+
+
+def validate_state_shape(state: dict[str, Any], *, name: str = "paper_position_state.json") -> None:
+    """Fail CLOSED on a structurally malformed persisted position state (Blocker 2).
+
+    ``{}`` (which ``read_json_obj``+``or new_state`` would silently treat as absent) and a
+    partial state (missing watermark/open_positions/accumulators — which the engine would
+    KeyError on) both raise LedgerCorruptionError.
+    """
+    if "watermark_bar_ts" not in state or not isinstance(state["watermark_bar_ts"], str):
+        raise LedgerCorruptionError(
+            f"{name}: missing/invalid watermark_bar_ts (got "
+            f"{state.get('watermark_bar_ts')!r}); corrupt state — `{{}}` is corrupt, not absent"
+        )
+    if not isinstance(state.get("open_positions"), dict):
+        raise LedgerCorruptionError(
+            f"{name}: open_positions must be an object; corrupt state"
+        )
+    acc = state.get("accumulators")
+    if not isinstance(acc, dict) or any(
+        not _finite_number(acc.get(k)) for k in _STATE_ACCUMULATOR_KEYS
+    ):
+        raise LedgerCorruptionError(
+            f"{name}: accumulators must be an object with finite "
+            f"{list(_STATE_ACCUMULATOR_KEYS)} (got {acc!r}); corrupt state"
+        )
+    if not _finite_number(state.get("peak_equity")):
+        raise LedgerCorruptionError(
+            f"{name}: peak_equity must be a finite number (got {state.get('peak_equity')!r}); "
+            f"corrupt state"
+        )
+    be = state.get("bars_elapsed")
+    if isinstance(be, bool) or not isinstance(be, int) or be < 0:
+        raise LedgerCorruptionError(
+            f"{name}: bars_elapsed must be a non-negative int (got {be!r}); corrupt state"
+        )
+
+
+def read_state_obj(path: Path) -> dict[str, Any] | None:
+    """Read + shape-validate the persisted position state. Absent file -> None (Blocker 2).
+
+    Absent (first run) returns None so the caller initializes a fresh state. A present file is
+    read via read_json_obj (object-ness fail-closed) then validate_state_shape, so a
+    present-but-empty (`{}`) or partial state fails closed as CORRUPT_LEDGER rather than being
+    silently reinitialized or KeyError'd in the engine.
+    """
+    if not path.exists():
+        return None
+    obj = read_json_obj(path)
+    validate_state_shape(obj, name=path.name)
     return obj
 
 

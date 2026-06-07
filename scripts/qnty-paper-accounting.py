@@ -100,6 +100,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  verdict:          {summary.get('current_verdict')}")
         return 0
 
+    # Defensive guard (Blocker 1): only a final `OK` summary is a completed run. RUNNING is the
+    # in-flight transaction marker and any other/unknown status is a failure — never print
+    # "run complete" for them. run_once returns OK on success and the explicit terminal statuses
+    # above otherwise; a RUNNING/unknown return means the run did not commit, so exit non-zero.
+    if status != "OK":
+        print("Paper accounting run did NOT complete (SIMULATION) — no OK commit marker.")
+        print(f"  current status:   {status}")
+        print(f"  forward_start_ts: {summary.get('forward_start_ts')}")
+        print(f"  verdict:          {summary.get('current_verdict')}")
+        if status == "RUNNING":
+            print("  A RUNNING status means a prior run crashed mid-commit; re-run to retry. "
+                  "If it persists beyond one timer interval, operator review is required.")
+        return 2
+
     print("Paper accounting run complete (SIMULATION).")
     print(f"  forward_start_ts: {summary['forward_start_ts']}")
     print(f"  bars elapsed:     {summary['bars_elapsed']}")

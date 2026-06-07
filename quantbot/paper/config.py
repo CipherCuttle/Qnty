@@ -134,8 +134,10 @@ def validate_config_contract(config: dict[str, Any]) -> None:
     # Exact schema match: an unknown/future schema_version (e.g. 2) fails closed unless a
     # migration is intentionally implemented for it. paper_pnl_v1 is pinned to one schema
     # (Blocker 4) — a >= comparison would silently accept a future, unvalidated layout.
+    # bool is rejected explicitly: it is a subclass of int and `True == 1`, so a correctly
+    # hashed `schema_version: true` would otherwise pass `isinstance(int)` AND `!= 1` (Blocker 3).
     schema_v = config.get("schema_version")
-    if not isinstance(schema_v, int) or schema_v != SCHEMA_VERSION:
+    if isinstance(schema_v, bool) or not isinstance(schema_v, int) or schema_v != SCHEMA_VERSION:
         raise ConfigContractError(
             f"paper_config.json schema_version {schema_v!r} != required exact "
             f"{SCHEMA_VERSION}. An unknown/future schema fails closed (no migration is "
@@ -330,14 +332,29 @@ def load_config(output_dir: Path | None = None) -> dict[str, Any]:
     """Load + fully validate the write-once paper config, failing CLOSED on every fault.
 
     Every failure mode raises ConfigContractError (a ValueError) so the CLI can catch a single
-    type and exit cleanly (exit 3) with archive/re-init guidance and NO traceback (Blocker 4):
-    a malformed JSON file, a contract violation (missing fields / wrong schema-engine-baseline /
-    non-finite or out-of-range freshness numbers), and a config_hash mismatch all fail closed.
+    type and exit cleanly (exit 3) with archive/re-init guidance and NO traceback (Blocker 3/4):
+    a MISSING config file, an invalid-UTF-8 file, a malformed JSON file, a contract violation
+    (missing fields / wrong schema-engine-baseline / non-finite or out-of-range numbers), and a
+    config_hash mismatch all fail closed. FileNotFoundError / UnicodeDecodeError / JSONDecodeError
+    are each normalized to ConfigContractError so the CLI never tracebacks / exits 1.
     """
     path = config_path(output_dir)
     try:
-        with open(path, encoding="utf-8") as fh:
-            config = json.load(fh)
+        raw = path.read_bytes()
+    except FileNotFoundError as exc:
+        raise ConfigContractError(
+            f"paper_config.json not found at {path}. Run "
+            f"`python -m quantbot.paper.config --forward-start-ts <FUTURE_UTC_8H_BOUNDARY>` "
+            f"to initialize a fresh write-once config. {_REINIT_HINT}"
+        ) from exc
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ConfigContractError(
+            f"paper_config.json is not valid UTF-8: {exc}. {_REINIT_HINT}"
+        ) from exc
+    try:
+        config = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ConfigContractError(
             f"paper_config.json is not valid JSON: {exc}. {_REINIT_HINT}"

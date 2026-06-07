@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -191,16 +192,32 @@ def run_once(
         funding_df = load_all_funding()
 
     # --- state ---
-    # The existing-ledger health gate above already validated paper_position_state.json as a
-    # JSON object (fail-closed CORRUPT_LEDGER otherwise), so this read cannot traceback on a
-    # corrupt state file; read_json_obj keeps it fail-closed as defence in depth (Blocker 2).
+    # The existing-ledger health gate above already validated paper_position_state.json's
+    # parse AND shape (fail-closed CORRUPT_LEDGER on a `{}`/partial/corrupt state), so this read
+    # cannot traceback or silently reinitialize a malformed state. read_state_obj returns None
+    # ONLY when the file is genuinely absent (first run); a present-but-empty `{}` would have
+    # already failed the health gate (Blocker 2).
     state_path = out / "paper_position_state.json"
-    state = ledger.read_json_obj(state_path, default=None) or new_state(
+    state = ledger.read_state_obj(state_path) or new_state(
         float(config["initial_equity_usd"])
     )
 
     # --- engine ---
     result = run_engine(config, per_bar_obs, bars_by_symbol, funding_df, state)
+
+    # === RUN-TRANSACTION MARKER (Blocker 1) ===========================================
+    # Authoritative current-status protocol: BEFORE any ledger/snapshot/state mutation (and
+    # only after config + the pre-run health/freshness/divergence gates passed), overwrite
+    # paper_pnl_summary.json atomically with `status: RUNNING`. This is the single authoritative
+    # current-run status. A stale previous `OK` summary therefore can NEVER remain visible as
+    # current truth once a new run starts mutating: if any later publication/state step fails,
+    # the visible status is RUNNING (not a false OK). The final `OK` summary (written last, as
+    # the commit marker) is the ONLY thing that flips the visible status back to OK, and only
+    # after the watermark and the full evidence bundle are already on disk.
+    run_id = uuid.uuid4().hex
+    previous_watermark = str(state.get("watermark_bar_ts", "") or "")
+    running = provenance.running_summary(config, run_id, _now_utc_str(), previous_watermark)
+    ledger.write_json_atomic(out / "paper_pnl_summary.json", running)
 
     # --- persist new rows idempotently (ids dedupe overlap) ---
     # CRASH-SAFE ORDER (Blocker 1): the immutable consumed-signal snapshot for a bar is
@@ -253,16 +270,20 @@ def run_once(
 
     # === OK EVIDENCE PUBLICATION PROTOCOL (Blocker 1) =================================
     # A run may NEVER leave a final `status: OK` summary unless the WHOLE OK evidence bundle
-    # (summary + provenance + receipt) was published successfully. To guarantee that:
+    # (provenance + receipt + state/watermark + summary) was published successfully. Chosen
+    # invariant (documented in schema doc § 5): paper_pnl_summary.json is the authoritative
+    # current status, and the FINAL `OK` summary write is the single commit marker. Sequence:
     #   1. Build the entire bundle IN MEMORY first. If any content generation raises, nothing
-    #      is published and (because the state watermark is written last) the next run
-    #      reprocesses the bar batch idempotently and republishes.
+    #      new is published; the on-disk status is still RUNNING (set above) — never a false OK.
     #   2. Serialize the summary to its exact on-disk bytes and pin THAT digest into provenance,
     #      so provenance reflects the new summary even though the summary is written last.
-    #   3. Publish provenance + receipt FIRST (atomic temp+rename), then the OK summary LAST —
-    #      the summary is the marker that the bundle is complete, so an `OK` summary can never
-    #      exist on disk without its provenance/receipt already present. A failure during any
-    #      step leaves no `OK` summary and does not advance the watermark.
+    #   3. Publish provenance + receipt, THEN write the state/watermark, THEN the `OK` summary
+    #      LAST. Writing state BEFORE the final OK summary closes the Codex blocker where a
+    #      state-write failure left an already-OK summary: now if the state write fails, the
+    #      visible status is still RUNNING. If the very last OK-summary write fails, the state
+    #      may be advanced but the visible status is RUNNING (not OK); the next run finds no new
+    #      bars to process, re-runs the publication, and self-heals to OK. In every failure case
+    #      the visible authoritative status is RUNNING/ABORTED/CORRUPT_LEDGER — never stale OK.
     all_trades = ledger.read_jsonl(out / "paper_trades.jsonl")
     all_equity = ledger.read_jsonl(out / "paper_equity.jsonl")
     all_funding = ledger.read_jsonl(out / "paper_funding.jsonl")
@@ -292,21 +313,16 @@ def run_once(
         output_digest_overrides={"paper_pnl_summary.json": summary_digest},
     )
 
-    # --- 3. publish: provenance + receipt FIRST, then the OK summary LAST ---
+    # --- 3. publish: provenance + receipt, then state, then the OK summary LAST ---
     ledger.write_json_atomic(out / "paper_provenance.json", prov)
     ledger.append_rows(out / "paper_provenance_log.jsonl", [prov])
     ledger.write_text_atomic(out / "paper_receipt.md", receipt)
-    # The OK summary is the LAST evidence write — an atomic rename, so the final summary path is
-    # only ever observed as fully-old or the complete OK bundle, never half-written (Blocker 1).
-    ledger.write_bytes_atomic(out / "paper_pnl_summary.json", summary_bytes)
-
-    # state (watermark) is the FINAL mutation — the commit marker for the whole bar batch. It
-    # is written ONLY after reconcile passed AND the full OK bundle (provenance/receipt/summary)
-    # was published successfully (Blocker 1). If any earlier step raises, the watermark is NOT
-    # advanced, so the next run reprocesses the bar batch and idempotently re-publishes the
-    # evidence. (The provenance digest of paper_position_state.json therefore reflects the PRIOR
-    # run's state by one run; this is the deliberate cost of making the watermark the
-    # strictly-last write, and self-heals on the next successful run.)
+    # state (watermark) is written BEFORE the final OK summary so a state-write failure leaves
+    # the visible status at RUNNING (not OK). The OK summary is the single commit marker.
     ledger.write_json_atomic(state_path, state)
+    # The OK summary is the LAST evidence write — an atomic rename, so the final summary path is
+    # only ever observed as fully-old (RUNNING) or the complete OK commit, never half-written.
+    # It supersedes the RUNNING marker only now that state + provenance + receipt are on disk.
+    ledger.write_bytes_atomic(out / "paper_pnl_summary.json", summary_bytes)
 
     return summary
