@@ -18,6 +18,22 @@ from quantbot.paper import ledger
 from quantbot.paper.ledger import LedgerCorruptionError
 
 EPS = 1e-6
+# Re-derivation tolerances (Blocker 4). Every value below is recomputed from the persisted
+# ledgers and compared to the stored value. The stored numbers are rounded (fill_price/8,
+# qty/10, fee/funding/equity/8, drawdown/8), so recomputing from the already-rounded inputs
+# accumulates a few ulp of slack; these tolerances sit comfortably above that while still
+# catching a fabricated fee / gross / funding / drawdown / exposure (the Codex blocker).
+REDERIVE_EPS = 1e-4
+# drawdown is a ratio in [0, 1]; its inputs (equity) are rounded to 8 decimals so the recompute
+# is tight.
+DRAWDOWN_EPS = 1e-6
+# gross_exposure is bounded, not pinned: marks (close prices) are NOT available to the read-only
+# reconcile, so exposure is tied to the equity row's unrealized_pnl plus the open book's entry
+# notionals (exposure - unrealized == Σ entry_notional over the *markable* open positions, which
+# is between 0 and Σ over the *whole* open book). This catches an arbitrarily fabricated exposure
+# without re-deriving marks (documented limitation: a genuine missing mark only shrinks the sum,
+# so the bound never false-positives).
+EXPOSURE_EPS = 1e-2
 # Tolerance for tying the state accumulators to the SUM of the rounded ledger rows. Each ledger
 # value is rounded to 8 decimals, so a long run accumulates a few * n * 5e-9 of slack; 1e-4 is
 # comfortably above that while still catching a tampered accumulator.
@@ -742,7 +758,10 @@ def reconcile(output_dir: Path) -> list[str]:
                 f"fill {f.get('fill_id')} fill_ts {f.get('fill_ts')} < forward_start_ts"
             )
 
-    # --- fill shape ---
+    # --- fill shape + fee re-derivation (Blocker 4) ---
+    # fee = fill_price * qty * fee_bps / 10_000 (engine.run_engine). A fabricated fee that does
+    # not equal this product fails closed instead of being accepted because it is merely >= 0.
+    fee_bps = float(config["fee_model"]["fee_bps"])
     fill_ids = {f["fill_id"] for f in fills}
     fill_price_by_id = {f["fill_id"]: f.get("fill_price") for f in fills}
     for f in fills:
@@ -751,9 +770,24 @@ def reconcile(output_dir: Path) -> list[str]:
             failures.append(f"fill {f['fill_id']} side/kind mismatch: {side}/{kind}")
         if f.get("qty", 0) <= 0:
             failures.append(f"fill {f['fill_id']} non-positive qty")
+        expected_fee = f["fill_price"] * f["qty"] * fee_bps / 10_000.0
+        if abs(expected_fee - f["fee"]) > REDERIVE_EPS:
+            failures.append(
+                f"fill {f['fill_id']} fee {f['fee']} != fill_price*qty*fee_bps/1e4 "
+                f"{expected_fee} (fabricated/incorrect fee)"
+            )
 
     # --- trade internal consistency ---
     for t in trades:
+        # gross re-derivation (Blocker 4): long-only, gross = (exit_price - entry_price) * qty.
+        # A fabricated gross_pnl with a matching net_pnl used to pass (only net = gross-fees-
+        # funding was checked); re-derive gross from the trade's own prices/qty.
+        expect_gross = (t["exit_price"] - t["entry_price"]) * t["qty"]
+        if abs(expect_gross - t["gross_pnl"]) > REDERIVE_EPS:
+            failures.append(
+                f"trade {t['trade_id']} gross_pnl {t['gross_pnl']} != "
+                f"(exit_price-entry_price)*qty {expect_gross} (fabricated/incorrect gross)"
+            )
         expect_net = t["gross_pnl"] - t["fees"] - t["funding"]
         if abs(expect_net - t["net_pnl"]) > EPS:
             failures.append(
@@ -773,8 +807,12 @@ def reconcile(output_dir: Path) -> list[str]:
                     f"{ref} fill_price {ref_price}"
                 )
 
-    # --- equity internal consistency (section 3.2) ---
+    # --- equity internal consistency (section 3.2) + drawdown re-derivation (Blocker 4) ---
+    # drawdown = (peak - equity) / peak with peak the running max equity (seeded at
+    # initial_equity). The equity rows are append-only chronological, so the peak is recomputed
+    # in order; a fabricated drawdown that is merely in-range [0,1] now fails closed.
     prev_fees = None
+    peak_equity = initial_equity
     for e in equity:
         recomputed = (
             initial_equity
@@ -789,9 +827,32 @@ def reconcile(output_dir: Path) -> list[str]:
             )
         if not (0.0 - EPS <= e["drawdown"] <= 1.0 + EPS):
             failures.append(f"equity {e['bar_ts']} drawdown out of range: {e['drawdown']}")
+        peak_equity = max(peak_equity, e["equity"])
+        expect_dd = (peak_equity - e["equity"]) / peak_equity if peak_equity > 0 else 0.0
+        if abs(expect_dd - e["drawdown"]) > DRAWDOWN_EPS:
+            failures.append(
+                f"equity {e['bar_ts']} drawdown {e['drawdown']} != (peak-equity)/peak "
+                f"{expect_dd} (peak {peak_equity}; fabricated/incorrect drawdown)"
+            )
         if prev_fees is not None and e["fees_cum"] + EPS < prev_fees:
             failures.append(f"equity {e['bar_ts']} fees_cum decreased")
         prev_fees = e["fees_cum"]
+
+    # --- funding amount re-derivation (Blocker 4) ---
+    # funding_amount = notional_usd * funding_rate when a rate is available, else exactly 0.0
+    # (engine.run_engine). A fabricated funding_amount / funding_rate pair that does not satisfy
+    # this product fails closed instead of being accepted as a finite number.
+    for f in funding:
+        if f["rate_available"]:
+            expected_amount = f["notional_usd"] * f["funding_rate"]
+        else:
+            expected_amount = 0.0
+        if abs(expected_amount - f["funding_amount"]) > REDERIVE_EPS:
+            failures.append(
+                f"funding {f['funding_id']} funding_amount {f['funding_amount']} != "
+                f"notional_usd*funding_rate {expected_amount} "
+                f"(rate_available={f['rate_available']}; fabricated/incorrect funding)"
+            )
 
     # --- funding ledger ties to last equity funding_cum ---
     if equity:
@@ -799,6 +860,54 @@ def reconcile(output_dir: Path) -> list[str]:
         if abs(funding_total - equity[-1]["funding_cum"]) > 1e-4:
             failures.append(
                 f"funding sum {funding_total} != last equity funding_cum {equity[-1]['funding_cum']}"
+            )
+
+    # --- positions: open-book + gross_exposure re-derivation (Blocker 4) ---------------
+    # The per-bar positions snapshot is taken on the PRE-FILL book (schema § 3.1): a symbol is
+    # open at bar `ts` iff it has more entry fills than exit fills with signal_bar_ts STRICTLY
+    # before ts. open_symbols/num_open are re-derived exactly from the fills (mark-independent).
+    # gross_exposure is bounded, not pinned (marks are unavailable to the read-only reconcile):
+    #   exposure - unrealized_pnl(same bar) == Σ entry_notional over the *markable* open book,
+    # which lies in [0, Σ entry_notional over the *whole* open book]. A fabricated exposure that
+    # leaves this band fails closed; a genuine missing mark only shrinks the sum (no false fail).
+    equity_by_ts = {e["bar_ts"]: e for e in equity}
+    for p in positions:
+        ts = p["bar_ts"]
+        entries_before: Counter = Counter()
+        exits_before: Counter = Counter()
+        last_entry_fill: dict[str, dict[str, Any]] = {}
+        for fl in fills:
+            if fl["signal_bar_ts"] < ts:
+                if fl["kind"] == "entry":
+                    entries_before[fl["symbol"]] += 1
+                    last_entry_fill[fl["symbol"]] = fl
+                elif fl["kind"] == "exit":
+                    exits_before[fl["symbol"]] += 1
+        open_book = sorted(
+            s for s in entries_before if entries_before[s] > exits_before[s]
+        )
+        if p["open_symbols"] != open_book:
+            failures.append(
+                f"positions {ts} open_symbols {p['open_symbols']} != pre-fill book "
+                f"reconstructed from fills {open_book}"
+            )
+        if p["num_open"] != len(open_book):
+            failures.append(
+                f"positions {ts} num_open {p['num_open']} != open book size {len(open_book)}"
+            )
+        e = equity_by_ts.get(ts)
+        if e is None:
+            continue  # missing equity row flagged by the snapshot/orphan checks above
+        max_notional = sum(
+            last_entry_fill[s]["fill_price"] * last_entry_fill[s]["qty"] for s in open_book
+        )
+        diff = p["gross_exposure_usd"] - e["unrealized_pnl"]
+        if diff < -EXPOSURE_EPS or diff > max_notional + EXPOSURE_EPS:
+            failures.append(
+                f"positions {ts} gross_exposure_usd {p['gross_exposure_usd']} inconsistent with "
+                f"unrealized_pnl {e['unrealized_pnl']} + open-book entry notionals "
+                f"(must be in [unrealized, unrealized+{max_notional}]; fabricated/incorrect "
+                f"exposure)"
             )
 
     # --- summary: winrate null iff no closed trades ---

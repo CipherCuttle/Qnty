@@ -128,8 +128,13 @@ exit code. **`exit 0` is NOT proof a normal accounting run happened** — it cov
 `OK` run *and* a healthy `NO_ELIGIBLE_BARS_YET` no-op. Always read the summary `status` /
 journald log, never the exit code alone:
 
-**`paper_pnl_summary.json` is the single authoritative current-run status** (the run
-transaction). A run overwrites the summary atomically with `status: RUNNING` (`phase: preflight`)
+**`paper_pnl_summary.json` is the runner's single current-run *transaction* status — NOT the
+authoritative paper trust status.** The authoritative paper status is the latest
+`paper_verify_report.json` produced by the read-only verifier against a frozen verify-run snapshot
+(see `docs/paper_pnl_v1_schema.md` § 5a); a runner `OK` is trusted only once the verifier has
+verified the run and its trusted baseline (`paper_verify_trusted_ok.json`) reflects it. The summary
+below is still useful as the runner's in-process transaction record. A run overwrites the summary
+atomically with `status: RUNNING` (`phase: preflight`)
 as its **first** write — **before** the pre-run existing-ledger health gate and the
 freshness/divergence gates, not after. This matters: those gates each publish their own
 `CORRUPT_LEDGER`/`ABORTED` bundle, and if that publication itself fails part-way a previous `OK`

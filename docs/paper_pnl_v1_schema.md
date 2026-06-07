@@ -175,13 +175,17 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
 | `paper_equity.jsonl` | append | `bar_ts, bar_commit_id, realized_gross_pnl, unrealized_pnl, funding_cum, fees_cum, equity, drawdown, num_open` |
 | `paper_funding.jsonl` | append | `funding_id(=symbol+bar_ts, or symbol+bar_ts+"\|exit" for the exit-tail stub), bar_commit_id, symbol, bar_ts, window_start, window_end, notional_usd, funding_rate(Σ of events in interval), funding_events, rate_available, funding_amount` (section 11) |
 | `paper_signal_snapshots.jsonl` | append | `snapshot_id, bar_ts, bar_commit_id, bar_index, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return, source_observation_digest, source_observation_mtime, run_ts, backfill=false` (section 10) |
-| `paper_pnl_summary.json` | overwrite (**runner status / human convenience — NOT authoritative**) | `status(OK / RUNNING / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (RUNNING runs carry `run_id, started_at, phase, previous_watermark` — `phase` is `preflight` for a normal run, `preflight_config_error` for the minimal stale-OK-superseding marker written when the config itself cannot be loaded; ABORTED runs add `abort_code, abort_reason, aborted_at`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count, detected_at`; NO_ELIGIBLE_BARS_YET runs add `reason, checked_at`). `CONFIG_ERROR` is a reserved persisted-summary status with `config_error, detected_at`; the current runner instead writes `RUNNING/phase=preflight_config_error` when replacing an existing stale summary. This is the **runner's own status of its in-process transaction** and a human convenience; its `OK` is **not** authoritative proof of a trusted run. The single authoritative status is **`paper_verify_report.json`** (§ 5a), produced by the separate read-only verifier. The runner still maintains this file with the run-transaction discipline of § 5 (a `RUNNING` marker before the pre-run gates; `OK` as the runner's commit marker) so a downstream verifier and operators have a faithful runner status, but no consumer may treat a runner `OK` as authoritative unless the verifier has signed it. |
+| `paper_pnl_summary.json` | overwrite (**runner status / human convenience — NOT authoritative**) | `status(OK / RUNNING / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (RUNNING runs carry `run_id, started_at, phase, previous_watermark` — `phase` is `preflight` for a normal run, `preflight_config_error` for the minimal stale-OK-superseding marker written when the config itself cannot be loaded; ABORTED runs add `abort_code, abort_reason, aborted_at`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count, detected_at`; NO_ELIGIBLE_BARS_YET runs add `reason, checked_at`). `CONFIG_ERROR` is a reserved persisted-summary status with `config_error, detected_at`; the current runner instead writes `RUNNING/phase=preflight_config_error` when replacing an existing stale summary. This is the **runner's own status of its in-process transaction** and a human convenience; its `OK` is **not** authoritative proof of a trusted run. The single authoritative status is the latest **`paper_verify_report.json`** (§ 5a), produced by the separate read-only verifier. The runner still maintains this file with the run-transaction discipline of § 5 (a `RUNNING` marker before the pre-run gates; `OK` as the runner's commit marker) so a downstream verifier and operators have a faithful runner status, but no consumer may treat a runner `OK` as authoritative unless the verifier has verified (digest-sealed) the run. |
 | `paper_provenance.json` | overwrite | latest run: `status(OK / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET)`, `baseline_label`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (a manifest of **every** output incl. `paper_signal_snapshots.jsonl`, `paper_position_state.json`, `paper_pnl_summary.json`, and `paper_receipt.md`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count`). **Provenance digests the EXACT final artifacts of the run, not stale/preceding files.** The summary, state, and receipt are published *after* provenance is generated (the `OK` summary is the last write of all; on a terminal run the summary is also written after provenance, after the `RUNNING` preflight marker), so the runner builds those bundle members **in memory first** and pins the sha256 of their exact bytes into the manifest via in-memory digest overrides. Thus an `OK` provenance pins the **committed** state digest (never `absent`, even on a first run) and the new summary/receipt; an `ABORTED`/`CORRUPT_LEDGER`/`NO_ELIGIBLE_BARS_YET` provenance pins the **terminal** summary/receipt bytes (never the preceding `RUNNING` marker), and digests the existing on-disk state (unchanged, since a terminal run never advances it). **This file is a runner convenience manifest, NOT the authoritative paper status** (the authority is `paper_verify_report.json`, § 5a, Option B — the verifier does **not** consult provenance for trust). As a runner-internal self-consistency check, the runner still gates its own provenance when its prior summary committed `OK`: it must parse, be `status: OK`, and still pin digests matching the committed summary/state, or the next runner pass fails closed as `CORRUPT_LEDGER`; it is also re-checked by the runner's final integrity gate immediately before each `OK` commit. This is runner hygiene only — no consumer derives authoritative trust from provenance. |
-| `paper_provenance_log.jsonl` | append | one provenance record per run (incl. aborted runs). **Audit-only / non-gating / NOT part of the commit proof:** this append-only log is a historical trail; it is NEVER read by the pre-run health gate, the final integrity gate, or reconcile, so a corrupt/partial line in it does not by itself abort a run and it is **not** evidence that any run committed. The authoritative current-run evidence is `paper_pnl_summary.json` + `paper_position_state.json` + the append-only ledgers + `paper_provenance.json` (the latter gated only when the prior summary committed `OK`). It is appended **after** the final integrity gate passes, alongside the state/`OK`-summary commit writes. |
-| `paper_receipt.md` | overwrite | human summary + loud disclaimer + baseline label + red flags (aborted runs render a 🛑 ABORTED receipt). **Convenience only — not authoritative unless the verifier has signed the run (§ 5a).** |
-| `paper_verify_report.json` | overwrite (**AUTHORITATIVE status**) | written **only** by the read-only verifier (`quantbot.paper.verify`, `scripts/paper_verify.py`). `schema_version, verifier_version, authoritative=true, verified_at, output_dir, forward_start_ts, status(OK / CORRUPT / INCOMPLETE / RUNNING_STALE / CONFIG_ERROR / VERIFYING — VERIFYING is the in-flight marker written first; never trusted), committed, bars_committed, failure_count, failures[], runner_summary_status(observed, NOT trusted), output_digests{artifact->sha256 of exact raw bytes}, append_only_digests{ledger->{bytes, lines, sha256, present}} (raw-byte length + line count + whole-file sha256, pinned so the NEXT verification can prove append-only immutability), current_verdict, disclaimer`. A paper run is trusted **iff** this file's `status == OK` (§ 5a). |
-| `paper_verify_receipt.md` | overwrite | human receipt for the authoritative verifier verdict (loud disclaimer, status, failures). |
-| `paper_verify_log.jsonl` | append | append-only audit trail: one row per verification (`verified_at, status, committed, bars_committed, failure_count, verifier_version`). |
+| `paper_provenance_log.jsonl` | append | one provenance record per run (incl. aborted runs). **Audit-only / non-gating / NOT part of the commit proof:** this append-only log is a historical trail; it is NEVER read by the pre-run health gate, the final integrity gate, or reconcile, so a corrupt/partial line in it does not by itself abort a run and it is **not** evidence that any run committed. The **runner's** current-run evidence (runner-internal, NOT the authoritative paper trust status — that is `paper_verify_report.json`, § 5a) is `paper_pnl_summary.json` + `paper_position_state.json` + the append-only ledgers + `paper_provenance.json` (the latter gated only when the prior summary committed `OK`). It is appended **after** the final integrity gate passes, alongside the state/`OK`-summary commit writes. |
+| `paper_receipt.md` | overwrite | human summary + loud disclaimer + baseline label + red flags (aborted runs render a 🛑 ABORTED receipt). **Convenience only — not authoritative unless the verifier has verified the run (§ 5a).** |
+| `verify_runs/<run_id>/inputs/*` | frozen (per verify run) | the EXACT raw bytes of every verifier input (config, the six ledgers, the position state, the runner summary), copied verbatim at verify time. The verifier verifies THIS frozen snapshot, never the live mutable files (§ 5a). |
+| `verify_runs/<run_id>/paper_verify_report.json` | frozen (per verify run) | the per-run **terminal** verifier report for that snapshot (same shape as the pointer below). Immutable once written. |
+| `verify_runs/<run_id>/paper_verify_receipt.md` | frozen (per verify run) | the per-run human receipt for that snapshot. |
+| `paper_verify_report.json` | overwrite (**AUTHORITATIVE pointer**) | written **only** by the read-only verifier (`quantbot.paper.verify`, `scripts/paper_verify.py`) as the pointer to the **latest terminal** per-run report. `schema_version, verifier_version, authoritative=true, verified_at, output_dir, run_id, verify_run_dir, bootstrap, trusted_baseline_present, forward_start_ts, status(OK / CORRUPT / INCOMPLETE / RUNNING_STALE / CONFIG_ERROR / NEEDS_BOOTSTRAP / VERIFYING — VERIFYING is the in-flight marker written first; never trusted), committed, bars_committed, failure_count, failures[], runner_summary_status(observed, NOT trusted), output_digests{artifact->sha256 of exact raw bytes}, append_only_digests{ledger->{bytes, lines, sha256, present}} (raw-byte length + line count + whole-file sha256), current_verdict, disclaimer`. A paper run is trusted **iff** the latest `paper_verify_report.json` `status == OK` (§ 5a). |
+| `paper_verify_trusted_ok.json` | overwrite **on OK only** | the separately-preserved **trusted OK baseline**: the digests/pins of the last verification that returned `OK`. A CORRUPT/INCOMPLETE/CONFIG_ERROR/RUNNING_STALE/NEEDS_BOOTSTRAP run **never** overwrites it, so detected tampering is not forgotten on the next run. Append-only immutability and exact-byte (config/state) checks compare the current snapshot against THIS baseline, not against the immediately-previous report. |
+| `paper_verify_receipt.md` | overwrite | human receipt for the latest verifier verdict (loud disclaimer, status, failures). |
+| `paper_verify_log.jsonl` | append | **audit-only / non-gating** append trail: one row per verification (`verified_at, run_id, status, committed, bars_committed, failure_count, verifier_version`). If gitignored it is not part of repo history; it never gates a verdict. |
 
 ---
 
@@ -408,99 +412,120 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
 
 ---
 
-## 5a. Authority model — the verifier is the only source of `OK`
+## 5a. Authority model — the verifier verifies a frozen snapshot, never live files
 
 The runner spent many iterations losing a multi-file TOCTOU race: it would validate the
-artifacts, something would mutate, and an `OK` would still be published. Rather than keep
-patching the runner toward impossible cross-file Byzantine atomicity, authority is split:
+artifacts, something would mutate, and an `OK` would still be published. Earlier verifier
+iterations tried to certify the **live, mutable** files directly with a re-read gate — Codex
+showed that still admitted a false `OK`, forgot detected tampering across runs, accepted a
+malformed prior report, and accepted fabricated accounting. Rather than keep patching a verifier
+that reads live files, authority is now **a frozen verify-run snapshot**:
 
 - **The paper accounting runner is NOT the authority on `OK`.** It only appends the
   deterministic accounting artifacts (snapshots → fills/trades/funding/positions/equity → state)
   and maintains its own `paper_pnl_summary.json` **runner status** (§ 4, § 5). A runner `OK`
-  means "the runner finished its in-process transaction"; it is a convenience, **not** proof.
+  means "the runner finished its in-process transaction"; it is a convenience, **not** proof. The
+  runner's `paper_pnl_summary.json` is **not** the authoritative paper status.
 - **A separate read-only verifier (`quantbot.paper.verify` / `scripts/paper_verify.py`) is the
-  only component allowed to publish an authoritative status.** It reads every paper artifact
-  **read-only** and re-derives the verdict from the **ledgers themselves** — it never trusts the
-  runner's summary `status`. It writes `paper_verify_report.json` (authoritative),
-  `paper_verify_receipt.md`, and appends `paper_verify_log.jsonl`. It writes **only** these
-  `paper_verify_*` files and mutates no runner artifact.
+  only component allowed to publish an authoritative status, and it does NOT certify the live
+  mutable files.** Each invocation:
+  1. creates a frozen verify-run directory `verify_runs/<run_id>/`;
+  2. copies the **exact raw bytes** of every input (config, the six ledgers, the position state,
+     and the runner summary) into `verify_runs/<run_id>/inputs/`, detecting any source mutation
+     *during* the copy (a double-read stat/digest comparison) — an unstable snapshot is never `OK`;
+  3. verifies the **frozen snapshot** (never the live files), re-deriving the whole verdict from
+     the snapshotted ledgers;
+  4. writes the per-run terminal report + receipt under `verify_runs/<run_id>/`, then updates the
+     top-level pointer `paper_verify_report.json` to the latest terminal report;
+  5. on `OK` only, advances the separately-preserved trusted baseline
+     `paper_verify_trusted_ok.json`.
+  It writes **only** `paper_verify_*` files and the `verify_runs/` tree, and mutates no runner
+  artifact.
 
-**A paper run is trusted iff `paper_verify_report.json` says `OK`.** `paper_pnl_summary.json`,
-`paper_receipt.md`, and `paper_provenance.json` remain runner conveniences and are **not**
-authoritative. There is **no cryptographic signing** here: the verifier *digest-seals* (verifies)
-the ledgers — it pins their exact bytes and re-derives the verdict — it does not sign them. Use
-"digest-sealed" / "verified", never "signed".
+**A paper run is trusted iff the latest `paper_verify_report.json` says `OK`.**
+`paper_pnl_summary.json`, `paper_receipt.md`, and `paper_provenance.json` remain runner
+conveniences and are **not** authoritative. There is **no cryptographic signing** here: the
+verifier *digest-seals* (verifies) the snapshotted ledgers — it pins their exact bytes and
+re-derives the verdict — it does not sign them. Use "digest-sealed" / "verified", never "signed".
 
 **Provenance authority (Option B).** `paper_provenance.json` is a **runner convenience manifest
 only**; the **verifier does not consult it for authority**. The verifier's trust comes from (a)
-its own read-only re-derivation over the ledgers and (b) the exact-byte digests it pins in its own
-report. (The runner may still keep its own internal provenance self-consistency check, but no
-consumer derives trust from provenance — only `paper_verify_report.json` is authoritative.)
+its own read-only re-derivation over the snapshotted ledgers and (b) the exact-byte digests it
+pins in its own report/baseline.
 
-**Write protocol (defeats stale OK + TOCTOU):**
+**TOCTOU is solved by the snapshot, not a re-read gate.** The verdict is a pure function of the
+**frozen snapshot bytes**. A file mutating *after* the snapshot completes cannot change this run's
+verdict; it is caught by the *next* verification (which snapshots the mutated bytes). A file
+mutating *during* the copy is caught by the double-read and yields `CORRUPT`. There is no
+re-read-the-live-file gate to race against.
 
-1. **`VERIFYING` first.** Before any read that could fail, the verifier overwrites
-   `paper_verify_report.json` **atomically** with `status: VERIFYING`. A stale prior `OK` is
-   superseded the instant a verification begins, so if this run fails/crashes before its terminal
-   write, the visible status is `VERIFYING`, never a stale `OK`.
-2. **Read-only validation + raw-byte digests.** It validates everything (below) and digests the
-   **exact raw bytes** of each artifact — full-file length, line count, and `sha256` of the whole
-   file, **not** a re-canonicalization of parsed rows. A whitespace-only rewrite that decodes to
-   the same JSON therefore still changes the digest.
-3. **Re-read gate immediately before `OK`.** Just before committing `OK`, it re-reads the exact
-   bytes of every **authoritative** artifact (config, the six ledgers, the position state) and
-   confirms they still match the digests the verdict was based on. Anything mutated during
-   verification → `CORRUPT`, never `OK`.
-4. **Terminal report written atomically LAST.** Receipt + log are conveniences written first; the
-   authoritative report is the final write. If that write fails, **no terminal `OK` exists** (the
-   on-disk status stays `VERIFYING`).
+**Detected tampering is never forgotten (trusted baseline).** Append-only immutability and the
+exact-byte (config/state) checks compare the current snapshot against the **trusted OK baseline**
+(`paper_verify_trusted_ok.json`), which is advanced **only** on `OK`. A `CORRUPT`/`INCOMPLETE`/
+`CONFIG_ERROR`/`RUNNING_STALE`/`NEEDS_BOOTSTRAP` run never overwrites it, so a whitespace rewrite /
+truncation / reorder detected once **stays** `CORRUPT` on every subsequent run until the underlying
+corruption is resolved. The trusted baseline is itself deeply schema-validated: a malformed/`{}`/
+unreadable baseline is `CORRUPT` (never silently reset).
 
-**What the verifier validates (all read-only):** the config contract (`load_config` — a
-stale/incompatible/mutated config is `CONFIG_ERROR`, never `OK`); deep parse + schema of every
-JSONL ledger and of the summary/state; structural `reconcile()` (uniqueness/append-only, one
-consumed-signal snapshot per equity bar, `bar_commit_id` agreement across every row of a bar, no
-fills before `forward_start_ts`, `net_pnl = gross − fees − funding`, equity recomputation,
-funding ties to the last equity `funding_cum`); state-vs-ledger lockstep
-(`reconcile_state_against_ledgers`, strict only when the ledgers are at rest after a commit);
-append-only immutability of every ledger a prior `OK` report pinned (raw byte length, line count,
-and prefix `sha256`); the integrity of the prior authoritative report itself when committed
-ledgers exist; and the output digests pinned into the report.
+**Bootstrap is explicit.** If committed ledgers exist but no trusted baseline has been anchored
+yet, the verifier returns `NEEDS_BOOTSTRAP` (never `OK`). An operator establishes the first
+baseline once, after reviewing the first committed bars, with
+`python scripts/paper_verify.py --bootstrap`. The timer never auto-bootstraps.
+
+**What the verifier validates over the snapshot (all read-only):** the config contract
+(`load_config` — a stale/incompatible/mutated config is `CONFIG_ERROR`, never `OK`); deep parse +
+schema of every JSONL ledger and of the summary/state; structural `reconcile()` with **full
+accounting re-derivation** — uniqueness/append-only, one consumed-signal snapshot per equity bar,
+`bar_commit_id` agreement across every row of a bar, no fills before `forward_start_ts`, **fee =
+fill_price·qty·fee_bps/1e4**, **gross_pnl = (exit−entry)·qty**, `net_pnl = gross − fees − funding`,
+**funding_amount = notional·rate** (0 when no rate), equity recomputation, **drawdown =
+(peak−equity)/peak** over the running peak, the per-bar open book reconstructed from the fills, and
+a price-independent bound on `gross_exposure_usd` (`exposure − unrealized ∈ [0, Σ open-book entry
+notionals]`); state-vs-ledger lockstep (`reconcile_state_against_ledgers`, strict only when the
+ledgers are at rest after a commit); append-only immutability of every ledger the trusted baseline
+pinned (raw byte length, line count, and prefix `sha256`); exact-byte immutability of the
+write-once config and (while no new bar committed) the position state; and snapshot stability.
+
+> **Documented limitation (remaining risk).** Marks (close prices) are NOT loaded by the read-only
+> verifier, so `unrealized_pnl` and the absolute level of `gross_exposure_usd` are checked only by
+> their ledger-internal bound, not re-derived from the OHLCV price book. Full mark re-derivation
+> requires the price data and is deferred.
 
 **Verifier statuses:**
 
-- `OK` — every check passed, the ledgers are committed/at-rest (state watermark == latest
-  committed equity bar), and the re-read gate confirmed no bytes drifted. Authoritative trust.
-- `CORRUPT` — any schema/reconcile/state failure; an append-only ledger that a prior `OK` report
-  pinned was mutated/truncated/reordered (raw-byte digest mismatch); a mid-verification mutation
-  caught by the re-read gate; or a prior authoritative report that was removed/corrupted while
-  committed ledgers exist.
-- `INCOMPLETE` — nothing certifiable yet: no committed bars (incl. a fresh/empty dir), or a run
-  in flight / crashed before its state caught up to the ledgers.
-- `RUNNING_STALE` — the runner left a `RUNNING` marker that has outlived its window while the
-  state never caught up to the ledgers (a crashed run); never `OK`.
+- `OK` — every check passed over the frozen snapshot, the ledgers are committed/at-rest (state
+  watermark == latest committed equity bar) and append-only-extend the trusted baseline.
+  Authoritative trust. Advances the trusted baseline.
+- `CORRUPT` — any schema/reconcile/re-derivation/state failure; a snapshot input mutated during
+  the copy; an append-only ledger that the trusted baseline pinned was mutated/truncated/reordered
+  (raw-byte digest mismatch); a config/state exact-byte mismatch; or a malformed/unreadable trusted
+  baseline. Does **not** touch the trusted baseline.
+- `INCOMPLETE` — nothing certifiable yet: no committed bars (incl. a fresh/empty dir), or a run in
+  flight / crashed before its state caught up to the ledgers.
+- `RUNNING_STALE` — the runner left a `RUNNING` marker that has outlived its window while the state
+  never caught up to the ledgers (a crashed run); never `OK`.
 - `CONFIG_ERROR` — `paper_config.json` is stale/incompatible/unloadable; nothing can be verified.
-- `VERIFYING` — in-flight marker only (a verification is running, or crashed before its terminal
-  write). Never a trusted result; if it persists, a verification was interrupted — re-run it.
+- `NEEDS_BOOTSTRAP` — committed, clean, append-only-consistent ledgers, but no trusted baseline has
+  been established and this was not an explicit `--bootstrap`. Never `OK`.
+- `VERIFYING` — in-flight pointer marker only (a verification is running, or crashed before its
+  terminal write). Never a trusted result; if it persists, re-run the verifier.
 
-**Why this closes the TOCTOU loop without runner-side atomicity.** The verdict is a pure function
-of the on-disk artifacts *at verify time*. If files mutate **after** a verifier `OK`, the next
-verifier run catches it two independent ways: (a) it re-runs the full reconcile/state suite over
-the current bytes, so a tampered `net_pnl`/`fee`/equity row no longer reconciles; and (b) it
-compares the append-only ledgers against the raw-byte digests its own prior `OK` report pinned, so
-a previously-verified row that changed, or a ledger that shrank, is flagged as a non-append
-mutation. We do **not** need impossible cross-file atomicity inside the runner — a later mutation
-simply makes the next authoritative verification fail closed.
+The top-level pointer is written `VERIFYING`-first (atomically, before any read), so a crash leaves
+`VERIFYING` in the pointer, never a stale `OK`; the terminal report is written last.
 
-**`paper_verify_log.jsonl` is audit-only.** It is an append-only trail of every verification; it
-is not gating and (if gitignored) is not part of repo history — but its presence over committed
-ledgers is used as corroboration that a prior report existed (so a *removed* authoritative report
-is distinguishable from a genuine first verification).
+**`paper_verify_log.jsonl` is audit-only.** It is an append-only trail of every verification; it is
+not gating and (if gitignored) is not part of repo history. Trust derives from the trusted baseline
++ the latest report, not from the log.
 
-**Timer flow.** The paper timer wrapper runs (1) the shadow observer (separately) → (2) the paper
-accounting runner (append-only) → (3) the paper verifier (authoritative). The systemd unit fails
-on a verifier `CONFIG_ERROR`/`CORRUPT`; `INCOMPLETE`/`RUNNING_STALE` is tolerated during pre-start
-(no eligible bars yet) and logged. Only step 3's `OK` is trusted. **Operators inspect
-`paper_verify_report.json`, not `paper_pnl_summary.json`.**
+**Timer flow (wrapper `ops/bin/qnty-paper-pnl-run.sh`).** (1) the shadow observer runs separately →
+(2) the paper accounting runner (append-only) → (3) the paper verifier (authoritative). The wrapper
+**inspects the accounting exit code**: a `CONFIG_ERROR` (3) or `CORRUPT_LEDGER` (4) fails the unit
+immediately and does **not** run the verifier (it must never certify stale/corrupt ledgers); an
+`ABORTED` (2, freshness/divergence — ledgers unchanged) is tolerated during pre-start and proceeds
+to the verifier; `OK`/`NO_ELIGIBLE_BARS_YET` (0) proceed. The unit then fails on a verifier
+`CONFIG_ERROR`/`CORRUPT`; `INCOMPLETE`/`RUNNING_STALE`/`NEEDS_BOOTSTRAP` (exit 5) is tolerated and
+logged. Only step 3's `OK` is trusted. **Operators inspect the latest `paper_verify_report.json`,
+not `paper_pnl_summary.json`.**
 
 ---
 
