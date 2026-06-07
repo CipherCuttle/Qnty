@@ -33,9 +33,10 @@ LEDGER_JSONL_SCHEMAS: dict[str, dict[str, Any]] = {
             "fill_id", "bar_commit_id", "signal_bar_ts", "fill_ts", "symbol",
             "side", "kind", "qty", "open_price", "fill_price", "slippage_bps", "fee", "backfill",
         ),
-        "numeric": ("qty", "open_price", "fill_price"),
+        "positive": ("qty", "open_price", "fill_price"),
         "nonneg": ("slippage_bps", "fee"),
-        "strings": ("fill_id", "signal_bar_ts", "fill_ts", "symbol"),
+        "strings": ("fill_id", "symbol"),
+        "timestamps": ("signal_bar_ts", "fill_ts"),
         "bools": ("backfill",),
         "enums": {"side": frozenset({"BUY", "SELL"}), "kind": frozenset({"entry", "exit"})},
     },
@@ -45,13 +46,14 @@ LEDGER_JSONL_SCHEMAS: dict[str, dict[str, Any]] = {
             "entry_bar_ts", "exit_bar_ts", "qty", "entry_price", "exit_price",
             "gross_pnl", "fees", "funding", "net_pnl", "hold_bars", "backfill",
         ),
-        "numeric": (
-            "qty", "entry_price", "exit_price", "gross_pnl", "fees", "funding",
-            "net_pnl", "hold_bars",
-        ),
+        "positive": ("qty", "entry_price", "exit_price"),
+        "numeric": ("gross_pnl", "funding", "net_pnl"),
+        "nonneg": ("fees",),
+        "nonneg_ints": ("hold_bars",),
         "strings": (
-            "trade_id", "symbol", "entry_fill_id", "exit_fill_id", "entry_bar_ts", "exit_bar_ts",
+            "trade_id", "symbol", "entry_fill_id", "exit_fill_id",
         ),
+        "timestamps": ("entry_bar_ts", "exit_bar_ts"),
         "bools": ("backfill",),
     },
     "paper_funding.jsonl": {
@@ -60,14 +62,19 @@ LEDGER_JSONL_SCHEMAS: dict[str, dict[str, Any]] = {
             "window_end", "notional_usd", "funding_rate", "funding_events",
             "rate_available", "funding_amount",
         ),
-        "numeric": ("notional_usd", "funding_rate", "funding_events", "funding_amount"),
-        "strings": ("funding_id", "bar_ts", "symbol", "window_start", "window_end"),
+        "positive": ("notional_usd",),
+        "numeric": ("funding_rate", "funding_amount"),
+        "nonneg_ints": ("funding_events",),
+        "strings": ("funding_id", "symbol"),
+        "timestamps": ("bar_ts", "window_start", "window_end"),
         "bools": ("rate_available",),
     },
     "paper_positions.jsonl": {
         "required": ("bar_ts", "bar_commit_id", "open_symbols", "num_open", "gross_exposure_usd"),
-        "numeric": ("num_open", "gross_exposure_usd"),
-        "strings": ("bar_ts",),
+        "nonneg": ("gross_exposure_usd",),
+        "nonneg_ints": ("num_open",),
+        "strings": (),
+        "timestamps": ("bar_ts",),
         "str_lists": ("open_symbols",),
     },
     "paper_equity.jsonl": {
@@ -77,9 +84,12 @@ LEDGER_JSONL_SCHEMAS: dict[str, dict[str, Any]] = {
         ),
         "numeric": (
             "realized_gross_pnl", "unrealized_pnl", "funding_cum", "fees_cum",
-            "equity", "drawdown", "num_open",
+            "equity",
         ),
-        "strings": ("bar_ts",),
+        "nonneg": ("drawdown",),
+        "nonneg_ints": ("num_open",),
+        "strings": (),
+        "timestamps": ("bar_ts",),
     },
     "paper_signal_snapshots.jsonl": {
         "required": (
@@ -87,8 +97,12 @@ LEDGER_JSONL_SCHEMAS: dict[str, dict[str, Any]] = {
             "portfolio_heat", "heat_cap_triggered", "weighted_return",
             "source_observation_digest", "source_observation_mtime", "run_ts", "backfill",
         ),
-        "numeric": ("bar_index", "portfolio_heat", "weighted_return"),
-        "strings": ("snapshot_id", "bar_ts", "source_observation_digest", "run_ts"),
+        "numeric": (
+            "portfolio_heat", "weighted_return", "source_observation_mtime",
+        ),
+        "nonneg_ints": ("bar_index",),
+        "strings": ("snapshot_id", "source_observation_digest"),
+        "timestamps": ("bar_ts", "run_ts"),
         "str_lists": ("active_symbols",),
         "bools": ("heat_cap_triggered", "backfill"),
     },
@@ -131,7 +145,9 @@ def _dup_ids(rows: list[dict[str, Any]], key: str) -> list[str]:
     return dups
 
 
-def check_existing_ledgers(output_dir: Path) -> list[str]:
+def check_existing_ledgers(
+    output_dir: Path, *, prior_summary_paths: tuple[Path, ...] = ()
+) -> list[str]:
     """Fail-closed integrity + reconcile over the ALREADY-PERSISTED ledgers (Blocker 2/3).
 
     Run BEFORE any new ledger/snapshot/state mutation and before any healthy no-op
@@ -153,18 +169,22 @@ def check_existing_ledgers(output_dir: Path) -> list[str]:
     for fname in LEDGER_JSONL_FILES:
         try:
             _read_ledger_validated(output_dir, fname)
-        except LedgerCorruptionError as exc:
+        except (LedgerCorruptionError, OSError) as exc:
             failures.append(str(exc))
-    # Summary: absent -> {} (first run); present-but-`{}`/unknown-status/wrong-typed -> corrupt.
-    try:
-        ledger.read_summary_obj(output_dir / "paper_pnl_summary.json")
-    except LedgerCorruptionError as exc:
-        failures.append(str(exc))
+    # The runner atomically stages the prior summary before publishing RUNNING, then passes the
+    # staged path(s) here. This preserves status-shape validation without reading the old summary
+    # before the authoritative preflight marker is visible.
+    summary_paths = prior_summary_paths or (output_dir / "paper_pnl_summary.json",)
+    for summary_path in summary_paths:
+        try:
+            ledger.read_summary_obj(summary_path)
+        except (LedgerCorruptionError, OSError) as exc:
+            failures.append(str(exc))
     # State: absent -> None (first run); present-but-`{}`/partial -> corrupt (never silently
     # reinitialized).
     try:
         ledger.read_state_obj(output_dir / "paper_position_state.json")
-    except LedgerCorruptionError as exc:
+    except (LedgerCorruptionError, OSError) as exc:
         failures.append(str(exc))
     if failures:
         return failures
@@ -191,7 +211,7 @@ def reconcile(output_dir: Path) -> list[str]:
         positions = _read_ledger_validated(output_dir, "paper_positions.jsonl")
         snaps = _read_ledger_validated(output_dir, "paper_signal_snapshots.jsonl")
         summary = ledger.read_summary_obj(output_dir / "paper_pnl_summary.json")
-    except LedgerCorruptionError as exc:
+    except (LedgerCorruptionError, OSError) as exc:
         return [str(exc)]
 
     # --- uniqueness / append-only ---

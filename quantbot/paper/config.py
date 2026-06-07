@@ -347,6 +347,10 @@ def load_config(output_dir: Path | None = None) -> dict[str, Any]:
             f"`python -m quantbot.paper.config --forward-start-ts <FUTURE_UTC_8H_BOUNDARY>` "
             f"to initialize a fresh write-once config. {_REINIT_HINT}"
         ) from exc
+    except OSError as exc:
+        raise ConfigContractError(
+            f"paper_config.json could not be read ({type(exc).__name__}: {exc}). {_REINIT_HINT}"
+        ) from exc
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:

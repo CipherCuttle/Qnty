@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -36,20 +37,48 @@ def _now_utc_str() -> str:
 
 
 SUMMARY_FILE = "paper_pnl_summary.json"
+STAGED_SUMMARY_GLOB = ".paper_pnl_summary.json.*.preflight_previous"
 
 
-def _previous_watermark(out: Path) -> str:
-    """Best-effort read of the pre-run watermark for the RUNNING marker (Blocker 1).
+def _stage_previous_summary(out: Path, run_id: str) -> tuple[Path | None, list[str]]:
+    """Move the prior authoritative summary aside without reading it.
 
-    A corrupt/partial state is surfaced by the existing-ledger health gate, NOT here — so this
-    swallows LedgerCorruptionError and falls back to "" rather than masking or duplicating the
-    corruption signal. (The marker's `previous_watermark` is informational.)
+    The old summary must still be schema-validated, but no persisted artifact may be read before
+    RUNNING is visible. An atomic rename removes any stale OK from the authoritative path without
+    parsing it; after RUNNING is written, the health gate validates this staged copy. Any staged
+    copies left by an interrupted prior run are also validated by the next run.
     """
+    staged = out / f".paper_pnl_summary.json.{run_id}.preflight_previous"
     try:
-        st = ledger.read_state_obj(out / "paper_position_state.json")
-    except LedgerCorruptionError:
-        return ""
-    return str((st or {}).get("watermark_bar_ts", "") or "")
+        os.replace(out / SUMMARY_FILE, staged)
+    except FileNotFoundError:
+        return None, []
+    except OSError as exc:
+        return None, [
+            f"{SUMMARY_FILE} could not be staged before preflight "
+            f"({type(exc).__name__}: {exc}); refusing to leave prior status unverified"
+        ]
+    return staged, []
+
+
+def _staged_summaries(out: Path) -> tuple[Path, ...]:
+    """Return every prior summary staged by this or an interrupted earlier run."""
+    try:
+        return tuple(sorted(out.glob(STAGED_SUMMARY_GLOB)))
+    except OSError as exc:
+        raise LedgerCorruptionError(
+            f"could not enumerate staged prior summaries ({type(exc).__name__}: {exc})"
+        ) from exc
+
+
+def _cleanup_staged_summaries(paths: tuple[Path, ...]) -> None:
+    """Best-effort cleanup after the prior summaries have been validated and handled."""
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            # A leftover validated copy is harmless and will be revalidated next run.
+            pass
 
 
 def _write_preflight_marker(
@@ -59,14 +88,12 @@ def _write_preflight_marker(
 
     This is the FIRST summary write of a run, performed BEFORE any abort/corrupt publication can
     fail (i.e. before the `_corrupt`/`_abort`/`_no_eligible_bars` publications and before any
-    ledger/snapshot/state mutation). The existing-ledger reads that compute the health-gate
-    failures do NOT publish anything, so reading them just before this write cannot leave a stale
-    OK; only the publications that follow this marker can fail, and if any does the visible status
-    stays RUNNING — never the superseded OK. Atomic write (temp + os.replace).
+    ledger/snapshot/state mutation or persisted-artifact read). The prior summary is atomically
+    staged without parsing first, then validated by the health gate only after this marker is
+    visible. If a later gate/publication fails, the visible status stays RUNNING — never the
+    superseded OK. Atomic write (temp + os.replace).
     """
-    marker = provenance.running_summary(
-        config, run_id, started_at, _previous_watermark(out), phase="preflight"
-    )
+    marker = provenance.running_summary(config, run_id, started_at, "", phase="preflight")
     ledger.write_json_atomic(out / SUMMARY_FILE, marker)
 
 
@@ -205,28 +232,35 @@ def run_once(
     freshness_cfg = config.get("freshness", {})
     forward_start_ts = config["forward_start_ts"]
 
-    # === EXISTING-LEDGER HEALTH GATE (before ANY mutation OR healthy no-op) ===========
+    # Atomically move the old summary aside WITHOUT reading it, then publish RUNNING before
+    # any persisted-artifact read. The staged prior summary remains available for the health
+    # gate's status-specific schema validation after stale OK has already been superseded.
+    _, stage_failures = _stage_previous_summary(out, run_id)
+    _write_preflight_marker(out, config, run_id, started_at)
+
+    # === EXISTING-LEDGER HEALTH GATE (before ANY ledger mutation OR healthy no-op) =====
     # Blocker 2/3: check the already-persisted ledgers FIRST. A malformed JSONL ledger or a
     # pre-existing reconcile failure (e.g. an orphan fill/snapshot left by a crashed prior run)
     # must fail closed as CORRUPT_LEDGER here — before we write any new snapshot/row, before a
     # NO_ELIGIBLE_BARS_YET no-op, and before the divergence gate — so existing corruption can
     # never be masked as a benign no-op/divergence or silently overwritten with fresh rows.
-    # These are pure READS of the existing artifacts (incl. the existing summary, so a `{}`/
-    # malformed prior summary is still detected as corrupt below); they publish nothing.
-    existing_failures = check_existing_ledgers(out)
-
-    # === RUN-TRANSACTION PREFLIGHT MARKER (Blocker 1) =================================
-    # Authoritative current-status protocol: invalidate any stale `OK` NOW, before ANY abort/
-    # corrupt/no-op publication that could itself fail part-way. The health-gate reads above
-    # never publish, so a stale OK was still visible until this point; from here on the visible
-    # status is RUNNING until a terminal status (OK/ABORTED/CORRUPT_LEDGER/NO_ELIGIBLE_BARS_YET)
-    # is fully published. Codex's exact case — a previous OK plus a failed CORRUPT/ABORTED
-    # publication — can no longer leave the old OK visible: if `_corrupt`/`_abort` below raise
-    # mid-publish, the on-disk status is this RUNNING marker, never the superseded OK.
-    _write_preflight_marker(out, config, run_id, started_at)
+    # These are pure READS of the existing artifacts. The prior summary is read from its staged
+    # path so malformed/partial status evidence is still caught without ever reading it before
+    # the authoritative RUNNING marker.
+    try:
+        staged_summaries = _staged_summaries(out)
+        existing_failures = stage_failures + check_existing_ledgers(
+            out, prior_summary_paths=staged_summaries
+        )
+    except (LedgerCorruptionError, OSError) as exc:
+        staged_summaries = ()
+        existing_failures = stage_failures + [str(exc)]
 
     if existing_failures:
-        return _corrupt(out, obs_dir, data_dir, config, existing_failures)
+        summary = _corrupt(out, obs_dir, data_dir, config, existing_failures)
+        _cleanup_staged_summaries(staged_summaries)
+        return summary
+    _cleanup_staged_summaries(staged_summaries)
 
     # --- inputs (read-only) ---
     obs_path = obs_dir / "observation_log.json"

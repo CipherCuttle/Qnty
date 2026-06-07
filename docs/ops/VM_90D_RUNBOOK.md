@@ -141,13 +141,20 @@ first-run config error in a fresh dir still writes nothing). The **final `OK` su
 single commit marker**, written **after** the state/watermark, so no false `OK` can survive a
 failed state/publication step either. Read this file's `status`, not `exit 0` alone.
 
-**Persisted artifacts are schema-validated, not just parse-validated.** Every reader checks the
-deep shape of each row/object — required fields present, finite numbers (no `bool`/`NaN`/`inf`),
-non-empty string ids/timestamps, lists-of-strings for `open_symbols`/`active_symbols`, real
-booleans, enumerated `side`/`kind`, an `OK` summary's `disclaimer`, an `open_positions` entry's
-full field set, and a parseable (or empty) `watermark_bar_ts`. A malformed persisted artifact
-therefore produces `CORRUPT_LEDGER` (exit 4) and an operator stop/review — it is never silently
-normalized into `OK` or republished.
+To keep the prior summary schema-checkable without reading it before preflight, the runner
+atomically stages the old summary path without parsing it, writes `RUNNING`, then validates the
+staged summary with the other persisted artifacts. No ledger/state/summary content is read before
+the authoritative `RUNNING` marker is visible.
+
+**Persisted artifacts are schema-validated, not just parse-validated.** Every reader normalizes
+permission/OS read failures and checks the deep shape of each row/object — required fields
+present, finite numbers and exact integers (no `bool`/`NaN`/`inf`), parseable timestamps,
+non-empty ids, lists-of-strings for `open_symbols`/`active_symbols`, real booleans, enumerated
+`side`/`kind`, every snapshot field including numeric `source_observation_mtime`, and every state
+field. Summaries are validated by status: `RUNNING`, `OK`, `NO_ELIGIBLE_BARS_YET`, `ABORTED`,
+reserved persisted `CONFIG_ERROR`, and `CORRUPT_LEDGER` each have required fields and types. A
+malformed or unreadable persisted artifact therefore produces `CORRUPT_LEDGER` (exit 4) and an
+operator stop/review — it is never silently normalized into `OK` or republished.
 
 | `status` | exit | meaning | writes |
 | --- | --- | --- | --- |
@@ -156,7 +163,7 @@ normalized into `OK` or republished.
 | `NO_ELIGIBLE_BARS_YET` | `0` | **healthy no-op** — observer output is clean/fresh/on-grid and the existing ledgers reconcile, but no bar has reached `forward_start_ts` yet. NOT a FLAT/zero result. | summary/receipt/provenance only; **no** ledger rows, **no** state/watermark |
 | `ABORTED` | `2` | freshness/divergence gate abort (config valid, observer output stale/missing/malformed/diverged). | clearly-marked `ABORTED` summary/receipt/provenance; **no** fills/trades/equity |
 | `CONFIG_ERROR` (`ConfigContractError`) | `3` | the `paper_config.json` that *defines* the output contract is itself **missing**, stale, or malformed (not found, invalid UTF-8, bad JSON, old `0.1.0`, wrong `schema_version`/`engine_version`/`baseline_label`, a `bool` where an int/number is required — incl. `schema_version: true`, missing/non-finite `freshness`, or hash mismatch). Clean operator message + init/archive/re-init guidance, **no Python traceback**. | **no ledger/state/provenance/receipt.** If a prior summary exists it is superseded by a minimal `RUNNING`/`phase: preflight_config_error` marker (a stale `OK` must not survive); a **first-run** config error in a fresh dir writes **nothing**. |
-| `CORRUPT_LEDGER` | `4` | a persisted artifact failed closed: an existing ledger is unreadable (**invalid UTF-8, invalid JSON, or a valid-JSON non-object row such as `[]`/`123`/`"x"`**), **structurally malformed/partial** (a `{}` JSONL row or one missing required fields / with a non-finite numeric), a **`{}`/malformed/non-object/wrong-typed `paper_pnl_summary.json`**, a **`{}`/partial/malformed `paper_position_state.json`** (`{}` is corrupt, **not** treated as absent), **or** a reconcile invariant fails (orphan fill/snapshot, disagreeing `bar_commit_id`, partial bar). Caught either on the **pre-run existing-ledger health gate** (before any new mutation, no-op, or divergence abort) **or** the **post-mutation reconcile**. No traceback. The watermark is **NOT** advanced and **no** `OK` is published. | `CORRUPT_LEDGER` summary/receipt/provenance surfacing the reconcile failures; **no** new ledger rows, **no** state |
+| `CORRUPT_LEDGER` | `4` | a persisted artifact failed closed: an existing ledger has a **permission/OS read failure**, invalid UTF-8/JSON, a valid-JSON non-object row such as `[]`/`123`/`"x"`, is structurally malformed/partial, has an invalid status-specific summary/state shape, **or** a reconcile invariant fails (orphan fill/snapshot, disagreeing `bar_commit_id`, partial bar). Caught either on the **pre-run existing-ledger health gate** (after `RUNNING` is visible, before any new ledger mutation/no-op/divergence abort) or the **post-mutation reconcile**. No traceback. The watermark is **NOT** advanced and **no** `OK` is published. | `CORRUPT_LEDGER` summary/receipt/provenance surfacing the reconcile failures; **no** new ledger rows, **no** state |
 
 So: `exit 0` = `OK` run **or** healthy `NO_ELIGIBLE_BARS_YET` no-op (read the status) · `exit 2`
 = gate-aborted with an `ABORTED` summary (or a RUNNING/unknown status the CLI refuses to call

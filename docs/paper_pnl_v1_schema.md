@@ -175,7 +175,7 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
 | `paper_equity.jsonl` | append | `bar_ts, bar_commit_id, realized_gross_pnl, unrealized_pnl, funding_cum, fees_cum, equity, drawdown, num_open` |
 | `paper_funding.jsonl` | append | `funding_id(=symbol+bar_ts, or symbol+bar_ts+"\|exit" for the exit-tail stub), bar_commit_id, symbol, bar_ts, window_start, window_end, notional_usd, funding_rate(Σ of events in interval), funding_events, rate_available, funding_amount` (section 11) |
 | `paper_signal_snapshots.jsonl` | append | `snapshot_id, bar_ts, bar_commit_id, bar_index, active_symbols, portfolio_heat, heat_cap_triggered, weighted_return, source_observation_digest, source_observation_mtime, run_ts, backfill=false` (section 10) |
-| `paper_pnl_summary.json` | overwrite (**authoritative current-run status**) | `status(OK / RUNNING / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (RUNNING runs carry `run_id, started_at, phase, previous_watermark` — `phase` is `preflight` for a normal run, `preflight_config_error` for the minimal stale-OK-superseding marker written when the config itself cannot be loaded; ABORTED runs add `abort_code, abort_reason, aborted_at`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count, detected_at`; NO_ELIGIBLE_BARS_YET runs add `reason, checked_at`). This file is the single authoritative current-run status (see § 5, run transaction): a `RUNNING` marker is written **before** the pre-run health/freshness/divergence gates (so a failed abort/corrupt publication never leaves a stale OK), and the final `OK` write is the commit marker. |
+| `paper_pnl_summary.json` | overwrite (**authoritative current-run status**) | `status(OK / RUNNING / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET), baseline_label, baseline_note, closed_trades, winrate(null until closed_trades>0), realized_net_pnl, total_pnl, max_drawdown, profit_factor, expectancy, bars_elapsed, open_positions, funding_gap, funding_gap_count, current_verdict, disclaimer` (RUNNING runs carry `run_id, started_at, phase, previous_watermark` — `phase` is `preflight` for a normal run, `preflight_config_error` for the minimal stale-OK-superseding marker written when the config itself cannot be loaded; ABORTED runs add `abort_code, abort_reason, aborted_at`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count, detected_at`; NO_ELIGIBLE_BARS_YET runs add `reason, checked_at`). `CONFIG_ERROR` is a reserved persisted-summary status with `config_error, detected_at`; the current runner instead writes `RUNNING/phase=preflight_config_error` when replacing an existing stale summary. This file is the single authoritative current-run status (see § 5, run transaction): a `RUNNING` marker is written **before** the pre-run health/freshness/divergence gates (so a failed abort/corrupt publication never leaves a stale OK), and the final `OK` write is the commit marker. |
 | `paper_provenance.json` | overwrite | latest run: `status(OK / ABORTED / CORRUPT_LEDGER / NO_ELIGIBLE_BARS_YET)`, `baseline_label`, input digests (`bar_decisions`, `observation_log`, OHLCV, funding), output digests (incl. `paper_signal_snapshots.jsonl`), `engine_version`, `git_sha`, `run_ts` (ABORTED runs add `abort_code, abort_reason`; CORRUPT_LEDGER runs add `reconcile_failures, reconcile_failure_count`) |
 | `paper_provenance_log.jsonl` | append | one provenance record per run (incl. aborted runs) |
 | `paper_receipt.md` | overwrite | human summary + loud disclaimer + baseline label + red flags (aborted runs render a 🛑 ABORTED receipt) |
@@ -227,16 +227,19 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
   **if that publication itself fails part-way a previous `OK` would still be visible**. So the
   `RUNNING` marker is written **before** those gates (Blocker 1). The runner runs an explicit
   transaction whose authoritative status lives in `paper_pnl_summary.json`:
-  1. **`RUNNING` preflight marker before any gate or mutation.** As the **first** summary write
+  1. **`RUNNING` preflight marker before any gate or ledger/state mutation.** As the **first**
+     summary write
      of a run — **before** the existing-ledger health gate, the freshness/divergence gates, and
      any snapshot/ledger/state write — the runner overwrites `paper_pnl_summary.json`
      **atomically** with `status: RUNNING` (carrying `run_id`, `started_at`, `phase: preflight`,
-     `previous_watermark`, `baseline_label`). The health-gate reads that compute the failures are
-     pure reads (they publish nothing), so reading them just before this marker cannot leave a
-     stale `OK`; **only** the gate publications that follow this marker can fail, and if any does
-     the visible status stays `RUNNING` — never the superseded `OK`. A stale previous `OK` is
-     therefore superseded the instant a run begins, so a failed `CORRUPT_LEDGER`/`ABORTED`/
-     `NO_ELIGIBLE_BARS_YET` publication can never leave the old `OK` visible. **Even a config
+     `previous_watermark`, `baseline_label`). To preserve validation of the prior summary without
+     reading it first, the runner atomically stages the old summary path **without parsing it**,
+     writes `RUNNING`, then validates the staged prior summary during the health gate. No
+     persisted ledger/state/summary content is read before `RUNNING` is visible. If the health
+     gate or its `CORRUPT_LEDGER` publication fails, the authoritative path therefore remains
+     `RUNNING`, never the superseded `OK`. A stale previous `OK` is superseded the instant a run
+     begins, so a failed `CORRUPT_LEDGER`/`ABORTED`/`NO_ELIGIBLE_BARS_YET` publication can never
+     leave the old `OK` visible. **Even a config
      load failure** invalidates a stale `OK`: if `paper_config.json` is missing/malformed, the
      runner writes a minimal `status: RUNNING` (`phase: preflight_config_error`) marker —
      **but only when a summary file already exists** (a first-run config error in a fresh dir
@@ -262,15 +265,18 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
   can never be silently normalized into `OK`. A `RUNNING` summary that outlives one timer interval
   signals a crashed/incomplete run for operator stop/review (see `docs/ops/VM_90D_RUNBOOK.md`
   § 3.5b).
-- **Fail-closed artifact reads (`CORRUPT_LEDGER`):** every persisted-artifact reader validates
-  **parse AND deep shape** (not just "is it a JSON object" and not just "is the file parseable").
+- **Fail-closed artifact reads (`CORRUPT_LEDGER`):** every persisted-artifact reader normalizes
+  filesystem read failures (`PermissionError`/other `OSError`) and validates **parse AND deep
+  shape** (not just "is it a JSON object" and not just "is the file parseable").
   A malformed JSONL ledger (invalid UTF-8, invalid JSON, or a valid-JSON **non-object** row such
   as `[]`/`123`/`"x"`) and a **structurally malformed/partial** JSONL row all fail closed. The
   per-row contract is **field-level and type-level**, mirroring exactly what the engine emits:
   - **required fields present** (an empty `{}` row, or one missing e.g. a fill's `fee`/`open_price`/
     `slippage_bps`/`backfill`, a snapshot's `active_symbols`, etc., is corrupt);
-  - **finite numbers** where numbers are needed (no `bool`/`NaN`/`inf`/`-inf`/string — e.g. a fill
-    `fee=NaN`/`open_price=NaN`, a funding `funding_events=NaN`, a snapshot `weighted_return=NaN`);
+  - **finite numbers / exact non-negative integers** where needed (no
+    `bool`/`NaN`/`inf`/`-inf`/string — e.g. a fill `fee=NaN`/`open_price=NaN`, a funding
+    `funding_events=NaN`, a snapshot `weighted_return=NaN` or
+    `source_observation_mtime="not-a-number"`);
   - **non-negative finite numbers** for `fee`/`slippage_bps`;
   - **non-empty strings** for ids/timestamps/symbols;
   - **lists of strings** for `open_symbols`/`active_symbols` (a scalar such as `open_symbols="AAA"`
@@ -278,9 +284,13 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
   - **real booleans** for `backfill`/`rate_available`/`heat_cap_triggered`;
   - **enumerated** `side` ∈ {BUY, SELL} and `kind` ∈ {entry, exit}.
 
-  The summary and state files are validated the same way: a `{}`/malformed/non-object/wrong-typed
-  `paper_pnl_summary.json` (incl. an `OK` summary with a wrong-typed numeric or **missing
-  `disclaimer`**, an unknown `status`), a `{}`/partial/malformed `paper_position_state.json`
+  The summary and state files are validated the same way. Summary validation is
+  **status-specific** for `RUNNING`, `OK`, `NO_ELIGIBLE_BARS_YET`, `ABORTED`, reserved persisted
+  `CONFIG_ERROR`, and `CORRUPT_LEDGER`: each status has required fields and exact field types.
+  Thus a `{}`/malformed/non-object/wrong-typed `paper_pnl_summary.json` (incl. a partial
+  `ABORTED`, a `RUNNING` summary with an accounting field, an `OK` summary with
+  `open_positions="AAA"` or a **missing `disclaimer`**, or an unknown/wrong-typed `status`), a
+  `{}`/partial/malformed `paper_position_state.json`
   (**`{}` is corrupt, never silently treated as "absent" and reinitialized**; a partial state, an
   **`open_positions` entry that is `{}`/partial**, or an **unparseable `watermark_bar_ts`** such as
   `"not-a-timestamp"` — only `""` or a parseable bar timestamp is accepted), or a pre-existing
@@ -298,8 +308,9 @@ also carries a `bar_commit_id` (section 10) tying it to the exact consumed sourc
   no-op) but prints `No eligible bars yet; no ledger rows written` — never "run complete".
 - **Missing/stale/malformed-config CLI behavior (`CONFIG_ERROR`):** because the invalid config
   *defines* the output contract, no valid `ABORTED` summary can be built. `load_config` normalizes
-  **every** load fault to `ConfigContractError`: a **missing** file (`FileNotFoundError` → init
-  guidance), **invalid UTF-8** bytes (`UnicodeDecodeError`), bad JSON (`JSONDecodeError`), missing
+  **every** load fault to `ConfigContractError`: a **missing/unreadable** file
+  (`FileNotFoundError`/other `OSError` → init guidance), **invalid UTF-8** bytes
+  (`UnicodeDecodeError`), bad JSON (`JSONDecodeError`), missing
   fields, wrong schema/engine/baseline (incl. `schema_version: true`), non-finite/out-of-range
   numeric, bad fill_model/signal_source/funding_model, numeric/off-grid `forward_start_ts`, or a
   hash mismatch. `scripts/qnty-paper-accounting.py` catches that single type, prints clean

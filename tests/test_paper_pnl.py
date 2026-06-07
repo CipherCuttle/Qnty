@@ -2733,3 +2733,143 @@ def test_unparseable_watermark_is_corrupt_ledger(tmp_path):
     summary = _run(out, fwd)
     _assert_corrupt_mentions(summary, "paper_position_state.json")
     assert not _summary_is_ok(out)
+
+
+# ==========================================================================================
+# ADVERSARIAL REGRESSION v6 — final preflight/read-normalization + status-schema blockers.
+# ==========================================================================================
+
+
+def _write_summary_mutation(out, mutate):
+    summary = json.loads((out / "paper_pnl_summary.json").read_text())
+    mutate(summary)
+    (out / "paper_pnl_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+
+def test_running_marker_is_visible_before_existing_ledger_health_reads(tmp_path, monkeypatch):
+    from quantbot.paper import runner as _runner
+
+    out, fwd = _seed_ok_run(tmp_path)
+    observed = []
+
+    def _health_gate(path, *, prior_summary_paths=()):
+        observed.append(json.loads((path / "paper_pnl_summary.json").read_text())["status"])
+        return []
+
+    monkeypatch.setattr(_runner, "check_existing_ledgers", _health_gate)
+    summary = _run(out, fwd)
+    assert observed == ["RUNNING"]
+    assert summary["status"] == "OK"
+
+
+@pytest.mark.parametrize("ledger_name", ["paper_equity.jsonl", "paper_fills.jsonl"])
+def test_previous_ok_unreadable_ledger_cli_exits_4_without_traceback(
+    tmp_path, ledger_name
+):
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    out, fwd = _seed_ok_run(tmp_path)
+    state_before = (out / "paper_position_state.json").read_bytes()
+    ledger_path = out / ledger_name
+    ledger_path.chmod(0)
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(repo_root / "scripts" / "qnty-paper-accounting.py"),
+                "--output-dir", str(out),
+                "--forward-obs-dir", str(fwd),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(repo_root),
+            env={**os.environ, "PYTHONPATH": str(repo_root)},
+        )
+    finally:
+        ledger_path.chmod(0o600)
+
+    assert proc.returncode == 4, (proc.returncode, proc.stdout, proc.stderr)
+    assert "Traceback" not in proc.stderr
+    assert json.loads((out / "paper_pnl_summary.json").read_text())["status"] == "CORRUPT_LEDGER"
+    assert (out / "paper_position_state.json").read_bytes() == state_before
+
+
+@pytest.mark.parametrize("error_type", [PermissionError, OSError])
+def test_previous_ok_os_error_from_ledger_reader_is_corrupt_not_ok(
+    tmp_path, monkeypatch, error_type
+):
+    from quantbot.paper import reconcile as _reconcile
+
+    out, fwd = _seed_ok_run(tmp_path)
+
+    def _unreadable(*args, **kwargs):
+        raise error_type("injected unreadable persisted ledger")
+
+    monkeypatch.setattr(_reconcile, "_read_ledger_validated", _unreadable)
+    summary = _run(out, fwd)
+    assert summary["status"] == "CORRUPT_LEDGER"
+    assert not _summary_is_ok(out)
+
+
+def test_running_summary_with_wrong_typed_accounting_field_is_corrupt(tmp_path):
+    from quantbot.paper import provenance as _provenance
+    from quantbot.paper import ledger as _ledger
+
+    out, fwd = _seed_ok_run(tmp_path)
+    running = _provenance.running_summary(
+        load_config(out), "run-id", "2026-06-07T00:00:00Z", TS[-1]
+    )
+    running["closed_trades"] = "bad"
+    _ledger.write_json_atomic(out / "paper_pnl_summary.json", running)
+    _assert_corrupt_mentions(_run(out, fwd), "paper_pnl_summary.json")
+
+
+def test_partial_aborted_summary_is_corrupt_not_ok(tmp_path):
+    from quantbot.paper import provenance as _provenance
+    from quantbot.paper import ledger as _ledger
+
+    out, fwd = _seed_ok_run(tmp_path)
+    aborted = _provenance.aborted_summary(load_config(out), "TEST_ABORT", "test")
+    aborted.pop("abort_reason")
+    _ledger.write_json_atomic(out / "paper_pnl_summary.json", aborted)
+    summary = _run(out, fwd)
+    _assert_corrupt_mentions(summary, "paper_pnl_summary.json")
+    assert summary["status"] != "OK"
+
+
+@pytest.mark.parametrize("bad_status", [123, "NOT_A_REAL_STATUS"])
+def test_wrong_or_unknown_summary_status_is_corrupt(tmp_path, bad_status):
+    out, fwd = _seed_ok_run(tmp_path)
+    _write_summary_mutation(out, lambda summary: summary.__setitem__("status", bad_status))
+    _assert_corrupt_mentions(_run(out, fwd), "paper_pnl_summary.json")
+
+
+def test_ok_summary_open_positions_string_is_corrupt(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _write_summary_mutation(
+        out, lambda summary: summary.__setitem__("open_positions", "AAA")
+    )
+    _assert_corrupt_mentions(_run(out, fwd), "paper_pnl_summary.json")
+
+
+def test_snapshot_source_observation_mtime_string_is_corrupt(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _corrupt_first_row(
+        out,
+        "paper_signal_snapshots.jsonl",
+        lambda row: row.__setitem__("source_observation_mtime", "not-a-number"),
+    )
+    _assert_corrupt_mentions(_run(out, fwd), "paper_signal_snapshots.jsonl")
+
+
+def test_snapshot_bar_index_string_is_corrupt(tmp_path):
+    out, fwd = _seed_ok_run(tmp_path)
+    _corrupt_first_row(
+        out,
+        "paper_signal_snapshots.jsonl",
+        lambda row: row.__setitem__("bar_index", "not-an-int"),
+    )
+    _assert_corrupt_mentions(_run(out, fwd), "paper_signal_snapshots.jsonl")

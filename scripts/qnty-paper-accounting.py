@@ -31,9 +31,10 @@ from quantbot.paper.runner import run_once
 #       fill_model/signal_source/funding_model, numeric/off-grid forward_start_ts, bad JSON, or
 #       hash mismatch). Clean abort, NO ledger/state/summary writes, NO traceback.
 #   4 = CORRUPT_LEDGER — a persisted artifact failed closed. Covers BOTH (a) the pre-run
-#       existing-ledger health gate (a malformed JSONL ledger: bad UTF-8, invalid JSON, a
-#       valid-JSON non-object row like `[]`, a malformed summary/position-state, or a
-#       pre-existing reconcile failure such as an orphan fill/snapshot) AND (b) the
+#       existing-ledger health gate (an unreadable/permission/OS read failure, malformed JSONL:
+#       bad UTF-8, invalid JSON, a valid-JSON non-object row like `[]`, a malformed
+#       status-specific summary/position-state, or a pre-existing reconcile failure such as an
+#       orphan fill/snapshot) AND (b) the
 #       post-mutation reconcile gate. In every case the watermark is NOT advanced and no `OK`
 #       is published; operator review is required (see runbook § 3.5b).
 EXIT_CONFIG_CONTRACT = 3

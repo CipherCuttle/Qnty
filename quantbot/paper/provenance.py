@@ -229,7 +229,18 @@ def no_eligible_bars_summary(config: dict[str, Any], reason: str) -> dict[str, A
 
 
 def _digest(path: Path) -> str:
-    return sha256_file(path) if path.exists() else "absent"
+    """Digest a provenance input/output without letting unreadable artifacts mask status.
+
+    CORRUPT_LEDGER publication must remain possible when the corrupt artifact is unreadable
+    because of PermissionError/another OS read failure. Record that fact instead of raising
+    while building the failure evidence bundle.
+    """
+    try:
+        return sha256_file(path)
+    except FileNotFoundError:
+        return "absent"
+    except OSError as exc:
+        return f"unreadable:{type(exc).__name__}:errno={exc.errno}"
 
 
 def build_provenance(
