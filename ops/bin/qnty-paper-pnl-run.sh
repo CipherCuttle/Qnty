@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # qnty-paper-pnl-run.sh - Ops-only: run one paper PnL accounting pass, then the AUTHORITATIVE
-# read-only verifier. Strictly additive. Reads forward_obs_v1 read-only; writes only paper_pnl_v1.
-# Does NOT place orders. Does NOT touch the observer. Decoupled from qnty-shadow-run.
+# read-only verifier. SQLite ledger path (Phase 4). Reads forward_obs_v1 read-only; writes only
+# paper_ledger.db. Does NOT place orders. Does NOT touch the observer. Decoupled from qnty-shadow-run.
 #
-# Flow (see docs/paper_pnl_v1_schema.md § 5a): (1) paper accounting runner, then (2) paper
-# verifier. The runner's paper_pnl_summary.json is a CONVENIENCE status only; the single
-# authoritative paper status is paper_verify_report.json. Operators MUST inspect
-# paper_verify_report.json (NOT paper_pnl_summary.json) to decide whether a run is trusted.
+# Flow (ADR 0001 / Phase 4): (1) SQLite accounting writer, then (2) SQLite read-only verifier.
+# The single authoritative paper status is the verifier exit code. See docs/ADR/0001-paper-sqlite-ledger.md.
+#
+# Precondition: QNTY_PAPER_DB_PATH must point to an existing paper_ledger.db.
+# If DB is missing, fails cleanly with guidance to run qnty-paper-sqlite-init.py.
+#
+# Testability: override accounting/verify commands via QNTY_PAPER_ACCT_CMD / QNTY_PAPER_VERIFY_CMD.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,78 +32,95 @@ fi
 
 cd "$REPO_DIR"
 
-# Refuse to run until the write-once config exists (operator must init first).
-PAPER_DIR="${QNTY_PAPER_OUTPUT_DIR:-/srv/qnty/output/paper_pnl_v1}"
-if [ ! -f "$PAPER_DIR/paper_config.json" ]; then
-    echo "Missing $PAPER_DIR/paper_config.json. Run qnty-paper-pnl-init.sh first." >&2
+# Precondition: SQLite DB must exist.
+DB_PATH="${QNTY_PAPER_DB_PATH:-/srv/qnty/output/paper_pnl_v1/paper_ledger.db}"
+if [ ! -f "$DB_PATH" ]; then
+    echo "Missing SQLite DB at $DB_PATH" >&2
+    echo "Run: python scripts/qnty-paper-sqlite-init.py --forward-start-ts <future UTC 8h boundary>" >&2
     exit 1
 fi
 
-# (1) Paper accounting runner. Its paper_pnl_summary.json status is the runner's in-process
-#     status only and is NOT authoritative — but its EXIT CODE gates whether we even try to
-#     certify. Accounting exit-code matrix (see docs/paper_pnl_v1_schema.md § 5 / CLAUDE.md):
-#       0 = OK or healthy NO_ELIGIBLE_BARS_YET no-op
-#       2 = ABORTED (freshness/divergence gate; ledgers unchanged)
-#       3 = CONFIG_ERROR (stale/missing/malformed paper_config.json — no writes)
-#       4 = CORRUPT_LEDGER (a persisted ledger failed closed)
-#     A CONFIG_ERROR or CORRUPT_LEDGER means we must NOT proceed to certify stale old ledgers as
-#     trusted — fail the unit immediately.
+# (1) SQLite accounting writer.
+#     Exit codes: 0=OK, 2=ABORTED, 3=CONFIG_ERROR, 4=CORRUPT_LEDGER, 5=PRE_START, 6=LEDGER_BUSY
+#     If accounting fails (rc!=0 and rc!=5), do NOT run verifier (prevents certifying stale DB).
+ACCT_CMD="${QNTY_PAPER_ACCT_CMD:-python scripts/qnty-paper-sqlite-accounting.py}"
 set +e
-python scripts/qnty-paper-accounting.py
+$ACCT_CMD
 acct_rc=$?
 set -e
-echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting runner exit=${acct_rc} (runner status, NOT authoritative)"
+echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting exit=${acct_rc}"
 
 case "$acct_rc" in
-    0)
-        : # OK or healthy NO_ELIGIBLE_BARS_YET — proceed to the verifier.
+    0|5)
+        # OK or PRE_START: proceed to verifier.
         ;;
     2)
-        # ABORTED (freshness/divergence). The existing ledgers were not mutated; this is normal
-        # during pre-start (observer not yet fresh/past forward_start_ts). Tolerated and logged;
-        # proceed to the verifier, which certifies whatever already-committed ledgers exist.
-        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting ABORTED (rc=2; freshness/divergence) — tolerated, ledgers unchanged; proceeding to verifier" >&2
+        # ABORTED: failure, not healthy no-op. Do NOT run verifier.
+        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting ABORTED (rc=2) — not proceeding to verifier" >&2
+        exit 2
         ;;
-    3|4)
-        # CONFIG_ERROR / CORRUPT_LEDGER: the accounting layer itself failed closed. Do NOT run the
-        # verifier against stale/corrupt ledgers (it must not certify them). Fail the unit now.
-        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting FAILED CLOSED (rc=${acct_rc}; CONFIG_ERROR/CORRUPT_LEDGER) — refusing to certify; inspect paper_pnl_summary.json" >&2
-        exit "$acct_rc"
+    3)
+        # CONFIG_ERROR: do NOT run verifier.
+        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting CONFIG_ERROR (rc=3) — not proceeding to verifier" >&2
+        exit 3
+        ;;
+    4)
+        # CORRUPT_LEDGER: do NOT run verifier.
+        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting CORRUPT_LEDGER (rc=4) — not proceeding to verifier" >&2
+        exit 4
+        ;;
+    6)
+        # LEDGER_BUSY: do NOT run verifier.
+        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting LEDGER_BUSY (rc=6) — not proceeding to verifier" >&2
+        exit 6
         ;;
     *)
-        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting returned unexpected rc=${acct_rc} — failing closed" >&2
+        # Unexpected nonzero: do NOT run verifier.
+        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting unexpected rc=${acct_rc} — not proceeding to verifier" >&2
         exit "$acct_rc"
         ;;
 esac
 
-# (2) AUTHORITATIVE verifier. The latest paper_verify_report.json is the single source of truth;
-#     trust is preserved separately in paper_verify_trusted_ok.json (advanced ONLY on OK).
-#     Exit codes: 0=OK, 3=CONFIG_ERROR, 4=CORRUPT, 5=INCOMPLETE/RUNNING_STALE/NEEDS_BOOTSTRAP.
-#     NOTE: the first trusted baseline must be established once by an operator with
-#     `python scripts/paper_verify.py --bootstrap` after reviewing the first committed bars; the
-#     timer never auto-bootstraps (it would otherwise blindly trust whatever ledgers it found).
+# (2) SQLite read-only verifier.
+#     Exit codes: 0=OK, 3=CONFIG_ERROR, 4=CORRUPT, 5=PRE_START
+VERIFY_CMD="${QNTY_PAPER_VERIFY_CMD:-python scripts/qnty-paper-sqlite-verify.py}"
 set +e
-python scripts/paper_verify.py
+$VERIFY_CMD
 verify_rc=$?
 set -e
+echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: verifier exit=${verify_rc}"
 
-case "$verify_rc" in
-    0)
+# Wrapper exit code matrix:
+#   acct 0 + verify 0   => exit 0
+#   acct 5 + verify 5   => exit 0
+#   acct 0 + verify 5   => exit 4
+#   acct 5 + verify 0   => exit 4
+#   acct 0 + verify 3   => exit 3
+#   acct 0 + verify 4   => exit 4
+#   acct 5 + verify 3   => exit 3
+#   acct 5 + verify 4   => exit 4
+case "$acct_rc:$verify_rc" in
+    0:0|5:5)
         echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: VERIFIED OK (authoritative; SIMULATION)"
+        exit 0
         ;;
-    5)
-        # INCOMPLETE / RUNNING_STALE / NEEDS_BOOTSTRAP: nothing certifiable yet. Tolerated during
-        # pre-start (no eligible bars) or while awaiting an operator --bootstrap. Logged loudly;
-        # the unit does not fail so the timer keeps observing.
-        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: NOT YET CERTIFIABLE (verify rc=5; INCOMPLETE/RUNNING_STALE/NEEDS_BOOTSTRAP) — inspect paper_verify_report.json" >&2
+    0:5|5:0)
+        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: accounting/verifier status mismatch (acct=${acct_rc}, verify=${verify_rc})" >&2
+        exit 4
+        ;;
+    0:3|5:3)
+        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: verifier CONFIG_ERROR (rc=3)" >&2
+        exit 3
+        ;;
+    0:4|5:4)
+        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: verifier CORRUPT (rc=4)" >&2
+        exit 4
         ;;
     *)
-        # CONFIG_ERROR (3), CORRUPT (4), or any unexpected code: the run is NOT trusted. Fail the
-        # unit so systemd marks it failed and alerting fires. Operators inspect
-        # paper_verify_report.json (NOT paper_pnl_summary.json).
-        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: VERIFIER FAILED (rc=${verify_rc}) — paper run NOT trusted; inspect paper_verify_report.json" >&2
-        exit "$verify_rc"
+        # Unexpected combination: exit with verifier rc if nonzero, else 4.
+        if [ "$verify_rc" -ne 0 ]; then
+            exit "$verify_rc"
+        fi
+        exit 4
         ;;
 esac
-
-echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: complete"

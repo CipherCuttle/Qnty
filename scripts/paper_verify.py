@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Authoritative, read-only verifier for the paper_pnl_v1 ledger (verify-run snapshot model).
 
+.. deprecated::
+   JSONL paper path is deprecated by ADR 0001 (SQLite path).
+   Kept for rollback / historical compatibility.
+   Do not delete yet.
+
 This is the ONLY component that publishes an authoritative paper status. Each invocation freezes
 the exact bytes of every input into `verify_runs/<run_id>/inputs/`, verifies that frozen snapshot
 (re-deriving the verdict from the snapshotted ledgers — it does NOT trust the runner's
@@ -25,68 +30,45 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from quantbot.paper.verify import (  # noqa: E402
-    STATUS_CONFIG_ERROR,
-    STATUS_CORRUPT,
-    STATUS_INCOMPLETE,
-    STATUS_NEEDS_BOOTSTRAP,
-    STATUS_OK,
-    STATUS_RUNNING_STALE,
-    STATUS_VERIFYING,
-    verify,
-)
-
-# Exit codes:
-#   0 = OK         — authoritative: the snapshot reconciles and is trusted (simulation).
-#   3 = CONFIG_ERROR — stale/incompatible/unloadable paper_config.json.
-#   4 = CORRUPT    — an integrity invariant failed; the run is NOT trusted (also any unknown /
-#                    in-flight VERIFYING status that should never be returned).
-#   5 = INCOMPLETE / RUNNING_STALE / NEEDS_BOOTSTRAP — nothing certifiable yet, a crashed/in-flight
-#                    run, or committed ledgers awaiting an explicit --bootstrap baseline.
-_EXIT = {
-    STATUS_OK: 0,
-    STATUS_CONFIG_ERROR: 3,
-    STATUS_CORRUPT: 4,
-    STATUS_INCOMPLETE: 5,
-    STATUS_RUNNING_STALE: 5,
-    STATUS_NEEDS_BOOTSTRAP: 5,
-    # VERIFYING is an in-flight marker verify() never returns; if it ever surfaces, fail closed.
-    STATUS_VERIFYING: 4,
-}
+from quantbot.paper.verify import verify_latest
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Verify the paper_pnl_v1 ledger (authoritative)")
-    parser.add_argument("--output-dir", default=None)
-    parser.add_argument(
-        "--bootstrap",
-        action="store_true",
-        help="Establish the first trusted OK baseline when committed ledgers exist but none has "
-        "been anchored yet (operator action; use once after reviewing the first committed bars).",
+    parser = argparse.ArgumentParser(
+        description="Authoritative read-only verifier for paper_pnl_v1 ledger"
     )
+    parser.add_argument("--bootstrap", action="store_true", help="Establish first trusted baseline")
+    parser.add_argument("--output-dir", default=None)
     args = parser.parse_args(argv)
 
-    report = verify(
-        output_dir=Path(args.output_dir) if args.output_dir else None,
-        bootstrap=args.bootstrap,
-    )
-    status = report["status"]
+    output_dir = Path(args.output_dir) if args.output_dir else None
+    result = verify_latest(output_dir=output_dir, bootstrap=args.bootstrap)
 
-    print(f"PAPER VERIFY: {status} (SIMULATION) — authoritative status in paper_verify_report.json")
-    print(f"  verify-run:       {report['verify_run_dir']}/")
-    print(f"  forward_start_ts: {report['forward_start_ts']}")
-    print(f"  committed bars:   {report['bars_committed']}")
-    print(f"  verdict:          {report['current_verdict']}")
-    if report["failures"]:
-        print(f"  failures ({report['failure_count']}):")
-        for f in report["failures"][:10]:
-            print(f"    - {f}")
-    return _EXIT.get(status, 4)
+    if result.status == "OK":
+        print("Paper verify OK (authoritative).")
+        if result.report:
+            print(f"  runs checked: {result.report.get('runs_checked', '?')}")
+            print(f"  failures:     {result.report.get('failure_count', 0)}")
+        return 0
+
+    if result.status in ("INCOMPLETE", "RUNNING_STALE", "NEEDS_BOOTSTRAP"):
+        print(f"Paper verify NOT YET CERTIFIABLE: {result.status}")
+        if result.report:
+            print(f"  detail: {result.report.get('reason', '')}")
+        return 5
+
+    # CONFIG_ERROR or CORRUPT
+    print(f"Paper verify FAILED: {result.status}")
+    if result.report:
+        for f in result.report.get("failures", [])[:10]:
+            print(f"  - {f}")
+    return 3 if result.status == "CONFIG_ERROR" else 4
 
 
 if __name__ == "__main__":

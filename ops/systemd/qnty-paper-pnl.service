@@ -16,6 +16,7 @@ Group=qnty
 WorkingDirectory=/srv/qnty/repo
 Environment="PATH=/srv/qnty/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="VIRTUAL_ENV=/srv/qnty/venv"
+Environment="QNTY_PAPER_DB_PATH=/srv/qnty/output/paper_pnl_v1/paper_ledger.db"
 ExecStart=/srv/qnty/repo/ops/bin/qnty-paper-pnl-run.sh
 StandardOutput=journal
 StandardError=journal

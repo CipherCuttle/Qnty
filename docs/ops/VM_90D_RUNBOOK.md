@@ -122,11 +122,14 @@ QNTY_PAPER_OUTPUT_DIR=/srv/qnty/output/paper_pnl_v1 \
 
 The paper timer remains disabled until the config is re-init'd against this engine version.
 
-> **Paper SQLite migration pending.** The JSONL paper PnL ledger + snapshot-verifier
-> authority model described in this runbook is being migrated to a SQLite/WAL ledger
+> **Paper SQLite migration (Phase 4) in progress.** The JSONL paper PnL ledger + snapshot-verifier
+> authority model is being migrated to a SQLite/WAL ledger
 > (paper engine `0.3.0`); see [ADR 0001 — paper SQLite ledger](../ADR/0001-paper-sqlite-ledger.md).
-> Until that migration is implemented, proven, and explicitly authorized, **the paper timer
-> must remain disabled** and this JSONL runbook section stays authoritative.
+>
+> **Phase 4 status (local only, not deployed):** The wrapper (`qnty-paper-pnl-run.sh`) has been
+> repointed to the SQLite path locally. The systemd service now includes `QNTY_PAPER_DB_PATH`.
+> JSONL scripts are deprecated but kept for rollback. **The paper timer must remain disabled on the VM**
+> until Phase 5 (deployment/validation) is complete and explicitly authorized.
 
 **Paper accounting status / exit-code matrix (do not conflate them).** `scripts/qnty-paper-accounting.py`
 writes a `status` into `paper_pnl_summary.json` (and `paper_provenance.json`) and returns an
@@ -502,7 +505,35 @@ code mutation occurred during the 90-day run.
 
 ---
 
-## 11. Prerequisites Before 90-Day Clock Starts
+---
+
+## 11. Paper PnL SQLite Migration Status
+
+### Phase 4 (Local Implementation — NOT deployed)
+
+The paper PnL ledger is being migrated from JSONL + snapshot verifier to a SQLite/WAL ledger. See [ADR 0001](../ADR/0001-paper-sqlite-ledger.md) for full context.
+
+**Phase 4 local changes (this repo, not deployed to VM):**
+- Wrapper script (`ops/bin/qnty-paper-pnl-run.sh`) repointed to SQLite path
+- Systemd service (`ops/systemd/qnty-paper-pnl.service`) updated with `QNTY_PAPER_DB_PATH`
+- JSONL scripts (`scripts/qnty-paper-accounting.py`, `scripts/paper_verify.py`, `scripts/paper_reconcile.py`) marked deprecated (kept for rollback)
+- Wrapper tests added (`tests/test_paper_pnl_wrapper.py`)
+- ADR documentation updated
+
+**VM deployment status:**
+- Paper timer (`qnty-paper-pnl.timer`) remains **disabled** on the VM
+- JSONL path still authoritative on VM until Phase 5 (deployment/validation) completes
+- Do NOT enable paper timer until Phase 5 is complete and explicitly authorized
+
+**Environment variables (Phase 4 local testing):**
+- `QNTY_PAPER_DB_PATH` — path to SQLite DB (default: `/srv/qnty/output/paper_pnl_v1/paper_ledger.db`)
+- `QNTY_PAPER_ACCT_CMD` — override accounting command (for testing)
+- `QNTY_PAPER_VERIFY_CMD` — override verifier command (for testing)
+- `QNTY_PAPER_LOCK` — lock file path (default: `/tmp/qnty-paper-pnl.lock`)
+
+---
+
+## 12. Prerequisites Before 90-Day Clock Starts
 
 1. Burn-in completed successfully (see `VM_90D_BURNIN_CHECKLIST.md`)
 2. Clean-deploy snapshot taken

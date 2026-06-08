@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Paper PnL accounting — one run.
 
+.. deprecated::
+   JSONL paper path is deprecated by ADR 0001 (SQLite path).
+   Kept for rollback / historical compatibility.
+   Do not delete yet.
+
 Consumes the read-only shadow observer output (observation_log.json) and appends to the
 paper_pnl_v1 ledger. Strictly additive; never writes to forward_obs_v1.
 

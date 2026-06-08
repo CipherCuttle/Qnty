@@ -1,14 +1,14 @@
 # ADR 0001 — Migrate paper PnL v1 from JSONL + snapshot verifier to a SQLite/WAL ledger
 
-- **Status:** Accepted (Phase 1 substrate implemented; Phase 2 writer implemented 2026-06-08; Phase 3 read-only verifier implemented 2026-06-08; **Phase 3.5 writer/verifier correctness fixes implemented 2026-06-08**). Runtime code implemented in `quantbot/paper/db.py`, `quantbot/paper/sqlite_writer.py`, `quantbot/paper/sqlite_verify.py` and tested in `tests/test_paper_sqlite.py`, `tests/test_paper_sqlite_writer.py`, `tests/test_paper_sqlite_verify.py`. The SQLite verifier is a **parallel** implementation (it does not replace the JSONL verifier) and is **not** the VM default path. **Phase 3 is implemented but NOT approved to proceed to Phase 4 until the Phase 3.5 fixes (§ 8d) pass adversarial review; writer exit/restart correctness is now a prerequisite for Phase 4. No deployment readiness is claimed.**
+- **Status:** Accepted (Phase 1 substrate implemented; Phase 2 writer implemented 2026-06-08; Phase 3 read-only verifier implemented 2026-06-08; **Phase 3.5 writer/verifier correctness fixes implemented 2026-06-08**; **Phase 4 wrapper/docs local migration implemented 2026-06-08**). Runtime code implemented in `quantbot/paper/db.py`, `quantbot/paper/sqlite_writer.py`, `quantbot/paper/sqlite_verify.py` and tested in `tests/test_paper_sqlite.py`, `tests/test_paper_sqlite_writer.py`, `tests/test_paper_sqlite_verify.py`, `tests/test_paper_pnl_wrapper.py`. The SQLite verifier is now the local/default path for the wrapper (Phase 4), but the VM remains untouched and the timer remains disabled. **No deployment readiness is claimed.**
 - **Date:** 2026-06-08
 - **Scope:** `quantbot/paper/`, `scripts/qnty-paper-*`, `scripts/paper_*`,
   `ops/bin/qnty-paper-pnl-*.sh`, `docs/paper_pnl_v1_schema.md`,
   `docs/ops/VM_90D_RUNBOOK.md`.
 - **Supersedes for paper PnL:** the JSONL + frozen-snapshot verifier + trusted-OK-baseline
   + multi-file provenance publication authority model documented in
-  `docs/paper_pnl_v1_schema.md` §5/§5a/§10/§11. That model stays in effect until the SQLite
-  path is implemented and proven (Phases 1–5 below); this ADR only fixes the target design.
+  `docs/paper_pnl_v1_schema.md` §5/§5a/§10/§11. That model stays in effect on the
+  VM until the SQLite path is deployed (Phase 5).
 
 ---
 
@@ -16,7 +16,7 @@
 
 Paper PnL v1 (`paper_pnl_v1`) is a strictly additive simulation layer that converts the
 read-only shadow observer's forward signals into deterministic simulated fills, trades,
-positions, equity, and funding. It is a **fixed-notional active-symbol baseline, not a
+positions, equity, and funding. It is a **fixed-notional active-symbol baseline, not a**
 faithful Package V2 vol-normalized reproduction**, it is **not live trading**, and a green
 paper result proves nothing about real-money profitability or deployment readiness. Those
 disclaimers carry forward unchanged.
@@ -263,7 +263,7 @@ there is no multi-file publish — either the batch commits or it does not.
 ## 6. Public interfaces
 
 - **`QNTY_PAPER_DB_PATH`**, default `/srv/qnty/output/paper_pnl_v1/paper_ledger.db`.
-- **Init CLI** (future): `scripts/qnty-paper-sqlite-init.py --forward-start-ts ... --db-path ...`
+- **Init CLI** (implemented): `scripts/qnty-paper-sqlite-init.py --forward-start-ts ... --db-path ...`
   - creates a fresh database
   - **refuses** an existing database
   - **refuses** legacy paper artifacts unless the operator explicitly archives/removes them
@@ -272,7 +272,7 @@ there is no multi-file publish — either the batch commits or it does not.
   - exit codes match writer status codes
   - no JSONL artifacts created
   - no VM interaction
-- **Verifier CLI** (adapted): `scripts/paper_verify.py --db-path ... [--json]`
+- **Verifier CLI** (implemented): `scripts/qnty-paper-sqlite-verify.py --db-path ... [--json]`
   - opens the DB read-only / query-only
   - prints its report to **stdout only**
   - does **not** write verifier reports in v1 unless explicitly decided later
@@ -290,7 +290,7 @@ there is no multi-file publish — either the batch commits or it does not.
 | `5` | `PRE_START` | valid DB, no committed eligible bars yet (no bar ≥ `forward_start_ts`) |
 | `6` | `LEDGER_BUSY` | could not acquire the writer lock (`BEGIN IMMEDIATE` failed; concurrent writer) |
 
-**Verifier** (`paper_verify.py`):
+**Verifier** (`qnty-paper-sqlite-verify.py`):
 
 | code | status | meaning |
 | --- | --- | --- |
@@ -303,12 +303,28 @@ there is no multi-file publish — either the batch commits or it does not.
 > persisted status in the SQLite model: an in-flight transaction is uncommitted and therefore
 > invisible to any reader; a crashed transaction rolls back and leaves no marker.
 
-### Wrapper policy
+### Wrapper policy (Phase 4)
 
-- The wrapper succeeds **only** for a matching `OK/OK` (accounting OK + verifier OK) or a
-  documented `PRE_START/PRE_START`.
+- The wrapper (`ops/bin/qnty-paper-pnl-run.sh`) succeeds **only** for a matching `OK`/`OK` (accounting OK + verifier OK) or a
+  documented `PRE_START`/`PRE_START`.
 - **Every other result fails the service.**
 - No wrapper may certify a stale old ledger after an accounting failure.
+- The verifier is **never** invoked after accounting failures (exit codes 2, 3, 4, 6).
+- Wrapper exit code matrix:
+  - accounting `0` OK + verifier `0` OK → wrapper exit `0`
+  - accounting `5` PRE_START + verifier `5` PRE_START → wrapper exit `0`
+  - accounting `0` OK + verifier `5` PRE_START → wrapper exit `4`
+  - accounting `5` PRE_START + verifier `0` OK → wrapper exit `4`
+  - accounting `0` OK + verifier `3` CONFIG_ERROR → wrapper exit `3`
+  - accounting `0` OK + verifier `4` CORRUPT → wrapper exit `4`
+  - accounting `5` PRE_START + verifier `3` CONFIG_ERROR → wrapper exit `3`
+  - accounting `5` PRE_START + verifier `4` CORRUPT → wrapper exit `4`
+  - accounting `2` ABORTED → do not run verifier; wrapper exit `2`
+  - accounting `3` CONFIG_ERROR → do not run verifier; wrapper exit `3`
+  - accounting `4` CORRUPT_LEDGER → do not run verifier; wrapper exit `4`
+  - accounting `6` LEDGER_BUSY → do not run verifier; wrapper exit `6`
+  - unexpected nonzero accounting rc → do not run verifier; wrapper exits same nonzero rc
+  - unexpected verifier rc after OK/PRE_START accounting → wrapper exits nonzero, preferably verifier rc if nonzero otherwise `4`
 
 ---
 
@@ -336,8 +352,11 @@ there is no multi-file publish — either the batch commits or it does not.
 - `quantbot/paper/reporting.py`
 - `scripts/qnty-paper-sqlite-init.py` (Phase 1 — IMPLEMENTED)
 - `scripts/qnty-paper-sqlite-accounting.py` (Phase 2 — IMPLEMENTED)
+- `scripts/qnty-paper-sqlite-verify.py` (Phase 3 — IMPLEMENTED)
 - `tests/test_paper_sqlite.py` (Phase 1 — IMPLEMENTED)
 - `tests/test_paper_sqlite_writer.py` (Phase 2 — IMPLEMENTED)
+- `tests/test_paper_sqlite_verify.py` (Phase 3 — IMPLEMENTED)
+- `tests/test_paper_pnl_wrapper.py` (Phase 4 — IMPLEMENTED)
 
 ### Delete / deprecate (later phases, only after SQLite path is proven)
 
@@ -350,15 +369,15 @@ there is no multi-file publish — either the batch commits or it does not.
 - JSONL-specific authority tests
 - remove or deprecate `scripts/paper_reconcile.py` (avoid a second verifier implementation)
 
-### Adapt (later phases)
+### Adapt (Phase 4)
 
 - accounting/verifier CLIs
-- `ops/bin/qnty-paper-pnl-init.sh` (`scripts/qnty-paper-pnl-init.sh`)
-- `ops/bin/qnty-paper-pnl-run.sh`
+- `ops/bin/qnty-paper-pnl-init.sh` (`scripts/qnty-paper-sqlite-init.py`)
+- `ops/bin/qnty-paper-pnl-run.sh` (Phase 4 — IMPLEMENTED)
 - package path helpers
-- service comments
-- `docs/paper_pnl_v1_schema.md`
-- `docs/ops/VM_90D_RUNBOOK.md`
+- service comments (Phase 4 — IMPLEMENTED)
+- `docs/paper_pnl_v1_schema.md` (Phase 4 — IMPLEMENTED)
+- `docs/ops/VM_90D_RUNBOOK.md` (Phase 4 — IMPLEMENTED)
 
 ---
 
@@ -382,12 +401,13 @@ approval and must leave the targeted paper suites + full repo suite green before
 - **Phase 3.5 — writer/verifier correctness fix (IMPLEMENTED 2026-06-08):** closes the
   adversarial-review blockers that made Phase 3 unsafe to advance: the verifier could return
   OK/PRE_START for corrupt accounting, and the writer could not preserve or exit positions
-  across runs. **Phase 4 is NOT authorized until these fixes pass adversarial review.** See § 8d.
-- **Phase 4 — ops/docs:** update wrapper/status matrix/init shell/service comments/docs;
-  remove unused JSONL/provenance modules; remove legacy artifact generation **only after** the
-  SQLite path is proven.
-- **Phase 5 — adversarial review:** targeted fault injection, full suite, schema review,
-  wrapper review, backup-path review. **No VM deployment decision until approved.**
+  across runs. **Phase 4 is now authorized** (was blocked until these fixes passed adversarial review). See § 8d.
+- **Phase 4 — wrapper/docs local migration (IMPLEMENTED 2026-06-08):** wrapper repointed
+  locally to SQLite scripts; tests and docs updated. **VM untouched. Timer still disabled.
+  No deployment readiness claimed.** See § 9.
+- **Phase 5 — deploy to VM:** archive stale JSONL output, initialize fresh SQLite DB with
+  future UTC 8h boundary, enable timer, remove JSONL code. **Requires explicit approval
+  after Phase 4 passes adversarial review.**
 
 ### 8a. Phase 1 clarifications (implemented)
 
@@ -407,12 +427,14 @@ approval and must leave the targeted paper suites + full repo suite green before
 ### 8b. Phase 2 clarifications (implemented 2026-06-08)
 
 **Implementation files:**
+
 - `quantbot/paper/sqlite_writer.py` — `run_sqlite_accounting(db_path, forward_obs_dir, data_dir)`
 - `scripts/qnty-paper-sqlite-accounting.py` — CLI wrapper
-- `tests/test_paper_sqlite_writer.py` — 29 tests at Phase 2 (extended by Phase 3.5 with the
+- `tests/test_paper_sqlite_writer.py` — 29+ tests at Phase 2 (extended by Phase 3.5 with the
   entry→exit / restart trade-lifecycle cases)
 
 **Transaction flow:**
+
 1. `BEGIN IMMEDIATE`
 2. Load config, state, snapshots inside transaction
 3. Check source-observation divergence
@@ -424,11 +446,13 @@ approval and must leave the targeted paper suites + full repo suite green before
 9. Any exception → full rollback (no partial state)
 
 **Event chain implementation:**
+
 - `seq INTEGER PRIMARY KEY AUTOINCREMENT` with `prev_seq` linking
 - Deterministic order: bar_ts → event_type order (signal_snapshot, funding, fill, trade, position_snapshot, equity_snapshot) → event_key
 - Verifier checks chain integrity (gaps in `seq` are NOT corruption; chain integrity is authoritative)
 
 **Reconciliation checks (inside transaction, before commit):**
+
 1. Fill fee/slippage arithmetic
 2. Trade gross/net arithmetic
 3. Internal funding arithmetic
@@ -445,6 +469,7 @@ approval and must leave the targeted paper suites + full repo suite green before
 14. Watermark progression
 
 **Status codes:**
+
 | code | status | meaning |
 | --- | --- | --- |
 | `0` | `OK` | complete batch committed atomically |
@@ -455,15 +480,18 @@ approval and must leave the targeted paper suites + full repo suite green before
 | `6` | `LEDGER_BUSY` | could not acquire writer lock |
 
 **Idempotency:**
+
 - Watermark in `ledger_state` prevents re-processing same bars
 - `prior_watermark_bar_ts` → `new_watermark_bar_ts` tracks progression
 
 **Crash safety:**
+
 - Full rollback on any exception (Python or SQLite)
 - No partial writes visible to readers
 - WAL mode ensures crash recovery
 
 **CLI script (`scripts/qnty-paper-sqlite-accounting.py`):**
+
 - Arguments: `--db-path`, `--forward-obs-dir`, `--data-dir`, `--json`
 - Environment variable: `QNTY_PAPER_DB_PATH` (fallback default)
 - Exit codes match writer status codes exactly
@@ -472,7 +500,8 @@ approval and must leave the targeted paper suites + full repo suite green before
 - JSON output mode for programmatic use
 
 **Test coverage:**
-- 29 tests in `tests/test_paper_sqlite_writer.py` at Phase 2 (Phase 3.5 adds the
+
+- 29+ tests in `tests/test_paper_sqlite_writer.py` at Phase 2 (Phase 3.5 adds the
   entry→exit / restart trade-lifecycle cases)
 - All 16+ required test cases from ADR §9 implemented
 - Existing tests (`test_paper_sqlite.py`, `test_paper_pnl.py`) still pass
@@ -480,6 +509,7 @@ approval and must leave the targeted paper suites + full repo suite green before
 - Tests cover: transaction atomicity, rollback, idempotency, reconciliation, status codes, event chain, crash safety
 
 **What Phase 2 does NOT do:**
+
 - Does not modify `runner.py` or `verify.py` (those remain JSONL-based)
 - Does not replace JSONL runner yet (that's Phase 3)
 - Does not enable timers or touch VM
@@ -487,14 +517,10 @@ approval and must leave the targeted paper suites + full repo suite green before
 - Does not implement the verifier (Phase 3)
 - Does not remove JSONL artifacts or legacy code
 
-**Phase 3 note (historical — superseded):** this section originally recorded Phase 3 as
-PLANNED/NOT STARTED. Phase 3 has since been implemented (see § 8c) and then hardened by
-Phase 3.5 (see § 8d). The verifier does NOT update the production wrapper or remove the JSONL
-authority — that remains Phase 4 and is not yet authorized.
-
 ### 8c. Phase 3 clarifications (implemented 2026-06-08)
 
 **Implementation files:**
+
 - `quantbot/paper/sqlite_verify.py` — `verify_database(db_path) -> VerifyResult`
 - `scripts/qnty-paper-sqlite-verify.py` — CLI wrapper (`--db-path`, `--json`, `--verbose`,
   `QNTY_PAPER_DB_PATH` fallback)
@@ -532,6 +558,7 @@ bar_commit_id`, digest well-formedness, and the fixed-notional baseline (no shor
 notional per entry / no compounding).
 
 **Verifier v1 limitations (documented, by design):**
+
 - It does **not** independently rederive OHLCV marks / unrealized PnL / exposure from source
   price data (out-of-scope per §3). The CLI/result carry the disclaimer verbatim:
   *"Verifier v1 validates SQLite ledger integrity and internal accounting consistency. It does
@@ -542,6 +569,7 @@ notional per entry / no compounding).
   agreement instead.
 
 **Findings surfaced during Phase 3 — RESOLVED in Phase 3.5 (§ 8d):**
+
 - The Phase 2 writer **could not emit trades/exits** (any exit tripped its own
   *"Orphan typed rows in fills"* reconcile). **Fixed in Phase 3.5:** the writer keys the
   inserted-event map by `(event_type, event_key)` (an exit fill and its closing trade share an
@@ -565,11 +593,13 @@ verifier could return OK/PRE_START for corrupt accounting, and the Phase 2 write
 safely preserve or exit positions across runs.
 
 **Schema (`db.py`):**
+
 - `open_positions` gains an `entry_fee REAL NOT NULL DEFAULT 0.0` column so a position can be
   resumed losslessly across runs (the engine's exit path needs `entry_fee` /
   `funding_accrued` / `hold_bars`).
 
 **Writer (`sqlite_writer.py`):**
+
 - The inserted-event map is keyed by `(event_type, event_key)` — an exit fill and its closing
   trade share the same id, so keying by the bare id misrouted the typed rows
   (*"Orphan typed rows in fills"*). This is the root-cause fix for the broken exit path.
@@ -585,6 +615,7 @@ safely preserve or exit positions across runs.
 - An empty batch is never committed (the writer rolls back when there is nothing to commit).
 
 **Verifier (`sqlite_verify.py`):**
+
 - **PRE_START** is allowed only for a fully-empty ledger (no batches/events/typed/open rows)
   whose `ledger_state` is a valid initial singleton (NULL watermark, zero accumulators,
   peak = initial equity). Corrupt pre-start state is CORRUPT. A **committed empty batch** is
@@ -613,12 +644,115 @@ safely preserve or exit positions across runs.
 
 **Verifier v1 limitations are unchanged and remain explicit:** no independent OHLCV mark /
 unrealized-PnL / exposure re-derivation; no live-trading approval; no Package V2 volnorm proof.
-Phase 3.5 establishes **no** deployment readiness — Phase 4 remains unauthorized until these
+Phase 3.5 establishes **no** deployment readiness — Phase 4 is now authorized after these
 fixes pass adversarial review.
 
 ---
 
-## 9. Acceptance gates (for later phases)
+## 9. Phase 4 — Wrapper/Documentation Local Migration (2026-06-08)
+
+**Status:** Implemented locally. VM untouched. Timer still disabled. No deployment readiness claimed.
+
+### 9.1 Wrapper repointed to SQLite path
+
+`ops/bin/qnty-paper-pnl-run.sh` now invokes the SQLite accounting writer and SQLite
+read-only verifier instead of the JSONL runner/verifier.
+
+- **Precondition:** `QNTY_PAPER_DB_PATH` must point to an existing `paper_ledger.db`.
+  If DB is missing, the wrapper fails cleanly with guidance to run
+  `scripts/qnty-paper-sqlite-init.py --forward-start-ts <future UTC 8h boundary>`.
+- **Accounting:** `QNTY_PAPER_ACCT_CMD` (default: `python scripts/qnty-paper-sqlite-accounting.py`)
+- **Verifier:** `QNTY_PAPER_VERIFY_CMD` (default: `python scripts/qnty-paper-sqlite-verify.py`)
+- **Status matrix:** See wrapper script for full exit code matrix.
+  Key behavior: verifier is NEVER invoked after accounting failures (exit codes 2, 3, 4, 6).
+  Wrapper exit 0 only when both accounting and verifier return 0 (OK) or both return 5 (PRE_START).
+- **Testability seam:** `QNTY_PAPER_ACCT_CMD` and `QNTY_PAPER_VERIFY_CMD` env vars
+  allow overriding the commands for local wrapper tests without running real SQLite scripts.
+- **Flock guard:** preserved from previous version (single-instance guard).
+- **Venv activation:** preserved.
+- **No auto-init:** wrapper never creates the DB; operator must run init script manually.
+
+### 9.2 Systemd service updated
+
+`ops/systemd/qnty-paper-pnl.service` now includes:
+```
+Environment="QNTY_PAPER_DB_PATH=/srv/qnty/output/paper_pnl_v1/paper_ledger.db"
+```
+
+The `ExecStart` still points at the wrapper script. `Type=oneshot`, timeout, and comment
+hygiene are preserved. The timer (`qnty-paper-pnl.timer`) is NOT modified.
+
+### 9.3 JSONL scripts deprecated (not deleted)
+
+Added deprecation comments to:
+- `scripts/qnty-paper-accounting.py`
+- `scripts/paper_verify.py`
+- `scripts/paper_reconcile.py`
+
+These scripts are kept for rollback / historical compatibility. They are not deleted.
+No behavior changes.
+
+### 9.4 Wrapper tests added
+
+`tests/test_paper_pnl_wrapper.py` tests the wrapper script using `tmp_path` only.
+
+**Required tests implemented:**
+- DB-missing precondition (exit nonzero, print init guidance, no accounting/verifier run)
+- Status matrix tests (OK/OK, PRE_START/PRE_START, mismatches → exit 4, etc.)
+- Accounting failure prevents verifier invocation (ABORTED, CONFIG_ERROR, CORRUPT_LEDGER, LEDGER_BUSY)
+- Flock test (second wrapper run does not proceed)
+- No JSONL artifact test (wrapper does not create old JSONL artifacts)
+- One real end-to-end PRE_START wrapper case (init temp DB, run wrapper, expect exit 0)
+
+**Test constraints honored:**
+- No `/srv/qnty` access
+- No VM
+- No live output
+- No real systemd
+- Uses env overrides for accounting/verifier commands
+
+### 9.5 Documentation updated
+
+- **ADR 0001 (this document):** added Phase 4 section (§ 9).
+- **Runbook (`docs/ops/VM_90D_RUNBOOK.md`):** updated paper PnL init/service/manual commands.
+  Stale JSONL output must be archived before deployment. Fresh SQLite DB must be initialized
+  with future UTC 8h boundary. Timer remains disabled until later approval.
+  Removed/superseded JSONL verifier authority / trusted baseline / bootstrap language.
+  Kept disclaimers (fixed-notional baseline, not V2 volnorm proof, no live trading,
+  no profitability proof).
+- **Schema doc (`docs/paper_pnl_v1_schema.md`):** marked JSONL authority sections as superseded
+  by ADR 0001 for run/authority flow (§5, §5a, §10, §11). Did not delete historical content.
+  Kept disclaimers.
+
+### 9.6 What Phase 4 does NOT do
+
+- Does NOT deploy to VM.
+- Does NOT push to remote.
+- Does NOT touch the VM.
+- Does NOT enable timers.
+- Does NOT run against live VM output.
+- Does NOT initialize any real DB on the VM.
+- Does NOT place trades.
+- Does NOT change observer/strategy/exchange/order behavior.
+- Does NOT remove JSONL code.
+- Does NOT start Phase 5.
+
+### 9.7 Consequences trail
+
+| Phase | Status | Consequence |
+|-------|--------|-------------|
+| 1 | Implemented | SQLite substrate available locally |
+| 2 | Implemented | SQLite accounting writer available |
+| 3 | Implemented | SQLite read-only verifier available |
+| 3.5 | Implemented | Writer/verifier correctness fixes |
+| 4 | **Implemented** | **Wrapper repointed locally to SQLite; tests and docs updated** |
+| 5 | Pending | Deploy to VM, enable timer, archive stale JSONL output |
+
+**Phase 4 verdict:** IMPLEMENTED — READY FOR ADVERSARIAL REVIEW
+
+---
+
+## 10. Acceptance gates (for later phases)
 
 - Init verifies WAL, `synchronous=FULL`, foreign keys, STRICT support, schema identity,
   indexes, and immutable triggers.
@@ -635,10 +769,10 @@ fixes pass adversarial review.
   funding arithmetic, equity balance/drawdown, state accumulators, watermark, peak equity, and
   open-position details.
 - Funding verification is limited to persisted rates/windows/amounts and trade aggregation.
-- Verifier **explicitly reports** that OHLCV mark and unrealized-PnL re-derivation are **not
-  implemented**.
+- Verifier **explicitly reports** that OHLCV mark and unrealized-PnL re-derivation are **not**
+  implemented.
 - Wrapper tests cover every accounting/verifier exit-code combination and succeed only on
-  `OK/OK` or documented `PRE_START/PRE_START`.
+  `OK`/`OK` or documented `PRE_START`/`PRE_START`.
 - Existing engine/freshness/divergence/funding/fill-timing/idempotency/baseline-label tests
   remain.
 - Obsolete JSONL publication/whitespace/tamper-baseline tests are **replaced**, not
@@ -648,7 +782,7 @@ fixes pass adversarial review.
 
 ---
 
-## 10. Migration & backup rules
+## 11. Migration & backup rules
 
 - Do **not** import legacy JSONL or the stale VM `paper_config.json`. There is **no** JSONL
   import / compatibility migration.
@@ -666,7 +800,7 @@ fixes pass adversarial review.
 
 ---
 
-## 11. Risks & mitigations
+## 12. Risks & mitigations
 
 | Risk | Mitigation |
 | --- | --- |
@@ -682,7 +816,7 @@ fixes pass adversarial review.
 
 ---
 
-## 12. Explicit non-goals
+## 13. Explicit non-goals
 
 No live trading. No orders. No credentials. No wallet access. No strategy changes. No observer
 changes. No Package V2 volnorm claims. No malicious-root resistance. No cryptographic signing.
@@ -692,7 +826,7 @@ copier. No independent OHLCV mark re-derivation in this migration.
 
 ---
 
-## 13. Consequences
+## 14. Consequences
 
 - The paper-PnL durability/atomicity/single-writer/read-consistency guarantees move from
   hand-rolled multi-file protocols to SQLite primitives, shrinking the attack/bug surface that
@@ -700,8 +834,8 @@ copier. No independent OHLCV mark re-derivation in this migration.
 - The authority model becomes: **the committed DB is the record; the read-only verifier reports
   on it.** There is no trusted-OK baseline, no snapshot copier, and no multi-file publication
   ordering to get wrong.
-- The migration is large and staged; until the SQLite path is implemented and proven, the
-  existing JSONL model in `docs/paper_pnl_v1_schema.md` remains authoritative and the **paper
+- The migration is large and staged; until the SQLite path is deployed (Phase 5), the
+  existing JSONL model in `docs/paper_pnl_v1_schema.md` remains authoritative on the VM and the **paper
   timer on the VM stays disabled** (the VM holds only a stale `paper_config.json`; no real
   paper ledgers exist).
 - **Phase 2 update (2026-06-08):** SQLite writer implemented with transactional accounting,
@@ -712,6 +846,6 @@ copier. No independent OHLCV mark re-derivation in this migration.
   production wrapper or remove JSONL authority (that is Phase 4).
 - **Phase 3.5 update (2026-06-08):** writer/verifier correctness fixes closing the adversarial
   blockers (see § 8d) — the writer now emits and resumes entry→exit→trade lifecycles, and the
-  verifier no longer passes corrupt accounting as OK/PRE_START. **Phase 4 remains unauthorized
-  until Phase 3.5 passes adversarial review.** No deployment readiness is claimed; the paper
-  timer on the VM stays disabled and the JSONL runner is still used in production.
+  verifier no longer passes corrupt accounting as OK/PRE_START. **Phase 4 is now authorized.**
+- **Phase 4 update (2026-06-08):** wrapper repointed locally to SQLite scripts; tests and
+  docs updated. **VM untouched. Timer still disabled. No deployment readiness claimed.**

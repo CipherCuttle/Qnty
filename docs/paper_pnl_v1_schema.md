@@ -2,12 +2,14 @@
 
 `schema_version: 1` · `engine_version: 0.2.0` · `baseline_label: fixed_notional_active_symbols_paper_v1`
 
-> **Migration target (next):** the JSONL + frozen-snapshot verifier + trusted-OK baseline +
+> **Migration status (Phase 4 local implementation complete):** the JSONL + frozen-snapshot verifier + trusted-OK baseline +
 > multi-file provenance authority model described below (§5, §5a, §10, §11) is being replaced
 > by a SQLite/WAL ledger with a transactional writer and a read-only verifier. See
-> [ADR 0001 — paper SQLite ledger](ADR/0001-paper-sqlite-ledger.md). This document stays
-> authoritative until that migration is implemented and proven; **the paper timer on the VM
-> remains disabled** in the meantime.
+> [ADR 0001 — paper SQLite ledger](ADR/0001-paper-sqlite-ledger.md).
+>
+> **Phase 4 locally implemented** (wrapper repointed, systemd updated, tests added).
+> **VM deployment pending** (Phase 5). JSONL path is deprecated but kept for rollback.
+> This document now describes the **superseded JSONL path** for reference.
 
 This document pins the input/output contract for the **strictly additive** paper PnL
 accounting layer. It converts the existing shadow observer's forward signals into

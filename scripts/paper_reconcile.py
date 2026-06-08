@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Reconcile the paper_pnl_v1 ledger. Exits non-zero on any invariant failure.
 
+.. deprecated::
+   JSONL paper path is deprecated by ADR 0001 (SQLite path).
+   Kept for rollback / historical compatibility.
+   Do not delete yet.
+
 Usage:
     python scripts/paper_reconcile.py
     QNTY_PAPER_OUTPUT_DIR=... python scripts/paper_reconcile.py
@@ -29,7 +34,8 @@ def main(argv: list[str] | None = None) -> int:
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("RECONCILE PASSED — all paper ledger invariants hold (simulation).")
+
+    print("RECONCILE PASSED")
     return 0
 
 
