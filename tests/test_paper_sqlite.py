@@ -459,9 +459,124 @@ class TestValidateDatabaseIdentity:
 
     def test_wrong_engine_version_fails(self, tmp_path: Path):
         db_path = _init_tmp_db(tmp_path)
-        # Use writer to update (before triggers are created? No, triggers exist.)
-        # Actually, paper_config has an append-only trigger preventing UPDATE.
-        # So we need to re-initialize with a wrong version... but that's hard.
-        # Instead, test that validate_database_identity reads correctly.
-        # For this test, we'll just verify the function works on a valid DB.
-        pass  # Covered by test_valid_db_passes
+        # Bypass append-only trigger by using raw sqlite3 connection.
+        # The trigger prevents UPDATE on paper_config, so we temporarily
+        # drop the trigger, update the version, then re-create the trigger.
+        raw = sqlite3.connect(str(db_path))
+        raw.execute("DROP TRIGGER IF EXISTS trg_paper_config_deny_update")
+        raw.execute(
+            "UPDATE paper_config SET paper_engine_version = '99.0.0' WHERE id = 1"
+        )
+        # Re-create the append-only trigger for consistency
+        raw.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_paper_config_deny_update
+            BEFORE UPDATE ON paper_config
+            BEGIN
+                SELECT RAISE(ABORT, 'Table paper_config is append-only — UPDATE not permitted');
+            END;
+            """
+        )
+        raw.commit()
+        raw.close()
+
+        # Now validate_database_identity should raise ValueError
+        conn = connect_readonly(db_path)
+        with pytest.raises(ValueError, match="engine version mismatch"):
+            validate_database_identity(conn)
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Test 16: Initial ledger_state singleton row exists after init
+# ---------------------------------------------------------------------------
+
+class TestLedgerStateSingletonRow:
+    def test_ledger_state_row_exists(self, tmp_path: Path):
+        db_path = _init_tmp_db(tmp_path)
+        conn = connect_readonly(db_path)
+        row = conn.execute("SELECT id, watermark_bar_ts FROM ledger_state WHERE id = 1").fetchone()
+        conn.close()
+        assert row is not None
+        assert row[0] == 1
+        # watermark_bar_ts is NULL initially (set on first batch)
+        assert row[1] is None
+
+    def test_ledger_state_only_one_row(self, tmp_path: Path):
+        db_path = _init_tmp_db(tmp_path)
+        conn = connect_readonly(db_path)
+        count = conn.execute("SELECT COUNT(*) FROM ledger_state").fetchone()[0]
+        conn.close()
+        assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# Test 17: ledger_batches DELETE trigger (append-only)
+# ---------------------------------------------------------------------------
+
+class TestLedgerBatchesDeleteTrigger:
+    def test_delete_raises(self, tmp_path: Path):
+        db_path = _init_tmp_db(tmp_path)
+        conn = connect_writer(db_path)
+        # Insert a row first so there's something to delete
+        conn.execute(
+            "INSERT INTO ledger_batches (created_at, event_count, paper_engine_version, config_hash) "
+            "VALUES ('2026-01-01T00:00:00Z', 0, '0.3.0', 'dummy')"
+        )
+        conn.commit()
+        with pytest.raises(sqlite3.Error, match="append-only"):
+            conn.execute("DELETE FROM ledger_batches WHERE batch_id = 1")
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Test 18: Append-only DELETE triggers on untested historical tables
+# ---------------------------------------------------------------------------
+
+class TestAppendOnlyDeleteTriggers:
+    """Verify DELETE is blocked on append-only tables that lacked DELETE coverage."""
+
+    def _insert_minimal_batch(self, conn):
+        """Insert a ledger_batches row and return its batch_id."""
+        conn.execute(
+            "INSERT INTO ledger_batches (created_at, event_count, paper_engine_version, config_hash) "
+            "VALUES ('2026-01-01T00:00:00Z', 0, '0.3.0', 'dummy')"
+        )
+        conn.commit()
+        return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    def test_ledger_events_delete_raises(self, tmp_path: Path):
+        db_path = _init_tmp_db(tmp_path)
+        conn = connect_writer(db_path)
+        batch_id = self._insert_minimal_batch(conn)
+        conn.execute(
+            "INSERT INTO ledger_events (batch_id, event_type, event_key, recorded_at) "
+            "VALUES (?, 'signal_snapshot', 'test_key', '2026-01-01T00:00:00Z')",
+            (batch_id,),
+        )
+        conn.commit()
+        with pytest.raises(sqlite3.Error, match="append-only"):
+            conn.execute("DELETE FROM ledger_events WHERE seq = 1")
+        conn.close()
+
+    def test_signal_snapshots_delete_raises(self, tmp_path: Path):
+        db_path = _init_tmp_db(tmp_path)
+        conn = connect_writer(db_path)
+        batch_id = self._insert_minimal_batch(conn)
+        conn.execute(
+            "INSERT INTO ledger_events (batch_id, event_type, event_key, recorded_at) "
+            "VALUES (?, 'signal_snapshot', 'snap_2026-01-01', '2026-01-01T00:00:00Z')",
+            (batch_id,),
+        )
+        conn.execute(
+            "INSERT INTO signal_snapshots "
+            "(seq, batch_id, snapshot_id, bar_ts, bar_commit_id, active_symbols, "
+            "heat_cap_triggered, source_observation_digest, run_ts) "
+            "VALUES (1, ?, 'snap_2026-01-01', '2026-01-01T00:00:00Z', 'c1', '[]', "
+            "0, 'dummy_digest', '2026-01-01T00:00:00Z')",
+            (batch_id,),
+        )
+        conn.commit()
+        with pytest.raises(sqlite3.Error, match="append-only"):
+            conn.execute("DELETE FROM signal_snapshots WHERE seq = 1")
+        conn.close()

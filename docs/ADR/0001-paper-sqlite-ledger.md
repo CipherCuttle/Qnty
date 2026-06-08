@@ -1,6 +1,6 @@
 # ADR 0001 — Migrate paper PnL v1 from JSONL + snapshot verifier to a SQLite/WAL ledger
 
-- **Status:** Accepted (design only — Phase 0). No runtime code changed by this ADR.
+- **Status:** Accepted (Phase 1 substrate implemented). Runtime code implemented in `quantbot/paper/db.py` and tested in `tests/test_paper_sqlite.py`.
 - **Date:** 2026-06-08
 - **Scope:** `quantbot/paper/`, `scripts/qnty-paper-*`, `scripts/paper_*`,
   `ops/bin/qnty-paper-pnl-*.sh`, `docs/paper_pnl_v1_schema.md`,
