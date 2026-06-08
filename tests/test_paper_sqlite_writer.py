@@ -47,22 +47,40 @@ from quantbot.data.types import Bar
 # Deterministic timestamp generation (on-grid, within freshness)
 # ---------------------------------------------------------------------------
 
-def _make_grid_ts():
-    """Generate timestamps on 8h grid within last 24h (freshness window)."""
-    now = datetime.now(timezone.utc)
-    # Current hour snapped to 8h grid (00/08/16)
-    grid_hour = (now.hour // 8) * 8
-    base = now.replace(hour=grid_hour, minute=0, second=0, microsecond=0)
+# Frozen 8h grid anchor. Deterministic by design: the bars used to be derived from
+# datetime.now() at import time, which made the suite wall-clock dependent (it could behave
+# differently across an 8h grid boundary). The grid is now a fixed calendar; the writer's
+# clock is pinned to NOW via the autouse `_freeze_writer_now` fixture below, so freshness is
+# reproducible regardless of when the suite runs.
+_GRID_BASE = datetime(2026, 6, 6, 16, 0, 0, tzinfo=timezone.utc)
 
-    # Generate 6 timestamps: 0h, 8h, 16h, 24h, 32h, 40h ago
-    ts_list = []
-    for h in [0, 8, 16, 24, 32, 40]:
-        t = base - timedelta(hours=h)
-        ts_list.append(t.strftime("%Y-%m-%dT%H:%M:%S"))
-    return ts_list
+
+def _make_grid_ts():
+    """Deterministic timestamps on the 8h grid, newest first (index 0 = newest)."""
+    # 6 timestamps: 0h, 8h, 16h, 24h, 32h, 40h before the fixed grid base.
+    return [
+        (_GRID_BASE - timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%S")
+        for h in [0, 8, 16, 24, 32, 40]
+    ]
+
 
 TS = _make_grid_ts()
 assert len(set(TS)) == 6, f"Duplicate timestamps: {TS}"
+
+# Deterministic "now" for the freshness gate: 5 minutes after the newest grid bar, so the
+# observer output is always fresh regardless of the wall clock.
+NOW = _GRID_BASE + timedelta(minutes=5)
+
+
+@pytest.fixture(autouse=True)
+def _freeze_writer_now(monkeypatch):
+    """Pin the SQLite writer's clock to NOW for every test in this module.
+
+    The writer reads the current time through `sqlite_writer._now()` (freshness gate +
+    run_ts). Patching it here makes the freshness window deterministic and the suite
+    reproducible at any wall-clock time. The verifier is read-only and clock-independent.
+    """
+    monkeypatch.setattr("quantbot.paper.sqlite_writer._now", lambda: NOW)
 
 # Rising prices for deterministic fills
 AAA_PRICES = [
@@ -223,7 +241,7 @@ class TestPreStartBeforeForwardStartTs:
 
     def test_returns_pre_start(self, tmp_path: Path):
         # Initialize DB with a future forward_start_ts
-        future_dt = datetime.now(timezone.utc) + timedelta(hours=48)
+        future_dt = NOW + timedelta(hours=48)
         future_ts = future_dt.strftime("%Y-%m-%dT%H:%M:%S")
         db_path = _init_test_db(tmp_path, forward_start_ts=future_ts)
         per_bar_obs = [_make_obs(ts, [SYMBOL], i) for i, ts in enumerate(TS)]
@@ -240,7 +258,7 @@ class TestPreStartBeforeForwardStartTs:
 
     def test_no_watermark_advance(self, tmp_path: Path):
             # Initialize DB with a future forward_start_ts
-            future_dt = datetime.now(timezone.utc) + timedelta(hours=48)
+            future_dt = NOW + timedelta(hours=48)
             future_ts = future_dt.strftime("%Y-%m-%dT%H:%M:%S")
             db_path = _init_test_db(tmp_path, forward_start_ts=future_ts)
             per_bar_obs = [_make_obs(ts, [SYMBOL], i) for i, ts in enumerate(TS)]
@@ -492,6 +510,67 @@ class TestTransactionRollbackOnException:
         conn.close()
         # Either 0 batches or 1 failed batch; definitely not partial data
         assert batches <= 1, "Expected at most 1 batch on error"
+
+    def test_missing_entry_fee_fails_closed_and_rolls_back(self, tmp_path: Path):
+        """A malformed engine open book cannot commit a silent entry-fee default."""
+        db_path = _init_test_db(tmp_path, forward_start_ts=TS[4])
+        per_bar_obs = [
+            _make_obs(ts, [SYMBOL], i)
+            for i, ts in enumerate([TS[5], TS[4], TS[3]])
+        ]
+        obs_dir = _write_observation_log(tmp_path, per_bar_obs)
+        cfg = _make_cfg()
+        cfg["forward_start_ts"] = TS[4]
+
+        from quantbot.paper import sqlite_writer
+
+        real_run_engine = sqlite_writer.run_engine
+
+        def run_engine_without_entry_fee(
+            engine_config, observations, bars_by_symbol, funding_df, state
+        ):
+            result = real_run_engine(
+                engine_config, observations, bars_by_symbol, funding_df, state
+            )
+            for pos in state["open_positions"].values():
+                pos.pop("entry_fee", None)
+            return result
+
+        p1, p2 = _patch_data_loaders(tmp_path)
+        with p1, p2:
+            with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
+                with patch(
+                    "quantbot.paper.sqlite_writer.run_engine",
+                    side_effect=run_engine_without_entry_fee,
+                ):
+                    status, msg = run_sqlite_accounting(
+                        db_path=db_path,
+                        forward_obs_dir=obs_dir,
+                    )
+
+        assert status == STATUS_CORRUPT_LEDGER
+        assert "entry_fee" in msg
+
+        conn = connect_readonly(db_path)
+        try:
+            for table in (
+                "ledger_batches",
+                "ledger_events",
+                "fills",
+                "equity_snapshots",
+                "open_positions",
+            ):
+                count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                assert count == 0, f"{table} retained partial rows after rollback"
+            state = conn.execute(
+                """
+                SELECT watermark_bar_ts, realized_gross, fees_cum, funding_cum
+                FROM ledger_state WHERE id = 1
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+        assert tuple(state) == (None, 0.0, 0.0, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1057,3 +1136,116 @@ class TestExistingTestsStillPass:
         print("test_paper_pnl.py output:", result.stdout[-500:] if result.stdout else "no output")
         if result.returncode != 0:
             print("WARNING: test_paper_pnl.py has failures (may be pre-existing)")
+
+
+# ---------------------------------------------------------------------------
+# Ascending-timestamp lifecycle (production-shaped input order)
+# ---------------------------------------------------------------------------
+#
+# Real observer/OHLCV/funding data is oldest-first (ascending). The shared fixtures above
+# feed TS newest-first; the engine sorts internally so results match, but production
+# confidence requires at least one end-to-end case where the bars, funding rows, and
+# observations are all in ASCENDING order AND are read by the REAL CSV loaders (not the
+# patched stand-ins). This guards the load_all_ohlcv/load_all_funding path, the divergence
+# check, and the snapshot walk against production-shaped input.
+
+ASC_TS = list(reversed(TS))  # oldest -> newest
+_PRICE_BY_TS = dict(zip(TS, AAA_PRICES))
+# Use a real universe symbol so the genuine load_all_ohlcv/load_all_funding loaders read
+# our ascending CSVs (AAAUSDT is not in the universe and would be skipped by the loader).
+ASC_SYMBOL = "BTCUSDT"
+
+
+def _write_ohlcv_csv_asc(tmp_path: Path, symbol: str = ASC_SYMBOL) -> Path:
+    """Write an OHLCV CSV in ascending (oldest-first) order, like real data."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = data_dir / f"{symbol}_8h_ohlcv.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["timestamp", "open", "high", "low", "close", "volume"])
+        for ts in ASC_TS:
+            o, c = _PRICE_BY_TS[ts]
+            writer.writerow([ts, o, max(o, c), min(o, c), c, 1.0])
+    return data_dir
+
+
+def _write_funding_csv_asc(tmp_path: Path, symbol: str = ASC_SYMBOL, rate: float = 0.0001) -> Path:
+    """Write a funding CSV in ascending (oldest-first) order, like real data."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = data_dir / f"{symbol}_8h_funding.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["fundingTime", "fundingRate"])
+        for ts in ASC_TS:
+            dt = datetime.fromisoformat(ts)
+            writer.writerow([int(dt.timestamp() * 1000), rate])
+    return data_dir
+
+
+# Symbol active for the two oldest *eligible* bars then removed -> one entry->exit->trade.
+# Same economic scenario as the verify-test `_trade_db`, but in ascending input order.
+_ASC_ENTRY_EXIT_ACTIVES = {
+    ASC_TS[0]: [ASC_SYMBOL],   # = TS[5], pre-forward_start (ineligible)
+    ASC_TS[1]: [ASC_SYMBOL],   # = TS[4], forward_start -> entry
+    ASC_TS[2]: [ASC_SYMBOL],   # = TS[3], hold
+    ASC_TS[3]: [],             # = TS[2], removed -> exit
+    ASC_TS[4]: [],             # = TS[1]
+    ASC_TS[5]: [],             # = TS[0]
+}
+
+
+def build_ascending_trade_db(tmp_path: Path) -> Path:
+    """Build a committed DB from ascending inputs through the REAL CSV loaders.
+
+    Runs the writer end-to-end (entry->exit->trade) and asserts it returns OK with a
+    real trade backed by two fills. Returns the db_path for verifier-side assertions.
+    """
+    forward_start_ts = ASC_TS[1]
+    db_path = _init_test_db(tmp_path, forward_start_ts=forward_start_ts)
+    per_bar_obs = [
+        _make_obs(ts, _ASC_ENTRY_EXIT_ACTIVES[ts], i) for i, ts in enumerate(ASC_TS)
+    ]
+    obs_dir = _write_observation_log(tmp_path, per_bar_obs)
+    data_dir = _write_ohlcv_csv_asc(tmp_path)
+    _write_funding_csv_asc(tmp_path)
+
+    cfg = _make_cfg()
+    cfg["forward_start_ts"] = forward_start_ts
+    # Use the REAL loaders (data_dir patched in) — do NOT patch load_all_ohlcv/funding.
+    with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
+        status, msg = run_sqlite_accounting(
+            db_path=db_path,
+            forward_obs_dir=obs_dir,
+            data_dir=data_dir,
+        )
+    assert status == STATUS_OK, f"ascending writer did not return OK: {status}: {msg}"
+    return db_path
+
+
+class TestAscendingLifecycle:
+    """Writer + verifier over ascending, real-loader inputs (production-shaped order)."""
+
+    def test_writer_and_verifier_ok_with_real_lifecycle(self, tmp_path: Path):
+        from quantbot.paper.sqlite_verify import verify_database
+
+        db_path = build_ascending_trade_db(tmp_path)
+        conn = connect_readonly(db_path)
+        try:
+            trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+            fills = conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0]
+        finally:
+            conn.close()
+        assert trades == 1, f"expected exactly one closed trade, got {trades}"
+        assert fills == 2, f"expected entry + exit fills, got {fills}"
+        result = verify_database(db_path=db_path)
+        assert result.status == "OK", f"verify failed: {result.failures}"
+
+    def test_bars_ascending_in_csv(self, tmp_path: Path):
+        """Guard: the OHLCV CSV this test relies on really is oldest-first."""
+        data_dir = _write_ohlcv_csv_asc(tmp_path)
+        with open(data_dir / f"{ASC_SYMBOL}_8h_ohlcv.csv", encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+        stamps = [r["timestamp"] for r in rows]
+        assert stamps == sorted(stamps), "CSV timestamps must be ascending (oldest first)"

@@ -607,7 +607,9 @@ safely preserve or exit positions across runs.
   `funding_accrued` from the funding ledger since entry.
 - **Malformed DBs** no longer traceback: a non-SQLite / unreadable file is CONFIG_ERROR; a
   query/parse error during consistency checks is CORRUPT. The CLI exits with the status code
-  and prints no traceback.
+  and prints no traceback. Verifier v1 specifically maps `ValueError` / `TypeError` raised
+  during verification to CORRUPT (or CONFIG_ERROR during initial DB/config validation) rather
+  than exposing a traceback.
 
 **Verifier v1 limitations are unchanged and remain explicit:** no independent OHLCV mark /
 unrealized-PnL / exposure re-derivation; no live-trading approval; no Package V2 volnorm proof.

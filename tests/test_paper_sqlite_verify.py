@@ -37,6 +37,7 @@ from quantbot.paper.sqlite_verify import (
 # Reuse the writer-test fixtures (timestamps, bars, observation log builders).
 from tests.test_paper_sqlite_writer import (  # noqa: E402
     AAA_PRICES,
+    NOW,
     SYMBOL,
     TS,
     _make_cfg,
@@ -44,6 +45,17 @@ from tests.test_paper_sqlite_writer import (  # noqa: E402
     _patch_data_loaders,
     _write_observation_log,
 )
+
+
+@pytest.fixture(autouse=True)
+def _freeze_writer_now(monkeypatch):
+    """Pin the SQLite writer's clock to NOW for the writer runs these tests drive.
+
+    The verifier itself is read-only and clock-independent, but several fixtures here run
+    the writer in-process to build committed DBs; freezing its freshness clock keeps those
+    runs deterministic regardless of the wall clock.
+    """
+    monkeypatch.setattr("quantbot.paper.sqlite_writer._now", lambda: NOW)
 
 
 # ---------------------------------------------------------------------------

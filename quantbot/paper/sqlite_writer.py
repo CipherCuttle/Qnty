@@ -53,6 +53,20 @@ from quantbot.paper.snapshots import (
 )
 
 # ---------------------------------------------------------------------------
+# Clock seam (patchable for deterministic tests)
+# ---------------------------------------------------------------------------
+
+def _now() -> datetime:
+    """Return the current UTC time.
+
+    A single indirection so tests can pin the writer's clock (freshness gate +
+    run_ts) to a fixed instant, making the suite reproducible regardless of the
+    wall clock. Production code calls this with no patching.
+    """
+    return datetime.now(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
@@ -460,7 +474,7 @@ def _build_signal_snapshots_for_bars(
                 "weighted_return": obs.get("weighted_return", 0.0),
                 "source_observation_digest": consumed_row_digest(obs),
                 "source_observation_mtime": None,
-                "run_ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "run_ts": _now().strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
         )
     return results
@@ -884,7 +898,7 @@ def run_sqlite_accounting(
     """
     db_path = get_paper_db_path(db_path)
     obs_dir = forward_obs_dir or default_forward_obs_dir()
-    now = datetime.now(timezone.utc)
+    now = _now()
     created_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # === PATCH DATA_DIR INTO EXISTING LOADERS =========================
@@ -1237,6 +1251,19 @@ def run_sqlite_accounting(
             final_open_positions = engine_state["open_positions"]
             conn.execute("DELETE FROM open_positions")
             for sym, pos in final_open_positions.items():
+                # The engine's authoritative open book MUST carry the fields the
+                # exit path needs to resume a position losslessly across runs. A
+                # missing entry_fee / funding_accrued / hold_bars is an internal
+                # accounting bug, NOT a tolerable default: persisting a silent 0.0
+                # would corrupt a later exit's fee/funding/hold arithmetic. Fail
+                # closed so the whole batch rolls back (CORRUPT_LEDGER).
+                for _field in ("entry_fee", "funding_accrued", "hold_bars"):
+                    if _field not in pos:
+                        raise ValueError(
+                            f"open position {sym!r} is missing required field "
+                            f"{_field!r} in the engine open book; refusing to "
+                            f"persist a silent default"
+                        )
                 conn.execute(
                     """
                     INSERT INTO open_positions (
@@ -1252,9 +1279,9 @@ def run_sqlite_accounting(
                         pos["qty"],
                         pos["entry_bar_ts"],
                         pos["entry_fill_ts"],
-                        pos.get("entry_fee", 0.0),
-                        pos.get("funding_accrued", 0.0),
-                        pos.get("hold_bars", 0),
+                        pos["entry_fee"],
+                        pos["funding_accrued"],
+                        pos["hold_bars"],
                     ),
                 )
 
