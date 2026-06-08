@@ -277,6 +277,31 @@ class TestPreStartBeforeForwardStartTs:
 
 
 # ---------------------------------------------------------------------------
+# Test 1b: config dir is resolved via QNTY_PAPER_OUTPUT_DIR (testability seam)
+# ---------------------------------------------------------------------------
+
+class TestConfigDirHonorsEnv:
+    """The writer loads paper_config.json from QNTY_PAPER_OUTPUT_DIR, not a hardcoded path."""
+
+    def test_config_loaded_from_qnty_paper_output_dir(self, tmp_path: Path, monkeypatch):
+        # Point the override at a temp dir that has NO paper_config.json. The writer
+        # must report CONFIG_ERROR against THAT temp path — proving it resolves the
+        # config dir via paper_output_dir()/QNTY_PAPER_OUTPUT_DIR rather than the
+        # production literal /srv/qnty/output/paper_pnl_v1. load_config() runs before
+        # any DB access, so a non-existent db_path never gets touched.
+        empty_output = tmp_path / "paper_output"
+        empty_output.mkdir()
+        monkeypatch.setenv("QNTY_PAPER_OUTPUT_DIR", str(empty_output))
+
+        status, msg = run_sqlite_accounting(db_path=tmp_path / "nonexistent.db")
+
+        assert status == STATUS_CONFIG_ERROR, f"Expected CONFIG_ERROR, got {status}: {msg}"
+        assert str(empty_output) in msg, (
+            f"Config error should reference the QNTY_PAPER_OUTPUT_DIR temp path, got: {msg}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Test 2: First successful batch
 # ---------------------------------------------------------------------------
 

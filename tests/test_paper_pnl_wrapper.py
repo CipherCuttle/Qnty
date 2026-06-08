@@ -29,6 +29,9 @@ import os
 # Wrapper script location
 WRAPPER_SCRIPT = Path(__file__).parent.parent / "ops" / "bin" / "qnty-paper-pnl-run.sh"
 
+# Repo root for PYTHONPATH (so subprocess can find quantbot package)
+REPO_ROOT = str(Path(__file__).parent.parent)
+
 
 def _make_acct_script(tmp_path: Path, exit_code: int, output: str = "") -> Path:
     """Create a fake accounting script that exits with given code."""
@@ -338,8 +341,6 @@ class TestEndToEndPreStart:
 
     def test_e2e_pre_start_with_init(self, tmp_path):
         """Initialize temp SQLite DB and run wrapper with real scripts."""
-        # This test needs the full environment (config file, etc.)
-        # Skip if we can't run the real scripts
         db_path = tmp_path / "paper_ledger.db"
 
         # Create a minimal valid DB using the init script
@@ -347,31 +348,97 @@ class TestEndToEndPreStart:
         if not init_script.exists():
             pytest.skip("qnty-paper-sqlite-init.py not found")
 
-        # Initialize DB with a future timestamp
-        from datetime import datetime, timedelta, UTC
-        future_ts = (datetime.now(UTC) + timedelta(hours=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Compute a future 8-hour boundary timestamp (PRE_START condition).
+        # Must be on the grid: HH:00:00 where HH in {0, 8, 16} UTC.
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        # Next 8h boundary: ceil to nearest 8 hours, then zero out minutes/seconds.
+        hour = ((now.hour // 8) + 1) * 8
+        if hour >= 24:
+            hour = 0
+            day_offset = 1
+        else:
+            day_offset = 0
+        future_dt = (now + timedelta(days=day_offset)).replace(
+            hour=hour % 24, minute=0, second=0, microsecond=0
+        )
+        future_ts = future_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         init_result = subprocess.run(
             [sys.executable, str(init_script), "--forward-start-ts", future_ts, "--db-path", str(db_path)],
             capture_output=True,
             text=True,
             cwd=str(tmp_path.parent),
+            env={**os.environ, "PYTHONPATH": REPO_ROOT},
         )
 
         if init_result.returncode != 0:
             pytest.skip(f"DB init failed: {init_result.stderr}")
+            return
 
         assert db_path.exists()
 
-        # Check if config file exists (needed by real scripts)
-        config_dir = Path("/srv/qnty/output/paper_pnl_v1")
-        if not config_dir.exists() or not (config_dir / "paper_config.json").exists():
-            pytest.skip("Config file not found at /srv/qnty/output/paper_pnl_v1/paper_config.json")
+        # The init script creates the DB but does NOT write paper_config.json to disk.
+        # The real accounting script (qnty-paper-sqlite-accounting.py) calls load_config()
+        # which expects paper_config.json at paper_output_dir() / "paper_config.json".
+        # We must write this file using the config CLI to a temp output dir.
+        output_dir = tmp_path / "paper_output"
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Now run the wrapper with real scripts pointing to our temp DB
+        config_result = subprocess.run(
+            [
+                sys.executable,
+                "-m", "quantbot.paper.config",
+                "--forward-start-ts", future_ts,
+                "--output-dir", str(output_dir),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path.parent),
+            env={**os.environ, "PYTHONPATH": REPO_ROOT},
+        )
+        if config_result.returncode != 0:
+            pytest.skip(f"Config write failed: {config_result.stderr}")
+            return
+
+        assert (output_dir / "paper_config.json").exists()
+
+        # The accounting freshness gate requires a present, on-grid, fresh
+        # observation_log.json or it ABORTs (rc=2) before it can reach PRE_START.
+        # Write a temp forward_obs_v1 dir with two recent on-grid bars, both
+        # strictly BEFORE forward_start_ts so the gate returns NO_ELIGIBLE_BARS_YET
+        # (=> PRE_START). No live VM paths, no JSONL ledger artifacts.
+        import json as _json
+        obs_dir = tmp_path / "forward_obs_v1"
+        obs_dir.mkdir(parents=True, exist_ok=True)
+        # Two prior 8h-grid boundaries (forward_start - 8h, forward_start - 16h):
+        # recent enough to pass the 24h staleness gate, all before forward_start_ts.
+        per_bar_obs = []
+        for i, hours_back in enumerate((16, 8)):
+            bar_dt = future_dt - timedelta(hours=hours_back)
+            per_bar_obs.append({
+                "bar_index": i,
+                "timestamp": bar_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "active_symbols": [],
+                "portfolio_heat": 0.0,
+                "heat_cap_triggered": False,
+                "weighted_return": 0.0,
+            })
+        (obs_dir / "observation_log.json").write_text(
+            _json.dumps({"per_bar_obs": per_bar_obs}, indent=2), encoding="utf-8"
+        )
+
+        # Run the wrapper with real scripts pointing to our temp DB.
+        # Set QNTY_PAPER_PYTHON to use sys.executable so the wrapper
+        # does not require /srv/qnty/venv.
+        # Set QNTY_PAPER_OUTPUT_DIR so load_config() finds paper_config.json.
+        # Set QNTY_FORWARD_OBS_DIR so the accounting gate reads the temp obs log.
         test_env = dict(os.environ)
         test_env["QNTY_PAPER_DB_PATH"] = str(db_path)
-        test_env.pop("QNTY_PAPER_OUTPUT_DIR", None)
+        test_env["QNTY_PAPER_PYTHON"] = sys.executable
+        test_env["QNTY_PAPER_OUTPUT_DIR"] = str(output_dir)
+        test_env["QNTY_FORWARD_OBS_DIR"] = str(obs_dir)
+        test_env["PYTHONPATH"] = REPO_ROOT
 
         result = subprocess.run(
             ["bash", str(WRAPPER_SCRIPT)],
@@ -383,7 +450,9 @@ class TestEndToEndPreStart:
 
         # With a valid empty/pre-start DB, accounting and verifier should both return 5
         # and wrapper should exit 0
-        assert result.returncode == 0
+        assert result.returncode == 0, (
+            f"Wrapper failed: rc={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
+        )
         assert "PRE_START" in result.stdout or "exit=5" in result.stdout
 
 

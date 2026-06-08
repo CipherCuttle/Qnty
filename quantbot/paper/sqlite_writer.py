@@ -30,6 +30,7 @@ from quantbot.paper import (
     BASELINE_LABEL,
     PAPER_ENGINE_VERSION,
     forward_obs_dir as default_forward_obs_dir,
+    paper_output_dir,
 )
 from quantbot.paper.config import config_hash, load_config
 from quantbot.paper.db import (
@@ -916,7 +917,10 @@ def run_sqlite_accounting(
     try:
         # === CONFIG (fail closed) =================================================
         try:
-            config = load_config(Path("/srv/qnty/output/paper_pnl_v1"))
+            # Resolve the paper config dir via paper_output_dir() so the writer honors
+            # QNTY_PAPER_OUTPUT_DIR (testability seam). Production default is unchanged:
+            # paper_output_dir() returns /srv/qnty/output/paper_pnl_v1 when the env is unset.
+            config = load_config(paper_output_dir())
         except Exception as exc:
             return STATUS_CONFIG_ERROR, f"Config error: {exc}"
 

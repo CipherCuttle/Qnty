@@ -10,11 +10,15 @@
 # If DB is missing, fails cleanly with guidance to run qnty-paper-sqlite-init.py.
 #
 # Testability: override accounting/verify commands via QNTY_PAPER_ACCT_CMD / QNTY_PAPER_VERIFY_CMD.
+# Testability: override Python interpreter via QNTY_PAPER_PYTHON (default: python).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 LOCK_FILE="${QNTY_PAPER_LOCK:-/tmp/qnty-paper-pnl.lock}"
+
+# Python interpreter: allow override for testing without /srv/qnty/venv.
+QNTY_PAPER_PYTHON="${QNTY_PAPER_PYTHON:-python}"
 
 # Single-instance guard: skip silently if a run is already in progress.
 exec 9>"$LOCK_FILE"
@@ -25,7 +29,9 @@ fi
 
 echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: starting (SIMULATION)"
 
-if [ -f /srv/qnty/venv/bin/activate ]; then
+# Only activate venv if it exists AND QNTY_PAPER_PYTHON is the default (python).
+# Tests can set QNTY_PAPER_PYTHON=<path> to skip venv activation.
+if [ "$QNTY_PAPER_PYTHON" = "python" ] && [ -f /srv/qnty/venv/bin/activate ]; then
     # shellcheck disable=SC1091
     source /srv/qnty/venv/bin/activate
 fi
@@ -43,7 +49,7 @@ fi
 # (1) SQLite accounting writer.
 #     Exit codes: 0=OK, 2=ABORTED, 3=CONFIG_ERROR, 4=CORRUPT_LEDGER, 5=PRE_START, 6=LEDGER_BUSY
 #     If accounting fails (rc!=0 and rc!=5), do NOT run verifier (prevents certifying stale DB).
-ACCT_CMD="${QNTY_PAPER_ACCT_CMD:-python scripts/qnty-paper-sqlite-accounting.py}"
+ACCT_CMD="${QNTY_PAPER_ACCT_CMD:-${QNTY_PAPER_PYTHON} scripts/qnty-paper-sqlite-accounting.py}"
 set +e
 $ACCT_CMD
 acct_rc=$?
@@ -83,7 +89,7 @@ esac
 
 # (2) SQLite read-only verifier.
 #     Exit codes: 0=OK, 3=CONFIG_ERROR, 4=CORRUPT, 5=PRE_START
-VERIFY_CMD="${QNTY_PAPER_VERIFY_CMD:-python scripts/qnty-paper-sqlite-verify.py}"
+VERIFY_CMD="${QNTY_PAPER_VERIFY_CMD:-${QNTY_PAPER_PYTHON} scripts/qnty-paper-sqlite-verify.py}"
 set +e
 $VERIFY_CMD
 verify_rc=$?
