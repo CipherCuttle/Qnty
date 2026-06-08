@@ -36,7 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from quantbot.paper.verify import verify_latest
+from quantbot.paper.verify import verify
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,27 +48,27 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     output_dir = Path(args.output_dir) if args.output_dir else None
-    result = verify_latest(output_dir=output_dir, bootstrap=args.bootstrap)
+    result = verify(output_dir=output_dir, bootstrap=args.bootstrap)
 
-    if result.status == "OK":
+    if result["status"] == "OK":
         print("Paper verify OK (authoritative).")
-        if result.report:
-            print(f"  runs checked: {result.report.get('runs_checked', '?')}")
-            print(f"  failures:     {result.report.get('failure_count', 0)}")
+        if result.get("report"):
+            print(f"  runs checked: {result['report'].get('runs_checked', '?')}")
+            print(f"  failures:     {result['report'].get('failure_count', 0)}")
         return 0
 
-    if result.status in ("INCOMPLETE", "RUNNING_STALE", "NEEDS_BOOTSTRAP"):
-        print(f"Paper verify NOT YET CERTIFIABLE: {result.status}")
-        if result.report:
-            print(f"  detail: {result.report.get('reason', '')}")
+    if result["status"] in ("INCOMPLETE", "RUNNING_STALE", "NEEDS_BOOTSTRAP"):
+        print(f"Paper verify NOT YET CERTIFIABLE: {result['status']}")
+        if result.get("report"):
+            print(f"  detail: {result['report'].get('reason', '')}")
         return 5
 
     # CONFIG_ERROR or CORRUPT
-    print(f"Paper verify FAILED: {result.status}")
-    if result.report:
-        for f in result.report.get("failures", [])[:10]:
+    print(f"Paper verify FAILED: {result['status']}")
+    if result.get("report"):
+        for f in result["report"].get("failures", [])[:10]:
             print(f"  - {f}")
-    return 3 if result.status == "CONFIG_ERROR" else 4
+    return 3 if result["status"] == "CONFIG_ERROR" else 4
 
 
 if __name__ == "__main__":
