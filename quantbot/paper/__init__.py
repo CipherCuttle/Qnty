@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 SCHEMA_VERSION = 1
-PAPER_ENGINE_VERSION = "0.2.0"
+PAPER_ENGINE_VERSION = "0.3.0"
 
 # This layer is a FIXED-NOTIONAL ACTIVE-SYMBOL baseline, NOT a faithful reproduction of
 # the Package V2 vol-normalized portfolio. See docs/paper_pnl_v1_schema.md section 8.

@@ -363,8 +363,8 @@ approval and must leave the targeted paper suites + full repo suite green before
 
 - **Phase 0 — schema only (this ADR):** SQLite design/DDL, final threat model, schema,
   transaction flow, statuses, migration decision. **No runtime changes.**
-- **Phase 1 — substrate:** add `db.py`, init CLI, schema, triggers, indexes, path handling,
-  SQLite version gate, isolated DB tests.
+- **Phase 1 — substrate (IMPLEMENTED):** `db.py`, init CLI, schema, triggers, indexes,
+  path handling, SQLite version gate, isolated DB tests. See § 8a for Phase 1 decisions.
 - **Phase 2 — writer:** adapt runner/config/snapshots to write complete typed batches
   transactionally; preserve engine + freshness behavior.
 - **Phase 3 — verifier:** port reusable arithmetic invariants; implement the read-only
@@ -374,6 +374,21 @@ approval and must leave the targeted paper suites + full repo suite green before
   SQLite path is proven.
 - **Phase 5 — adversarial review:** targeted fault injection, full suite, schema review,
   wrapper review, backup-path review. **No VM deployment decision until approved.**
+
+### 8a. Phase 1 clarifications (implemented)
+
+- **`prev_seq` NULL:** the first event in `ledger_events` may have `prev_seq = NULL`.
+  This is intentional — it marks the start of the chain. The verifier must accept
+  `prev_seq IS NULL` for exactly one event (the first).
+- **`config_hash` excludes itself:** the `config_hash` field is NOT included when
+  computing the hash. The `config_hash_from_row()` function reconstructs the canonical
+  config dict (excluding `config_hash`) and delegates to `quantbot.paper.config.config_hash`.
+- **Mutable state is cache:** `ledger_state` and `open_positions` are explicitly mutable
+  (no append-only triggers). They are a transactional restart/cache anchor only. The
+  verifier MUST detect state/cache drift by recomputing state from the ledgers.
+- **Trigger error type:** append-only triggers raise `sqlite3.IntegrityError` (not
+  `OperationalError`) because the trigger uses `RAISE(ABORT, ...)`. Both are subclasses
+  of `sqlite3.Error`.
 
 ---
 
