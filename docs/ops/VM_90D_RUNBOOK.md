@@ -122,6 +122,12 @@ QNTY_PAPER_OUTPUT_DIR=/srv/qnty/output/paper_pnl_v1 \
 
 The paper timer remains disabled until the config is re-init'd against this engine version.
 
+> **Paper SQLite migration pending.** The JSONL paper PnL ledger + snapshot-verifier
+> authority model described in this runbook is being migrated to a SQLite/WAL ledger
+> (paper engine `0.3.0`); see [ADR 0001 — paper SQLite ledger](../ADR/0001-paper-sqlite-ledger.md).
+> Until that migration is implemented, proven, and explicitly authorized, **the paper timer
+> must remain disabled** and this JSONL runbook section stays authoritative.
+
 **Paper accounting status / exit-code matrix (do not conflate them).** `scripts/qnty-paper-accounting.py`
 writes a `status` into `paper_pnl_summary.json` (and `paper_provenance.json`) and returns an
 exit code. **`exit 0` is NOT proof a normal accounting run happened** — it covers both a real

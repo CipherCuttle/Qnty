@@ -1,0 +1,465 @@
+# ADR 0001 — Migrate paper PnL v1 from JSONL + snapshot verifier to a SQLite/WAL ledger
+
+- **Status:** Accepted (design only — Phase 0). No runtime code changed by this ADR.
+- **Date:** 2026-06-08
+- **Scope:** `quantbot/paper/`, `scripts/qnty-paper-*`, `scripts/paper_*`,
+  `ops/bin/qnty-paper-pnl-*.sh`, `docs/paper_pnl_v1_schema.md`,
+  `docs/ops/VM_90D_RUNBOOK.md`.
+- **Supersedes for paper PnL:** the JSONL + frozen-snapshot verifier + trusted-OK-baseline
+  + multi-file provenance publication authority model documented in
+  `docs/paper_pnl_v1_schema.md` §5/§5a/§10/§11. That model stays in effect until the SQLite
+  path is implemented and proven (Phases 1–5 below); this ADR only fixes the target design.
+
+---
+
+## 1. Context
+
+Paper PnL v1 (`paper_pnl_v1`) is a strictly additive simulation layer that converts the
+read-only shadow observer's forward signals into deterministic simulated fills, trades,
+positions, equity, and funding. It is a **fixed-notional active-symbol baseline, not a
+faithful Package V2 vol-normalized reproduction**, it is **not live trading**, and a green
+paper result proves nothing about real-money profitability or deployment readiness. Those
+disclaimers carry forward unchanged.
+
+The current persistence design is append-only JSONL ledgers plus a homemade authority stack:
+a runner that writes `RUNNING`/`OK` summaries, a frozen-snapshot copier, a read-only verifier
+over that snapshot, a trusted-OK baseline JSON, and a multi-file provenance/receipt publication
+protocol (see `docs/paper_pnl_v1_schema.md` §5, §5a, §10, §11).
+
+A hardening loop against adversarial review (Codex) repeatedly surfaced classes of holes that
+are **structural to the JSONL + multi-file-authority design**, not one-off bugs:
+
+- **TOCTOU** between freshness check, ledger read, and write.
+- **Stale `OK`** surviving a failed/partial publication of a later result.
+- **Mutable-file** windows: append-only files are still byte-mutable between steps.
+- **Digest / commit-ordering** ambiguity across separate files.
+- **Wrapper** gaps: a wrapper certifying an old ledger after an accounting failure.
+- **Authority-model** confusion: which file is the source of truth, and when.
+
+Each fix added another guard file or ordering rule, increasing the surface area rather than
+shrinking it. The decision is to stop patching the JSONL/snapshot/baseline machinery and move
+the durability + atomicity + single-writer + read-consistency guarantees into SQLite, where
+they are primitives rather than hand-rolled protocols.
+
+---
+
+## 2. Decision
+
+Replace the JSONL + snapshot-verifier + trusted-baseline + provenance-publication machinery
+with a **single SQLite/WAL database** using **typed normalized tables plus a minimal ordered
+event index**, a **transactional writer**, and a **read-only / query-only verifier**.
+
+- **One logical DB file** per output family:
+  - default path `/srv/qnty/output/paper_pnl_v1/paper_ledger.db`
+  - sidecars `paper_ledger.db-wal` and `paper_ledger.db-shm` are **SQLite-managed** (do not
+    hand-edit, do not copy independently — see §10 backup rules).
+- **`QNTY_PAPER_DB_PATH`** is the single canonical path env var, used by init, accounting,
+  verifier, and wrapper. Default as above.
+- **`DB_SCHEMA_VERSION = 1`.**
+- **Paper contract v1 is unchanged** (`schema_version: 1`, `baseline_label:
+  fixed_notional_active_symbols_paper_v1`).
+- **Paper engine version bumps to `0.3.0`** to mark the storage/authority change.
+- PRAGMAs / connection settings:
+  - `PRAGMA journal_mode=WAL`
+  - `PRAGMA synchronous=FULL`
+  - `PRAGMA foreign_keys=ON`
+  - `STRICT` tables (requires SQLite **3.37+**; init fails loudly on older versions)
+  - writer transactions use `BEGIN IMMEDIATE`
+  - verifier opens the DB with URI `mode=ro` **and** sets `PRAGMA query_only=ON`
+- The writer commits **complete batches transactionally**. The verifier is **read-only and
+  query-only**.
+- **Removed by this design** (in later phases): homemade snapshot copier, trusted-OK baseline
+  JSON, and the multi-file OK publication protocol.
+
+### Explicitly NOT claimed
+
+No public tamper-proof / security claims. No external audit guarantee. No cryptographic
+signing. No claim of faithful Package V2 volnorm replication. No live-trading authorization.
+
+---
+
+## 3. Threat model (authoritative for the SQLite design)
+
+### In scope (the design must defend against these)
+
+- accidental corruption
+- crash mid-write
+- partial writes
+- accidental concurrent writer/verifier
+- stale config
+- malformed / corrupt ledger state
+- internal accounting inconsistency
+
+### Out of scope (explicitly not defended against)
+
+- a malicious root/user with filesystem write access
+- adversarial tamper-proof *public* evidence
+- external audit guarantees
+- cryptographic signing
+- full independent OHLCV mark re-derivation (unless implemented in a later phase)
+- live-trading approval
+- profitability proof
+- Package V2 volnorm proof
+
+### What the SQLite paper ledger proves
+
+- local crash safety
+- transaction atomicity
+- single-writer behavior
+- schema validity
+- internal accounting consistency
+- fixed-notional active-symbol baseline simulation **only**
+
+### What it does NOT prove
+
+- tamper resistance
+- external auditability
+- observer correctness
+- real-money profitability
+- deployment readiness
+- live-trading readiness
+- faithful Package V2 volnorm PnL
+- independent OHLCV mark / unrealized / exposure re-derivation (unless implemented later)
+
+---
+
+## 4. Schema (DB_SCHEMA_VERSION = 1)
+
+All tables are `STRICT`. Foreign keys on. Numeric columns are typed; timestamps stored as
+canonical UTC ISO-8601 strings (matching the existing observer/observation contract). No
+column accepts `NaN`/`inf`; integer columns reject `bool`.
+
+### 4.1 `paper_config` — DB identity / config (singleton, immutable)
+
+Singleton row (enforced by a fixed primary key, e.g. `id = 1`) holding the flattened, typed
+config that defines the output contract:
+
+- `db_schema_version`
+- `paper_contract_version`
+- `paper_engine_version`
+- `baseline_label`
+- `forward_start_ts`
+- `initial_equity_usd`
+- `notional_usd`
+- `leverage`
+- fee model fields
+- slippage model fields
+- funding model fields
+- fill model
+- signal source
+- freshness fields
+- `created_at`
+- `config_hash`
+
+Immutability is enforced with `BEFORE UPDATE` and `BEFORE DELETE` triggers that raise. The
+config is validated against the exact v1 contract on every open (versions, baseline label,
+finite/typed numbers, hash match).
+
+### 4.2 `ledger_batches` — transaction batches (append-only)
+
+One row per committed accounting transaction; the foreign-key anchor for all events:
+
+- `batch_id`
+- `created_at`
+- `started_at` / `committed_at` (if useful)
+- `git_sha`
+- `prior_watermark_bar_ts`
+- `new_watermark_bar_ts`
+- `first_event_seq`
+- `last_event_seq`
+- `event_count`
+- `committed_bar_count`
+- `paper_engine_version`
+- `config_hash`
+
+Append-only (insert-only triggers; no update/delete).
+
+### 4.3 `ledger_events` — minimal ordered event index (append-only)
+
+- `seq INTEGER PRIMARY KEY AUTOINCREMENT`
+- `batch_id` (FK → `ledger_batches`)
+- `event_type`
+- `event_key`
+- `recorded_at`
+- `bar_ts`
+- `symbol`
+- `prev_seq`
+
+Constraints: fixed `event_type` check constraint; unique event identity
+(`(event_type, event_key)` and/or per-bar uniqueness); insert-only triggers; indexes on
+`event_type`, `bar_ts`, `symbol`, `batch_id`.
+
+**Ordering invariant:** `prev_seq` is the durable ordering link. The verifier checks that
+`prev_seq` points to the immediately preceding observed event. **Numeric `seq` gaps alone are
+NOT corruption** — SQLite `AUTOINCREMENT` does not guarantee gap-free numbering (rolled-back
+inserts can consume values). The chain, not the integer spacing, is authoritative.
+
+**Canonical event insertion order** (deterministic, for reproducible `seq`/`prev_seq` chains):
+
+1. sort by bar timestamp, then by event type in this order:
+2. `signal_snapshot`
+3. `funding`
+4. `fill`
+5. `trade`
+6. `position_snapshot`
+7. `equity_snapshot`
+8. event keys sorted within each type.
+
+### 4.4 Typed ledgers (append-only, typed constraints, FKs)
+
+- `signal_snapshots` (see §4.6)
+- `fills`
+- `trades`
+- `funding`
+- `position_snapshots`
+- `position_snapshot_symbols`
+- `equity_snapshots`
+
+Each main row references **exactly one** matching `ledger_events.seq` / event identity. All
+are append-only with typed constraints and foreign keys to `ledger_events` and
+`ledger_batches`.
+
+### 4.5 Current state (mutable singleton/cache)
+
+- `ledger_state` — singleton: watermark bar ts, accumulators, peak equity, drawdown, etc.
+- `open_positions` — current open positions cache.
+
+These are updated **only inside the same transaction** as the event/typed-ledger inserts.
+The typed ledgers + events are the **durable historical record**; state is a transactional
+**restart/cache anchor**. The verifier must be able to **detect state/cache drift** by
+recomputing state from the ledgers and comparing.
+
+### 4.6 Source snapshot (`signal_snapshots`)
+
+Stores the canonical full source observation JSON, its source digest, the bar timestamp, and
+the `bar_commit_id`. The verifier **recomputes** the digest and commit ID from the stored
+canonical JSON and compares — reusing the existing `snapshots.py` digest/`bar_commit_id`
+functions.
+
+---
+
+## 5. Transaction flow (writer)
+
+1. Validate DB identity, schema, config, and **external observer freshness**.
+2. Load OHLCV/funding inputs **before** taking the writer transaction.
+3. `BEGIN IMMEDIATE`.
+4. Re-read config, existing snapshots, and current state **inside** the transaction.
+5. Check source-observation divergence.
+6. Run the **unchanged deterministic engine**.
+7. Insert the complete event batch and typed rows.
+8. Update `ledger_state` / `open_positions`.
+9. Run structural + arithmetic reconciliation against the **uncommitted transaction view**.
+10. Commit **only if every check passes**.
+11. Any exception, mismatch, or crash **rolls back the entire batch** (no partial state).
+12. A valid DB with no committed eligible bars returns **`PRE_START`**.
+13. An aborted freshness/divergence check **never mutates the DB**.
+
+This collapses the JSONL "write `RUNNING` first, publish bundle, write `OK` last" protocol
+into one atomic transaction: there is no stale-`OK`-survives-failed-publish window because
+there is no multi-file publish — either the batch commits or it does not.
+
+---
+
+## 6. Public interfaces
+
+- **`QNTY_PAPER_DB_PATH`**, default `/srv/qnty/output/paper_pnl_v1/paper_ledger.db`.
+- **Init CLI** (future): `scripts/qnty-paper-sqlite-init.py --forward-start-ts ... --db-path ...`
+  - creates a fresh database
+  - **refuses** an existing database
+  - **refuses** legacy paper artifacts unless the operator explicitly archives/removes them
+- **Accounting CLI** (adapted): `scripts/qnty-paper-accounting.py --db-path ...`
+  - writes transactionally
+- **Verifier CLI** (adapted): `scripts/paper_verify.py --db-path ... [--json]`
+  - opens the DB read-only / query-only
+  - prints its report to **stdout only**
+  - does **not** write verifier reports in v1 unless explicitly decided later
+
+### Exit codes
+
+**Accounting** (`qnty-paper-accounting.py`):
+
+| code | status | meaning |
+| --- | --- | --- |
+| `0` | `OK` | complete batch committed atomically |
+| `2` | `ABORTED` | freshness/divergence gate aborted; DB unmutated |
+| `3` | `CONFIG_ERROR` | DB/config identity invalid (missing/stale/malformed/version/hash) |
+| `4` | `CORRUPT_LEDGER` | persisted ledger/state failed a structural or reconcile invariant |
+| `5` | `PRE_START` | valid DB, no committed eligible bars yet (no bar ≥ `forward_start_ts`) |
+| `6` | `LEDGER_BUSY` | could not acquire the writer lock (`BEGIN IMMEDIATE` failed; concurrent writer) |
+
+**Verifier** (`paper_verify.py`):
+
+| code | status | meaning |
+| --- | --- | --- |
+| `0` | `OK` | DB verified consistent |
+| `3` | `CONFIG_ERROR` | DB/config identity invalid |
+| `4` | `CORRUPT` | a verification invariant failed |
+| `5` | `PRE_START` | valid DB, no committed eligible bars yet |
+
+> `PRE_START` replaces the JSONL `NO_ELIGIBLE_BARS_YET` healthy-no-op. There is no `RUNNING`
+> persisted status in the SQLite model: an in-flight transaction is uncommitted and therefore
+> invisible to any reader; a crashed transaction rolls back and leaves no marker.
+
+### Wrapper policy
+
+- The wrapper succeeds **only** for a matching `OK/OK` (accounting OK + verifier OK) or a
+  documented `PRE_START/PRE_START`.
+- **Every other result fails the service.**
+- No wrapper may certify a stale old ledger after an accounting failure.
+
+---
+
+## 7. Keep / Replace / Add / Delete / Adapt map
+
+### Keep (reuse as-is)
+
+- deterministic fill/funding/PnL logic in `engine.py`
+- freshness validation (`freshness.py`)
+- config construction/validation/hash logic where reusable (`config.py`)
+- snapshot digest and `bar_commit_id` functions (`snapshots.py`)
+- baseline label, disclaimer, and summary arithmetic
+
+### Replace
+
+- `runner.py` persistence → one SQLite transaction
+- `reconcile.py` → storage-independent accounting checks over typed DB rows
+- `verify.py` → read-only DB verification
+- config file loading/writing → DB config access
+
+### Add (later phases)
+
+- `quantbot/paper/db.py`
+- `quantbot/paper/reporting.py`
+- `scripts/qnty-paper-sqlite-init.py`
+- `tests/test_paper_sqlite.py`
+
+### Delete / deprecate (later phases, only after SQLite path is proven)
+
+- JSONL I/O in `ledger.py`
+- digest/publication machinery in `provenance.py`
+- verifier snapshot copier
+- `verify_runs`
+- trusted baseline
+- persisted runner summary/state/provenance/receipt files
+- JSONL-specific authority tests
+- remove or deprecate `scripts/paper_reconcile.py` (avoid a second verifier implementation)
+
+### Adapt (later phases)
+
+- accounting/verifier CLIs
+- `ops/bin/qnty-paper-pnl-init.sh` (`scripts/qnty-paper-pnl-init.sh`)
+- `ops/bin/qnty-paper-pnl-run.sh`
+- package path helpers
+- service comments
+- `docs/paper_pnl_v1_schema.md`
+- `docs/ops/VM_90D_RUNBOOK.md`
+
+---
+
+## 8. Implementation phases
+
+This ADR is **Phase 0** and authorizes design only. Each later phase requires explicit
+approval and must leave the targeted paper suites + full repo suite green before the next.
+
+- **Phase 0 — schema only (this ADR):** SQLite design/DDL, final threat model, schema,
+  transaction flow, statuses, migration decision. **No runtime changes.**
+- **Phase 1 — substrate:** add `db.py`, init CLI, schema, triggers, indexes, path handling,
+  SQLite version gate, isolated DB tests.
+- **Phase 2 — writer:** adapt runner/config/snapshots to write complete typed batches
+  transactionally; preserve engine + freshness behavior.
+- **Phase 3 — verifier:** port reusable arithmetic invariants; implement the read-only
+  verifier; remove snapshot/trusted-baseline authority; replace obsolete verifier tests.
+- **Phase 4 — ops/docs:** update wrapper/status matrix/init shell/service comments/docs;
+  remove unused JSONL/provenance modules; remove legacy artifact generation **only after** the
+  SQLite path is proven.
+- **Phase 5 — adversarial review:** targeted fault injection, full suite, schema review,
+  wrapper review, backup-path review. **No VM deployment decision until approved.**
+
+---
+
+## 9. Acceptance gates (for later phases)
+
+- Init verifies WAL, `synchronous=FULL`, foreign keys, STRICT support, schema identity,
+  indexes, and immutable triggers.
+- `UPDATE`/`DELETE` against `paper_config`, `ledger_batches`, `ledger_events`, and the typed
+  ledgers all abort.
+- A complete writer batch commits atomically.
+- Injected exceptions after inserts/state changes leave **no** new batch, events, or state.
+- A second `BEGIN IMMEDIATE` writer fails cleanly as `LEDGER_BUSY`.
+- A concurrent read-only verifier sees a consistent committed snapshot.
+- Read-only / query-only verifier write attempts fail.
+- Verifier catches: broken event chains, event/type mismatches, batch counts, schema/config
+  versions, malformed source JSON, commit-ID disagreement.
+- Verifier catches: broken fill fee/slippage arithmetic, trade gross/net arithmetic, internal
+  funding arithmetic, equity balance/drawdown, state accumulators, watermark, peak equity, and
+  open-position details.
+- Funding verification is limited to persisted rates/windows/amounts and trade aggregation.
+- Verifier **explicitly reports** that OHLCV mark and unrealized-PnL re-derivation are **not
+  implemented**.
+- Wrapper tests cover every accounting/verifier exit-code combination and succeed only on
+  `OK/OK` or documented `PRE_START/PRE_START`.
+- Existing engine/freshness/divergence/funding/fill-timing/idempotency/baseline-label tests
+  remain.
+- Obsolete JSONL publication/whitespace/tamper-baseline tests are **replaced**, not
+  mechanically preserved.
+- Targeted paper suites and the complete repo suite pass before implementation moves beyond
+  each phase.
+
+---
+
+## 10. Migration & backup rules
+
+- Do **not** import legacy JSONL or the stale VM `paper_config.json`. There is **no** JSONL
+  import / compatibility migration.
+- Future deployment must **archive/remove the entire stale `/srv/qnty/output/paper_pnl_v1/`**
+  and initialize a fresh DB with a **future UTC 8-hour boundary** as `forward_start_ts` (never
+  reuse a stale forward start).
+- **WAL backup safety:** raw-copying only `paper_ledger.db` while the writer is active is
+  **unsafe** — committed data may still live in `paper_ledger.db-wal`. Use the **SQLite backup
+  API**, or **stop the writer and checkpoint** before copying. Backup restoration must be
+  tested.
+- Documentation to update in later phases: rewrite `docs/paper_pnl_v1_schema.md` around the
+  SQLite authority model and this local threat model; update `docs/ops/VM_90D_RUNBOOK.md` to
+  remove JSONL/verifier-authority language and document the new statuses/commands. Keep the
+  fixed-notional / non-V2 / no-live-trading disclaimers.
+
+---
+
+## 11. Risks & mitigations
+
+| Risk | Mitigation |
+| --- | --- |
+| Large migration diff | Isolate by phase; preserve engine/freshness logic. |
+| Regression risk | Existing paper/full suites must pass after each phase. |
+| Engine/DB mismatch | One typed adapter; reconcile inside the transaction before commit. |
+| Determinism loss | Explicit query ordering, canonical source JSON, deterministic event order, stable event keys. |
+| DB path mismatch | One canonical `QNTY_PAPER_DB_PATH` used by init, runner, verifier, wrapper. |
+| WAL backup omission | Document backup API/checkpoint; test backup restoration. |
+| SQLite compatibility | Require SQLite **3.37+** for STRICT; init fails loudly on older versions. |
+| Trigger overconfidence | Verifier checks trigger/schema presence; malicious filesystem/root modification remains out of scope. |
+| Mutable-state overconfidence | State is cache/anchor; typed ledgers/events are the durable record; verifier checks state against ledgers. |
+
+---
+
+## 12. Explicit non-goals
+
+No live trading. No orders. No credentials. No wallet access. No strategy changes. No observer
+changes. No Package V2 volnorm claims. No malicious-root resistance. No cryptographic signing.
+No tamper-proof public evidence. No external audit guarantee. No JSONL import or compatibility
+migration. No persisted authoritative verifier report / trusted-OK baseline / homemade snapshot
+copier. No independent OHLCV mark re-derivation in this migration.
+
+---
+
+## 13. Consequences
+
+- The paper-PnL durability/atomicity/single-writer/read-consistency guarantees move from
+  hand-rolled multi-file protocols to SQLite primitives, shrinking the attack/bug surface that
+  the adversarial review kept reopening.
+- The authority model becomes: **the committed DB is the record; the read-only verifier reports
+  on it.** There is no trusted-OK baseline, no snapshot copier, and no multi-file publication
+  ordering to get wrong.
+- The migration is large and staged; until the SQLite path is implemented and proven, the
+  existing JSONL model in `docs/paper_pnl_v1_schema.md` remains authoritative and the **paper
+  timer on the VM stays disabled** (the VM holds only a stale `paper_config.json`; no real
+  paper ledgers exist).
