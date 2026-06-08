@@ -1,6 +1,6 @@
 # ADR 0001 — Migrate paper PnL v1 from JSONL + snapshot verifier to a SQLite/WAL ledger
 
-- **Status:** Accepted (Phase 1 substrate implemented; Phase 2 writer implemented 2026-06-08; Phase 3 read-only verifier implemented 2026-06-08). Runtime code implemented in `quantbot/paper/db.py`, `quantbot/paper/sqlite_writer.py`, `quantbot/paper/sqlite_verify.py` and tested in `tests/test_paper_sqlite.py`, `tests/test_paper_sqlite_writer.py`, `tests/test_paper_sqlite_verify.py`. The SQLite verifier is a **parallel** implementation (it does not replace the JSONL verifier) and is **not** the VM default path.
+- **Status:** Accepted (Phase 1 substrate implemented; Phase 2 writer implemented 2026-06-08; Phase 3 read-only verifier implemented 2026-06-08; **Phase 3.5 writer/verifier correctness fixes implemented 2026-06-08**). Runtime code implemented in `quantbot/paper/db.py`, `quantbot/paper/sqlite_writer.py`, `quantbot/paper/sqlite_verify.py` and tested in `tests/test_paper_sqlite.py`, `tests/test_paper_sqlite_writer.py`, `tests/test_paper_sqlite_verify.py`. The SQLite verifier is a **parallel** implementation (it does not replace the JSONL verifier) and is **not** the VM default path. **Phase 3 is implemented but NOT approved to proceed to Phase 4 until the Phase 3.5 fixes (§ 8d) pass adversarial review; writer exit/restart correctness is now a prerequisite for Phase 4. No deployment readiness is claimed.**
 - **Date:** 2026-06-08
 - **Scope:** `quantbot/paper/`, `scripts/qnty-paper-*`, `scripts/paper_*`,
   `ops/bin/qnty-paper-pnl-*.sh`, `docs/paper_pnl_v1_schema.md`,
@@ -379,6 +379,10 @@ approval and must leave the targeted paper suites + full repo suite green before
   state from the typed tables; arithmetic/structural invariants ported; snapshot/trusted-baseline
   authority not used. Added as a parallel implementation alongside the JSONL verifier (the JSONL
   verifier and its tests are NOT removed yet — that is Phase 4). See § 8c.
+- **Phase 3.5 — writer/verifier correctness fix (IMPLEMENTED 2026-06-08):** closes the
+  adversarial-review blockers that made Phase 3 unsafe to advance: the verifier could return
+  OK/PRE_START for corrupt accounting, and the writer could not preserve or exit positions
+  across runs. **Phase 4 is NOT authorized until these fixes pass adversarial review.** See § 8d.
 - **Phase 4 — ops/docs:** update wrapper/status matrix/init shell/service comments/docs;
   remove unused JSONL/provenance modules; remove legacy artifact generation **only after** the
   SQLite path is proven.
@@ -405,7 +409,8 @@ approval and must leave the targeted paper suites + full repo suite green before
 **Implementation files:**
 - `quantbot/paper/sqlite_writer.py` — `run_sqlite_accounting(db_path, forward_obs_dir, data_dir)`
 - `scripts/qnty-paper-sqlite-accounting.py` — CLI wrapper
-- `tests/test_paper_sqlite_writer.py` — 29 tests
+- `tests/test_paper_sqlite_writer.py` — 29 tests at Phase 2 (extended by Phase 3.5 with the
+  entry→exit / restart trade-lifecycle cases)
 
 **Transaction flow:**
 1. `BEGIN IMMEDIATE`
@@ -467,7 +472,8 @@ approval and must leave the targeted paper suites + full repo suite green before
 - JSON output mode for programmatic use
 
 **Test coverage:**
-- 29 tests in `tests/test_paper_sqlite_writer.py`
+- 29 tests in `tests/test_paper_sqlite_writer.py` at Phase 2 (Phase 3.5 adds the
+  entry→exit / restart trade-lifecycle cases)
 - All 16+ required test cases from ADR §9 implemented
 - Existing tests (`test_paper_sqlite.py`, `test_paper_pnl.py`) still pass
 - Test fixtures use `tmp_path` only, no VM dependencies
@@ -481,13 +487,10 @@ approval and must leave the targeted paper suites + full repo suite green before
 - Does not implement the verifier (Phase 3)
 - Does not remove JSONL artifacts or legacy code
 
-**Phase 3 note:**
-Phase 3 (verifier) is still PLANNED/NOT STARTED. It will:
-- Migrate verification from JSONL to SQLite
-- Implement read-only verifier with `mode=ro` and `PRAGMA query_only=ON`
-- Update production wrapper to use SQLite writer
-- Remove snapshot/trusted-baseline authority
-- Replace obsolete verifier tests
+**Phase 3 note (historical — superseded):** this section originally recorded Phase 3 as
+PLANNED/NOT STARTED. Phase 3 has since been implemented (see § 8c) and then hardened by
+Phase 3.5 (see § 8d). The verifier does NOT update the production wrapper or remove the JSONL
+authority — that remains Phase 4 and is not yet authorized.
 
 ### 8c. Phase 3 clarifications (implemented 2026-06-08)
 
@@ -495,7 +498,9 @@ Phase 3 (verifier) is still PLANNED/NOT STARTED. It will:
 - `quantbot/paper/sqlite_verify.py` — `verify_database(db_path) -> VerifyResult`
 - `scripts/qnty-paper-sqlite-verify.py` — CLI wrapper (`--db-path`, `--json`, `--verbose`,
   `QNTY_PAPER_DB_PATH` fallback)
-- `tests/test_paper_sqlite_verify.py` — 45 tests (tmp_path only; no VM/`/srv/qnty` paths)
+- `tests/test_paper_sqlite_verify.py` — tmp_path only; no VM/`/srv/qnty` paths (extended by
+  Phase 3.5 with trade-lifecycle, position-snapshot, cumulative-equity, restart-field,
+  PRE_START-hardening and malformed-DB cases)
 
 **Verifier statuses / exit codes:**
 
@@ -506,21 +511,25 @@ Phase 3 (verifier) is still PLANNED/NOT STARTED. It will:
 | `4` | `CORRUPT` | a structural or accounting invariant failed |
 | `5` | `PRE_START` | valid DB, no committed batches/events/equity and `watermark_bar_ts` NULL |
 
-**Verifier flow:** open read-only (`mode=ro` + `PRAGMA query_only=ON`) → confirm `query_only`
-→ structural presence (tables/append-only triggers/indexes) → identity/config-hash
-→ PRE_START short-circuit → event chain → batches → arithmetic → state → open positions
-→ snapshot identity. It never writes the DB and never writes any report/JSONL artifact.
+**Verifier flow (as hardened by Phase 3.5):** open read-only (`mode=ro` + `PRAGMA
+query_only=ON`) → confirm `query_only` → structural presence (tables/append-only
+triggers/indexes) → identity/config-hash → (malformed/non-SQLite file short-circuits to
+CONFIG_ERROR) → PRE_START only on a fully-empty ledger with a valid initial state singleton
+→ `PRAGMA foreign_key_check` → event chain → event↔typed-row key/batch/bar/symbol consistency
+→ batches → fill/funding arithmetic → trade lifecycle → cumulative equity → state → open
+positions → position snapshots → snapshot identity. It never writes the DB and never writes
+any report/JSONL artifact.
 
-**Checks implemented:** deterministic `prev_seq` chain (first event NULL, gaps are not
-corruption), event-type enum, unique event identity, 1:1 event↔typed-row, batch
-`event_count` / `first`/`last_event_seq` / `committed_bar_count`, batch engine-version &
-config-hash agreement, no fill before `forward_start_ts` (on the signal bar), fill-fee
-arithmetic, trade gross/net arithmetic, funding amount arithmetic, per-row equity balance &
-drawdown, `ledger_state` accumulators vs ledger-table sums, watermark = latest committed
-equity bar, peak-equity reconstruction, `open_positions` (qty / entry_price / entry_fill_id /
-entry_bar_ts / entry_fill_ts) reconstructed from the fill book, cross-row `bar_commit_id`
-agreement + `snapshot_id == bar_commit_id`, digest well-formedness, and the fixed-notional
-baseline (no shorts, fixed notional per entry / no compounding).
+**Checks implemented (Phase 3 baseline; see § 8d for the Phase 3.5 hardening):** deterministic
+`prev_seq` chain (first event NULL, gaps are not corruption), event-type enum, unique event
+identity, 1:1 event↔typed-row, batch `event_count` / `first`/`last_event_seq` /
+`committed_bar_count`, batch engine-version & config-hash agreement, no fill before
+`forward_start_ts` (on the signal bar), fill-fee arithmetic, trade arithmetic, funding amount
+arithmetic, equity balance & drawdown, `ledger_state` accumulators vs ledger-table sums,
+watermark = latest committed equity bar, peak-equity reconstruction, `open_positions`
+reconstructed from the fill book, cross-row `bar_commit_id` agreement + `snapshot_id ==
+bar_commit_id`, digest well-formedness, and the fixed-notional baseline (no shorts, fixed
+notional per entry / no compounding).
 
 **Verifier v1 limitations (documented, by design):**
 - It does **not** independently rederive OHLCV marks / unrealized PnL / exposure from source
@@ -532,20 +541,78 @@ baseline (no shorts, fixed notional per entry / no compounding).
   canonical row. The verifier validates digest well-formedness and cross-row `bar_commit_id`
   agreement instead.
 
-**Findings surfaced during Phase 3 (deferred to Phase 4 — writer is not modified here):**
-- The Phase 2 writer **cannot emit trades/exits**: any exit trips its own reconcile with
-  *"Orphan typed rows in fills"*. Trade-path verification is exercised in tests by injecting a
-  self-consistent trade. The writer exit path must be fixed before live use.
-- The Phase 2 writer does **not** persist `funding_accrued` / `hold_bars` into `open_positions`
-  (it rebuilds the cache from an entry/exit replay and stores `0` for both). The verifier
-  therefore does **not** reconstruct those two fields (doing so would flag valid writer output
-  as cache drift). The writer should populate them, and the verifier should then validate them,
-  in Phase 4.
+**Findings surfaced during Phase 3 — RESOLVED in Phase 3.5 (§ 8d):**
+- The Phase 2 writer **could not emit trades/exits** (any exit tripped its own
+  *"Orphan typed rows in fills"* reconcile). **Fixed in Phase 3.5:** the writer keys the
+  inserted-event map by `(event_type, event_key)` (an exit fill and its closing trade share an
+  id), resolves each event's `bar_ts` from its anchoring bar, and chains `prev_seq` across
+  batches. The writer now emits real entry→exit→trade rows in a single run and across a restart.
+- The Phase 2 writer did **not** persist `funding_accrued` / `hold_bars` / `entry_fee` into
+  `open_positions`. **Fixed in Phase 3.5:** `open_positions` gains an `entry_fee` column, the
+  writer persists the engine's authoritative open book (funding/hold/fee), and the verifier
+  now reconstructs and validates all three from the ledger.
 
-**What Phase 3 does NOT do:** does not modify `runner.py` / `verify.py` / `sqlite_writer.py`;
-does not update the production wrapper, systemd units, or VM default path; does not remove the
-JSONL verifier, its tests, or any legacy artifact generation; does not enable timers or touch
-the VM. It does **not** establish deployment readiness.
+**What Phase 3 does NOT do** (Phase 3.5 later modifies `sqlite_writer.py` / `db.py` —
+see § 8d — but neither phase touches the items below): does not modify `runner.py` /
+`verify.py`; does not update the production wrapper, systemd units, or VM default path; does
+not remove the JSONL verifier, its tests, or any legacy artifact generation; does not enable
+timers or touch the VM. It does **not** establish deployment readiness.
+
+### 8d. Phase 3.5 clarifications (writer/verifier correctness fix, implemented 2026-06-08)
+
+Phase 3.5 closes the adversarial-review blockers (`NEEDS FIX BEFORE PHASE 4`): the Phase 3
+verifier could return OK/PRE_START for corrupt accounting, and the Phase 2 writer could not
+safely preserve or exit positions across runs.
+
+**Schema (`db.py`):**
+- `open_positions` gains an `entry_fee REAL NOT NULL DEFAULT 0.0` column so a position can be
+  resumed losslessly across runs (the engine's exit path needs `entry_fee` /
+  `funding_accrued` / `hold_bars`).
+
+**Writer (`sqlite_writer.py`):**
+- The inserted-event map is keyed by `(event_type, event_key)` — an exit fill and its closing
+  trade share the same id, so keying by the bare id misrouted the typed rows
+  (*"Orphan typed rows in fills"*). This is the root-cause fix for the broken exit path.
+- `ledger_events.bar_ts` and the deterministic chain order are resolved per row type
+  (fills key off the signal bar, trades off the exit bar) instead of a bare
+  `attrs.get("bar_ts")` that was `None` for fills/trades.
+- The in-transaction reconcile chains `prev_seq` across batches (the batch's first event links
+  to the prior global event, NULL only for the very first event ever).
+- `open_positions` persists the engine's authoritative open book (entry_fee / funding_accrued
+  / hold_bars), not the lossy entry/exit replay.
+- The per-bar position-snapshot walk is seeded with the restart open book, so a restart
+  batch's `position_snapshots` agree with the `position_snapshot_symbols` child rows.
+- An empty batch is never committed (the writer rolls back when there is nothing to commit).
+
+**Verifier (`sqlite_verify.py`):**
+- **PRE_START** is allowed only for a fully-empty ledger (no batches/events/typed/open rows)
+  whose `ledger_state` is a valid initial singleton (NULL watermark, zero accumulators,
+  peak = initial equity). Corrupt pre-start state is CORRUPT. A **committed empty batch** is
+  CORRUPT.
+- **Trade lifecycle** is re-derived from the underlying fills + funding ledger, not the trade
+  row's own fields: entry/exit fills must exist with the right kind/side/symbol/qty;
+  `gross_pnl == (exit_price − entry_price) × qty`; `fees == entry_fee + exit_fee`; `funding`
+  equals the funding-ledger aggregation over the held interval; `net == gross − fees −
+  funding`. Fake fill ids and arbitrary gross/funding are CORRUPT.
+- **Durable relationships:** `PRAGMA foreign_key_check`; each event's `event_key` matches the
+  typed row's natural key and its `batch_id` / `bar_ts` / `symbol` agree with the typed row;
+  every `position_snapshot` has exactly the expected `position_snapshot_symbols` and
+  `num_open` equals that count and the `open_symbols` length, reconstructed from the fill book.
+- **Cumulative equity** is recomputed from history: `realized_gross` from trades closed before
+  the bar, `fees_cum` from fills before the bar, `funding_cum` from funding up to the bar, then
+  equity and running peak/drawdown — so a coordinated mutation of realized/equity/peak is
+  caught. The unrealized mark is still taken from the row (not rederived from OHLCV).
+- **open_positions** restart fields are validated from the ledger: `entry_fee` from the entry
+  fill, `hold_bars` from the count of committed equity bars after the entry bar, and
+  `funding_accrued` from the funding ledger since entry.
+- **Malformed DBs** no longer traceback: a non-SQLite / unreadable file is CONFIG_ERROR; a
+  query/parse error during consistency checks is CORRUPT. The CLI exits with the status code
+  and prints no traceback.
+
+**Verifier v1 limitations are unchanged and remain explicit:** no independent OHLCV mark /
+unrealized-PnL / exposure re-derivation; no live-trading approval; no Package V2 volnorm proof.
+Phase 3.5 establishes **no** deployment readiness — Phase 4 remains unauthorized until these
+fixes pass adversarial review.
 
 ---
 
@@ -636,6 +703,13 @@ copier. No independent OHLCV mark re-derivation in this migration.
   timer on the VM stays disabled** (the VM holds only a stale `paper_config.json`; no real
   paper ledgers exist).
 - **Phase 2 update (2026-06-08):** SQLite writer implemented with transactional accounting,
-  event chain, reconciliation checks, and idempotency. 29 tests added. Phase 3 (verifier)
-  remains PLANNED. SQLite writer is not yet the default path; JSONL runner still used in
-  production.
+  event chain, reconciliation checks, and idempotency. SQLite writer is not yet the default
+  path; JSONL runner still used in production.
+- **Phase 3 update (2026-06-08):** read-only / query-only SQLite verifier implemented as a
+  parallel implementation alongside the JSONL verifier (see § 8c). It does not update the
+  production wrapper or remove JSONL authority (that is Phase 4).
+- **Phase 3.5 update (2026-06-08):** writer/verifier correctness fixes closing the adversarial
+  blockers (see § 8d) — the writer now emits and resumes entry→exit→trade lifecycles, and the
+  verifier no longer passes corrupt accounting as OK/PRE_START. **Phase 4 remains unauthorized
+  until Phase 3.5 passes adversarial review.** No deployment readiness is claimed; the paper
+  timer on the VM stays disabled and the JSONL runner is still used in production.

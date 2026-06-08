@@ -101,6 +101,62 @@ def _funding_db(tmp_path: Path) -> Path:
     return db_path
 
 
+# active at the three oldest eligible bars, then removed -> a real exit + trade.
+_ENTRY_EXIT_ACTIVES = {
+    TS[5]: [SYMBOL], TS[4]: [SYMBOL], TS[3]: [SYMBOL],
+    TS[2]: [], TS[1]: [], TS[0]: [],
+}
+
+
+def _run_writer_obs(tmp_path: Path, db_path: Path, forward_start_ts: str,
+                    per_bar_obs: list[dict]) -> tuple[int, str]:
+    obs_dir = _write_observation_log(tmp_path, per_bar_obs)
+    cfg = _make_cfg()
+    cfg["forward_start_ts"] = forward_start_ts
+    p1, p2 = _patch_data_loaders(tmp_path)
+    with p1, p2:
+        with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
+            return run_sqlite_accounting(db_path=db_path, forward_obs_dir=obs_dir)
+
+
+def _trade_db(tmp_path: Path) -> Path:
+    """Writer-produced DB with a real entry->exit->trade in a single run.
+
+    forward_start_ts = TS[4]; the symbol is active for the three oldest eligible
+    bars then removed, so the engine emits one entry fill, one exit fill, and the
+    closing trade that references them.
+    """
+    db_path = _init_db(tmp_path, forward_start_ts=TS[4])
+    per_bar_obs = [_make_obs(ts, _ENTRY_EXIT_ACTIVES[ts], i) for i, ts in enumerate(TS)]
+    status, msg = _run_writer_obs(tmp_path, db_path, TS[4], per_bar_obs)
+    assert status == STATUS_OK, f"writer did not return OK: {status}: {msg}"
+    # Sanity: this fixture really does carry a committed trade backed by 2 fills.
+    assert _scalar(db_path, "SELECT COUNT(*) FROM trades") == 1
+    assert _scalar(db_path, "SELECT COUNT(*) FROM fills") == 2
+    return db_path
+
+
+def _restart_trade_db(tmp_path: Path) -> Path:
+    """Writer-produced DB where the trade spans TWO runs (restart exit).
+
+    Run 1 commits the entry and holds the position; run 2 (after the symbol is
+    removed) loads the position from open_positions and emits the exit + trade.
+    """
+    db_path = _init_db(tmp_path, forward_start_ts=TS[4])
+    # Run 1: only the three oldest bars present, symbol active -> entry + hold.
+    obs1 = [_make_obs(ts, [SYMBOL], i) for i, ts in enumerate([TS[5], TS[4], TS[3]])]
+    s1, m1 = _run_writer_obs(tmp_path, db_path, TS[4], obs1)
+    assert s1 == STATUS_OK, m1
+    assert _scalar(db_path, "SELECT COUNT(*) FROM open_positions") == 1
+    # Run 2: append the exit bar -> exit + trade emitted from restart state.
+    obs2 = obs1 + [_make_obs(TS[2], [], 3)]
+    s2, m2 = _run_writer_obs(tmp_path, db_path, TS[4], obs2)
+    assert s2 == STATUS_OK, m2
+    assert _scalar(db_path, "SELECT COUNT(*) FROM trades") == 1
+    assert _scalar(db_path, "SELECT COUNT(*) FROM ledger_batches") == 2
+    return db_path
+
+
 def _inject_trade(
     db_path: Path, *, gross: float, fees: float, funding: float, net: float
 ) -> int:
@@ -219,9 +275,15 @@ class TestCleanOk:
         # Sanity: this fixture really does carry funding rows.
         assert _scalar(db_path, "SELECT COUNT(*) FROM funding") >= 1
 
-    def test_injected_consistent_trade_is_ok(self, tmp_path: Path):
-        db_path = _clean_db(tmp_path)
-        _inject_trade(db_path, gross=10.0, fees=0.1, funding=0.05, net=9.85)
+    def test_writer_produced_trade_is_ok(self, tmp_path: Path):
+        # Real entry->exit->trade produced by the writer (not an injected trade).
+        db_path = _trade_db(tmp_path)
+        result = verify_database(db_path)
+        assert result.status == V_STATUS_OK, result.failures
+
+    def test_writer_produced_restart_trade_is_ok(self, tmp_path: Path):
+        # Trade that spans two writer runs (restart exit) verifies OK.
+        db_path = _restart_trade_db(tmp_path)
         result = verify_database(db_path)
         assert result.status == V_STATUS_OK, result.failures
 
@@ -388,29 +450,67 @@ class TestFillFeeCorruption:
 # ---------------------------------------------------------------------------
 
 class TestTradeCorruption:
-    # The Phase 2 writer cannot emit trades, so a consistent trade is injected
-    # (proven OK in TestCleanOk.test_injected_consistent_trade_is_ok) and then
-    # mutated here to exercise the trade arithmetic / accumulator checks.
+    # All trade-lifecycle corruption is exercised against a WRITER-PRODUCED trade
+    # (real entry/exit fills + funding ledger), so the verifier derives every
+    # component instead of trusting the trade row's own fields.
+
     def test_net_pnl_mutated(self, tmp_path: Path):
-        db_path = _clean_db(tmp_path)
-        _inject_trade(db_path, gross=10.0, fees=0.1, funding=0.05, net=9.85)
-        _mutate(db_path, "UPDATE trades SET net_pnl = net_pnl + 5.0 WHERE trade_id = 'injtrade'")
+        db_path = _trade_db(tmp_path)
+        _mutate(db_path, "UPDATE trades SET net_pnl = net_pnl + 5.0")
         result = verify_database(db_path)
         assert result.status == STATUS_CORRUPT, result.failures
 
-    def test_gross_pnl_mutated_breaks_state(self, tmp_path: Path):
-        db_path = _clean_db(tmp_path)
-        _inject_trade(db_path, gross=10.0, fees=0.1, funding=0.05, net=9.85)
-        _mutate(db_path, "UPDATE trades SET gross_pnl = gross_pnl + 5.0 WHERE trade_id = 'injtrade'")
+    def test_gross_pnl_mutated(self, tmp_path: Path):
+        # Arbitrary gross that no longer matches (exit_price-entry_price)*qty.
+        db_path = _trade_db(tmp_path)
+        _mutate(db_path, "UPDATE trades SET gross_pnl = gross_pnl + 5.0, net_pnl = net_pnl + 5.0")
         result = verify_database(db_path)
         assert result.status == STATUS_CORRUPT, result.failures
 
     def test_funding_field_mutated(self, tmp_path: Path):
-        db_path = _clean_db(tmp_path)
-        _inject_trade(db_path, gross=10.0, fees=0.1, funding=0.05, net=9.85)
-        _mutate(db_path, "UPDATE trades SET funding = funding + 5.0 WHERE trade_id = 'injtrade'")
+        # Arbitrary funding that no longer matches the funding-ledger aggregation.
+        db_path = _trade_db(tmp_path)
+        _mutate(db_path, "UPDATE trades SET funding = funding + 5.0, net_pnl = net_pnl - 5.0")
         result = verify_database(db_path)
         assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_fees_field_mutated(self, tmp_path: Path):
+        # fees no longer equals entry_fee + exit_fee.
+        db_path = _trade_db(tmp_path)
+        _mutate(db_path, "UPDATE trades SET fees = fees + 5.0, net_pnl = net_pnl - 5.0")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_qty_mutated(self, tmp_path: Path):
+        # Trade qty no longer matches the entry/exit fill qty.
+        db_path = _trade_db(tmp_path)
+        _mutate(db_path, "UPDATE trades SET qty = qty + 1.0")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_fake_entry_fill_id(self, tmp_path: Path):
+        # entry_fill_id pointing at a non-existent fill must be CORRUPT.
+        db_path = _trade_db(tmp_path)
+        _mutate(db_path, "UPDATE trades SET entry_fill_id = 'nonexistent'")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+        assert any("not found in fills" in f for f in result.failures)
+
+    def test_fake_exit_fill_id(self, tmp_path: Path):
+        db_path = _trade_db(tmp_path)
+        _mutate(db_path, "UPDATE trades SET exit_fill_id = 'nonexistent'")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+        assert any("not found in fills" in f for f in result.failures)
+
+    def test_fabricated_trade_with_fake_fills(self, tmp_path: Path):
+        # A self-consistent trade row keyed to a real bar but referencing fake
+        # fill ids (the old "injected consistent trade") is now CORRUPT.
+        db_path = _clean_db(tmp_path)
+        _inject_trade(db_path, gross=10.0, fees=0.1, funding=0.05, net=9.85)
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+        assert any("not found in fills" in f for f in result.failures)
 
 
 # ---------------------------------------------------------------------------
@@ -645,6 +745,226 @@ class TestNoArtifacts:
                     f.name.endswith(".db-shm") or f.name == "paper_config.json", (
                     f"Unexpected artifact: {f.name}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Test 18: PRE_START hardening — corrupt pre-start state / empty committed batch
+# ---------------------------------------------------------------------------
+
+class TestPreStartHardening:
+    def test_corrupt_pre_start_state_is_corrupt(self, tmp_path: Path):
+        # Empty ledger, but ledger_state is NOT a valid initial singleton.
+        db_path = _init_db(tmp_path)
+        _mutate(db_path, "UPDATE ledger_state SET realized_gross = 123.0 WHERE id = 1")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_corrupt_pre_start_watermark_is_corrupt(self, tmp_path: Path):
+        db_path = _init_db(tmp_path)
+        _mutate(
+            db_path,
+            "UPDATE ledger_state SET watermark_bar_ts = '2026-01-01T00:00:00' WHERE id = 1",
+        )
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_committed_empty_batch_is_corrupt(self, tmp_path: Path):
+        # A committed ledger_batches row with no events is corruption, not OK.
+        db_path = _init_db(tmp_path)
+        _mutate(
+            db_path,
+            "INSERT INTO ledger_batches (created_at, committed_at, event_count, "
+            "committed_bar_count, paper_engine_version, config_hash) "
+            "SELECT 'now', 'now', 0, 0, paper_engine_version, config_hash "
+            "FROM paper_config WHERE id = 1",
+        )
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+        assert any("zero events" in f for f in result.failures)
+
+
+# ---------------------------------------------------------------------------
+# Test 19: event <-> typed-row relationship consistency
+# ---------------------------------------------------------------------------
+
+class TestEventTypedConsistency:
+    def test_event_key_mismatch(self, tmp_path: Path):
+        db_path = _clean_db(tmp_path)
+        _mutate(
+            db_path,
+            "UPDATE ledger_events SET event_key = 'tampered' WHERE event_type = 'fill'",
+        )
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_event_batch_mismatch(self, tmp_path: Path):
+        db_path = _clean_db(tmp_path)
+        # Add a second valid batch row so FK stays satisfied, then point the
+        # fill's typed row at it while its event keeps the original batch_id.
+        _mutate(
+            db_path,
+            "INSERT INTO ledger_batches (created_at, committed_at, event_count, "
+            "committed_bar_count, paper_engine_version, config_hash) "
+            "SELECT 'now', 'now', 1, 1, paper_engine_version, config_hash "
+            "FROM paper_config WHERE id = 1",
+        )
+        new_batch = _scalar(db_path, "SELECT MAX(batch_id) FROM ledger_batches")
+        _mutate(db_path, "UPDATE fills SET batch_id = ?", (new_batch,))
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_event_symbol_mismatch(self, tmp_path: Path):
+        db_path = _clean_db(tmp_path)
+        _mutate(db_path, "UPDATE fills SET symbol = 'ZZZUSDT'")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_event_bar_mismatch(self, tmp_path: Path):
+        db_path = _clean_db(tmp_path)
+        # Move an equity row's bar_ts: event_key (eq|<bar>) and event.bar_ts no
+        # longer match the typed row.
+        seq = _scalar(db_path, "SELECT seq FROM equity_snapshots ORDER BY seq LIMIT 1")
+        _mutate(
+            db_path,
+            "UPDATE equity_snapshots SET bar_ts = '2099-01-01T00:00:00' WHERE seq = ?",
+            (seq,),
+        )
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+
+# ---------------------------------------------------------------------------
+# Test 20: position_snapshot / position_snapshot_symbols validation
+# ---------------------------------------------------------------------------
+
+class TestPositionSnapshots:
+    def test_funding_db_has_child_rows(self, tmp_path: Path):
+        db_path = _funding_db(tmp_path)
+        assert _scalar(db_path, "SELECT COUNT(*) FROM position_snapshot_symbols") >= 1
+
+    def test_wrong_child_symbol(self, tmp_path: Path):
+        db_path = _funding_db(tmp_path)
+        _mutate(db_path, "UPDATE position_snapshot_symbols SET symbol = 'ZZZUSDT'")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_wrong_child_qty(self, tmp_path: Path):
+        db_path = _funding_db(tmp_path)
+        _mutate(db_path, "UPDATE position_snapshot_symbols SET qty = qty + 1.0")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_missing_child_row(self, tmp_path: Path):
+        db_path = _funding_db(tmp_path)
+        seq = _scalar(
+            db_path, "SELECT snapshot_seq FROM position_snapshot_symbols LIMIT 1"
+        )
+        _mutate(
+            db_path,
+            "DELETE FROM position_snapshot_symbols WHERE snapshot_seq = ?",
+            (seq,),
+        )
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_wrong_num_open(self, tmp_path: Path):
+        db_path = _funding_db(tmp_path)
+        seq = _scalar(
+            db_path,
+            "SELECT seq FROM position_snapshots WHERE num_open > 0 ORDER BY seq LIMIT 1",
+        )
+        _mutate(db_path, "UPDATE position_snapshots SET num_open = 99 WHERE seq = ?", (seq,))
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+
+# ---------------------------------------------------------------------------
+# Test 21: equity cumulative reconciliation (coordinated mutation)
+# ---------------------------------------------------------------------------
+
+class TestEquityCumulative:
+    def test_coordinated_realized_equity_peak_mutation(self, tmp_path: Path):
+        # Bump realized_gross_pnl + equity together (keeps the row internally
+        # self-consistent) AND peak in ledger_state. The recompute-from-trades
+        # still catches it because realized is rederived from the trade ledger.
+        db_path = _trade_db(tmp_path)
+        seq = _scalar(db_path, "SELECT seq FROM equity_snapshots ORDER BY seq DESC LIMIT 1")
+        _mutate(
+            db_path,
+            "UPDATE equity_snapshots SET realized_gross_pnl = realized_gross_pnl + 50.0, "
+            "equity = equity + 50.0 WHERE seq = ?",
+            (seq,),
+        )
+        _mutate(db_path, "UPDATE ledger_state SET peak_equity = peak_equity + 50.0 WHERE id = 1")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_fees_cum_field_mutation(self, tmp_path: Path):
+        db_path = _trade_db(tmp_path)
+        seq = _scalar(db_path, "SELECT seq FROM equity_snapshots ORDER BY seq DESC LIMIT 1")
+        _mutate(
+            db_path,
+            "UPDATE equity_snapshots SET fees_cum = fees_cum + 10.0, "
+            "equity = equity - 10.0 WHERE seq = ?",
+            (seq,),
+        )
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+
+# ---------------------------------------------------------------------------
+# Test 22: open_positions restart fields (funding_accrued / hold_bars / entry_fee)
+# ---------------------------------------------------------------------------
+
+class TestOpenPositionsRestartFields:
+    def test_funding_db_open_position_has_accrual(self, tmp_path: Path):
+        db_path = _funding_db(tmp_path)
+        row = _scalar(
+            db_path, "SELECT funding_accrued FROM open_positions LIMIT 1"
+        )
+        assert row is not None and abs(row) > 0.0
+
+    def test_wrong_funding_accrued(self, tmp_path: Path):
+        db_path = _funding_db(tmp_path)
+        _mutate(db_path, "UPDATE open_positions SET funding_accrued = funding_accrued + 1.0")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_wrong_hold_bars(self, tmp_path: Path):
+        db_path = _funding_db(tmp_path)
+        _mutate(db_path, "UPDATE open_positions SET hold_bars = hold_bars + 5")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+    def test_wrong_entry_fee(self, tmp_path: Path):
+        db_path = _funding_db(tmp_path)
+        _mutate(db_path, "UPDATE open_positions SET entry_fee = entry_fee + 1.0")
+        result = verify_database(db_path)
+        assert result.status == STATUS_CORRUPT, result.failures
+
+
+# ---------------------------------------------------------------------------
+# Test 23: malformed DB does not traceback
+# ---------------------------------------------------------------------------
+
+class TestMalformedDb:
+    def test_non_sqlite_file_is_config_error(self, tmp_path: Path):
+        bogus = tmp_path / "not_a_db.db"
+        bogus.write_text("this is not a sqlite database", encoding="utf-8")
+        result = verify_database(bogus)
+        assert result.status == STATUS_CONFIG_ERROR, result.failures
+
+    def test_cli_non_sqlite_file_no_traceback(self, tmp_path: Path):
+        bogus = tmp_path / "not_a_db.db"
+        bogus.write_text("garbage bytes not sqlite", encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, "scripts/qnty-paper-sqlite-verify.py", "--db-path", str(bogus)],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        )
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert "Traceback" not in r.stderr
 
 
 # ---------------------------------------------------------------------------

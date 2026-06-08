@@ -331,6 +331,9 @@ CREATE TABLE IF NOT EXISTS ledger_state (
 ) STRICT;
 
 -- 4.7 open_positions (mutable)
+-- Carries every field the deterministic engine needs to resume an open
+-- position across writer runs (entry_fee / funding_accrued / hold_bars are
+-- required by the exit path), so restart is lossless.
 CREATE TABLE IF NOT EXISTS open_positions (
     symbol              TEXT PRIMARY KEY,
     entry_fill_id       TEXT NOT NULL,
@@ -338,6 +341,7 @@ CREATE TABLE IF NOT EXISTS open_positions (
     qty                 REAL NOT NULL,
     entry_bar_ts        TEXT NOT NULL,
     entry_fill_ts       TEXT NOT NULL,
+    entry_fee           REAL NOT NULL DEFAULT 0.0,
     funding_accrued     REAL NOT NULL DEFAULT 0.0,
     hold_bars           INTEGER NOT NULL DEFAULT 0
 ) STRICT;

@@ -24,6 +24,7 @@ subset). See ``docs/ADR/0001-paper-sqlite-ledger.md``.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -347,6 +348,11 @@ def _validate_batches(conn: sqlite3.Connection) -> list[str]:
         actual_count = _scalar(
             conn, "SELECT COUNT(*) FROM ledger_events WHERE batch_id = ?", (bid,)
         )
+        # A committed batch must carry at least one event: an empty committed
+        # batch is corruption, not a healthy no-op (the writer rolls back when
+        # there is nothing to commit).
+        if b["committed_at"] is not None and actual_count == 0:
+            failures.append(f"Batch {bid} committed with zero events")
         if b["event_count"] != actual_count:
             failures.append(
                 f"Batch {bid} event_count={b['event_count']} != actual "
@@ -410,7 +416,6 @@ def _validate_arithmetic(
     fee_bps = float(cfg["fee_bps"])
     fee_rate = fee_bps / 10_000.0
     forward_start = cfg["forward_start_ts"]
-    initial_equity = float(cfg["initial_equity_usd"])
     notional = float(cfg["notional_usd"])
 
     # --- fills: no fill before forward_start_ts; fee arithmetic; fixed-notional baseline
@@ -451,15 +456,11 @@ def _validate_arithmetic(
                     f"fixed notional {notional:.6f} (compounding/sizing drift)"
                 )
 
-    # --- trades: gross/net arithmetic
-    trades = _rows(conn, "SELECT * FROM trades")
-    for t in trades:
-        expected_net = t["gross_pnl"] - t["fees"] - t["funding"]
-        if not _close(t["net_pnl"], expected_net):
-            failures.append(
-                f"Trade {t['trade_id']} net_pnl {t['net_pnl']:.8f} != gross-fees-funding "
-                f"{expected_net:.8f}"
-            )
+    # NOTE: trade lifecycle arithmetic lives in _validate_trades (it derives
+    # gross/fees/funding from the underlying fills + funding ledger, not from the
+    # trade row's own self-consistent fields). Equity cumulative reconciliation
+    # lives in _validate_equity_cumulative (it recomputes realized/fees/funding
+    # from history rather than trusting the equity row's own fields).
 
     # --- funding: amount arithmetic (when rate available)
     funding_rows = _rows(conn, "SELECT * FROM funding")
@@ -478,32 +479,174 @@ def _validate_arithmetic(
                     f"with rate_available=0"
                 )
 
-    # --- equity balance + drawdown per row (ordered by seq)
-    eq = _rows(
-        conn,
-        "SELECT * FROM equity_snapshots ORDER BY seq",
-    )
+    return failures
+
+
+def _validate_trades(conn: sqlite3.Connection) -> list[str]:
+    """Verify the full trade lifecycle from the underlying fills + funding ledger.
+
+    A trade row is NOT trusted on its own fields: every component is re-derived
+    from the entry/exit fills it references and from the funding ledger for the
+    held interval. Fabricated trades (fake fill ids, arbitrary gross/funding)
+    therefore fail even when the trade row is internally self-consistent.
+    """
+    failures: list[str] = []
+    fills_by_id = {f["fill_id"]: f for f in _rows(conn, "SELECT * FROM fills")}
+    trades = _rows(conn, "SELECT * FROM trades")
+
+    for t in trades:
+        tid = t["trade_id"]
+        entry = fills_by_id.get(t["entry_fill_id"])
+        exit_ = fills_by_id.get(t["exit_fill_id"])
+
+        if entry is None:
+            failures.append(
+                f"Trade {tid} entry_fill_id {t['entry_fill_id']!r} not found in fills"
+            )
+        if exit_ is None:
+            failures.append(
+                f"Trade {tid} exit_fill_id {t['exit_fill_id']!r} not found in fills"
+            )
+
+        if entry is not None:
+            if entry["kind"] != "entry" or entry["side"] != "BUY":
+                failures.append(
+                    f"Trade {tid} entry fill {entry['fill_id']} is not (entry, BUY): "
+                    f"kind={entry['kind']!r}, side={entry['side']!r}"
+                )
+            if entry["symbol"] != t["symbol"]:
+                failures.append(
+                    f"Trade {tid} entry fill symbol {entry['symbol']!r} != trade "
+                    f"symbol {t['symbol']!r}"
+                )
+            if not _close(t["qty"], entry["qty"], tol=_TIGHT_TOL):
+                failures.append(
+                    f"Trade {tid} qty {t['qty']} != entry fill qty {entry['qty']}"
+                )
+        if exit_ is not None:
+            if exit_["kind"] != "exit" or exit_["side"] != "SELL":
+                failures.append(
+                    f"Trade {tid} exit fill {exit_['fill_id']} is not (exit, SELL): "
+                    f"kind={exit_['kind']!r}, side={exit_['side']!r}"
+                )
+            if exit_["symbol"] != t["symbol"]:
+                failures.append(
+                    f"Trade {tid} exit fill symbol {exit_['symbol']!r} != trade "
+                    f"symbol {t['symbol']!r}"
+                )
+            if not _close(t["qty"], exit_["qty"], tol=_TIGHT_TOL):
+                failures.append(
+                    f"Trade {tid} qty {t['qty']} != exit fill qty {exit_['qty']}"
+                )
+
+        if entry is not None and exit_ is not None:
+            # gross_pnl derived from fill prices (long-only baseline).
+            expected_gross = (exit_["fill_price"] - entry["fill_price"]) * t["qty"]
+            if not _close(t["gross_pnl"], expected_gross):
+                failures.append(
+                    f"Trade {tid} gross_pnl {t['gross_pnl']:.8f} != "
+                    f"(exit_price-entry_price)*qty {expected_gross:.8f}"
+                )
+            # fees = entry fee + exit fee.
+            expected_fees = entry["fee"] + exit_["fee"]
+            if not _close(t["fees"], expected_fees):
+                failures.append(
+                    f"Trade {tid} fees {t['fees']:.8f} != entry_fee+exit_fee "
+                    f"{expected_fees:.8f}"
+                )
+
+        # funding = aggregation of the funding ledger over the held interval
+        # (entry_bar_ts, exit_bar_ts] for this symbol (v1 semantics: a single
+        # position per symbol, so the windows of sequential trades are disjoint).
+        agg = _scalar(
+            conn,
+            """
+            SELECT COALESCE(SUM(funding_amount), 0.0) FROM funding
+            WHERE symbol = ? AND bar_ts > ? AND bar_ts <= ?
+            """,
+            (t["symbol"], t["entry_bar_ts"], t["exit_bar_ts"]),
+        )
+        if not _close(t["funding"], agg):
+            failures.append(
+                f"Trade {tid} funding {t['funding']:.8f} != funding-ledger "
+                f"aggregation over ({t['entry_bar_ts']}, {t['exit_bar_ts']}] "
+                f"{agg:.8f}"
+            )
+
+        # net = gross - fees - funding (using the trade's own components).
+        expected_net = t["gross_pnl"] - t["fees"] - t["funding"]
+        if not _close(t["net_pnl"], expected_net):
+            failures.append(
+                f"Trade {tid} net_pnl {t['net_pnl']:.8f} != gross-fees-funding "
+                f"{expected_net:.8f}"
+            )
+
+    return failures
+
+
+def _validate_equity_cumulative(conn: sqlite3.Connection, cfg: dict) -> list[str]:
+    """Reconcile each equity row's cumulative fields against ledger history.
+
+    The equity row's realized_gross_pnl / fees_cum / funding_cum are NOT trusted:
+    they are recomputed from the trade / fill / funding ledgers up to each bar, so
+    a coordinated mutation of realized PnL + equity + peak cannot pass. The
+    unrealized mark is taken from the row as-is (the verifier does not rederive
+    OHLCV marks — see VERIFIER_DISCLAIMER), but every other input is rederived.
+
+    Cumulative semantics match the engine's per-bar ordering: the equity snapshot
+    for bar B is taken PRE-fill, so it reflects fills/realized strictly before B,
+    and funding accrued up to and including B.
+    """
+    failures: list[str] = []
+    initial_equity = float(cfg["initial_equity_usd"])
+    eq = _rows(conn, "SELECT * FROM equity_snapshots ORDER BY bar_ts")
     peak = initial_equity
     for e in eq:
+        bar = e["bar_ts"]
+        realized = _scalar(
+            conn,
+            "SELECT COALESCE(SUM(gross_pnl), 0.0) FROM trades WHERE exit_bar_ts < ?",
+            (bar,),
+        )
+        fees_cum = _scalar(
+            conn,
+            "SELECT COALESCE(SUM(fee), 0.0) FROM fills WHERE signal_bar_ts < ?",
+            (bar,),
+        )
+        funding_cum = _scalar(
+            conn,
+            "SELECT COALESCE(SUM(funding_amount), 0.0) FROM funding WHERE bar_ts <= ?",
+            (bar,),
+        )
+        if not _close(e["realized_gross_pnl"], realized):
+            failures.append(
+                f"Equity@{bar} realized_gross_pnl {e['realized_gross_pnl']:.8f} != "
+                f"SUM(trades.gross_pnl WHERE exit_bar_ts<{bar}) {realized:.8f}"
+            )
+        if not _close(e["fees_cum"], fees_cum):
+            failures.append(
+                f"Equity@{bar} fees_cum {e['fees_cum']:.8f} != "
+                f"SUM(fills.fee WHERE signal_bar_ts<{bar}) {fees_cum:.8f}"
+            )
+        if not _close(e["funding_cum"], funding_cum):
+            failures.append(
+                f"Equity@{bar} funding_cum {e['funding_cum']:.8f} != "
+                f"SUM(funding WHERE bar_ts<={bar}) {funding_cum:.8f}"
+            )
         expected_equity = (
-            initial_equity
-            + e["realized_gross_pnl"]
-            - e["fees_cum"]
-            - e["funding_cum"]
-            + e["unrealized_pnl"]
+            initial_equity + realized - fees_cum - funding_cum + e["unrealized_pnl"]
         )
         if not _close(e["equity"], expected_equity):
             failures.append(
-                f"Equity@{e['bar_ts']} {e['equity']:.8f} != initial+realized-fees-"
-                f"funding+unrealized {expected_equity:.8f}"
+                f"Equity@{bar} {e['equity']:.8f} != initial+realized-fees-funding+"
+                f"unrealized {expected_equity:.8f} (recomputed from history)"
             )
-        if e["equity"] > peak:
-            peak = e["equity"]
-        expected_dd = (peak - e["equity"]) / peak if peak > 0 else 0.0
+        if expected_equity > peak:
+            peak = expected_equity
+        expected_dd = (peak - expected_equity) / peak if peak > 0 else 0.0
         if not _close(e["drawdown"], expected_dd):
             failures.append(
-                f"Drawdown@{e['bar_ts']} {e['drawdown']:.8f} != expected "
-                f"{expected_dd:.8f}"
+                f"Drawdown@{bar} {e['drawdown']:.8f} != expected {expected_dd:.8f}"
             )
 
     return failures
@@ -569,23 +712,18 @@ def _validate_state(conn: sqlite3.Connection, cfg: dict) -> list[str]:
 
 
 def _validate_open_positions(conn: sqlite3.Connection) -> list[str]:
-    """Reconstruct the open book from fills and compare to the cache.
+    """Reconstruct the open book from the ledger and compare to the cache.
 
-    Validates the fields the Phase 2 writer maintains authoritatively in
-    ``open_positions``: qty, entry_price, entry_fill_id, entry_bar_ts,
-    entry_fill_ts. ``funding_accrued`` and ``hold_bars`` are NOT reconstructed
-    here: the Phase 2 writer rebuilds ``open_positions`` from an entry/exit
-    replay that does not carry the engine's per-bar funding accrual / hold-bar
-    increments (it persists 0 for both), so reconstructing them would flag valid
-    writer output as drift. See VERIFIER_DISCLAIMER and ADR Phase 4 follow-up.
+    Every field the engine needs to resume a position across runs is rederived
+    and checked: qty, entry_price, entry_fill_id, entry_bar_ts, entry_fill_ts,
+    entry_fee, funding_accrued and hold_bars. The reconstruction is taken from
+    the fill book, the funding ledger and the equity bar count — NOT from the
+    open_positions row — so a tampered restart cache is caught.
     """
     failures: list[str] = []
 
-    # Reconstruct open book by replaying fills in seq order.
-    fills = _rows(
-        conn,
-        "SELECT * FROM fills ORDER BY seq",
-    )
+    # Reconstruct open book by replaying fills in (signal-bar, seq) order.
+    fills = _rows(conn, "SELECT * FROM fills ORDER BY signal_bar_ts, seq")
     book: dict[str, dict] = {}
     for f in fills:
         sym = f["symbol"]
@@ -596,6 +734,7 @@ def _validate_open_positions(conn: sqlite3.Connection) -> list[str]:
                 "entry_fill_id": f["fill_id"],
                 "entry_bar_ts": f["signal_bar_ts"],
                 "entry_fill_ts": f["fill_ts"],
+                "entry_fee": f["fee"],
             }
         elif f["kind"] == "exit":
             book.pop(sym, None)
@@ -634,6 +773,38 @@ def _validate_open_positions(conn: sqlite3.Connection) -> list[str]:
             failures.append(
                 f"open_positions {sym} entry_fill_ts {dbp['entry_fill_ts']!r} != "
                 f"{recon['entry_fill_ts']!r}"
+            )
+        # entry_fee rebuilt from the entry fill the engine resumes against.
+        if not _close(dbp["entry_fee"], recon["entry_fee"], tol=_TIGHT_TOL):
+            failures.append(
+                f"open_positions {sym} entry_fee {dbp['entry_fee']} != entry fill fee "
+                f"{recon['entry_fee']}"
+            )
+        # hold_bars = number of committed equity bars after the entry signal bar
+        # (the engine increments hold_bars on every PRE-fill snapshot the position
+        # is in the book, i.e. bars strictly after entry_bar_ts).
+        recon_hold = _scalar(
+            conn,
+            "SELECT COUNT(*) FROM equity_snapshots WHERE bar_ts > ?",
+            (recon["entry_bar_ts"],),
+        )
+        if dbp["hold_bars"] != recon_hold:
+            failures.append(
+                f"open_positions {sym} hold_bars {dbp['hold_bars']} != equity bars "
+                f"after entry {recon_hold}"
+            )
+        # funding_accrued = funding ledger for this symbol since the entry bar
+        # (no exit-tail yet — the position is still open).
+        recon_funding = _scalar(
+            conn,
+            "SELECT COALESCE(SUM(funding_amount), 0.0) FROM funding "
+            "WHERE symbol = ? AND bar_ts > ?",
+            (sym, recon["entry_bar_ts"]),
+        )
+        if not _close(dbp["funding_accrued"], recon_funding):
+            failures.append(
+                f"open_positions {sym} funding_accrued {dbp['funding_accrued']:.8f} != "
+                f"funding ledger since entry {recon_funding:.8f}"
             )
 
     return failures
@@ -701,6 +872,238 @@ def _validate_snapshot_identity(conn: sqlite3.Connection) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Durable event <-> typed-row relationship validation
+# ---------------------------------------------------------------------------
+
+# event_type -> (typed table, natural-key column or None, bar column, symbol column)
+_TYPED_KEY: dict[str, tuple[str, str | None, str, str | None]] = {
+    "signal_snapshot": ("signal_snapshots", "snapshot_id", "bar_ts", None),
+    "funding": ("funding", "funding_id", "bar_ts", "symbol"),
+    "fill": ("fills", "fill_id", "signal_bar_ts", "symbol"),
+    "trade": ("trades", "trade_id", "exit_bar_ts", "symbol"),
+    "position_snapshot": ("position_snapshots", None, "bar_ts", None),
+    "equity_snapshot": ("equity_snapshots", None, "bar_ts", None),
+}
+
+
+def _validate_event_typed_consistency(conn: sqlite3.Connection) -> list[str]:
+    """Validate that each event's key/batch/bar/symbol match its typed row.
+
+    Beyond seq/type presence (already covered by the event-chain check) this
+    confirms the event_key equals the typed row's natural key, that the event's
+    batch_id / bar_ts / symbol agree with the typed row, so an event cannot be
+    silently re-pointed at a different row of the same type.
+    """
+    failures: list[str] = []
+    for et, (table, keycol, barcol, symcol) in _TYPED_KEY.items():
+        rows = _rows(
+            conn,
+            f"""
+            SELECT e.seq AS eseq, e.event_key AS ekey, e.bar_ts AS ebar,
+                   e.symbol AS esym, e.batch_id AS ebatch, t.*
+            FROM ledger_events e
+            JOIN {table} t ON t.seq = e.seq
+            WHERE e.event_type = ?
+            """,
+            (et,),
+        )
+        for r in rows:
+            seq = r["eseq"]
+            if keycol is not None:
+                natural = r[keycol]
+            else:
+                prefix = "pos" if et == "position_snapshot" else "eq"
+                natural = f"{prefix}|{r['bar_ts']}"
+            if r["ekey"] != natural:
+                failures.append(
+                    f"{et} event seq={seq} event_key {r['ekey']!r} != natural key "
+                    f"{natural!r}"
+                )
+            if r["ebatch"] != r["batch_id"]:
+                failures.append(
+                    f"{et} event seq={seq} batch_id {r['ebatch']} != typed row "
+                    f"batch_id {r['batch_id']}"
+                )
+            if r["ebar"] != r[barcol]:
+                failures.append(
+                    f"{et} event seq={seq} bar_ts {r['ebar']!r} != typed row "
+                    f"{barcol} {r[barcol]!r}"
+                )
+            if symcol is not None:
+                if r["esym"] != r[symcol]:
+                    failures.append(
+                        f"{et} event seq={seq} symbol {r['esym']!r} != typed row "
+                        f"symbol {r[symcol]!r}"
+                    )
+            else:
+                if r["esym"] is not None:
+                    failures.append(
+                        f"{et} event seq={seq} symbol {r['esym']!r} should be NULL"
+                    )
+    return failures
+
+
+def _validate_position_snapshots(conn: sqlite3.Connection) -> list[str]:
+    """Validate each position_snapshot against its child symbol rows + the book.
+
+    For every position_snapshot: ``num_open`` equals both the open_symbols JSON
+    length and the child-row count; the child symbols equal the open_symbols
+    JSON; and each child row's (qty, entry_price, entry_fill_id, entry_bar_ts)
+    matches the pre-fill open book reconstructed from the fill ledger at that bar.
+
+    The child ``unrealized_gross`` / position exposure are NOT re-derived (they
+    depend on OHLCV marks the verifier does not rederive — see
+    VERIFIER_DISCLAIMER); only the structural / fill-derived fields are checked.
+    """
+    failures: list[str] = []
+    ps_rows = _rows(conn, "SELECT * FROM position_snapshots ORDER BY bar_ts")
+    children: dict[int, list[dict]] = {}
+    for c in _rows(conn, "SELECT * FROM position_snapshot_symbols"):
+        children.setdefault(c["snapshot_seq"], []).append(c)
+
+    fills_by_bar: dict[str, list[dict]] = {}
+    for f in _rows(conn, "SELECT * FROM fills ORDER BY signal_bar_ts, seq"):
+        fills_by_bar.setdefault(f["signal_bar_ts"], []).append(f)
+
+    book: dict[str, dict] = {}
+    for ps in ps_rows:
+        bar = ps["bar_ts"]
+        try:
+            open_symbols = json.loads(ps["open_symbols"])
+        except (ValueError, TypeError):
+            failures.append(f"position_snapshot@{bar} open_symbols is not valid JSON")
+            open_symbols = []
+        child = children.get(ps["seq"], [])
+        child_syms = sorted(c["symbol"] for c in child)
+
+        if ps["num_open"] != len(open_symbols):
+            failures.append(
+                f"position_snapshot@{bar} num_open {ps['num_open']} != "
+                f"len(open_symbols) {len(open_symbols)}"
+            )
+        if ps["num_open"] != len(child):
+            failures.append(
+                f"position_snapshot@{bar} num_open {ps['num_open']} != "
+                f"position_snapshot_symbols count {len(child)}"
+            )
+        if child_syms != sorted(open_symbols):
+            failures.append(
+                f"position_snapshot@{bar} child symbols {child_syms} != "
+                f"open_symbols {sorted(open_symbols)}"
+            )
+        # open_symbols must equal the reconstructed pre-fill book at this bar.
+        if sorted(book.keys()) != sorted(open_symbols):
+            failures.append(
+                f"position_snapshot@{bar} open_symbols {sorted(open_symbols)} != "
+                f"reconstructed open book {sorted(book.keys())}"
+            )
+
+        child_by_sym = {c["symbol"]: c for c in child}
+        for sym, pos in book.items():
+            c = child_by_sym.get(sym)
+            if c is None:
+                continue  # already flagged via child_syms mismatch
+            if not _close(c["qty"], pos["qty"], tol=_TIGHT_TOL):
+                failures.append(
+                    f"position_snapshot@{bar} {sym} qty {c['qty']} != {pos['qty']}"
+                )
+            if not _close(c["entry_price"], pos["entry_price"], tol=_TIGHT_TOL):
+                failures.append(
+                    f"position_snapshot@{bar} {sym} entry_price {c['entry_price']} != "
+                    f"{pos['entry_price']}"
+                )
+            if c["entry_fill_id"] != pos["entry_fill_id"]:
+                failures.append(
+                    f"position_snapshot@{bar} {sym} entry_fill_id "
+                    f"{c['entry_fill_id']!r} != {pos['entry_fill_id']!r}"
+                )
+            if c["entry_bar_ts"] != pos["entry_bar_ts"]:
+                failures.append(
+                    f"position_snapshot@{bar} {sym} entry_bar_ts "
+                    f"{c['entry_bar_ts']!r} != {pos['entry_bar_ts']!r}"
+                )
+
+        # Advance the book by this bar's fills (exits then entries, matching the
+        # engine) so the NEXT bar's pre-fill snapshot reconstructs correctly.
+        bar_fills = fills_by_bar.get(bar, [])
+        for f in bar_fills:
+            if f["kind"] == "exit":
+                book.pop(f["symbol"], None)
+        for f in bar_fills:
+            if f["kind"] == "entry":
+                book[f["symbol"]] = {
+                    "qty": f["qty"],
+                    "entry_price": f["fill_price"],
+                    "entry_fill_id": f["fill_id"],
+                    "entry_bar_ts": f["signal_bar_ts"],
+                }
+
+    return failures
+
+
+def _validate_foreign_keys(conn: sqlite3.Connection) -> list[str]:
+    """Run SQLite's own foreign-key integrity check over the whole DB."""
+    failures: list[str] = []
+    for row in conn.execute("PRAGMA foreign_key_check").fetchall():
+        # columns: (table, rowid, parent, fkid)
+        failures.append(
+            f"Foreign key violation: table {row[0]!r} rowid {row[1]} -> "
+            f"{row[2]!r} (fk #{row[3]})"
+        )
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# PRE_START state validation
+# ---------------------------------------------------------------------------
+
+_LEDGER_TABLES = [
+    "ledger_batches",
+    "ledger_events",
+    "signal_snapshots",
+    "fills",
+    "trades",
+    "funding",
+    "position_snapshots",
+    "position_snapshot_symbols",
+    "equity_snapshots",
+    "open_positions",
+]
+
+
+def _ledger_table_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    return {t: _scalar(conn, f"SELECT COUNT(*) FROM {t}") for t in _LEDGER_TABLES}
+
+
+def _validate_initial_state(conn: sqlite3.Connection, cfg: dict) -> list[str]:
+    """A PRE_START DB must hold a valid INITIAL ledger_state singleton.
+
+    Corrupt pre-start state (non-NULL watermark, non-zero accumulators, wrong
+    peak) must NOT be reported as PRE_START — it is CORRUPT.
+    """
+    failures: list[str] = []
+    state = conn.execute("SELECT * FROM ledger_state WHERE id = 1").fetchone()
+    if state is None:
+        return ["ledger_state row (id=1) not found"]
+    state = dict(state)
+    initial_equity = float(cfg["initial_equity_usd"])
+    if state["watermark_bar_ts"] is not None:
+        failures.append(
+            f"pre-start ledger_state.watermark_bar_ts {state['watermark_bar_ts']!r} "
+            f"!= NULL"
+        )
+    for col in ("realized_gross", "fees_cum", "funding_cum"):
+        if not _close(state[col], 0.0):
+            failures.append(f"pre-start ledger_state.{col} {state[col]:.8f} != 0")
+    if not _close(state["peak_equity"], initial_equity):
+        failures.append(
+            f"pre-start ledger_state.peak_equity {state['peak_equity']:.8f} != "
+            f"initial_equity {initial_equity:.8f}"
+        )
+    return failures
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -718,7 +1121,7 @@ def verify_database(db_path: str | Path | None = None) -> VerifyResult:
 
     try:
         conn = connect_readonly(db_path)
-    except Exception as exc:  # noqa: BLE001
+    except sqlite3.Error as exc:
         return VerifyResult(
             STATUS_CONFIG_ERROR,
             [f"Could not open DB read-only: {type(exc).__name__}: {exc}"],
@@ -727,48 +1130,77 @@ def verify_database(db_path: str | Path | None = None) -> VerifyResult:
 
     try:
         # Confirm query-only mode is active (defends against accidental writes).
-        query_only = _scalar(conn, "PRAGMA query_only")
-        report["query_only"] = int(query_only) if query_only is not None else None
-        if not query_only:
+        # A non-SQLite / malformed file raises sqlite3.DatabaseError here; it is
+        # reported as CONFIG_ERROR rather than tracebacking out.
+        try:
+            query_only = _scalar(conn, "PRAGMA query_only")
+            report["query_only"] = int(query_only) if query_only is not None else None
+            if not query_only:
+                return VerifyResult(
+                    STATUS_CONFIG_ERROR,
+                    ["PRAGMA query_only is not ON on the verifier connection"],
+                    report,
+                )
+
+            # Structural presence (tables/triggers/indexes).
+            structural = _validate_schema_presence(conn)
+            if structural:
+                return VerifyResult(STATUS_CORRUPT, structural, report)
+
+            # Identity / config.
+            cfg, identity_failures = _validate_identity(conn)
+            if identity_failures:
+                return VerifyResult(STATUS_CONFIG_ERROR, identity_failures, report)
+            assert cfg is not None
+        except sqlite3.DatabaseError as exc:
+            # File is not a usable SQLite paper DB (e.g. not a database, malformed
+            # header, missing core tables surfaced as a query error).
             return VerifyResult(
                 STATUS_CONFIG_ERROR,
-                ["PRAGMA query_only is not ON on the verifier connection"],
+                [f"DB is not readable as a paper ledger: {type(exc).__name__}: {exc}"],
                 report,
             )
 
-        # Structural presence (tables/triggers/indexes).
-        structural = _validate_schema_presence(conn)
-        if structural:
-            return VerifyResult(STATUS_CORRUPT, structural, report)
+        # Everything past identity is a consistency check over a structurally
+        # valid DB: query / parse errors here are CORRUPT, not CONFIG_ERROR.
+        try:
+            counts = _ledger_table_counts(conn)
+            report["batches"] = counts["ledger_batches"]
+            report["events"] = counts["ledger_events"]
+            report["equity_rows"] = counts["equity_snapshots"]
+            report["watermark_bar_ts"] = _scalar(
+                conn, "SELECT watermark_bar_ts FROM ledger_state WHERE id = 1"
+            )
 
-        # Identity / config.
-        cfg, identity_failures = _validate_identity(conn)
-        if identity_failures:
-            return VerifyResult(STATUS_CONFIG_ERROR, identity_failures, report)
-        assert cfg is not None
+            # PRE_START: a fully-empty ledger with a valid INITIAL state singleton
+            # and an empty open book. Any committed/typed/open row, or non-initial
+            # state, disqualifies PRE_START (and is validated below / flagged here).
+            if all(v == 0 for v in counts.values()):
+                state_failures = _validate_initial_state(conn, cfg)
+                if state_failures:
+                    report["failure_count"] = len(state_failures)
+                    return VerifyResult(STATUS_CORRUPT, state_failures, report)
+                return VerifyResult(STATUS_PRE_START, [], report)
 
-        # PRE_START: valid DB, nothing committed yet.
-        n_batches = _scalar(conn, "SELECT COUNT(*) FROM ledger_batches")
-        n_events = _scalar(conn, "SELECT COUNT(*) FROM ledger_events")
-        n_equity = _scalar(conn, "SELECT COUNT(*) FROM equity_snapshots")
-        watermark = _scalar(
-            conn, "SELECT watermark_bar_ts FROM ledger_state WHERE id = 1"
-        )
-        report["batches"] = n_batches
-        report["events"] = n_events
-        report["equity_rows"] = n_equity
-        report["watermark_bar_ts"] = watermark
-        if not n_batches and not n_events and not n_equity and watermark is None:
-            return VerifyResult(STATUS_PRE_START, [], report)
-
-        # Full validation.
-        failures: list[str] = []
-        failures += _validate_event_chain(conn)
-        failures += _validate_batches(conn)
-        failures += _validate_arithmetic(conn, cfg)
-        failures += _validate_state(conn, cfg)
-        failures += _validate_open_positions(conn)
-        failures += _validate_snapshot_identity(conn)
+            # Full validation over a non-empty DB.
+            failures: list[str] = []
+            failures += _validate_foreign_keys(conn)
+            failures += _validate_event_chain(conn)
+            failures += _validate_event_typed_consistency(conn)
+            failures += _validate_batches(conn)
+            failures += _validate_arithmetic(conn, cfg)
+            failures += _validate_trades(conn)
+            failures += _validate_equity_cumulative(conn, cfg)
+            failures += _validate_state(conn, cfg)
+            failures += _validate_open_positions(conn)
+            failures += _validate_position_snapshots(conn)
+            failures += _validate_snapshot_identity(conn)
+        except (sqlite3.DatabaseError, ValueError, TypeError) as exc:
+            return VerifyResult(
+                STATUS_CORRUPT,
+                [f"Verification query failed: {type(exc).__name__}: {exc}"],
+                report,
+            )
 
         report["forward_start_ts"] = cfg["forward_start_ts"]
         report["failure_count"] = len(failures)

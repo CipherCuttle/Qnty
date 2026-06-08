@@ -319,11 +319,11 @@ class TestFirstSuccessfulBatch:
         # Verify deterministic order: signal_snapshot -> funding -> fill -> trade -> position_snapshot -> equity_snapshot
         if len(events) >= 3:
             etypes = [e[0] for e in events]
-            # signal_snapshot should come before fill
+            # Within its bar, signal_snapshot (rank 0) precedes the fill (rank 2).
             sig_indices = [i for i, e in enumerate(etypes) if e == "signal_snapshot"]
             fill_indices = [i for i, e in enumerate(etypes) if e == "fill"]
             if sig_indices and fill_indices:
-                assert sig_indices[0] > fill_indices[0], "signal_snapshot should precede fill"
+                assert sig_indices[0] < fill_indices[0], "signal_snapshot should precede fill"
 
     def test_typed_rows_inserted(self, tmp_path: Path):
         db_path = _init_test_db(tmp_path)
@@ -933,6 +933,97 @@ class TestCliSmokeWithTempDb:
         script_path = REPO_ROOT / "scripts" / "qnty-paper-sqlite-accounting.py"
         assert script_path.exists(), "CLI script not found"
         assert script_path.is_file(), "CLI script is not a file"
+
+
+# ---------------------------------------------------------------------------
+# Test 17: entry -> exit trade lifecycle (single run and across a restart)
+# ---------------------------------------------------------------------------
+
+class TestEntryExitTradeLifecycle:
+    """The writer can open AND close positions, emitting trades that the
+    read-only verifier accepts — including when the exit happens on a later run
+    that resumes the position from persisted open_positions restart state."""
+
+    # forward_start_ts = TS[4]; symbol active for the three oldest eligible bars
+    # then removed -> one entry fill, one exit fill, one trade.
+    _ACTIVES = {
+        TS[5]: [SYMBOL], TS[4]: [SYMBOL], TS[3]: [SYMBOL],
+        TS[2]: [], TS[1]: [], TS[0]: [],
+    }
+
+    def _run(self, tmp_path, db_path, per_bar_obs):
+        obs_dir = _write_observation_log(tmp_path, per_bar_obs)
+        cfg = _make_cfg()
+        cfg["forward_start_ts"] = TS[4]
+        p1, p2 = _patch_data_loaders(tmp_path)
+        with p1, p2:
+            with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
+                return run_sqlite_accounting(db_path=db_path, forward_obs_dir=obs_dir)
+
+    def test_single_run_emits_entry_exit_trade(self, tmp_path: Path):
+        db_path = _init_test_db(tmp_path, forward_start_ts=TS[4])
+        obs = [_make_obs(ts, self._ACTIVES[ts], i) for i, ts in enumerate(TS)]
+        status, msg = self._run(tmp_path, db_path, obs)
+        assert status == STATUS_OK, msg
+        conn = connect_readonly(db_path)
+        fills = conn.execute("SELECT kind, side FROM fills ORDER BY kind").fetchall()
+        trades = conn.execute(
+            "SELECT entry_fill_id, exit_fill_id FROM trades"
+        ).fetchall()
+        open_count = conn.execute("SELECT COUNT(*) FROM open_positions").fetchone()[0]
+        fill_ids = {r[0] for r in conn.execute("SELECT fill_id FROM fills").fetchall()}
+        conn.close()
+        assert len(fills) == 2, f"expected entry+exit fills, got {fills}"
+        assert {f[0] for f in fills} == {"entry", "exit"}
+        assert len(trades) == 1, "expected one closed trade"
+        # Trade references real fills.
+        assert trades[0][0] in fill_ids and trades[0][1] in fill_ids
+        assert open_count == 0, "position should be closed"
+
+    def test_writer_produced_trade_verifies_ok(self, tmp_path: Path):
+        from quantbot.paper.sqlite_verify import verify_database
+        db_path = _init_test_db(tmp_path, forward_start_ts=TS[4])
+        obs = [_make_obs(ts, self._ACTIVES[ts], i) for i, ts in enumerate(TS)]
+        assert self._run(tmp_path, db_path, obs)[0] == STATUS_OK
+        result = verify_database(db_path)
+        assert result.status == "OK", result.failures
+
+    def test_run1_entry_persists_restart_state(self, tmp_path: Path):
+        # First run: symbol active across the three oldest bars -> entry + hold,
+        # open_positions persists the engine restart fields.
+        db_path = _init_test_db(tmp_path, forward_start_ts=TS[4])
+        obs1 = [_make_obs(ts, [SYMBOL], i) for i, ts in enumerate([TS[5], TS[4], TS[3]])]
+        assert self._run(tmp_path, db_path, obs1)[0] == STATUS_OK
+        conn = connect_readonly(db_path)
+        pos = conn.execute(
+            "SELECT entry_fill_id, entry_fee, funding_accrued, hold_bars FROM open_positions"
+        ).fetchall()
+        conn.close()
+        assert len(pos) == 1, "expected one open position after run 1"
+        entry_fill_id, entry_fee, funding_accrued, hold_bars = pos[0]
+        assert entry_fill_id, "entry_fill_id must be persisted"
+        assert entry_fee > 0.0, "entry_fee must be persisted (engine needs it on exit)"
+        assert hold_bars >= 1, "hold_bars must accrue while held"
+        assert funding_accrued != 0.0, "funding_accrued must be persisted across runs"
+
+    def test_run2_exits_position_and_emits_trade(self, tmp_path: Path):
+        from quantbot.paper.sqlite_verify import verify_database
+        db_path = _init_test_db(tmp_path, forward_start_ts=TS[4])
+        obs1 = [_make_obs(ts, [SYMBOL], i) for i, ts in enumerate([TS[5], TS[4], TS[3]])]
+        assert self._run(tmp_path, db_path, obs1)[0] == STATUS_OK
+        # Second run appends the exit bar; the engine resumes from restart state.
+        obs2 = obs1 + [_make_obs(TS[2], [], 3)]
+        assert self._run(tmp_path, db_path, obs2)[0] == STATUS_OK
+        conn = connect_readonly(db_path)
+        n_trades = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+        n_batches = conn.execute("SELECT COUNT(*) FROM ledger_batches").fetchone()[0]
+        n_open = conn.execute("SELECT COUNT(*) FROM open_positions").fetchone()[0]
+        conn.close()
+        assert n_trades == 1, "exit on run 2 should emit one trade"
+        assert n_batches == 2, "two committed batches across the two runs"
+        assert n_open == 0, "position closed on run 2"
+        # The full entry->exit DB built across two runs verifies OK.
+        assert verify_database(db_path).status == "OK"
 
 
 # ---------------------------------------------------------------------------

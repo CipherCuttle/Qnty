@@ -99,6 +99,21 @@ def _event_key(event_type: str, **attrs: Any) -> str:
     raise ValueError(f"Unknown event_type: {event_type}")
 
 
+def _event_bar_ts(event_type: str, attrs: dict[str, Any]) -> str | None:
+    """Return the bar a row belongs to, for ledger_events.bar_ts + chain order.
+
+    The engine names the anchoring bar differently per row type (fills key off
+    the *signal* bar, trades off the *exit* bar); ``ledger_events.bar_ts`` and
+    the deterministic chain order both need the resolved bar, not a bare
+    ``attrs.get('bar_ts')`` which is ``None`` for fills/trades.
+    """
+    if event_type == "fill":
+        return attrs.get("signal_bar_ts")
+    if event_type == "trade":
+        return attrs.get("exit_bar_ts")
+    return attrs.get("bar_ts")
+
+
 def _sort_events_for_chain(
     signal_snapshots: list[dict],
     funding_rows: list[dict],
@@ -109,38 +124,29 @@ def _sort_events_for_chain(
 ) -> list[tuple[str, dict[str, Any]]]:
     """Return [(event_type, attrs), ...] in deterministic chain order.
 
-    Order: by bar_ts, then by EVENT_TYPE_ORDER rank.
+    Order: by resolved bar_ts, then by EVENT_TYPE_ORDER rank.
     Within each type, keys are sorted deterministically.
     """
-    events: list[tuple[str, int, str, dict[str, Any]]] = []
+    events: list[tuple[str, int, str, str, dict[str, Any]]] = []
 
-    for row in signal_snapshots:
-        key = _event_key("signal_snapshot", **row)
-        events.append(("signal_snapshot", EVENT_TYPE_RANK["signal_snapshot"], key, row))
+    def _add(event_type: str, rows: list[dict]) -> None:
+        rank = EVENT_TYPE_RANK[event_type]
+        for row in rows:
+            key = _event_key(event_type, **row)
+            bar = _event_bar_ts(event_type, row) or ""
+            events.append((event_type, rank, bar, key, row))
 
-    for row in funding_rows:
-        key = _event_key("funding", **row)
-        events.append(("funding", EVENT_TYPE_RANK["funding"], key, row))
+    _add("signal_snapshot", signal_snapshots)
+    _add("funding", funding_rows)
+    _add("fill", fill_rows)
+    _add("trade", trade_rows)
+    _add("position_snapshot", position_snapshots)
+    _add("equity_snapshot", equity_snapshots)
 
-    for row in fill_rows:
-        key = _event_key("fill", **row)
-        events.append(("fill", EVENT_TYPE_RANK["fill"], key, row))
+    # bar_ts first, then event-type rank, then key — deterministic and stable.
+    events.sort(key=lambda x: (x[2], x[1], x[3]))
 
-    for row in trade_rows:
-        key = _event_key("trade", **row)
-        events.append(("trade", EVENT_TYPE_RANK["trade"], key, row))
-
-    for row in position_snapshots:
-        key = _event_key("position_snapshot", **row)
-        events.append(("position_snapshot", EVENT_TYPE_RANK["position_snapshot"], key, row))
-
-    for row in equity_snapshots:
-        key = _event_key("equity_snapshot", **row)
-        events.append(("equity_snapshot", EVENT_TYPE_RANK["equity_snapshot"], key, row))
-
-    events.sort(key=lambda x: (x[3].get("bar_ts", ""), x[1], x[2]))
-
-    return [(et, attrs) for et, _, _, attrs in events]
+    return [(et, attrs) for et, _, _, _, attrs in events]
 
 
 # ---------------------------------------------------------------------------
@@ -221,11 +227,14 @@ def _insert_typed_rows_for_bar(
 ) -> None:
     """Insert all typed rows for one committed bar.
 
-    `event_seq_by_key` maps event_key -> ledger_events.seq (already inserted).
+    `event_seq_by_key` maps (event_type, event_key) -> ledger_events.seq
+    (already inserted). The key is the (type, key) PAIR, not the key alone:
+    an exit fill and its closing trade share the same id, so keying by the
+    bare event_key would collide and misroute the typed rows.
     """
     # signal_snapshots
     for snap in signal_snapshots_for_bar:
-        seq = event_seq_by_key[_event_key("signal_snapshot", **snap)]
+        seq = event_seq_by_key[("signal_snapshot", _event_key("signal_snapshot", **snap))]
         conn.execute(
             """
             INSERT INTO signal_snapshots (
@@ -254,7 +263,7 @@ def _insert_typed_rows_for_bar(
 
     # funding
     for f in funding_for_bar:
-        seq = event_seq_by_key[_event_key("funding", **f)]
+        seq = event_seq_by_key[("funding", _event_key("funding", **f))]
         conn.execute(
             """
             INSERT INTO funding (
@@ -282,7 +291,7 @@ def _insert_typed_rows_for_bar(
 
     # fills
     for fl in fills_for_bar:
-        seq = event_seq_by_key[_event_key("fill", **fl)]
+        seq = event_seq_by_key[("fill", _event_key("fill", **fl))]
         conn.execute(
             """
             INSERT INTO fills (
@@ -312,7 +321,7 @@ def _insert_typed_rows_for_bar(
 
     # trades
     for tr in trades_for_bar:
-        seq = event_seq_by_key[_event_key("trade", **tr)]
+        seq = event_seq_by_key[("trade", _event_key("trade", **tr))]
         conn.execute(
             """
             INSERT INTO trades (
@@ -347,7 +356,7 @@ def _insert_typed_rows_for_bar(
     # position_snapshot (+ symbols child table)
     if position_snapshot_for_bar:
         seq = event_seq_by_key[
-            _event_key("position_snapshot", **position_snapshot_for_bar)
+            ("position_snapshot", _event_key("position_snapshot", **position_snapshot_for_bar))
         ]
         ps = position_snapshot_for_bar
         conn.execute(
@@ -390,7 +399,7 @@ def _insert_typed_rows_for_bar(
     # equity_snapshot
     if equity_snapshot_for_bar:
         seq = event_seq_by_key[
-            _event_key("equity_snapshot", **equity_snapshot_for_bar)
+            ("equity_snapshot", _event_key("equity_snapshot", **equity_snapshot_for_bar))
         ]
         eq = equity_snapshot_for_bar
         conn.execute(
@@ -462,6 +471,7 @@ def _group_engine_result_by_bar(
     per_bar_obs: list[dict],
     engine_version: str,
     config_hash_val: str,
+    prior_open_positions: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Group engine result rows into per-bar dicts for SQLite insertion.
 
@@ -470,6 +480,12 @@ def _group_engine_result_by_bar(
       signal_snapshots, funding, fills, trades,
       position_snapshot, equity_snapshot,
       open_positions_after
+
+    ``prior_open_positions`` seeds the per-bar open-book walk with the positions
+    already open at the START of this run (loaded from the DB on a restart), so
+    the per-bar position_snapshots reflect carried-over positions — not an empty
+    book. Without it, a restart batch's position_snapshots would disagree with
+    the (correctly seeded) position_snapshot_symbols child rows.
     """
     # Build bar_commit_id lookup
     commit_id_by_ts: dict[str, str] = {}
@@ -496,9 +512,13 @@ def _group_engine_result_by_bar(
         ts = tr["exit_bar_ts"]
         trades_by_ts.setdefault(ts, []).append(tr)
 
-    # Walk in sorted order, tracking open_positions incrementally
+    # Walk in sorted order, tracking open_positions incrementally. Seed with the
+    # positions already open at the start of this run (restart state) so the
+    # per-bar pre-fill snapshots include carried-over positions.
     sorted_ts = sorted(equity_by_ts.keys())
-    open_positions: dict[str, dict] = {}
+    open_positions: dict[str, dict] = {
+        sym: dict(pos) for sym, pos in (prior_open_positions or {}).items()
+    }
     bars: list[dict] = []
 
     for ts in sorted_ts:
@@ -594,25 +614,31 @@ def _reconcile_batch_inside_tx(
                 f"Event type {et} count mismatch: expected {expected}, got {actual}"
             )
 
-    # 3. prev_seq chain coherence
+    # 3. prev_seq chain coherence (across batches). The batch's first event must
+    # link to the immediately preceding GLOBAL event (NULL only if it is the very
+    # first event ever); subsequent events link to their predecessor in-batch.
     events = conn.execute(
         "SELECT seq, prev_seq FROM ledger_events WHERE batch_id = ? ORDER BY seq",
         (batch_id,),
     ).fetchall()
-    prev = None
-    for erow in events:
-        if prev is None:
-            if erow["prev_seq"] is not None:
-                failures.append(
-                    f"First event seq={erow['seq']} has non-NULL prev_seq={erow['prev_seq']}"
-                )
-        else:
+    if events:
+        first = events[0]
+        global_pred = conn.execute(
+            "SELECT MAX(seq) FROM ledger_events WHERE seq < ?", (first["seq"],)
+        ).fetchone()[0]
+        if first["prev_seq"] != global_pred:
+            failures.append(
+                f"First batch event seq={first['seq']} prev_seq={first['prev_seq']} "
+                f"!= global predecessor {global_pred}"
+            )
+        prev = first["seq"]
+        for erow in events[1:]:
             if erow["prev_seq"] != prev:
                 failures.append(
                     f"Event seq={erow['seq']} prev_seq={erow['prev_seq']} "
                     f"!= expected {prev}"
                 )
-        prev = erow["seq"]
+            prev = erow["seq"]
 
     # 4. Every typed row references valid event
     for et in EVENT_TYPE_ORDER:
@@ -988,6 +1014,11 @@ def run_sqlite_accounting(
                 "peak_equity": peak_equity,
                 "bars_elapsed": 0,
             }
+            # Snapshot the open book BEFORE the engine mutates it — needed to seed
+            # the per-bar position snapshots for a restart batch.
+            prior_open_positions = {
+                sym: dict(pos) for sym, pos in engine_state["open_positions"].items()
+            }
 
             # Load market data (using patched data_dir if provided)
             bars_by_symbol: dict[str, list[Bar]] | None = load_all_ohlcv()
@@ -1018,8 +1049,11 @@ def run_sqlite_accounting(
             # === RUN ENGINE =====================================================
             result = run_engine(engine_config, per_bar_obs, bars_by_symbol, funding_df, engine_state)
 
-            if not result.equity and result.deferred_bar_ts is None:
-                # No new bars processed and no deferral = everything up to date
+            if not result.equity:
+                # No bar produced an equity snapshot this run — either everything
+                # is up to date or the next eligible bar deferred on a missing T+1
+                # open. Either way there is nothing to commit; never write an empty
+                # batch (the verifier treats a committed empty batch as CORRUPT).
                 conn.rollback()
                 conn.close()
                 return STATUS_OK, "No new bars to process"
@@ -1037,9 +1071,9 @@ def run_sqlite_accounting(
             # Build the event chain for all new rows
             processed_bar_ts = {eq["bar_ts"] for eq in result.equity}
 
-            # Build per-bar data
+            # Build per-bar data (seeded with the restart open book)
             bars_data = _group_engine_result_by_bar(
-                result, per_bar_obs, engine_version, cfg_hash
+                result, per_bar_obs, engine_version, cfg_hash, prior_open_positions
             )
 
             # Build signal snapshots list
@@ -1078,7 +1112,9 @@ def run_sqlite_accounting(
             )
 
             # Insert ledger_events (first pass)
-            event_seq_by_key: dict[str, int] = {}
+            # Keyed by (event_type, event_key): an exit fill and its closing
+            # trade share the same id, so the bare key is not unique.
+            event_seq_by_key: dict[tuple[str, str], int] = {}
             prev_seq: int | None = None
 
             # Get the max seq so far (for prev_seq chaining across batches)
@@ -1102,13 +1138,13 @@ def run_sqlite_accounting(
                         event_type,
                         event_key,
                         created_at,
-                        attrs.get("bar_ts"),
+                        _event_bar_ts(event_type, attrs),
                         attrs.get("symbol"),
                         prev_seq,
                     ),
                 )
                 seq = cur.lastrowid
-                event_seq_by_key[event_key] = seq
+                event_seq_by_key[(event_type, event_key)] = seq
                 prev_seq = seq
 
             # Insert typed rows (second pass)
@@ -1193,14 +1229,21 @@ def run_sqlite_accounting(
             )
 
             # === UPDATE OPEN_POSITIONS (delete all, re-insert) =====================
+            # Persist the engine's authoritative open book (NOT the entry/exit
+            # replay): the engine carries the per-bar funding_accrued, hold_bars
+            # and entry_fee the exit path needs to resume the position losslessly
+            # across runs. The replay only knows fills and would store 0 for
+            # funding/hold and lose entry_fee.
+            final_open_positions = engine_state["open_positions"]
             conn.execute("DELETE FROM open_positions")
-            for sym, pos in replay_positions.items():
+            for sym, pos in final_open_positions.items():
                 conn.execute(
                     """
                     INSERT INTO open_positions (
                         symbol, entry_fill_id, entry_price, qty,
-                        entry_bar_ts, entry_fill_ts, funding_accrued, hold_bars
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        entry_bar_ts, entry_fill_ts, entry_fee,
+                        funding_accrued, hold_bars
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         sym,
@@ -1209,6 +1252,7 @@ def run_sqlite_accounting(
                         pos["qty"],
                         pos["entry_bar_ts"],
                         pos["entry_fill_ts"],
+                        pos.get("entry_fee", 0.0),
                         pos.get("funding_accrued", 0.0),
                         pos.get("hold_bars", 0),
                     ),
@@ -1222,7 +1266,7 @@ def run_sqlite_accounting(
 
             recon_failures = _reconcile_batch_inside_tx(
                 conn, batch_id, event_count, event_chain,
-                typed_counts, replay_positions,
+                typed_counts, final_open_positions,
                 final_acc, final_peak, initial_equity, fee_bps,
             )
 
@@ -1238,10 +1282,14 @@ def run_sqlite_accounting(
             first_seq = None
             last_seq = None
             if event_chain:
-                first_key = _event_key(event_chain[0][0], **event_chain[0][1])
-                last_key = _event_key(event_chain[-1][0], **event_chain[-1][1])
-                first_seq = event_seq_by_key.get(first_key)
-                last_seq = event_seq_by_key.get(last_key)
+                first_et, first_attrs = event_chain[0]
+                last_et, last_attrs = event_chain[-1]
+                first_seq = event_seq_by_key.get(
+                    (first_et, _event_key(first_et, **first_attrs))
+                )
+                last_seq = event_seq_by_key.get(
+                    (last_et, _event_key(last_et, **last_attrs))
+                )
 
             committed_bar_count = len(result.equity) if result.equity else 0
 
