@@ -1,6 +1,6 @@
 # ADR 0001 — Migrate paper PnL v1 from JSONL + snapshot verifier to a SQLite/WAL ledger
 
-- **Status:** Accepted (Phase 1 substrate implemented; Phase 2 writer implemented 2026-06-08). Runtime code implemented in `quantbot/paper/db.py`, `quantbot/paper/sqlite_writer.py` and tested in `tests/test_paper_sqlite.py`, `tests/test_paper_sqlite_writer.py`.
+- **Status:** Accepted (Phase 1 substrate implemented; Phase 2 writer implemented 2026-06-08; Phase 3 read-only verifier implemented 2026-06-08). Runtime code implemented in `quantbot/paper/db.py`, `quantbot/paper/sqlite_writer.py`, `quantbot/paper/sqlite_verify.py` and tested in `tests/test_paper_sqlite.py`, `tests/test_paper_sqlite_writer.py`, `tests/test_paper_sqlite_verify.py`. The SQLite verifier is a **parallel** implementation (it does not replace the JSONL verifier) and is **not** the VM default path.
 - **Date:** 2026-06-08
 - **Scope:** `quantbot/paper/`, `scripts/qnty-paper-*`, `scripts/paper_*`,
   `ops/bin/qnty-paper-pnl-*.sh`, `docs/paper_pnl_v1_schema.md`,
@@ -374,8 +374,11 @@ approval and must leave the targeted paper suites + full repo suite green before
 - **Phase 2 — writer (IMPLEMENTED 2026-06-08):** `sqlite_writer.py`, accounting CLI,
   transaction flow with reconciliation, event chain implementation, idempotency via watermark.
   See § 8b for Phase 2 details.
-- **Phase 3 — verifier (PLANNED):** port reusable arithmetic invariants; implement the read-only
-  verifier; remove snapshot/trusted-baseline authority; replace obsolete verifier tests.
+- **Phase 3 — verifier (IMPLEMENTED 2026-06-08):** read-only / query-only SQLite verifier
+  (`sqlite_verify.py` + `scripts/qnty-paper-sqlite-verify.py`) that validates committed DB
+  state from the typed tables; arithmetic/structural invariants ported; snapshot/trusted-baseline
+  authority not used. Added as a parallel implementation alongside the JSONL verifier (the JSONL
+  verifier and its tests are NOT removed yet — that is Phase 4). See § 8c.
 - **Phase 4 — ops/docs:** update wrapper/status matrix/init shell/service comments/docs;
   remove unused JSONL/provenance modules; remove legacy artifact generation **only after** the
   SQLite path is proven.
@@ -485,6 +488,64 @@ Phase 3 (verifier) is still PLANNED/NOT STARTED. It will:
 - Update production wrapper to use SQLite writer
 - Remove snapshot/trusted-baseline authority
 - Replace obsolete verifier tests
+
+### 8c. Phase 3 clarifications (implemented 2026-06-08)
+
+**Implementation files:**
+- `quantbot/paper/sqlite_verify.py` — `verify_database(db_path) -> VerifyResult`
+- `scripts/qnty-paper-sqlite-verify.py` — CLI wrapper (`--db-path`, `--json`, `--verbose`,
+  `QNTY_PAPER_DB_PATH` fallback)
+- `tests/test_paper_sqlite_verify.py` — 45 tests (tmp_path only; no VM/`/srv/qnty` paths)
+
+**Verifier statuses / exit codes:**
+
+| code | status | meaning |
+| --- | --- | --- |
+| `0` | `OK` | DB verified consistent |
+| `3` | `CONFIG_ERROR` | DB/config identity invalid (missing file, schema/engine/baseline/hash) |
+| `4` | `CORRUPT` | a structural or accounting invariant failed |
+| `5` | `PRE_START` | valid DB, no committed batches/events/equity and `watermark_bar_ts` NULL |
+
+**Verifier flow:** open read-only (`mode=ro` + `PRAGMA query_only=ON`) → confirm `query_only`
+→ structural presence (tables/append-only triggers/indexes) → identity/config-hash
+→ PRE_START short-circuit → event chain → batches → arithmetic → state → open positions
+→ snapshot identity. It never writes the DB and never writes any report/JSONL artifact.
+
+**Checks implemented:** deterministic `prev_seq` chain (first event NULL, gaps are not
+corruption), event-type enum, unique event identity, 1:1 event↔typed-row, batch
+`event_count` / `first`/`last_event_seq` / `committed_bar_count`, batch engine-version &
+config-hash agreement, no fill before `forward_start_ts` (on the signal bar), fill-fee
+arithmetic, trade gross/net arithmetic, funding amount arithmetic, per-row equity balance &
+drawdown, `ledger_state` accumulators vs ledger-table sums, watermark = latest committed
+equity bar, peak-equity reconstruction, `open_positions` (qty / entry_price / entry_fill_id /
+entry_bar_ts / entry_fill_ts) reconstructed from the fill book, cross-row `bar_commit_id`
+agreement + `snapshot_id == bar_commit_id`, digest well-formedness, and the fixed-notional
+baseline (no shorts, fixed notional per entry / no compounding).
+
+**Verifier v1 limitations (documented, by design):**
+- It does **not** independently rederive OHLCV marks / unrealized PnL / exposure from source
+  price data (out-of-scope per §3). The CLI/result carry the disclaimer verbatim:
+  *"Verifier v1 validates SQLite ledger integrity and internal accounting consistency. It does
+  not independently rederive OHLCV marks/unrealized PnL/exposure from source price data."*
+- It does **not** recompute `source_observation_digest` from a canonical source JSON, because
+  the Phase 2 writer persists only the consumed subset of each observation, not the full
+  canonical row. The verifier validates digest well-formedness and cross-row `bar_commit_id`
+  agreement instead.
+
+**Findings surfaced during Phase 3 (deferred to Phase 4 — writer is not modified here):**
+- The Phase 2 writer **cannot emit trades/exits**: any exit trips its own reconcile with
+  *"Orphan typed rows in fills"*. Trade-path verification is exercised in tests by injecting a
+  self-consistent trade. The writer exit path must be fixed before live use.
+- The Phase 2 writer does **not** persist `funding_accrued` / `hold_bars` into `open_positions`
+  (it rebuilds the cache from an entry/exit replay and stores `0` for both). The verifier
+  therefore does **not** reconstruct those two fields (doing so would flag valid writer output
+  as cache drift). The writer should populate them, and the verifier should then validate them,
+  in Phase 4.
+
+**What Phase 3 does NOT do:** does not modify `runner.py` / `verify.py` / `sqlite_writer.py`;
+does not update the production wrapper, systemd units, or VM default path; does not remove the
+JSONL verifier, its tests, or any legacy artifact generation; does not enable timers or touch
+the VM. It does **not** establish deployment readiness.
 
 ---
 
