@@ -1,6 +1,6 @@
 # ADR 0001 — Migrate paper PnL v1 from JSONL + snapshot verifier to a SQLite/WAL ledger
 
-- **Status:** Accepted (Phase 1 substrate implemented). Runtime code implemented in `quantbot/paper/db.py` and tested in `tests/test_paper_sqlite.py`.
+- **Status:** Accepted (Phase 1 substrate implemented; Phase 2 writer implemented 2026-06-08). Runtime code implemented in `quantbot/paper/db.py`, `quantbot/paper/sqlite_writer.py` and tested in `tests/test_paper_sqlite.py`, `tests/test_paper_sqlite_writer.py`.
 - **Date:** 2026-06-08
 - **Scope:** `quantbot/paper/`, `scripts/qnty-paper-*`, `scripts/paper_*`,
   `ops/bin/qnty-paper-pnl-*.sh`, `docs/paper_pnl_v1_schema.md`,
@@ -267,8 +267,11 @@ there is no multi-file publish — either the batch commits or it does not.
   - creates a fresh database
   - **refuses** an existing database
   - **refuses** legacy paper artifacts unless the operator explicitly archives/removes them
-- **Accounting CLI** (adapted): `scripts/qnty-paper-accounting.py --db-path ...`
+- **Accounting CLI** (implemented): `scripts/qnty-paper-sqlite-accounting.py --db-path ...`
   - writes transactionally
+  - exit codes match writer status codes
+  - no JSONL artifacts created
+  - no VM interaction
 - **Verifier CLI** (adapted): `scripts/paper_verify.py --db-path ... [--json]`
   - opens the DB read-only / query-only
   - prints its report to **stdout only**
@@ -276,7 +279,7 @@ there is no multi-file publish — either the batch commits or it does not.
 
 ### Exit codes
 
-**Accounting** (`qnty-paper-accounting.py`):
+**Accounting** (`qnty-paper-sqlite-accounting.py`):
 
 | code | status | meaning |
 | --- | --- | --- |
@@ -328,10 +331,13 @@ there is no multi-file publish — either the batch commits or it does not.
 
 ### Add (later phases)
 
-- `quantbot/paper/db.py`
+- `quantbot/paper/db.py` (Phase 1 — IMPLEMENTED)
+- `quantbot/paper/sqlite_writer.py` (Phase 2 — IMPLEMENTED)
 - `quantbot/paper/reporting.py`
-- `scripts/qnty-paper-sqlite-init.py`
-- `tests/test_paper_sqlite.py`
+- `scripts/qnty-paper-sqlite-init.py` (Phase 1 — IMPLEMENTED)
+- `scripts/qnty-paper-sqlite-accounting.py` (Phase 2 — IMPLEMENTED)
+- `tests/test_paper_sqlite.py` (Phase 1 — IMPLEMENTED)
+- `tests/test_paper_sqlite_writer.py` (Phase 2 — IMPLEMENTED)
 
 ### Delete / deprecate (later phases, only after SQLite path is proven)
 
@@ -365,9 +371,10 @@ approval and must leave the targeted paper suites + full repo suite green before
   transaction flow, statuses, migration decision. **No runtime changes.**
 - **Phase 1 — substrate (IMPLEMENTED):** `db.py`, init CLI, schema, triggers, indexes,
   path handling, SQLite version gate, isolated DB tests. See § 8a for Phase 1 decisions.
-- **Phase 2 — writer:** adapt runner/config/snapshots to write complete typed batches
-  transactionally; preserve engine + freshness behavior.
-- **Phase 3 — verifier:** port reusable arithmetic invariants; implement the read-only
+- **Phase 2 — writer (IMPLEMENTED 2026-06-08):** `sqlite_writer.py`, accounting CLI,
+  transaction flow with reconciliation, event chain implementation, idempotency via watermark.
+  See § 8b for Phase 2 details.
+- **Phase 3 — verifier (PLANNED):** port reusable arithmetic invariants; implement the read-only
   verifier; remove snapshot/trusted-baseline authority; replace obsolete verifier tests.
 - **Phase 4 — ops/docs:** update wrapper/status matrix/init shell/service comments/docs;
   remove unused JSONL/provenance modules; remove legacy artifact generation **only after** the
@@ -389,6 +396,95 @@ approval and must leave the targeted paper suites + full repo suite green before
 - **Trigger error type:** append-only triggers raise `sqlite3.IntegrityError` (not
   `OperationalError`) because the trigger uses `RAISE(ABORT, ...)`. Both are subclasses
   of `sqlite3.Error`.
+
+### 8b. Phase 2 clarifications (implemented 2026-06-08)
+
+**Implementation files:**
+- `quantbot/paper/sqlite_writer.py` — `run_sqlite_accounting(db_path, forward_obs_dir, data_dir)`
+- `scripts/qnty-paper-sqlite-accounting.py` — CLI wrapper
+- `tests/test_paper_sqlite_writer.py` — 29 tests
+
+**Transaction flow:**
+1. `BEGIN IMMEDIATE`
+2. Load config, state, snapshots inside transaction
+3. Check source-observation divergence
+4. Run deterministic engine (unchanged)
+5. Insert complete event batch + typed rows
+6. Update `ledger_state` / `open_positions`
+7. Run 14 reconciliation checks inside transaction
+8. Commit only if all checks pass
+9. Any exception → full rollback (no partial state)
+
+**Event chain implementation:**
+- `seq INTEGER PRIMARY KEY AUTOINCREMENT` with `prev_seq` linking
+- Deterministic order: bar_ts → event_type order (signal_snapshot, funding, fill, trade, position_snapshot, equity_snapshot) → event_key
+- Verifier checks chain integrity (gaps in `seq` are NOT corruption; chain integrity is authoritative)
+
+**Reconciliation checks (inside transaction, before commit):**
+1. Fill fee/slippage arithmetic
+2. Trade gross/net arithmetic
+3. Internal funding arithmetic
+4. Equity balance check
+5. Drawdown calculation
+6. State accumulators (watermark, peak equity)
+7. Open position details
+8. Batch event count matches
+9. Event type/key uniqueness
+10. Foreign key consistency
+11. Config hash match
+12. Source snapshot digest verification
+13. Bar commit ID verification
+14. Watermark progression
+
+**Status codes:**
+| code | status | meaning |
+| --- | --- | --- |
+| `0` | `OK` | complete batch committed atomically |
+| `2` | `ABORTED` | freshness/divergence gate aborted; DB unmutated |
+| `3` | `CONFIG_ERROR` | DB/config identity invalid |
+| `4` | `CORRUPT_LEDGER` | persisted ledger/state failed a structural or reconcile invariant |
+| `5` | `PRE_START` | valid DB, no committed eligible bars yet |
+| `6` | `LEDGER_BUSY` | could not acquire writer lock |
+
+**Idempotency:**
+- Watermark in `ledger_state` prevents re-processing same bars
+- `prior_watermark_bar_ts` → `new_watermark_bar_ts` tracks progression
+
+**Crash safety:**
+- Full rollback on any exception (Python or SQLite)
+- No partial writes visible to readers
+- WAL mode ensures crash recovery
+
+**CLI script (`scripts/qnty-paper-sqlite-accounting.py`):**
+- Arguments: `--db-path`, `--forward-obs-dir`, `--data-dir`, `--json`
+- Environment variable: `QNTY_PAPER_DB_PATH` (fallback default)
+- Exit codes match writer status codes exactly
+- No JSONL artifacts created
+- No VM interaction
+- JSON output mode for programmatic use
+
+**Test coverage:**
+- 29 tests in `tests/test_paper_sqlite_writer.py`
+- All 16+ required test cases from ADR §9 implemented
+- Existing tests (`test_paper_sqlite.py`, `test_paper_pnl.py`) still pass
+- Test fixtures use `tmp_path` only, no VM dependencies
+- Tests cover: transaction atomicity, rollback, idempotency, reconciliation, status codes, event chain, crash safety
+
+**What Phase 2 does NOT do:**
+- Does not modify `runner.py` or `verify.py` (those remain JSONL-based)
+- Does not replace JSONL runner yet (that's Phase 3)
+- Does not enable timers or touch VM
+- Does not make SQLite writer the default path yet
+- Does not implement the verifier (Phase 3)
+- Does not remove JSONL artifacts or legacy code
+
+**Phase 3 note:**
+Phase 3 (verifier) is still PLANNED/NOT STARTED. It will:
+- Migrate verification from JSONL to SQLite
+- Implement read-only verifier with `mode=ro` and `PRAGMA query_only=ON`
+- Update production wrapper to use SQLite writer
+- Remove snapshot/trusted-baseline authority
+- Replace obsolete verifier tests
 
 ---
 
@@ -478,3 +574,7 @@ copier. No independent OHLCV mark re-derivation in this migration.
   existing JSONL model in `docs/paper_pnl_v1_schema.md` remains authoritative and the **paper
   timer on the VM stays disabled** (the VM holds only a stale `paper_config.json`; no real
   paper ledgers exist).
+- **Phase 2 update (2026-06-08):** SQLite writer implemented with transactional accounting,
+  event chain, reconciliation checks, and idempotency. 29 tests added. Phase 3 (verifier)
+  remains PLANNED. SQLite writer is not yet the default path; JSONL runner still used in
+  production.

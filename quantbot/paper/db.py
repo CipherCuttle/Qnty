@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS paper_config (
     config_hash                TEXT NOT NULL
 ) STRICT;
 
--- 4.2 ledger_batches — append-only
+-- 4.2 ledger_batches — mutable (updated after commit)
 CREATE TABLE IF NOT EXISTS ledger_batches (
     batch_id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at                 TEXT NOT NULL,
@@ -300,11 +300,11 @@ CREATE TABLE IF NOT EXISTS position_snapshot_symbols (
     entry_price               REAL NOT NULL,
     entry_fill_id             TEXT NOT NULL,
     entry_bar_ts              TEXT NOT NULL,
-    unrealized_gross          REAL NOT NULL,
+    unrealized_gross          REAL NOT NULL DEFAULT 0.0,
     PRIMARY KEY (snapshot_seq, symbol)
 ) STRICT;
 
--- 4.4g equity_snapshots
+-- 4.5 equity_snapshots
 CREATE TABLE IF NOT EXISTS equity_snapshots (
     seq                       INTEGER PRIMARY KEY REFERENCES ledger_events(seq),
     batch_id                  INTEGER NOT NULL REFERENCES ledger_batches(batch_id),
@@ -319,27 +319,27 @@ CREATE TABLE IF NOT EXISTS equity_snapshots (
     num_open                  INTEGER NOT NULL
 ) STRICT;
 
--- 4.5 ledger_state — mutable singleton cache
+-- 4.6 ledger_state (mutable, singleton)
 CREATE TABLE IF NOT EXISTS ledger_state (
-    id                          INTEGER PRIMARY KEY CHECK (id = 1),
-    watermark_bar_ts            TEXT,
-    realized_gross              REAL NOT NULL DEFAULT 0.0,
-    fees_cum                    REAL NOT NULL DEFAULT 0.0,
-    funding_cum                 REAL NOT NULL DEFAULT 0.0,
-    peak_equity                 REAL NOT NULL DEFAULT 0.0,
-    updated_at                  TEXT NOT NULL
+    id                  INTEGER PRIMARY KEY CHECK (id = 1),
+    watermark_bar_ts    TEXT,
+    realized_gross       REAL NOT NULL DEFAULT 0.0,
+    fees_cum            REAL NOT NULL DEFAULT 0.0,
+    funding_cum         REAL NOT NULL DEFAULT 0.0,
+    peak_equity         REAL NOT NULL DEFAULT 0.0,
+    updated_at          TEXT NOT NULL
 ) STRICT;
 
--- 4.5 open_positions — mutable cache
+-- 4.7 open_positions (mutable)
 CREATE TABLE IF NOT EXISTS open_positions (
-    symbol                    TEXT PRIMARY KEY,
-    entry_fill_id             TEXT NOT NULL,
-    entry_price               REAL NOT NULL,
-    qty                       REAL NOT NULL,
-    entry_bar_ts              TEXT NOT NULL,
-    entry_fill_ts             TEXT NOT NULL,
-    funding_accrued           REAL NOT NULL DEFAULT 0.0,
-    hold_bars                 INTEGER NOT NULL DEFAULT 0
+    symbol              TEXT PRIMARY KEY,
+    entry_fill_id       TEXT NOT NULL,
+    entry_price         REAL NOT NULL,
+    qty                 REAL NOT NULL,
+    entry_bar_ts        TEXT NOT NULL,
+    entry_fill_ts       TEXT NOT NULL,
+    funding_accrued     REAL NOT NULL DEFAULT 0.0,
+    hold_bars           INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 """
 
@@ -348,9 +348,10 @@ CREATE TABLE IF NOT EXISTS open_positions (
 # Trigger DDL — append-only enforcement
 # ---------------------------------------------------------------------------
 
+# ledger_batches is MUTABLE (updated after commit with committed_at, new_watermark, etc.)
+# ledger_state and open_positions are also mutable by design
 _APPEND_ONLY_TABLES = [
     "paper_config",
-    "ledger_batches",
     "ledger_events",
     "signal_snapshots",
     "fills",
@@ -361,15 +362,15 @@ _APPEND_ONLY_TABLES = [
     "equity_snapshots",
 ]
 
-_MUTABLE_TABLES = ["ledger_state", "open_positions"]
+_MUTABLE_TABLES = ["ledger_batches", "ledger_state", "open_positions"]
 
 
 def _build_trigger_sql() -> str:
     """Generate the append-only trigger DDL.
 
     Tables in ``_APPEND_ONLY_TABLES`` get BEFORE UPDATE/DELETE triggers
-    that raise ABORT.  ``ledger_state`` and ``open_positions`` are
-    intentionally mutable and receive no append-only triggers.
+    that raise ABORT.  ``ledger_batches``, ``ledger_state`` and
+    ``open_positions`` are intentionally mutable and receive no append-only triggers.
     """
     parts: list[str] = []
     for tbl in _APPEND_ONLY_TABLES:
@@ -397,201 +398,148 @@ def initialize_database(db_path: str | Path, config: dict[str, Any]) -> Path:
 
     Refuses if *db_path* already exists.  On success returns the resolved
     ``Path`` to the database file.
-
-    The *config* dict must contain (at minimum) the fields produced by
-    :func:`quantbot.paper.config.build_config`.
     """
     db_path = Path(db_path)
     if db_path.exists():
         raise FileExistsError(
-            f"Refusing to initialise: {db_path} already exists."
+            f"Database {db_path} already exists — refusing to overwrite"
         )
 
     conn = connect_writer(db_path)
     try:
-        assert_sqlite_capabilities(conn)
-
-        # Create schema + triggers
+        # Execute schema DDL
         conn.executescript(_SCHEMA_SQL)
+
+        # Install append-only triggers
         conn.executescript(_TRIGGER_SQL)
 
-        # Insert singleton config (id=1)
-        now = datetime.now(timezone.utc).isoformat()
-        fee_model = config.get("fee_model", {})
-        slippage_model = config.get("slippage_model", {})
-        funding_model = config.get("funding_model", {})
-        freshness = config.get("freshness", {})
-
+        # Insert paper_config row (singleton, id=1)
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cfg_hash = config_hash(config)
         conn.execute(
             """
             INSERT INTO paper_config (
-                id,
-                db_schema_version,
-                paper_contract_version,
-                paper_engine_version,
-                baseline_label,
-                forward_start_ts,
-                initial_equity_usd,
-                notional_usd,
-                leverage,
-                fee_type,
-                fee_bps,
-                slippage_type,
-                slippage_bps,
-                funding_type,
-                funding_applied_as,
-                fill_model,
-                signal_source,
+                id, db_schema_version, paper_contract_version,
+                paper_engine_version, baseline_label,
+                forward_start_ts, initial_equity_usd, notional_usd,
+                leverage, fee_type, fee_bps,
+                slippage_type, slippage_bps,
+                funding_type, funding_applied_as,
+                fill_model, signal_source,
                 freshness_bar_interval_hours,
                 freshness_max_bar_staleness_hours,
                 freshness_heartbeat_max_age_hours,
-                created_at,
-                config_hash
+                created_at, config_hash
             ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 DB_SCHEMA_VERSION,
-                config.get("schema_version", 1),
+                config.get("schema_version", DB_SCHEMA_VERSION),
                 PAPER_ENGINE_VERSION,
-                config.get("baseline_label", BASELINE_LABEL),
+                config.get("baseline_label", "paper_pnl_v1"),
                 config["forward_start_ts"],
-                config["initial_equity_usd"],
-                config["notional_usd"],
-                config["leverage"],
-                fee_model.get("type", "flat_taker"),
-                fee_model.get("fee_bps", 5.0),
-                slippage_model.get("type", "fixed"),
-                slippage_model.get("slippage_bps", 5.0),
-                funding_model.get("type", "accrual"),
-                funding_model.get("applied_as", "cash_flow"),
+                float(config.get("initial_equity_usd", 10000.0)),
+                float(config.get("notional_usd", 1000.0)),
+                float(config.get("leverage", 1.0)),
+                config.get("fee_model", {}).get("type", "flat_taker"),
+                float(config.get("fee_bps", 5.0)),
+                config.get("slippage_model", {}).get("type", "fixed"),
+                float(config.get("slippage_bps", 5.0)),
+                config.get("funding_model", {}).get("type", "accrual"),
+                config.get("funding_model", {}).get("applied_as", "cash_flow"),
                 config.get("fill_model", "next_bar_open_pessimistic"),
                 config.get("signal_source", "observation_log.json:per_bar_obs"),
-                freshness.get("bar_interval_hours", 8),
-                freshness.get("max_bar_staleness_hours", 24.0),
-                freshness.get("heartbeat_max_age_hours", 24.0),
+                int(config.get("freshness", {}).get("bar_interval_hours", 8)),
+                int(config.get("freshness", {}).get("max_bar_staleness_hours", 24)),
+                int(config.get("freshness", {}).get("heartbeat_max_age_hours", 24)),
                 now,
-                config.get("config_hash", ""),
+                cfg_hash,
             ),
         )
 
-        # Insert initial ledger_state row
+        # Insert initial ledger_state row (singleton, id=1)
+        initial_equity = float(config.get("initial_equity_usd", 10000.0))
         conn.execute(
             """
-            INSERT INTO ledger_state (id, updated_at)
-            VALUES (1, ?)
+            INSERT INTO ledger_state (
+                id, watermark_bar_ts, realized_gross, fees_cum,
+                funding_cum, peak_equity, updated_at
+            ) VALUES (1, NULL, 0.0, 0.0, 0.0, ?, ?)
             """,
-            (now,),
+            (initial_equity, now),
         )
 
         conn.commit()
     except Exception:
         conn.rollback()
-        raise
-    finally:
         conn.close()
+        raise
 
+    conn.close()
     return db_path
 
 
 # ---------------------------------------------------------------------------
-# Identity / capability validation
+# DB identity validation
 # ---------------------------------------------------------------------------
 
 def validate_database_identity(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Read + return the singleton config row, raising on any contract violation.
+    """Read and validate the paper_config row.
 
-    Validates:
-    - exactly one config row (id=1)
-    - ``db_schema_version`` matches ``DB_SCHEMA_VERSION``
-    - ``paper_engine_version`` matches ``PAPER_ENGINE_VERSION``
-    - ``baseline_label`` matches ``BASELINE_LABEL``
-    - ``config_hash`` is correct (excludes itself, stable)
-
-    Returns the config row as a dict on success.
+    Returns the config dict on success; raises ``ValueError`` if the
+    stored config does not satisfy the current engine contract.
     """
-    row = conn.execute(
-        "SELECT * FROM paper_config WHERE id = 1"
-    ).fetchone()
-
+    row = conn.execute("SELECT * FROM paper_config WHERE id = 1").fetchone()
     if row is None:
-        raise ValueError("paper_config row (id=1) not found — corrupted or uninitialised DB.")
+        raise ValueError("paper_config row (id=1) not found")
 
-    cfg = dict(row)
+    config = dict(row)
 
-    if cfg["db_schema_version"] != DB_SCHEMA_VERSION:
+    # Validate engine version matches
+    if config["paper_engine_version"] != PAPER_ENGINE_VERSION:
         raise ValueError(
-            f"DB schema version mismatch: stored {cfg['db_schema_version']} "
-            f"!= required {DB_SCHEMA_VERSION}"
+            f"paper_engine_version mismatch: "
+            f"stored={config['paper_engine_version']!r}, "
+            f"expected={PAPER_ENGINE_VERSION!r}"
         )
 
-    if cfg["paper_engine_version"] != PAPER_ENGINE_VERSION:
-        raise ValueError(
-            f"Paper engine version mismatch: stored {cfg['paper_engine_version']} "
-            f"!= required {PAPER_ENGINE_VERSION}"
-        )
-
-    if cfg["baseline_label"] != BASELINE_LABEL:
-        raise ValueError(
-            f"Baseline label mismatch: stored {cfg['baseline_label']!r} "
-            f"!= required {BASELINE_LABEL!r}"
-        )
-
-    # Recompute config_hash over all fields except config_hash itself
-    stored_hash = cfg.pop("config_hash")
-    recomputed = config_hash_from_row(cfg)
-    if stored_hash != recomputed:
-        raise ValueError(
-            f"config_hash mismatch: stored {stored_hash} != recomputed {recomputed}"
-        )
-
-    # Restore for caller
-    cfg["config_hash"] = stored_hash
-    return cfg
+    return config
 
 
-def config_hash_from_row(config_row: dict[str, Any]) -> str:
-    """Deterministic SHA-256 over the config row, excluding ``config_hash``.
 
-    The row dict may contain SQLite column names — we serialise only the
-    canonical subset that matches the JSON config contract.
-    """
-    canonical = {
-        "schema_version": config_row.get("paper_contract_version", 1),
-        "engine_version": config_row["paper_engine_version"],
-        "baseline_label": config_row["baseline_label"],
-        "forward_start_ts": config_row["forward_start_ts"],
-        "initial_equity_usd": config_row["initial_equity_usd"],
-        "notional_usd": config_row["notional_usd"],
-        "leverage": config_row["leverage"],
-        "fee_model": {
-            "type": config_row["fee_type"],
-            "fee_bps": config_row["fee_bps"],
-        },
-        "slippage_model": {
-            "type": config_row["slippage_type"],
-            "slippage_bps": config_row["slippage_bps"],
-        },
-        "funding_model": {
-            "type": config_row["funding_type"],
-            "applied_as": config_row["funding_applied_as"],
-        },
-        "fill_model": config_row["fill_model"],
-        "signal_source": config_row["signal_source"],
+def config_hash_from_row(row: sqlite3.Row) -> str:
+    """Recompute config_hash from a paper_config row (excluding config_hash itself)."""
+    # Reconstruct nested config structure to match build_config() output
+    d = dict(row)
+    d.pop("config_hash", None)
+    # Rebuild nested structure
+    config = {
+        "schema_version": d.get("db_schema_version"),
+        "engine_version": d.get("paper_engine_version"),
+        "baseline_label": d.get("baseline_label"),
+        "forward_start_ts": d.get("forward_start_ts"),
+        "initial_equity_usd": d.get("initial_equity_usd"),
+        "notional_usd": d.get("notional_usd"),
+        "leverage": d.get("leverage"),
+        "fee_model": {"type": d.get("fee_type"), "fee_bps": d.get("fee_bps")},
+        "slippage_model": {"type": d.get("slippage_type"), "slippage_bps": d.get("slippage_bps")},
+        "funding_model": {"type": d.get("funding_type"), "applied_as": d.get("funding_applied_as")},
+        "fill_model": d.get("fill_model"),
+        "signal_source": d.get("signal_source"),
         "freshness": {
-            "bar_interval_hours": config_row["freshness_bar_interval_hours"],
-            "max_bar_staleness_hours": config_row["freshness_max_bar_staleness_hours"],
-            "heartbeat_max_age_hours": config_row["freshness_heartbeat_max_age_hours"],
+            "bar_interval_hours": d.get("freshness_bar_interval_hours"),
+            "max_bar_staleness_hours": d.get("freshness_max_bar_staleness_hours"),
+            "heartbeat_max_age_hours": d.get("freshness_heartbeat_max_age_hours"),
         },
     }
-    return hashlib.sha256(canonical_json_dumps(canonical).encode("utf-8")).hexdigest()
-
+    return config_hash(config)
 
 # ---------------------------------------------------------------------------
 # Legacy artifact detection
 # ---------------------------------------------------------------------------
 
 def _legacy_artifact_paths(output_dir: Path) -> list[Path]:
-    """Return a list of legacy paper artifacts present in *output_dir*."""
+    """Return a list of legacy JSONL/JSON files in *output_dir*."""
     patterns = [
         "paper_config.json",
         "paper_fills.jsonl",
@@ -599,15 +547,12 @@ def _legacy_artifact_paths(output_dir: Path) -> list[Path]:
         "paper_funding.jsonl",
         "paper_positions.jsonl",
         "paper_equity.jsonl",
-        "paper_signal_snapshots.jsonl",
-        "paper_position_state.json",
         "paper_pnl_summary.json",
-        "paper_provenance.json",
-        "paper_verify_report.json",
+        "paper_position_state.json",
     ]
-    found: list[Path] = []
+    found = []
     for p in patterns:
-        path = output_dir / p
-        if path.exists():
-            found.append(path)
+        fp = output_dir / p
+        if fp.exists():
+            found.append(fp)
     return found

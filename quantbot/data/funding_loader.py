@@ -8,10 +8,13 @@ Per-bar cost = |funding_rate| * 3 (3 × 8h periods per day).
 """
 
 from pathlib import Path
+from typing import Final
 
 import pandas as pd
 
 from quantbot.data.multi_asset_loader import SYMBOLS
+
+_DATA_DIR: Final[Path] = Path("data")
 
 
 def load_funding_csv(symbol: str) -> pd.DataFrame:
@@ -23,7 +26,7 @@ def load_funding_csv(symbol: str) -> pd.DataFrame:
     Returns:
         DataFrame with columns: dt (Timestamp, UTC-aware), fundingRate (float), abs_rate (float)
     """
-    path = Path("data") / f"{symbol}_8h_funding.csv"
+    path = _DATA_DIR / f"{symbol}_8h_funding.csv"
     df = pd.read_csv(path)
     # Parse as UTC-aware to match bar timestamps
     df["dt"] = pd.to_datetime(df["fundingTime"], unit="ms", utc=True)
@@ -39,7 +42,7 @@ def load_all_funding() -> pd.DataFrame:
     """
     rows = []
     for symbol in SYMBOLS:
-        path = Path("data") / f"{symbol}_8h_funding.csv"
+        path = _DATA_DIR / f"{symbol}_8h_funding.csv"
         if not path.exists():
             continue
         df = load_funding_csv(symbol)

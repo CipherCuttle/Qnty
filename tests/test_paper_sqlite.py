@@ -185,23 +185,28 @@ class TestPaperConfigInsertedAndImmutable:
 # ---------------------------------------------------------------------------
 
 class TestAppendOnlyTriggers:
-    APPEND_ONLY = ["paper_config", "ledger_batches"]
+    APPEND_ONLY = ["paper_config"]
 
     @pytest.mark.parametrize("tbl", APPEND_ONLY)
     def test_update_aborts(self, tbl: str, tmp_path: Path):
         db_path = _init_tmp_db(tmp_path)
         conn = connect_writer(db_path)
-        if tbl == "ledger_batches":
-            conn.execute(
-                "INSERT INTO ledger_batches (created_at, event_count, paper_engine_version, config_hash) "
-                "VALUES ('2026-01-01T00:00:00Z', 0, '0.3.0', 'dummy')"
-            )
-            conn.commit()
         with pytest.raises(sqlite3.Error, match="append-only"):
-            if tbl == "ledger_batches":
-                conn.execute("UPDATE ledger_batches SET created_at = 'X'")
-            else:
-                conn.execute("UPDATE paper_config SET paper_engine_version = 'X'")
+            conn.execute("UPDATE paper_config SET paper_engine_version = 'X'")
+        conn.close()
+
+    def test_ledger_batches_update_succeeds(self, tmp_path: Path):
+        """ledger_batches is now mutable (updated after commit)."""
+        db_path = _init_tmp_db(tmp_path)
+        conn = connect_writer(db_path)
+        conn.execute(
+            "INSERT INTO ledger_batches (created_at, event_count, paper_engine_version, config_hash) "
+            "VALUES ('2026-01-01T00:00:00Z', 0, '0.3.0', 'dummy')"
+        )
+        conn.commit()
+        # Should NOT raise - ledger_batches is mutable
+        conn.execute("UPDATE ledger_batches SET created_at = 'X'")
+        conn.commit()
         conn.close()
 
     def test_fills_update_aborts(self, tmp_path: Path):
@@ -482,7 +487,7 @@ class TestValidateDatabaseIdentity:
 
         # Now validate_database_identity should raise ValueError
         conn = connect_readonly(db_path)
-        with pytest.raises(ValueError, match="engine version mismatch"):
+        with pytest.raises(ValueError, match="paper_engine_version mismatch"):
             validate_database_identity(conn)
         conn.close()
 
@@ -511,21 +516,35 @@ class TestLedgerStateSingletonRow:
 
 
 # ---------------------------------------------------------------------------
-# Test 17: ledger_batches DELETE trigger (append-only)
+# Test 17: ledger_batches is now MUTABLE (not append-only)
 # ---------------------------------------------------------------------------
 
-class TestLedgerBatchesDeleteTrigger:
-    def test_delete_raises(self, tmp_path: Path):
+class TestLedgerBatchesMutable:
+    """ledger_batches is now mutable (updated after commit)."""
+    def test_update_succeeds(self, tmp_path: Path):
         db_path = _init_tmp_db(tmp_path)
         conn = connect_writer(db_path)
-        # Insert a row first so there's something to delete
         conn.execute(
             "INSERT INTO ledger_batches (created_at, event_count, paper_engine_version, config_hash) "
             "VALUES ('2026-01-01T00:00:00Z', 0, '0.3.0', 'dummy')"
         )
         conn.commit()
-        with pytest.raises(sqlite3.Error, match="append-only"):
-            conn.execute("DELETE FROM ledger_batches WHERE batch_id = 1")
+        # Should NOT raise - ledger_batches is mutable
+        conn.execute("UPDATE ledger_batches SET created_at = 'X' WHERE batch_id = 1")
+        conn.commit()
+        conn.close()
+
+    def test_delete_succeeds(self, tmp_path: Path):
+        db_path = _init_tmp_db(tmp_path)
+        conn = connect_writer(db_path)
+        conn.execute(
+            "INSERT INTO ledger_batches (created_at, event_count, paper_engine_version, config_hash) "
+            "VALUES ('2026-01-01T00:00:00Z', 0, '0.3.0', 'dummy')"
+        )
+        conn.commit()
+        # Should NOT raise - ledger_batches is mutable
+        conn.execute("DELETE FROM ledger_batches WHERE batch_id = 1")
+        conn.commit()
         conn.close()
 
 
