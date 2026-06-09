@@ -1,6 +1,6 @@
 # ADR 0001 — Migrate paper PnL v1 from JSONL + snapshot verifier to a SQLite/WAL ledger
 
-- **Status:** Accepted (Phase 1 substrate implemented; Phase 2 writer implemented 2026-06-08; Phase 3 read-only verifier implemented 2026-06-08; **Phase 3.5 writer/verifier correctness fixes implemented 2026-06-08**; **Phase 4 wrapper/docs local migration implemented 2026-06-08**). Runtime code implemented in `quantbot/paper/db.py`, `quantbot/paper/sqlite_writer.py`, `quantbot/paper/sqlite_verify.py` and tested in `tests/test_paper_sqlite.py`, `tests/test_paper_sqlite_writer.py`, `tests/test_paper_sqlite_verify.py`, `tests/test_paper_pnl_wrapper.py`. The SQLite verifier is now the local/default path for the wrapper (Phase 4), but the VM remains untouched and the timer remains disabled. **No deployment readiness is claimed.**
+- **Status:** Accepted (Phase 1 substrate implemented; Phase 2 writer implemented 2026-06-08; Phase 3 read-only verifier implemented 2026-06-08; **Phase 3.5 writer/verifier correctness fixes implemented 2026-06-08**; **Phase 4 wrapper/docs local migration implemented 2026-06-08**; **Phase 5 VM preflight planned 2026-06-09**). Runtime code implemented in `quantbot/paper/db.py`, `quantbot/paper/sqlite_writer.py`, `quantbot/paper/sqlite_verify.py` and tested in `tests/test_paper_sqlite.py`, `tests/test_paper_sqlite_writer.py`, `tests/test_paper_sqlite_verify.py`, `tests/test_paper_pnl_wrapper.py`. The SQLite verifier is now the local/default path for the wrapper (Phase 4), but the VM remains untouched and the timer remains disabled. Phase 5 planning is documented in `docs/ops/PAPER_SQLITE_PHASE5_PREFLIGHT.md`; it authorizes no VM action or timer enablement. **No deployment readiness is claimed.**
 - **Date:** 2026-06-08
 - **Scope:** `quantbot/paper/`, `scripts/qnty-paper-*`, `scripts/paper_*`,
   `ops/bin/qnty-paper-pnl-*.sh`, `docs/paper_pnl_v1_schema.md`,
@@ -405,9 +405,11 @@ approval and must leave the targeted paper suites + full repo suite green before
 - **Phase 4 — wrapper/docs local migration (IMPLEMENTED 2026-06-08):** wrapper repointed
   locally to SQLite scripts; tests and docs updated. **VM untouched. Timer still disabled.
   No deployment readiness claimed.** See § 9.
-- **Phase 5 — deploy to VM:** archive stale JSONL output, initialize fresh SQLite DB with
-  future UTC 8h boundary, enable timer, remove JSONL code. **Requires explicit approval
-  after Phase 4 passes adversarial review.**
+- **Phase 5 — VM preflight, then separately approved deployment:** the preflight plan archives
+  stale JSONL output, initializes a fresh SQLite DB with a future UTC 8h boundary, and runs the
+  wrapper manually once while the timer remains disabled. See
+  `docs/ops/PAPER_SQLITE_PHASE5_PREFLIGHT.md`. Timer enablement and JSONL-code removal are later,
+  separately reviewed actions. **Every VM mutation requires explicit approval.**
 
 ### 8a. Phase 1 clarifications (implemented)
 
@@ -746,7 +748,7 @@ No behavior changes.
 | 3 | Implemented | SQLite read-only verifier available |
 | 3.5 | Implemented | Writer/verifier correctness fixes |
 | 4 | **Implemented** | **Wrapper repointed locally to SQLite; tests and docs updated** |
-| 5 | Pending | Deploy to VM, enable timer, archive stale JSONL output |
+| 5 | **Preflight planned** | Manual VM preflight documented; no VM action or timer enablement authorized |
 
 **Phase 4 verdict:** IMPLEMENTED — READY FOR ADVERSARIAL REVIEW
 
@@ -849,3 +851,7 @@ copier. No independent OHLCV mark re-derivation in this migration.
   verifier no longer passes corrupt accounting as OK/PRE_START. **Phase 4 is now authorized.**
 - **Phase 4 update (2026-06-08):** wrapper repointed locally to SQLite scripts; tests and
   docs updated. **VM untouched. Timer still disabled. No deployment readiness claimed.**
+- **Phase 5 planning update (2026-06-09):** a documentation-only VM preflight runbook now
+  defines local gates, read-only reconnaissance, explicitly approved mutation steps, one manual
+  wrapper run, rollback, evidence, and review gates. **No VM commands were run. The paper timer
+  remains disabled. No deployment readiness is claimed.**

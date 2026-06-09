@@ -524,6 +524,9 @@ The paper PnL ledger is being migrated from JSONL + snapshot verifier to a SQLit
 - Paper timer (`qnty-paper-pnl.timer`) remains **disabled** on the VM
 - JSONL path still authoritative on VM until Phase 5 (deployment/validation) completes
 - Do NOT enable paper timer until Phase 5 is complete and explicitly authorized
+- Phase 5 manual VM preflight is separately gated by
+  [PAPER_SQLITE_PHASE5_PREFLIGHT.md](PAPER_SQLITE_PHASE5_PREFLIGHT.md); that preflight leaves the
+  paper timer disabled and does not authorize deployment or timer enablement
 
 **Environment variables (Phase 4 local testing):**
 - `QNTY_PAPER_DB_PATH` — path to SQLite DB (default: `/srv/qnty/output/paper_pnl_v1/paper_ledger.db`)
