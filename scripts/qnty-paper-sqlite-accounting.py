@@ -35,7 +35,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Run SQLite paper accounting writer (Phase 2).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Exit codes:
+Exit codes (RUNNER STATUS ONLY — authoritative trust is the verifier's
+paper_verify_report.json, never the writer's return code):
   0  OK (complete batch committed)
   2  ABORTED (freshness/divergence gate)
   3  CONFIG_ERROR (DB/config identity invalid)
@@ -126,7 +127,11 @@ Environment variables:
         print(f"Message: {status_message}")
 
         if status_code == 0:
-            print("\nBatch committed successfully.")
+            print("\nBatch committed successfully (runner status only).")
+            print(
+                "This is NOT an authoritative OK. Authoritative paper trust is the "
+                "verifier's paper_verify_report.json — run scripts/qnty-paper-sqlite-verify.py."
+            )
 
     return status_code
 

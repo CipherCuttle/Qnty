@@ -4,7 +4,13 @@ Implements the transactional writer for the paper ledger. Processes forward
 observer signals and writes all ledger rows inside a single BEGIN IMMEDIATE
 transaction, with full reconciliation before commit.
 
-Status codes (matching the JSONL runner contract):
+The writer is NOT the authority on a trusted run. It only commits raw accounting
+artifacts to the DB and RETURNS a runner status code; it publishes no authoritative
+``OK`` artifact. Authoritative paper trust is the read-only verifier's
+``paper_verify_report.json`` (``sqlite_verify.verify_and_publish``) — a returned
+``OK`` here means "this batch committed", not "this run is trusted".
+
+Status codes (RUNNER STATUS ONLY — matching the JSONL runner contract):
   0 = OK
   2 = ABORTED
   3 = CONFIG_ERROR
@@ -948,6 +954,24 @@ def run_sqlite_accounting(
                 conn.rollback()
                 conn.close()
                 return STATUS_CONFIG_ERROR, f"DB identity invalid: {exc}"
+
+            fs_identity = (
+                config.get("forward_start_ts"),
+                config.get("config_hash"),
+            )
+            db_identity = (
+                db_config.get("forward_start_ts"),
+                db_config.get("config_hash"),
+            )
+            if fs_identity != db_identity:
+                conn.rollback()
+                conn.close()
+                return (
+                    STATUS_CONFIG_ERROR,
+                    "Filesystem paper_config.json identity does not match SQLite paper_config "
+                    f"(filesystem forward_start_ts/config_hash={fs_identity!r}, "
+                    f"database={db_identity!r})",
+                )
 
             state_row = conn.execute("SELECT * FROM ledger_state WHERE id = 1").fetchone()
             if state_row is None:

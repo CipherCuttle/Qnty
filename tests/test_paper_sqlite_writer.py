@@ -193,6 +193,7 @@ def _init_test_db(tmp_path: Path, forward_start_ts: str = "") -> Path:
         notional_usd=1000.0,
         fee_bps=5.0,
         slippage_bps=5.0,
+        max_bar_staleness_hours=72.0,
     )
     write_config_once(config, output_dir=db_path.parent)
     initialize_database(db_path, config)
@@ -201,16 +202,14 @@ def _init_test_db(tmp_path: Path, forward_start_ts: str = "") -> Path:
 
 def _make_cfg():
     """Create a config dict matching what load_config would return."""
-    cfg = build_config(
+    return build_config(
         forward_start_ts=TS[0],
         initial_equity_usd=10000.0,
         notional_usd=1000.0,
         fee_bps=5.0,
         slippage_bps=5.0,
+        max_bar_staleness_hours=72.0,
     )
-    # Extend freshness to 72h so our 40h-oldest timestamp passes
-    cfg["freshness"]["max_bar_staleness_hours"] = 72.0
-    return cfg
 
 
 def _patch_data_loaders(tmp_path):
@@ -249,6 +248,7 @@ class TestPreStartBeforeForwardStartTs:
 
         cfg = _make_cfg()
         cfg["forward_start_ts"] = future_ts
+        cfg["config_hash"] = config_hash(cfg)
         with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
             status, msg = run_sqlite_accounting(
                 db_path=db_path,
@@ -299,6 +299,96 @@ class TestConfigDirHonorsEnv:
         assert str(empty_output) in msg, (
             f"Config error should reference the QNTY_PAPER_OUTPUT_DIR temp path, got: {msg}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 1c: filesystem config identity must match immutable SQLite config
+# ---------------------------------------------------------------------------
+
+class TestFilesystemDbConfigIdentity:
+    def _run_pre_start(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, db_path: Path):
+        monkeypatch.setenv("QNTY_PAPER_OUTPUT_DIR", str(db_path.parent))
+        future_ts = json.loads((db_path.parent / "paper_config.json").read_text())[
+            "forward_start_ts"
+        ]
+        future_dt = datetime.fromisoformat(future_ts.replace("Z", "+00:00"))
+        obs = [
+            _make_obs(
+                (future_dt - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S"),
+                [],
+                i,
+            )
+            for i, hours in enumerate((8, 16))
+        ]
+        return run_sqlite_accounting(
+            db_path=db_path,
+            forward_obs_dir=_write_observation_log(tmp_path, obs),
+        )
+
+    @staticmethod
+    def _assert_no_accounting_rows(db_path: Path):
+        conn = connect_readonly(db_path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM ledger_batches").fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM ledger_events").fetchone()[0] == 0
+        finally:
+            conn.close()
+
+    def test_matching_db_and_filesystem_config_passes(self, tmp_path: Path, monkeypatch):
+        future_ts = (NOW + timedelta(hours=8)).replace(
+            minute=0, second=0, microsecond=0
+        ).strftime("%Y-%m-%dT%H:%M:%S")
+        db_path = _init_test_db(tmp_path, forward_start_ts=future_ts)
+        status, msg = self._run_pre_start(tmp_path, monkeypatch, db_path)
+        assert status == STATUS_PRE_START, msg
+
+    @pytest.mark.parametrize("field", ["config_hash", "forward_start_ts"])
+    def test_mismatched_filesystem_identity_fails_closed(
+        self, tmp_path: Path, monkeypatch, field: str
+    ):
+        db_path = _init_test_db(tmp_path)
+        config_path = db_path.parent / "paper_config.json"
+        config = json.loads(config_path.read_text())
+        if field == "forward_start_ts":
+            config[field] = TS[1]
+            config["config_hash"] = config_hash(config)
+        else:
+            config["notional_usd"] = 2000.0
+            config["config_hash"] = config_hash(config)
+        write_config_once(config, output_dir=db_path.parent, force=True)
+        monkeypatch.setenv("QNTY_PAPER_OUTPUT_DIR", str(db_path.parent))
+
+        status, msg = run_sqlite_accounting(db_path=db_path)
+
+        assert status == STATUS_CONFIG_ERROR
+        assert "does not match SQLite paper_config" in msg
+        self._assert_no_accounting_rows(db_path)
+
+    def test_missing_filesystem_config_fails_cleanly(self, tmp_path: Path, monkeypatch):
+        db_path = _init_test_db(tmp_path)
+        (db_path.parent / "paper_config.json").unlink()
+        monkeypatch.setenv("QNTY_PAPER_OUTPUT_DIR", str(db_path.parent))
+
+        status, msg = run_sqlite_accounting(db_path=db_path)
+
+        assert status == STATUS_CONFIG_ERROR
+        assert "paper_config.json not found" in msg
+        self._assert_no_accounting_rows(db_path)
+
+    def test_missing_db_config_row_fails_cleanly(self, tmp_path: Path, monkeypatch):
+        db_path = _init_test_db(tmp_path)
+        conn = sqlite3.connect(db_path)
+        conn.execute("DROP TRIGGER trg_paper_config_deny_delete")
+        conn.execute("DELETE FROM paper_config WHERE id = 1")
+        conn.commit()
+        conn.close()
+        monkeypatch.setenv("QNTY_PAPER_OUTPUT_DIR", str(db_path.parent))
+
+        status, msg = run_sqlite_accounting(db_path=db_path)
+
+        assert status == STATUS_CONFIG_ERROR
+        assert "paper_config row (id=1) not found" in msg
+        self._assert_no_accounting_rows(db_path)
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +636,7 @@ class TestTransactionRollbackOnException:
         obs_dir = _write_observation_log(tmp_path, per_bar_obs)
         cfg = _make_cfg()
         cfg["forward_start_ts"] = TS[4]
+        cfg["config_hash"] = config_hash(cfg)
 
         from quantbot.paper import sqlite_writer
 
@@ -1059,6 +1150,7 @@ class TestEntryExitTradeLifecycle:
         obs_dir = _write_observation_log(tmp_path, per_bar_obs)
         cfg = _make_cfg()
         cfg["forward_start_ts"] = TS[4]
+        cfg["config_hash"] = config_hash(cfg)
         p1, p2 = _patch_data_loaders(tmp_path)
         with p1, p2:
             with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
@@ -1238,6 +1330,7 @@ def build_ascending_trade_db(tmp_path: Path) -> Path:
 
     cfg = _make_cfg()
     cfg["forward_start_ts"] = forward_start_ts
+    cfg["config_hash"] = config_hash(cfg)
     # Use the REAL loaders (data_dir patched in) — do NOT patch load_all_ohlcv/funding.
     with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
         status, msg = run_sqlite_accounting(

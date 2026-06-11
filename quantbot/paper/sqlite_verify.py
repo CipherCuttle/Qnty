@@ -2,7 +2,25 @@
 
 Opens ``paper_ledger.db`` read-only (URI ``mode=ro`` + ``PRAGMA query_only=ON``)
 and validates the committed DB state from the typed tables. The verifier never
-writes the DB, never writes artifacts, and never touches VM / live output.
+writes the DB and never touches VM / live output.
+
+Two entry points:
+
+  - :func:`verify_database` — the pure read-only check. Returns a ``VerifyResult``
+    and writes NOTHING.
+  - :func:`verify_and_publish` — the authoritative publisher. Pins one read-only
+    SQLite snapshot for validation + digesting, then writes its OWN artifacts
+    (``paper_verify_report.json`` + ``paper_verify_receipt.md`` +
+    ``paper_verify_log.jsonl``) atomically next to the DB. This is the only
+    component allowed to publish an authoritative paper status.
+
+Authority model (ADR 0001): the committed DB and the accounting writer's returned
+status code are RAW accounting artifacts / a runner status only. The single
+authoritative paper status is the latest ``paper_verify_report.json`` for its exact
+recorded SQLite snapshot digest; a paper run is trusted IFF that report's
+``status == OK``. If the DB is mutated after an OK, the next verification recomputes
+the consistency invariants + content digests from the then-current DB and fails
+closed -> CORRUPT.
 
 It is a parallel implementation to the JSONL verifier in ``verify.py``; it does
 NOT reuse the JSONL snapshot / trusted-baseline authority logic. The committed DB
@@ -24,10 +42,12 @@ subset). See ``docs/ADR/0001-paper-sqlite-ledger.md``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +56,7 @@ from quantbot.paper import (
     PAPER_ENGINE_VERSION,
     SCHEMA_VERSION,
 )
+from quantbot.paper import ledger
 from quantbot.paper.db import (
     DB_SCHEMA_VERSION,
     config_hash_from_row,
@@ -64,6 +85,16 @@ VERIFIER_DISCLAIMER = (
     "consistency. It does not independently rederive OHLCV marks/unrealized "
     "PnL/exposure from source price data."
 )
+
+# Authoritative-publication layer (ADR 0001 authority model). The committed DB and the
+# writer's returned status code are RAW accounting artifacts / a runner status only. The
+# single authoritative paper status is the latest paper_verify_report.json, written ONLY by
+# this read-only verifier. The verifier reads the DB read-only and writes only its own
+# paper_verify_* artifacts next to the DB (never the DB, never any runner artifact).
+SQLITE_VERIFIER_VERSION = "1.0.0"
+REPORT_FILE = "paper_verify_report.json"   # authoritative latest terminal report
+RECEIPT_FILE = "paper_verify_receipt.md"   # human receipt for the latest verdict
+LOG_FILE = "paper_verify_log.jsonl"        # append-only audit trail (NON-gating)
 
 # Numeric tolerances
 _ABS_TOL = 1e-6
@@ -1107,108 +1138,311 @@ def _validate_initial_state(conn: sqlite3.Connection, cfg: dict) -> list[str]:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def verify_database(db_path: str | Path | None = None) -> VerifyResult:
-    """Verify a committed paper ledger DB read-only. Never writes anything."""
-    db_path = get_paper_db_path(db_path)
+def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
+    """Verify the single read snapshot currently held by ``conn``."""
     report: dict[str, Any] = {
         "db_path": str(db_path),
         "disclaimer": VERIFIER_DISCLAIMER,
     }
+    # Confirm query-only mode is active (defends against accidental writes).
+    try:
+        query_only = _scalar(conn, "PRAGMA query_only")
+        report["query_only"] = int(query_only) if query_only is not None else None
+        if not query_only:
+            return VerifyResult(
+                STATUS_CONFIG_ERROR,
+                ["PRAGMA query_only is not ON on the verifier connection"],
+                report,
+            )
 
+        structural = _validate_schema_presence(conn)
+        if structural:
+            return VerifyResult(STATUS_CORRUPT, structural, report)
+
+        cfg, identity_failures = _validate_identity(conn)
+        if identity_failures:
+            return VerifyResult(STATUS_CONFIG_ERROR, identity_failures, report)
+        assert cfg is not None
+    except sqlite3.DatabaseError as exc:
+        return VerifyResult(
+            STATUS_CONFIG_ERROR,
+            [f"DB is not readable as a paper ledger: {type(exc).__name__}: {exc}"],
+            report,
+        )
+
+    try:
+        counts = _ledger_table_counts(conn)
+        report["batches"] = counts["ledger_batches"]
+        report["events"] = counts["ledger_events"]
+        report["equity_rows"] = counts["equity_snapshots"]
+        report["watermark_bar_ts"] = _scalar(
+            conn, "SELECT watermark_bar_ts FROM ledger_state WHERE id = 1"
+        )
+
+        if all(v == 0 for v in counts.values()):
+            state_failures = _validate_initial_state(conn, cfg)
+            if state_failures:
+                report["failure_count"] = len(state_failures)
+                return VerifyResult(STATUS_CORRUPT, state_failures, report)
+            report["forward_start_ts"] = cfg["forward_start_ts"]
+            report["failure_count"] = 0
+            return VerifyResult(STATUS_PRE_START, [], report)
+
+        failures: list[str] = []
+        failures += _validate_foreign_keys(conn)
+        failures += _validate_event_chain(conn)
+        failures += _validate_event_typed_consistency(conn)
+        failures += _validate_batches(conn)
+        failures += _validate_arithmetic(conn, cfg)
+        failures += _validate_trades(conn)
+        failures += _validate_equity_cumulative(conn, cfg)
+        failures += _validate_state(conn, cfg)
+        failures += _validate_open_positions(conn)
+        failures += _validate_position_snapshots(conn)
+        failures += _validate_snapshot_identity(conn)
+    except (sqlite3.DatabaseError, ValueError, TypeError) as exc:
+        return VerifyResult(
+            STATUS_CORRUPT,
+            [f"Verification query failed: {type(exc).__name__}: {exc}"],
+            report,
+        )
+
+    report["forward_start_ts"] = cfg["forward_start_ts"]
+    report["failure_count"] = len(failures)
+    if failures:
+        return VerifyResult(STATUS_CORRUPT, failures, report)
+    return VerifyResult(STATUS_OK, [], report)
+
+
+def _open_snapshot(db_path: Path) -> sqlite3.Connection:
+    """Open and pin one read-only SQLite snapshot for validation and digesting."""
+    conn = connect_readonly(db_path)
+    conn.execute("BEGIN")
+    # The first read pins the WAL snapshot for all subsequent verifier queries.
+    conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+    return conn
+
+
+def verify_database(db_path: str | Path | None = None) -> VerifyResult:
+    """Verify one committed paper-ledger snapshot read-only. Never writes anything."""
+    db_path = get_paper_db_path(db_path)
+    report = {"db_path": str(db_path), "disclaimer": VERIFIER_DISCLAIMER}
     if not Path(db_path).exists():
         report["error"] = "database file does not exist"
         return VerifyResult(STATUS_CONFIG_ERROR, [f"DB not found: {db_path}"], report)
-
     try:
-        conn = connect_readonly(db_path)
+        conn = _open_snapshot(Path(db_path))
     except sqlite3.Error as exc:
         return VerifyResult(
             STATUS_CONFIG_ERROR,
             [f"Could not open DB read-only: {type(exc).__name__}: {exc}"],
             report,
         )
-
     try:
-        # Confirm query-only mode is active (defends against accidental writes).
-        # A non-SQLite / malformed file raises sqlite3.DatabaseError here; it is
-        # reported as CONFIG_ERROR rather than tracebacking out.
-        try:
-            query_only = _scalar(conn, "PRAGMA query_only")
-            report["query_only"] = int(query_only) if query_only is not None else None
-            if not query_only:
-                return VerifyResult(
-                    STATUS_CONFIG_ERROR,
-                    ["PRAGMA query_only is not ON on the verifier connection"],
-                    report,
-                )
-
-            # Structural presence (tables/triggers/indexes).
-            structural = _validate_schema_presence(conn)
-            if structural:
-                return VerifyResult(STATUS_CORRUPT, structural, report)
-
-            # Identity / config.
-            cfg, identity_failures = _validate_identity(conn)
-            if identity_failures:
-                return VerifyResult(STATUS_CONFIG_ERROR, identity_failures, report)
-            assert cfg is not None
-        except sqlite3.DatabaseError as exc:
-            # File is not a usable SQLite paper DB (e.g. not a database, malformed
-            # header, missing core tables surfaced as a query error).
-            return VerifyResult(
-                STATUS_CONFIG_ERROR,
-                [f"DB is not readable as a paper ledger: {type(exc).__name__}: {exc}"],
-                report,
-            )
-
-        # Everything past identity is a consistency check over a structurally
-        # valid DB: query / parse errors here are CORRUPT, not CONFIG_ERROR.
-        try:
-            counts = _ledger_table_counts(conn)
-            report["batches"] = counts["ledger_batches"]
-            report["events"] = counts["ledger_events"]
-            report["equity_rows"] = counts["equity_snapshots"]
-            report["watermark_bar_ts"] = _scalar(
-                conn, "SELECT watermark_bar_ts FROM ledger_state WHERE id = 1"
-            )
-
-            # PRE_START: a fully-empty ledger with a valid INITIAL state singleton
-            # and an empty open book. Any committed/typed/open row, or non-initial
-            # state, disqualifies PRE_START (and is validated below / flagged here).
-            if all(v == 0 for v in counts.values()):
-                state_failures = _validate_initial_state(conn, cfg)
-                if state_failures:
-                    report["failure_count"] = len(state_failures)
-                    return VerifyResult(STATUS_CORRUPT, state_failures, report)
-                return VerifyResult(STATUS_PRE_START, [], report)
-
-            # Full validation over a non-empty DB.
-            failures: list[str] = []
-            failures += _validate_foreign_keys(conn)
-            failures += _validate_event_chain(conn)
-            failures += _validate_event_typed_consistency(conn)
-            failures += _validate_batches(conn)
-            failures += _validate_arithmetic(conn, cfg)
-            failures += _validate_trades(conn)
-            failures += _validate_equity_cumulative(conn, cfg)
-            failures += _validate_state(conn, cfg)
-            failures += _validate_open_positions(conn)
-            failures += _validate_position_snapshots(conn)
-            failures += _validate_snapshot_identity(conn)
-        except (sqlite3.DatabaseError, ValueError, TypeError) as exc:
-            return VerifyResult(
-                STATUS_CORRUPT,
-                [f"Verification query failed: {type(exc).__name__}: {exc}"],
-                report,
-            )
-
-        report["forward_start_ts"] = cfg["forward_start_ts"]
-        report["failure_count"] = len(failures)
-        if failures:
-            return VerifyResult(STATUS_CORRUPT, failures, report)
-        return VerifyResult(STATUS_OK, [], report)
+        return _verify_connection(conn, Path(db_path))
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Authoritative publication (writes paper_verify_report.json / receipt / log)
+# ---------------------------------------------------------------------------
+
+def _now_utc_str(now: datetime | None = None) -> str:
+    return (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _table_digest(conn: sqlite3.Connection, table: str) -> str:
+    """Order-independent sha256 of every row in a committed table (read-only).
+
+    Rows are canonicalized (sorted-key JSON) and then themselves sorted, so the digest is a
+    stable fingerprint of the committed CONTENT regardless of physical rowid order. ``table``
+    is always a hardcoded schema constant (never user input), so the f-string SQL is safe.
+    """
+    rows = [dict(r) for r in conn.execute(f"SELECT * FROM {table}").fetchall()]
+    canon = sorted(json.dumps(r, sort_keys=True, default=str) for r in rows)
+    h = hashlib.sha256()
+    for line in canon:
+        h.update(line.encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
+def _content_digests(conn: sqlite3.Connection) -> dict[str, str]:
+    """Digest the same pinned read snapshot used for the verdict."""
+    try:
+        per_table: dict[str, str] = {}
+        for table in _REQUIRED_TABLES:
+            per_table[table] = _table_digest(conn, table)
+    except sqlite3.DatabaseError:
+        return {}
+    combined = hashlib.sha256()
+    for table in _REQUIRED_TABLES:
+        combined.update(f"{table}:{per_table[table]}\n".encode("utf-8"))
+    per_table["content_sha256"] = combined.hexdigest()
+    return per_table
+
+
+_VERDICT_LINE: dict[str, str] = {
+    STATUS_OK: (
+        "OK (simulation) — the committed SQLite paper ledger verified consistent read-only; "
+        "this paper_verify_report.json is the authoritative paper status"
+    ),
+    STATUS_CORRUPT: "CORRUPT — integrity failure(s); the paper run is NOT trusted",
+    STATUS_CONFIG_ERROR: (
+        "CONFIG_ERROR — the DB/config identity is invalid/stale/unloadable; nothing can be "
+        "verified against it"
+    ),
+    STATUS_PRE_START: (
+        "PRE_START — a valid pre-start DB with no committed eligible bars yet; nothing to certify"
+    ),
+}
+
+
+def _build_published_report(
+    db_path: Path,
+    result: VerifyResult,
+    digests: dict[str, str],
+    now: datetime | None,
+) -> dict[str, Any]:
+    """Wrap a VerifyResult in the authoritative report envelope (the on-disk report shape)."""
+    status = result.status
+    report: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "verifier": "sqlite",
+        "verifier_version": SQLITE_VERIFIER_VERSION,
+        "authoritative": True,
+        "verified_at": _now_utc_str(now),
+        "db_path": str(db_path),
+        "status": status,
+        "exit_code": result.exit_code,
+        # A paper run is trusted IFF this is true.
+        "trusted": status == STATUS_OK,
+        "failure_count": len(result.failures),
+        "failures": list(result.failures),
+        "content_digests": digests,
+        "content_sha256": digests.get("content_sha256"),
+        "snapshot_identity": {
+            "content_sha256": digests.get("content_sha256"),
+            "meaning": "authoritative verdict for this exact validated SQLite read snapshot",
+        },
+        "current_verdict": _VERDICT_LINE.get(status, status),
+        "disclaimer": VERIFIER_DISCLAIMER,
+    }
+    # Carry forward the read-only metrics the core verifier collected (batches/events/equity/
+    # watermark/forward_start_ts/config identity), without letting them shadow the envelope.
+    for k, v in result.report.items():
+        report.setdefault(k, v)
+    return report
+
+
+def _render_receipt(report: dict[str, Any]) -> str:
+    status = report["status"]
+    icon = {
+        STATUS_OK: "✅",
+        STATUS_CORRUPT: "🛑",
+        STATUS_CONFIG_ERROR: "🛑",
+        STATUS_PRE_START: "⏳",
+    }.get(status, "❓")
+    lines = [
+        "# Paper PnL v1 — SQLite Verifier Receipt (AUTHORITATIVE)",
+        "",
+        f"> **{report['disclaimer']}**",
+        "",
+        f"## {icon} {status}",
+        "",
+        "- The latest `paper_verify_report.json` is the **authoritative** paper status. The "
+        "committed `paper_ledger.db` and the accounting writer's returned status code are RAW "
+        "accounting artifacts / a runner status only — NOT proof of a trusted run. A paper run "
+        "is trusted **iff** this report's `status == OK`.",
+        f"- Verified (UTC): {report['verified_at']}",
+        f"- Verifier: {report['verifier']} v{report['verifier_version']}",
+        f"- DB: {report['db_path']}",
+        f"- Committed batches/events/equity rows: "
+        f"{report.get('batches', '?')}/{report.get('events', '?')}/{report.get('equity_rows', '?')}",
+        f"- forward_start_ts: {report.get('forward_start_ts', 'unknown')}",
+        f"- Content digest: {report.get('content_sha256') or 'n/a'}",
+        f"- Verdict: {report['current_verdict']}",
+        "",
+    ]
+    if report["failures"]:
+        lines.append(f"## Failures ({report['failure_count']})")
+        for f in report["failures"]:
+            lines.append(f"- {f}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def verify_and_publish(
+    db_path: str | Path | None = None,
+    output_dir: str | Path | None = None,
+    *,
+    now: datetime | None = None,
+    write_log: bool = True,
+) -> VerifyResult:
+    """Verify the DB read-only and PUBLISH the authoritative report/receipt/log atomically.
+
+    This is the only component allowed to publish an authoritative paper status. It validates and
+    computes content digests through one pinned read-only SQLite snapshot, then writes:
+
+      - ``paper_verify_report.json``  (authoritative latest terminal report)
+      - ``paper_verify_receipt.md``   (human receipt)
+      - ``paper_verify_log.jsonl``    (append-only audit trail; NON-gating) when ``write_log``
+
+    Artifacts go to ``output_dir`` (default: the DB's directory). The DB is only ever read
+    (read-only / query-only); no runner artifact is mutated. The receipt is written first and the
+    authoritative report last, so a crash mid-publish leaves the prior report in place rather than a
+    truncated/false one. The returned ``VerifyResult.report`` is the published envelope.
+    """
+    db_path = get_paper_db_path(db_path)
+    out = Path(output_dir) if output_dir is not None else Path(db_path).parent
+
+    report_seed = {"db_path": str(db_path), "disclaimer": VERIFIER_DISCLAIMER}
+    if not Path(db_path).exists():
+        result = VerifyResult(STATUS_CONFIG_ERROR, [f"DB not found: {db_path}"], report_seed)
+        digests: dict[str, str] = {}
+    else:
+        try:
+            conn = _open_snapshot(Path(db_path))
+        except sqlite3.Error as exc:
+            result = VerifyResult(
+                STATUS_CONFIG_ERROR,
+                [f"Could not open DB read-only: {type(exc).__name__}: {exc}"],
+                report_seed,
+            )
+            digests = {}
+        else:
+            try:
+                result = _verify_connection(conn, Path(db_path))
+                digests = _content_digests(conn)
+                if result.status == STATUS_OK and not digests.get("content_sha256"):
+                    result = VerifyResult(
+                        STATUS_CORRUPT,
+                        ["Could not digest the validated SQLite snapshot"],
+                        result.report,
+                    )
+            finally:
+                conn.close()
+    report = _build_published_report(Path(db_path), result, digests, now)
+
+    out.mkdir(parents=True, exist_ok=True)
+    ledger.write_text_atomic(out / RECEIPT_FILE, _render_receipt(report))
+    ledger.write_json_atomic(out / REPORT_FILE, report)
+    if write_log:
+        ledger.append_rows(
+            out / LOG_FILE,
+            [{
+                "verified_at": report["verified_at"],
+                "status": report["status"],
+                "trusted": report["trusted"],
+                "failure_count": report["failure_count"],
+                "content_sha256": report.get("content_sha256"),
+                "verifier_version": SQLITE_VERIFIER_VERSION,
+            }],
+        )
+
+    result.report = report
+    return result
 
 
 __all__ = [
@@ -1218,6 +1452,11 @@ __all__ = [
     "STATUS_PRE_START",
     "EXIT_CODE",
     "VERIFIER_DISCLAIMER",
+    "SQLITE_VERIFIER_VERSION",
+    "REPORT_FILE",
+    "RECEIPT_FILE",
+    "LOG_FILE",
     "VerifyResult",
     "verify_database",
+    "verify_and_publish",
 ]

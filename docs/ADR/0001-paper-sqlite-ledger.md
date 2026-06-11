@@ -269,13 +269,39 @@ there is no multi-file publish — either the batch commits or it does not.
   - **refuses** legacy paper artifacts unless the operator explicitly archives/removes them
 - **Accounting CLI** (implemented): `scripts/qnty-paper-sqlite-accounting.py --db-path ...`
   - writes transactionally
-  - exit codes match writer status codes
+  - exit codes match writer status codes (a **runner status only** — see the authority model below)
   - no JSONL artifacts created
   - no VM interaction
-- **Verifier CLI** (implemented): `scripts/qnty-paper-sqlite-verify.py --db-path ... [--json]`
-  - opens the DB read-only / query-only
-  - prints its report to **stdout only**
-  - does **not** write verifier reports in v1 unless explicitly decided later
+- **Verifier CLI** (implemented): `scripts/qnty-paper-sqlite-verify.py --db-path ... [--output-dir DIR] [--no-emit] [--json]`
+  - opens the DB read-only / query-only (never writes the DB)
+  - **publishes the authoritative paper status** by default to `paper_verify_report.json`
+    (+ `paper_verify_receipt.md` + `paper_verify_log.jsonl`) next to the DB, written atomically
+    (receipt first, report last). `--no-emit` runs a pure read-only check that writes nothing
+    (`verify_database`); `--output-dir` redirects the published artifacts.
+
+### Authority model (authoritative status = `paper_verify_report.json`)
+
+- **The accounting writer/runner is NOT the authority on a trusted run.** It only commits **raw
+  accounting artifacts** to `paper_ledger.db` and **returns** a runner status code; it publishes no
+  authoritative `OK` artifact. A returned/printed `OK` from the writer means *"this batch
+  committed"*, not *"this run is trusted"*.
+- **The read-only verifier is the only component allowed to publish an authoritative status.**
+  `sqlite_verify.verify_and_publish` pins one read-only SQLite transaction, re-derives the verdict
+  and content digests from that single consistent snapshot, and writes `paper_verify_report.json`
+  as the single authoritative artifact for the exact recorded snapshot digest. **A paper run is
+  trusted iff the latest `paper_verify_report.json` has `status == OK`** (`trusted: true`).
+- `paper_verify_receipt.md` (human) and any runner-side convenience file (e.g. a legacy
+  `paper_pnl_summary.json`) are **convenience only** and are **not** consulted for trust — the
+  verifier derives status purely from the DB and ignores such sidecars.
+- `paper_verify_log.jsonl` is an append-only verifier audit log only. It is not a legacy paper
+  ledger, is non-gating, and never confers trust.
+- The single-file transactional DB removes the multi-file TOCTOU window the JSONL runner kept
+  losing: there is no cross-file "validate then mutate then publish OK" race. If the DB is mutated
+  after an OK, the **next** verification recomputes the invariants + content digests from the
+  then-current DB and fails closed (`CORRUPT`); no impossible cross-file atomicity is required
+  inside the writer.
+- **Timer flow (when enabled later; still disabled):** shadow observer → paper accounting runner
+  (writer) → paper verifier (publisher). Only the verifier's report confers trust.
 
 ### Exit codes
 

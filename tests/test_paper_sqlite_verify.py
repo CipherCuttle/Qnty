@@ -23,7 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from quantbot.paper.config import build_config, write_config_once
+from quantbot.paper.config import build_config, config_hash, write_config_once
 from quantbot.paper.db import _TRIGGER_SQL, connect_readonly, initialize_database
 from quantbot.paper.sqlite_writer import STATUS_OK, run_sqlite_accounting
 from quantbot.paper.sqlite_verify import (
@@ -74,6 +74,7 @@ def _init_db(tmp_path: Path, forward_start_ts: str = "") -> Path:
         notional_usd=1000.0,
         fee_bps=5.0,
         slippage_bps=5.0,
+        max_bar_staleness_hours=72.0,
     )
     write_config_once(config, output_dir=db_path.parent)
     initialize_database(db_path, config)
@@ -85,6 +86,7 @@ def _run_writer(tmp_path: Path, db_path: Path, forward_start_ts: str) -> None:
     obs_dir = _write_observation_log(tmp_path, per_bar_obs)
     cfg = _make_cfg()
     cfg["forward_start_ts"] = forward_start_ts
+    cfg["config_hash"] = config_hash(cfg)
     p1, p2 = _patch_data_loaders(tmp_path)
     with p1, p2:
         with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
@@ -125,6 +127,7 @@ def _run_writer_obs(tmp_path: Path, db_path: Path, forward_start_ts: str,
     obs_dir = _write_observation_log(tmp_path, per_bar_obs)
     cfg = _make_cfg()
     cfg["forward_start_ts"] = forward_start_ts
+    cfg["config_hash"] = config_hash(cfg)
     p1, p2 = _patch_data_loaders(tmp_path)
     with p1, p2:
         with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):

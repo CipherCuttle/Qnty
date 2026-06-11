@@ -106,8 +106,12 @@ echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: verifier exit=${verify_
 #   acct 5 + verify 3   => exit 3
 #   acct 5 + verify 4   => exit 4
 case "$acct_rc:$verify_rc" in
-    0:0|5:5)
+    0:0)
         echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: VERIFIED OK (authoritative; SIMULATION)"
+        exit 0
+        ;;
+    5:5)
+        echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] qnty-paper-pnl: VERIFIED PRE_START (authoritative no-data status; SIMULATION)"
         exit 0
         ;;
     0:5|5:0)

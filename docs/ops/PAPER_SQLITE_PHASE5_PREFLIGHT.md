@@ -25,8 +25,10 @@ was **not executed while authoring this document**.
 - The observer/shadow timer is observed only; it is never stopped, restarted, enabled, disabled,
   or otherwise touched.
 - The paper timer remains disabled before, during, and after this preflight.
-- The one manual wrapper run reads the observer output and writes only the SQLite paper ledger
-  DB/WAL/SHM. It must not generate JSONL paper-ledger artifacts.
+- The one manual wrapper run reads the observer output, writes the SQLite paper ledger DB/WAL/SHM,
+  and lets the verifier publish `paper_verify_report.json`, `paper_verify_receipt.md`, and the
+  audit-only `paper_verify_log.jsonl`. The audit log is not a paper ledger or trust authority.
+- It must not generate legacy JSONL paper-ledger artifacts.
 - Preflight setup creates a fresh SQLite DB and the required write-once `paper_config.json`;
   neither is a live-trading artifact.
 - No stale JSONL data is imported into SQLite.
@@ -49,6 +51,7 @@ bash -n ops/bin/qnty-paper-pnl-run.sh
 PYTHONPATH=. pytest tests/test_paper_pnl_wrapper.py -v
 PYTHONPATH=. pytest tests/test_paper_sqlite_writer.py -v
 PYTHONPATH=. pytest tests/test_paper_sqlite_verify.py -v
+PYTHONPATH=. pytest tests/test_paper_sqlite_verify_report.py -v
 PYTHONPATH=. pytest tests/test_paper_sqlite.py -v
 PYTHONPATH=. pytest tests/test_paper_pnl.py -q
 PYTHONPATH=. pytest tests/test_paper_verify.py -v
@@ -342,7 +345,8 @@ Expected success is exactly one matching pair:
 - Accounting `OK (0)` and verifier `OK (exit 0)`, wrapper exit `0`; or
 - Accounting `PRE_START (5)` and verifier `PRE_START (exit 5)`, wrapper exit `0`.
 
-The wrapper must not produce JSONL paper artifacts. Keep the paper timer disabled.
+The wrapper must not produce legacy JSONL paper-ledger artifacts. The verifier-owned
+`paper_verify_log.jsonl` is expected audit-only output. Keep the paper timer disabled.
 
 ---
 
@@ -385,9 +389,15 @@ printf 'manual_verifier_exit=%s\n' "$MANUAL_VERIFY_RC" | tee "$EVIDENCE_DIR/manu
 cat "$EVIDENCE_DIR/manual-verifier.json"
 cat "$EVIDENCE_DIR/manual-verifier.stderr"
 
-# No legacy JSONL-era output may have been generated. paper_config.json is expected.
+# No legacy JSONL-era paper-ledger output may have been generated. The verifier-owned
+# paper_verify_log.jsonl is expected audit-only output and is intentionally not matched here.
 sudo find "$QNTY_PAPER_OUTPUT_DIR" -maxdepth 1 -type f \( \
-  -name '*.jsonl' -o \
+  -name 'paper_fills.jsonl' -o \
+  -name 'paper_trades.jsonl' -o \
+  -name 'paper_equity.jsonl' -o \
+  -name 'paper_positions.jsonl' -o \
+  -name 'paper_funding.jsonl' -o \
+  -name 'paper_signal_snapshots.jsonl' -o \
   -name 'paper_pnl_summary.json' -o \
   -name 'paper_position_state.json' \
 \) -print | tee "$EVIDENCE_DIR/unexpected-jsonl-era-artifacts.txt"
@@ -411,8 +421,10 @@ git diff --name-only -- quantbot scripts ops
 Expected:
 
 - Manual verifier returns the same `OK` (`0`) or `PRE_START` (`5`) status as the wrapper pair.
-- Artifact listing contains `paper_config.json`, `paper_ledger.db`, and optional
-  SQLite-managed `paper_ledger.db-wal` / `paper_ledger.db-shm`; no JSONL-era paper artifacts.
+- Artifact listing contains `paper_config.json`, `paper_ledger.db`, optional SQLite-managed
+  `paper_ledger.db-wal` / `paper_ledger.db-shm`, verifier-owned `paper_verify_report.json`,
+  `paper_verify_receipt.md`, and audit-only `paper_verify_log.jsonl`; no legacy JSONL-era paper
+  ledger artifacts.
 - Paper timer/service state is unchanged; observer/shadow timer remains active and enabled.
 - VM repo worktree remains clean; no strategy, observer, exchange, order, script, or ops files
   changed.
@@ -490,7 +502,7 @@ Stop immediately and preserve evidence if any condition occurs:
 - Accounting returns `ABORTED`, `CONFIG_ERROR`, `CORRUPT_LEDGER`, `LEDGER_BUSY`, or an unexpected
   code.
 - Verifier returns `CONFIG_ERROR`, `CORRUPT`, or an unexpected code.
-- Unexpected JSONL-era paper artifacts are generated.
+- Unexpected legacy JSONL-era paper-ledger artifacts are generated.
 - VM repo or strategy/observer/exchange/order/script/ops files change.
 - Any command would require an unreviewed repair, unit edit, deployment, or timer enablement.
 
@@ -512,6 +524,7 @@ Collect and retain:
 - DB/config identity receipt.
 - Wrapper stdout, stderr, and exit code.
 - Manual verifier JSON stdout, stderr, and exit code.
+- Published verifier report, receipt, and audit-only `paper_verify_log.jsonl`.
 - DB/WAL/SHM listing and unexpected-artifact check.
 - Rollback transcript and confirmation if rollback is executed.
 
@@ -534,7 +547,8 @@ All gates require explicit human review:
 - Manual wrapper run evidence is reviewed.
 - Status matrix success is exactly `OK`/`OK` or `PRE_START`/`PRE_START`, wrapper exit `0`.
 - DB/output/observer path consistency and DB/config identity are verified.
-- No stale JSONL-era paper artifacts were generated.
+- No stale legacy JSONL-era paper-ledger artifacts were generated; verifier-owned
+  `paper_verify_log.jsonl` is audit-only and expected.
 - Paper timer is still disabled/inactive.
 - Service user/group issue is resolved and reviewed.
 - Observer/shadow timer remains active/enabled and untouched.

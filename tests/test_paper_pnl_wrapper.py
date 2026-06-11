@@ -149,6 +149,7 @@ class TestStatusMatrix:
         verify = _make_verify_script(tmp_path, 0)
         result = _run_wrapper(tmp_path, acct_script=acct, verify_script=verify)
         assert result.returncode == 0
+        assert "VERIFIED OK" in result.stdout
 
     def test_pre_start_pre_start_exits_zero(self, tmp_path):
         """Accounting PRE_START + verifier PRE_START => exit 0."""
@@ -156,6 +157,8 @@ class TestStatusMatrix:
         verify = _make_verify_script(tmp_path, 5)
         result = _run_wrapper(tmp_path, acct_script=acct, verify_script=verify)
         assert result.returncode == 0
+        assert "VERIFIED PRE_START" in result.stdout
+        assert "VERIFIED OK" not in result.stdout
 
     def test_ok_pre_start_exits_4(self, tmp_path):
         """Accounting OK + verifier PRE_START => exit 4."""
@@ -454,6 +457,21 @@ class TestEndToEndPreStart:
             f"Wrapper failed: rc={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}"
         )
         assert "PRE_START" in result.stdout or "exit=5" in result.stdout
+        assert "VERIFIED PRE_START" in result.stdout
+        assert (tmp_path / "paper_verify_report.json").exists()
+        assert (tmp_path / "paper_verify_receipt.md").exists()
+        assert (tmp_path / "paper_verify_log.jsonl").exists()
+        legacy_artifacts = {
+            "paper_fills.jsonl",
+            "paper_trades.jsonl",
+            "paper_equity.jsonl",
+            "paper_positions.jsonl",
+            "paper_funding.jsonl",
+            "paper_signal_snapshots.jsonl",
+            "paper_pnl_summary.json",
+            "paper_position_state.json",
+        }
+        assert not legacy_artifacts.intersection(p.name for p in tmp_path.iterdir())
 
 
 if __name__ == "__main__":
