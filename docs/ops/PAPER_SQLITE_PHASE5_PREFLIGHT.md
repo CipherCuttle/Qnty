@@ -1,6 +1,6 @@
 # Phase 5 SQLite Paper PnL VM Preflight Runbook
 
-**Status:** Planned, documentation only. Not executed.
+**Status:** Recovery planning after interrupted VM preflight. No recovery mutation executed.
 
 **Approved implementation baseline (2026-06-11):**
 
@@ -12,11 +12,18 @@
 - Full local suite: `996 passed, 0 skipped`
 - Real wrapper -> accounting -> verifier `PRE_START` E2E passes on temporary paths
 - SQLite writer/verifier/wrapper path is locally approved
-- VM untouched; paper timer disabled; no deployment readiness claimed
+- VM repo synced to `88bc7633c5282be0341acf07626113cc76e8d28c`; only this runbook differs
+  from reviewed implementation HEAD `afcd149`
+- VM reconnaissance found that the paper timer had run the SQLite wrapper automatically before
+  the approved preflight; the timer is now contained as disabled/inactive
+- Current `/srv/qnty/output/paper_pnl_v1` is provenance-contaminated accidental evidence and must
+  not be used as clean preflight evidence
+- No live trading or observer/shadow mutation occurred; no deployment readiness claimed
 
-This runbook is for a later, explicitly approved VM preflight execution session. Every command
-under **VM read-only reconnaissance** or **VM preflight mutation plan** is a future command and
-was **not executed while authoring this document**.
+This runbook now records the interrupted preflight and defines a later, explicitly approved
+recovery path. Commands under **Accidental automatic execution recovery branch** and
+**VM preflight mutation plan** are future commands and were **not executed while authoring this
+recovery patch**.
 
 ---
 
@@ -30,7 +37,9 @@ was **not executed while authoring this document**.
 - The paper timer remains disabled before, during, and after this preflight.
 - The one manual wrapper run reads the observer output, writes the SQLite paper ledger DB/WAL/SHM,
   and lets the verifier publish `paper_verify_report.json`, `paper_verify_receipt.md`, and the
-  audit-only `paper_verify_log.jsonl`. The audit log is not a paper ledger or trust authority.
+  audit-only `paper_verify_log.jsonl`. The report is authoritative for its recorded SQLite
+  snapshot digest; the append-only audit log is non-gating and is not a paper ledger or trust
+  authority.
 - It must not generate legacy JSONL paper-ledger artifacts.
 - Preflight setup creates a fresh SQLite DB and the required write-once `paper_config.json`;
   neither is a live-trading artifact.
@@ -83,8 +92,10 @@ branch/commit changed without review.
 
 ## 3. VM read-only reconnaissance
 
-> **FUTURE COMMANDS - NOT EXECUTED NOW.** This section is read-only. Do not use `stop`,
-> `start`, `enable`, `disable`, `mv`, `mkdir`, `install`, init scripts, or the wrapper here.
+> **READ-ONLY COMMAND SET.** Some reconnaissance commands were executed during the interrupted
+> preflight and found the accidental automatic execution. Any approved rerun of this section
+> remains read-only. Do not use `stop`, `start`, `enable`, `disable`, `mv`, `mkdir`, `install`,
+> init scripts, or the wrapper here.
 
 Run each command individually and preserve its output in the evidence pack:
 
@@ -138,19 +149,170 @@ Required read-only findings:
   are understood before mutation.
 - Existing `/srv/qnty/output/paper_pnl_v1/` contents are fully inventoried before archival.
 
-**No mutation yet.** Present the reconnaissance evidence for operator review. Continue only after
-explicit approval for the mutation plan below.
+**No mutation yet.** Present the reconnaissance evidence for operator review. If accidental
+automatic execution is found, follow section 4 and do not continue directly to the generic
+mutation plan. Otherwise, continue only after explicit approval for the mutation plan.
 
 ---
 
-## 4. VM preflight mutation plan
+## 4. Accidental automatic execution recovery branch
+
+Use this branch because reconnaissance found that `qnty-paper-pnl.timer` was unexpectedly
+enabled/active and had already run the SQLite wrapper automatically:
+
+- 2026-06-10 01:27 UTC: `PRE_START` / `PRE_START`
+- 2026-06-10 08:20 UTC: `OK`, batch 1
+- 2026-06-10 16:21 UTC: `OK`, batch 2
+- 2026-06-11 00:21 UTC: `OK`, batch 3
+- 2026-06-11 08:20 UTC: `OK`, batch 4
+
+The timer has since been contained as disabled/inactive; the paper service was inactive at
+inspection, and the shadow timer remained enabled/active. No live trading or observer/shadow
+mutation occurred.
+
+### 4.1 Classification and recovery boundary
+
+- Classify `/srv/qnty/output/paper_pnl_v1` as **contaminated accidental preflight output**.
+- Here, contaminated means **provenance-contaminated**, not necessarily SQLite-corrupt. Its
+  initialization and automatic batches occurred outside the approved preflight session.
+- Do not continue using the existing DB as clean preflight evidence.
+- Do not delete, overwrite, import from, or reuse any accidental DB state.
+- Avoid querying or opening SQLite before filesystem-level preservation. Opening SQLite can affect
+  the WAL/SHM family even when the intended operation is read-only.
+- Capture read-only filesystem, systemd, journal, and repo evidence first.
+- Preserve the entire output directory intact, including DB/WAL/SHM and published artifacts, under
+  `/srv/qnty/output/paper_pnl_v1.accidental-auto-run-<UTC_TIMESTAMP>`.
+- Only under a separate approval, create a fresh empty output directory and initialize a fresh
+  DB/config with a strictly future UTC 8-hour boundary.
+
+Old journal output from before implementation HEAD `afcd149` may show matching
+`PRE_START` / `PRE_START` followed by `VERIFIED OK`. Preserve that wording as historical evidence
+from before the wrapper wording fix. Do not rewrite or otherwise "repair" old logs. Current wrapper
+behavior reports matching pre-start status as `VERIFIED PRE_START`.
+
+### 4.2 Read-only accidental-output evidence capture
+
+> **FUTURE COMMANDS - READ-ONLY AND REQUIRE OPERATOR APPROVAL.** Run commands individually and
+> preserve their outputs. Do not run SQLite, Python, init, wrapper, accounting, verifier, `mv`,
+> `install`, or any systemctl mutation command in this stage.
+
+```bash
+# Paper and shadow state.
+sudo systemctl is-enabled qnty-paper-pnl.timer || true
+sudo systemctl is-active qnty-paper-pnl.timer || true
+sudo systemctl is-active qnty-paper-pnl.service || true
+sudo systemctl status qnty-paper-pnl.timer qnty-paper-pnl.service --no-pager || true
+sudo systemctl is-enabled qnty-shadow-run.timer || true
+sudo systemctl is-active qnty-shadow-run.timer || true
+sudo systemctl status qnty-shadow-run.timer qnty-shadow-run.service --no-pager || true
+
+# Unit definitions and effective settings.
+sudo systemctl cat qnty-paper-pnl.service qnty-paper-pnl.timer
+sudo systemctl cat qnty-shadow-run.service qnty-shadow-run.timer
+sudo systemctl show qnty-paper-pnl.service qnty-paper-pnl.timer
+sudo systemctl show qnty-shadow-run.service qnty-shadow-run.timer
+
+# Historical automatic execution evidence. Preserve old wording exactly as recorded.
+sudo journalctl --utc --since "2026-06-10 00:00:00 UTC" \
+  -u qnty-paper-pnl.timer -u qnty-paper-pnl.service \
+  -o short-iso-precise --no-pager
+
+# Repo identity and worktree.
+cd /srv/qnty/repo
+git rev-parse HEAD
+git status --short
+git log -1 --oneline
+
+# Filesystem-level accidental-output evidence. Do not query SQLite yet.
+sudo find /srv/qnty/output/paper_pnl_v1 -maxdepth 1 \
+  -printf '%M %u:%g %s %i %TY-%Tm-%TdT%TH:%TM:%TS %p\n' | sort
+sudo find /srv/qnty/output/paper_pnl_v1 -maxdepth 1 -type f \
+  -exec sha256sum -- {} + | sort
+sudo lsof +D /srv/qnty/output/paper_pnl_v1 || true
+sudo stat -c '%U:%G %a %n' \
+  /srv/qnty /srv/qnty/repo /srv/qnty/output /srv/qnty/output/paper_pnl_v1
+
+# Repeat inventory and hashes at the end; they must exactly match the first capture.
+sudo find /srv/qnty/output/paper_pnl_v1 -maxdepth 1 \
+  -printf '%M %u:%g %s %i %TY-%Tm-%TdT%TH:%TM:%TS %p\n' | sort
+sudo find /srv/qnty/output/paper_pnl_v1 -maxdepth 1 -type f \
+  -exec sha256sum -- {} + | sort
+```
+
+Required findings before archive approval:
+
+- Paper timer is disabled/inactive and paper service is inactive.
+- Shadow timer is enabled/active and neither shadow unit failed or changed.
+- VM HEAD is exactly `88bc7633c5282be0341acf07626113cc76e8d28c` and the worktree is clean.
+- Inventory and hashes cover the complete accidental output, including DB/WAL/SHM together.
+- `lsof` shows no open handles anywhere under the paper output directory.
+- Output inventory, hashes, timestamps, or ownership do not change during evidence capture.
+- No SQLite DB query has been run during this evidence stage.
+
+### 4.3 Later-approval archive/reset command plan
+
+> **FUTURE COMMANDS - RUN ONLY UNDER A SEPARATE EXPLICIT OPERATOR APPROVAL.** This plan archives
+> accidental evidence and creates fresh initialized state only. It stops before wrapper,
+> accounting, verifier, timer execution, or any observer/shadow mutation.
+
+```bash
+set -euo pipefail
+
+QNTY_PAPER_OUTPUT_DIR=/srv/qnty/output/paper_pnl_v1
+QNTY_PAPER_DB_PATH=/srv/qnty/output/paper_pnl_v1/paper_ledger.db
+RECOVERY_TS="$(date -u +%Y%m%dT%H%M%SZ)"
+ACCIDENTAL_ARCHIVE_DIR="/srv/qnty/output/paper_pnl_v1.accidental-auto-run-${RECOVERY_TS}"
+export QNTY_PAPER_OUTPUT_DIR QNTY_PAPER_DB_PATH RECOVERY_TS ACCIDENTAL_ARCHIVE_DIR
+
+test "$(sudo systemctl is-enabled qnty-paper-pnl.timer 2>/dev/null || true)" = "disabled"
+test "$(sudo systemctl is-active qnty-paper-pnl.timer 2>/dev/null || true)" = "inactive"
+test "$(sudo systemctl is-active qnty-paper-pnl.service 2>/dev/null || true)" = "inactive"
+test "$(sudo systemctl is-enabled qnty-shadow-run.timer 2>/dev/null || true)" = "enabled"
+test "$(sudo systemctl is-active qnty-shadow-run.timer 2>/dev/null || true)" = "active"
+
+PAPER_USER="$(sudo systemctl show -p User --value qnty-paper-pnl.service)"
+PAPER_GROUP="$(sudo systemctl show -p Group --value qnty-paper-pnl.service)"
+SHADOW_USER="$(sudo systemctl show -p User --value qnty-shadow-run.service)"
+SHADOW_GROUP="$(sudo systemctl show -p Group --value qnty-shadow-run.service)"
+test -n "$PAPER_USER"
+test -n "$PAPER_GROUP"
+test "$PAPER_USER" = "$SHADOW_USER"
+test "$PAPER_GROUP" = "$SHADOW_GROUP"
+test "$(dirname -- "$QNTY_PAPER_DB_PATH")" = "$QNTY_PAPER_OUTPUT_DIR"
+
+OPEN_HANDLES="$(sudo lsof +D "$QNTY_PAPER_OUTPUT_DIR" 2>/dev/null || true)"
+test -z "$OPEN_HANDLES"
+test -d "$QNTY_PAPER_OUTPUT_DIR"
+test ! -e "$ACCIDENTAL_ARCHIVE_DIR"
+
+sudo mv "$QNTY_PAPER_OUTPUT_DIR" "$ACCIDENTAL_ARCHIVE_DIR"
+sudo install -d -o "$PAPER_USER" -g "$PAPER_GROUP" -m 0750 "$QNTY_PAPER_OUTPUT_DIR"
+sudo find "$QNTY_PAPER_OUTPUT_DIR" -maxdepth 1 -mindepth 1 -print
+```
+
+Expected: the archive destination did not previously exist, the entire accidental output directory
+was moved intact, and the final `find` prints nothing. Preserve the archive permanently; never
+import or reuse its DB state.
+
+After the archive/reset commands pass, execute the reviewed fresh-boundary and initialization
+steps in sections **5.4** and **5.5** only: choose a strictly future UTC 8-hour boundary, initialize
+the fresh SQLite DB first, write matching config second, and confirm DB/config identity. Then stop.
+Do not execute section **5.6**, accounting, verifier, wrapper, deployment, or any timer command.
+
+---
+
+## 5. VM preflight mutation plan
 
 > **FUTURE COMMANDS - RUN ONLY AFTER EXPLICIT OPERATOR APPROVAL.**
 >
 > These steps intentionally do not enable or start the paper timer. Do not modify the
 > observer/shadow service or timer.
 
-### 4.1 Establish the approved session variables
+For the accidental automatic execution scenario, complete the separately approved recovery branch
+in section 4 and resume at section 5.4. Do not archive accidental evidence under the generic stale
+output name in section 5.3.
+
+### 5.1 Establish the approved session variables
 
 Use the correct observer path found during reconnaissance. The expected path is shown below:
 
@@ -190,7 +352,7 @@ Expected:
 Stop on any mismatch. Do not compensate with ad hoc permissions or a unit edit during this
 preflight. Resolve and review the mismatch separately.
 
-### 4.2 Stop/confirm the paper timer remains disabled
+### 5.2 Stop/confirm the paper timer remains disabled
 
 ```bash
 sudo systemctl stop qnty-paper-pnl.timer
@@ -202,7 +364,7 @@ test "$(sudo systemctl is-active qnty-paper-pnl.service 2>/dev/null || true)" = 
 Expected: every `test` exits `0`. If the timer is enabled unexpectedly, stop immediately; do not
 run `systemctl disable` as an unreviewed repair.
 
-### 4.3 Start the evidence transcript and archive stale paper output
+### 5.3 Start the evidence transcript and archive stale paper output
 
 ```bash
 PREFLIGHT_TS="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -240,7 +402,7 @@ sudo find "$QNTY_PAPER_OUTPUT_DIR" -maxdepth 1 -mindepth 1 -print
 
 Expected: the final `find` prints nothing. Preserve `ARCHIVE_DIR`; do not delete it.
 
-### 4.4 Choose a strictly future UTC 8-hour boundary
+### 5.4 Choose a strictly future UTC 8-hour boundary
 
 ```bash
 FORWARD_START_TS="$(
@@ -263,7 +425,7 @@ printf 'forward_start_ts=%s\n' "$FORWARD_START_TS"
 Expected: timestamp ends in `T00:00:00Z`, `T08:00:00Z`, or `T16:00:00Z` and is strictly in the
 future. Record it in the evidence pack.
 
-### 4.5 Initialize the fresh DB, then the required write-once config
+### 5.5 Initialize the fresh DB, then the required write-once config
 
 The order matters: SQLite init refuses legacy JSON/JSONL artifacts, including
 `paper_config.json`, so initialize the DB first and write the matching config second.
@@ -324,7 +486,7 @@ PY
 
 Expected: `db_config_identity=OK`.
 
-### 4.6 Run the wrapper manually once
+### 5.6 Run the wrapper manually once
 
 ```bash
 set +e
@@ -342,7 +504,7 @@ set -e
 printf 'wrapper_exit=%s\n' "$WRAPPER_RC" | tee "$EVIDENCE_DIR/wrapper.exit"
 cat "$EVIDENCE_DIR/wrapper.stdout"
 cat "$EVIDENCE_DIR/wrapper.stderr"
-grep -E 'Status:|accounting exit=|verifier exit=|VERIFIED OK' "$EVIDENCE_DIR/wrapper.stdout" || true
+grep -E 'Status:|accounting exit=|verifier exit=|VERIFIED (OK|PRE_START)' "$EVIDENCE_DIR/wrapper.stdout" || true
 ```
 
 Expected success is exactly one matching pair:
@@ -355,7 +517,7 @@ The wrapper must not produce legacy JSONL paper-ledger artifacts. The verifier-o
 
 ---
 
-## 5. Success/failure matrix
+## 6. Success/failure matrix
 
 | Accounting | Verifier | Wrapper exit | Preflight result |
 | --- | --- | --- | --- |
@@ -372,7 +534,7 @@ On any failure:
 
 ---
 
-## 6. Post-run inspection
+## 7. Post-run inspection
 
 Run after the one manual wrapper invocation, whether it succeeds or fails:
 
@@ -438,7 +600,7 @@ Any mismatch is a failure and hard stop.
 
 ---
 
-## 7. Rollback
+## 8. Rollback
 
 Rollback restores filesystem state only. It does not import JSONL into SQLite, enable timers, or
 change observer/shadow state.
@@ -485,7 +647,7 @@ JSONL data into SQLite.
 
 ---
 
-## 8. Hard stop conditions
+## 9. Hard stop conditions
 
 Stop immediately and preserve evidence if any condition occurs:
 
@@ -493,15 +655,21 @@ Stop immediately and preserve evidence if any condition occurs:
 - Local or VM branch/commit/worktree differs from the approved state.
 - VM does not already contain the reviewed SQLite wrapper code; deployment is outside this
   runbook.
-- Paper timer is enabled or active unexpectedly.
-- Paper service is active unexpectedly before or after the manual run.
+- Paper timer or service becomes active.
 - Observer/shadow timer or service is affected, failed, stopped, restarted, disabled, or changed.
 - Paper and shadow effective service users/groups do not match, or ownership/permission risk is
   unresolved.
 - Repo path, DB path, output path, observer path, or environment is unresolved or inconsistent.
 - `dirname "$QNTY_PAPER_DB_PATH"` differs from `"$QNTY_PAPER_OUTPUT_DIR"`.
 - Existing output was not inventoried or stale output was not archived intact.
+- Any process holds the accidental DB/WAL/SHM or another file under the paper output directory
+  open.
+- Accidental output files, hashes, timestamps, ownership, or inventory change during evidence
+  capture.
+- The accidental DB/WAL/SHM family cannot be preserved together and archived intact.
+- The selected accidental archive destination already exists.
 - SQLite init/config identity, config hash, or `forward_start_ts` differs.
+- The new `forward_start_ts` is not strictly future and on the UTC 8-hour grid.
 - Wrapper returns anything except matching `OK`/`OK` exit `0` or
   `PRE_START`/`PRE_START` exit `0`.
 - Accounting returns `ABORTED`, `CONFIG_ERROR`, `CORRUPT_LEDGER`, `LEDGER_BUSY`, or an unexpected
@@ -509,11 +677,12 @@ Stop immediately and preserve evidence if any condition occurs:
 - Verifier returns `CONFIG_ERROR`, `CORRUPT`, or an unexpected code.
 - Unexpected legacy JSONL-era paper-ledger artifacts are generated.
 - VM repo or strategy/observer/exchange/order/script/ops files change.
-- Any command would require an unreviewed repair, unit edit, deployment, or timer enablement.
+- Any recovery step would require wrapper, accounting, verifier, deployment, timer enablement, or
+  an unreviewed repair or unit edit.
 
 ---
 
-## 9. Evidence pack
+## 10. Evidence pack
 
 Collect and retain:
 
@@ -531,6 +700,8 @@ Collect and retain:
 - Manual verifier JSON stdout, stderr, and exit code.
 - Published verifier report, receipt, and audit-only `paper_verify_log.jsonl`.
 - DB/WAL/SHM listing and unexpected-artifact check.
+- Accidental-output journal, inventory with inode metadata, SHA-256 hashes, `lsof` output, path
+  ownership, and intact archive path, when the recovery branch applies.
 - Rollback transcript and confirmation if rollback is executed.
 
 Exit the recorded shell after evidence collection:
@@ -541,7 +712,7 @@ exit
 
 ---
 
-## 10. Review gates before timer enablement is even proposed
+## 11. Review gates before timer enablement is even proposed
 
 All gates require explicit human review:
 
@@ -549,6 +720,8 @@ All gates require explicit human review:
 - Local targeted tests and full suite are green with `0 skipped`.
 - Approved branch/commit and clean worktree are confirmed locally and on the VM.
 - VM read-only reconnaissance is reviewed.
+- Accidental automatic execution evidence and intact archive are reviewed, when the recovery branch
+  applies.
 - Manual wrapper run evidence is reviewed.
 - Status matrix success is exactly `OK`/`OK` or `PRE_START`/`PRE_START`, wrapper exit `0`.
 - DB/output/observer path consistency and DB/config identity are verified.
