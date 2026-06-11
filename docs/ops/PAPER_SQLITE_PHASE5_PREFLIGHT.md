@@ -2,11 +2,14 @@
 
 **Status:** Planned, documentation only. Not executed.
 
-**Approved planning baseline (2026-06-09):**
+**Approved implementation baseline (2026-06-11):**
 
 - Branch: `feature/paper-pnl-v1`
-- HEAD: `667dec6 Enable paper wrapper PRE_START E2E test`
-- Full local suite: `978 passed, 0 skipped`
+- Reviewed implementation HEAD: `afcd149 Align SQLite paper verifier preflight gates`
+- The current clean HEAD may be one later runbook-only baseline-attestation commit. Before VM
+  reconnaissance, `git diff --name-only afcd149..HEAD` must print only
+  `docs/ops/PAPER_SQLITE_PHASE5_PREFLIGHT.md`; any behavior-code difference is a hard stop.
+- Full local suite: `996 passed, 0 skipped`
 - Real wrapper -> accounting -> verifier `PRE_START` E2E passes on temporary paths
 - SQLite writer/verifier/wrapper path is locally approved
 - VM untouched; paper timer disabled; no deployment readiness claimed
@@ -47,6 +50,7 @@ Run these locally from the Qnty repo before any VM action:
 git status --short
 git branch --show-current
 git log --oneline -10
+git diff --name-only afcd149..HEAD
 bash -n ops/bin/qnty-paper-pnl-run.sh
 PYTHONPATH=. pytest tests/test_paper_pnl_wrapper.py -v
 PYTHONPATH=. pytest tests/test_paper_sqlite_writer.py -v
@@ -65,7 +69,8 @@ Expected gates:
 | --- | --- |
 | `git status --short` | No output: clean worktree |
 | `git branch --show-current` | `feature/paper-pnl-v1` |
-| `git log --oneline -10` | Approved HEAD is first; initially `667dec6 Enable paper wrapper PRE_START E2E test` |
+| `git log --oneline -10` | Reviewed implementation HEAD `afcd149` is present; current HEAD is either it or one runbook-only attestation commit |
+| `git diff --name-only afcd149..HEAD` | No output, or only `docs/ops/PAPER_SQLITE_PHASE5_PREFLIGHT.md` |
 | `bash -n` | Exit `0`, no output |
 | Targeted tests | All pass |
 | Full suite | All pass and `0 skipped` |
