@@ -1098,6 +1098,8 @@ def run_sqlite_accounting(
                 # batch (the verifier treats a committed empty batch as CORRUPT).
                 conn.rollback()
                 conn.close()
+                if state_row["watermark_bar_ts"] is None:
+                    return STATUS_PRE_START, "No committed eligible bars yet"
                 return STATUS_OK, "No new bars to process"
 
             # === INSERT INTO DB INSIDE TRANSACTION ==========================

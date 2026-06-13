@@ -342,6 +342,109 @@ class TestNoJsonlArtifacts:
 class TestEndToEndPreStart:
     """One real end-to-end PRE_START wrapper case with temp SQLite DB."""
 
+    def test_e2e_first_eligible_bar_deferral_is_pre_start(self, tmp_path):
+        """A first eligible active bar without T+1 data is PRE_START end to end."""
+        import csv
+        import json
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        eligible_dt = now.replace(
+            hour=(now.hour // 8) * 8,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        eligible_ts = eligible_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        db_path = tmp_path / "paper_ledger.db"
+        output_dir = tmp_path
+        obs_dir = tmp_path / "forward_obs_v1"
+        data_dir = tmp_path / "data"
+        obs_dir.mkdir()
+        data_dir.mkdir()
+
+        init_script = Path(__file__).parent.parent / "scripts" / "qnty-paper-sqlite-init.py"
+        init_result = subprocess.run(
+            [
+                sys.executable,
+                str(init_script),
+                "--forward-start-ts",
+                eligible_ts,
+                "--db-path",
+                str(db_path),
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONPATH": REPO_ROOT},
+        )
+        assert init_result.returncode == 0, init_result.stderr
+
+        config_result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "quantbot.paper.config",
+                "--forward-start-ts",
+                eligible_ts,
+                "--output-dir",
+                str(output_dir),
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONPATH": REPO_ROOT},
+        )
+        assert config_result.returncode == 0, config_result.stderr
+
+        observation = {
+            "bar_index": 0,
+            "timestamp": eligible_ts,
+            "active_symbols": ["BTCUSDT"],
+            "portfolio_heat": 0.0,
+            "heat_cap_triggered": False,
+            "weighted_return": 0.0,
+        }
+        (obs_dir / "observation_log.json").write_text(
+            json.dumps({"per_bar_obs": [observation]}),
+            encoding="utf-8",
+        )
+
+        with (data_dir / "BTCUSDT_8h_ohlcv.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["timestamp", "open", "high", "low", "close", "volume"])
+            writer.writerow([eligible_ts, 100.0, 101.0, 99.0, 100.0, 1.0])
+
+        test_env = {
+            **os.environ,
+            "QNTY_PAPER_DB_PATH": str(db_path),
+            "QNTY_PAPER_OUTPUT_DIR": str(output_dir),
+            "QNTY_FORWARD_OBS_DIR": str(obs_dir),
+            "QNTY_PAPER_PYTHON": sys.executable,
+            "QNTY_PAPER_ACCT_CMD": (
+                f"{sys.executable} scripts/qnty-paper-sqlite-accounting.py "
+                f"--data-dir {data_dir}"
+            ),
+            "PYTHONPATH": REPO_ROOT,
+        }
+        result = subprocess.run(
+            ["bash", str(WRAPPER_SCRIPT)],
+            env=test_env,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        )
+
+        assert result.returncode == 0, (
+            f"Wrapper failed: rc={result.returncode}, stdout={result.stdout!r}, "
+            f"stderr={result.stderr!r}"
+        )
+        assert "accounting exit=5" in result.stdout
+        assert "verifier exit=5" in result.stdout
+        assert "VERIFIED PRE_START" in result.stdout
+        report = json.loads((output_dir / "paper_verify_report.json").read_text())
+        assert report["status"] == "PRE_START"
+
     def test_e2e_pre_start_with_init(self, tmp_path):
         """Initialize temp SQLite DB and run wrapper with real scripts."""
         db_path = tmp_path / "paper_ledger.db"

@@ -510,6 +510,53 @@ class TestFirstSuccessfulBatch:
 class TestIdempotentRerun:
     """Rerunning with identical inputs produces no duplicates."""
 
+    def test_started_ledger_rerun_without_new_bars_stays_ok(self, tmp_path: Path):
+        from quantbot.paper.sqlite_verify import verify_database
+
+        db_path = _init_test_db(tmp_path)
+        per_bar_obs = [_make_obs(ts, [SYMBOL], i) for i, ts in enumerate(TS)]
+        obs_dir = _write_observation_log(tmp_path, per_bar_obs)
+        cfg = _make_cfg()
+        p1, p2 = _patch_data_loaders(tmp_path)
+
+        with p1, p2:
+            with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
+                first_status, first_msg = run_sqlite_accounting(
+                    db_path=db_path,
+                    forward_obs_dir=obs_dir,
+                )
+                assert first_status == STATUS_OK, first_msg
+                conn = connect_readonly(db_path)
+                before = {
+                    table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    for table in (
+                        "ledger_batches",
+                        "ledger_events",
+                        "fills",
+                        "trades",
+                        "equity_snapshots",
+                        "open_positions",
+                    )
+                }
+                conn.close()
+
+                status, msg = run_sqlite_accounting(
+                    db_path=db_path,
+                    forward_obs_dir=obs_dir,
+                )
+
+        conn = connect_readonly(db_path)
+        after = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in before
+        }
+        conn.close()
+
+        assert status == STATUS_OK, msg
+        assert msg == "No new bars to process"
+        assert after == before
+        assert verify_database(db_path).status == "OK"
+
     def test_no_duplicate_events(self, tmp_path: Path):
         db_path = _init_test_db(tmp_path)
         per_bar_obs = [_make_obs(ts, [SYMBOL], i) for i, ts in enumerate(TS)]
@@ -559,39 +606,111 @@ class TestIdempotentRerun:
 class TestMissingT1OpenDefersBar:
     """When T+1 open is missing, the bar is deferred (no watermark advance)."""
 
-    def test_bar_deferred_when_no_t1(self, tmp_path: Path):
+    def test_first_eligible_bar_deferred_is_pre_start(self, tmp_path: Path):
         db_path = _init_test_db(tmp_path)
-        # Write CSV with missing T+1 open for last bar
-        data_dir = tmp_path / "data"
-        data_dir.mkdir(parents=True, exist_ok=True)
-        csv_path = data_dir / f"{SYMBOL}_8h_ohlcv.csv"
-        with open(csv_path, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.writer(fh)
-            writer.writerow(["timestamp", "open", "high", "low", "close", "volume"])
-            # Write only first 3 bars (missing T+1 for bar 2)
-            for ts, (o, c) in zip(TS[:3], AAA_PRICES[:3]):
-                high = max(o, c)
-                low = min(o, c)
-                writer.writerow([ts, o, high, low, c, 1.0])
-        _write_funding_csv(tmp_path)
-        per_bar_obs = [_make_obs(ts, [SYMBOL], i) for i, ts in enumerate(TS[:3])]
+        per_bar_obs = [_make_obs(TS[0], [SYMBOL])]
         obs_dir = _write_observation_log(tmp_path, per_bar_obs)
-
         cfg = _make_cfg()
-        p1, p2 = _patch_data_loaders(tmp_path)
-        with p1, p2:
-            with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
-                status, msg = run_sqlite_accounting(
-                    db_path=db_path,
-                    forward_obs_dir=obs_dir,
-                )
-        # Should not advance watermark past available bars
+        only_eligible_bar = _make_bars()[:1]
+
+        with patch(
+            "quantbot.paper.sqlite_writer.load_all_ohlcv",
+            return_value={SYMBOL: only_eligible_bar},
+        ), patch(
+            "quantbot.paper.sqlite_writer.load_all_funding",
+            return_value=_make_funding_df(),
+        ), patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
+            status, msg = run_sqlite_accounting(
+                db_path=db_path,
+                forward_obs_dir=obs_dir,
+            )
+
         conn = connect_readonly(db_path)
         state = conn.execute("SELECT watermark_bar_ts FROM ledger_state WHERE id = 1").fetchone()
+        counts = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "ledger_batches",
+                "ledger_events",
+                "signal_snapshots",
+                "fills",
+                "trades",
+                "funding",
+                "position_snapshots",
+                "position_snapshot_symbols",
+                "equity_snapshots",
+                "open_positions",
+            )
+        }
         conn.close()
-        if state and state[0] is not None:
-            # Watermark should be TS[1] (only consumed bar 0, bar 1 needs T+1)
-            assert state[0] == TS[1] or state[0] == TS[0], "Watermark should not advance past available T+1"
+
+        assert status == STATUS_PRE_START, msg
+        assert msg == "No committed eligible bars yet"
+        assert state is not None and state[0] is None
+        assert all(count == 0 for count in counts.values()), counts
+
+    def test_started_ledger_next_bar_deferred_stays_ok(self, tmp_path: Path):
+        from quantbot.paper.sqlite_verify import verify_database
+
+        forward_start_ts = TS[2]
+        db_path = _init_test_db(tmp_path, forward_start_ts=forward_start_ts)
+        cfg = _make_cfg()
+        cfg["forward_start_ts"] = forward_start_ts
+        cfg["config_hash"] = config_hash(cfg)
+
+        first_obs_dir = _write_observation_log(tmp_path, [_make_obs(TS[2], [])])
+        with patch(
+            "quantbot.paper.sqlite_writer.load_all_ohlcv",
+            return_value={},
+        ), patch(
+            "quantbot.paper.sqlite_writer.load_all_funding",
+            return_value=_make_funding_df(),
+        ), patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
+            first_status, first_msg = run_sqlite_accounting(
+                db_path=db_path,
+                forward_obs_dir=first_obs_dir,
+            )
+        assert first_status == STATUS_OK, first_msg
+
+        conn = connect_readonly(db_path)
+        before = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("ledger_batches", "ledger_events", "equity_snapshots")
+        }
+        conn.close()
+
+        second_obs_dir = _write_observation_log(
+            tmp_path,
+            [_make_obs(TS[2], []), _make_obs(TS[1], [SYMBOL], 1)],
+        )
+        next_bar_without_t1 = [_make_bars()[1]]
+        with patch(
+            "quantbot.paper.sqlite_writer.load_all_ohlcv",
+            return_value={SYMBOL: next_bar_without_t1},
+        ), patch(
+            "quantbot.paper.sqlite_writer.load_all_funding",
+            return_value=_make_funding_df(),
+        ), patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
+            status, msg = run_sqlite_accounting(
+                db_path=db_path,
+                forward_obs_dir=second_obs_dir,
+            )
+
+        conn = connect_readonly(db_path)
+        after = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in before
+        }
+        watermark = conn.execute(
+            "SELECT watermark_bar_ts FROM ledger_state WHERE id = 1"
+        ).fetchone()[0]
+        conn.close()
+
+        assert status == STATUS_OK, msg
+        assert msg == "No new bars to process"
+        assert after == before
+        assert watermark == TS[2]
+        assert verify_database(db_path).status == "OK"
 
 
 # ---------------------------------------------------------------------------
