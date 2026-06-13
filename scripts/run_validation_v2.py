@@ -37,7 +37,7 @@ import math
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -66,6 +66,7 @@ K2_DRAWDOWN_THRESHOLD = 0.35
 
 # Heat cap trigger threshold for FAIL
 HEAT_CAP_TRIGGER_RATE_THRESHOLD = 0.05  # 5%
+BAR_INTERVAL = timedelta(hours=8)
 
 
 def _log_return(close_start: float, close_end: float) -> float:
@@ -123,6 +124,41 @@ def get_git_info() -> tuple[str, str]:
         return "unknown", "unknown"
 
 
+def _parse_bar_timestamp(timestamp: str) -> datetime:
+    """Parse an observer bar-open timestamp as UTC."""
+    parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def filter_closed_bars(
+    bars_by_symbol: dict[str, list[Bar]],
+    now: datetime,
+) -> dict[str, list[Bar]]:
+    """Return only bars whose full 8-hour interval has closed by ``now``."""
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    now_utc = now.astimezone(timezone.utc)
+    return {
+        symbol: [
+            bar for bar in bars
+            if _parse_bar_timestamp(bar.timestamp) + BAR_INTERVAL <= now_utc
+        ]
+        for symbol, bars in bars_by_symbol.items()
+    }
+
+
+def run_observer_window(
+    bars_by_symbol: dict[str, list[Bar]],
+    funding_df,
+    funding_lookup: dict | None,
+    now: datetime,
+) -> dict:
+    """Run the observer using closed candles only."""
+    return run_validation_window(filter_closed_bars(bars_by_symbol, now), funding_df, funding_lookup)
+
+
 def run_validation_window(
     bars_by_symbol: dict[str, list[Bar]],
     funding_df,
@@ -153,12 +189,6 @@ def run_validation_window(
     print(f"  Start: {ref_bars[window_start].timestamp}")
     print(f"  End: {ref_bars[window_end - 1].timestamp}")
 
-    # Warmup period: need VOL_LOOKBACK_BARS before window_start
-    warmup_start = max(0, window_start - VOL_LOOKBACK_BARS)
-    warmup_end = window_start
-    warmup_size = warmup_end - warmup_start
-    print(f"Warmup period: bars {warmup_start} to {warmup_end} ({warmup_size} bars)")
-
     # Determine universe for this period
     window_ts = ref_bars[window_start].timestamp
     quarter_idx = 0
@@ -168,6 +198,17 @@ def run_validation_window(
     qdate = QUARTERLY_DATES[quarter_idx] if quarter_idx < len(QUARTERLY_DATES) else QUARTERLY_DATES[-1]
     universe = QUARTERLY_UNIVERSES.get(qdate, ["BTCUSDT", "ETHUSDT"])
     print(f"Universe: {universe}")
+
+    # Start state calculation at the stable boundary for the selected universe.
+    # The published window still rolls, but overlapping rows are always derived
+    # from the same preceding state while that universe remains applicable.
+    warmup_start = next(
+        (i for i, bar in enumerate(ref_bars) if bar.timestamp >= qdate),
+        0,
+    )
+    warmup_end = window_start
+    warmup_size = max(0, warmup_end - warmup_start)
+    print(f"Warmup period: bars {warmup_start} to {warmup_end} ({warmup_size} bars)")
 
     # Use representative grid point: rp=20, th=0.0 (same as Stage 4 K2 check)
     rep_params = TSMOM_GRID[0]  # {"return_period": 20, "threshold": 0.0}
@@ -188,25 +229,9 @@ def run_validation_window(
         for symbol in universe if symbol in bars_by_symbol
     }
 
-    # Warmup: process bars from warmup_start to warmup_end
-    print("Warming up volatility trackers...")
-    prev_close_warmup: dict[str, float] = {}
-    for i in range(warmup_start, warmup_end):
-        for symbol in universe:
-            if symbol not in bars_by_symbol:
-                continue
-            bars = bars_by_symbol[symbol]
-            if i >= len(bars):
-                continue
-            bar = bars[i]
-            if symbol not in prev_close_warmup:
-                prev_close_warmup[symbol] = bar.close
-                continue
-            ret = _log_return(prev_close_warmup[symbol], bar.close)
-            vol_trackers[symbol].update(ret)
-            prev_close_warmup[symbol] = bar.close
-
-    # Per-bar evaluation on validation window
+    # Calculate from the stable universe boundary, but score and publish only
+    # the rolling validation window.
+    print("Warming up deterministic observer state...")
     strat_net: list[float] = []
     bench: list[float] = []
     heat_cap_triggers = 0
@@ -216,7 +241,7 @@ def run_validation_window(
 
     per_bar_obs: list[dict] = []
 
-    for i in range(window_start, window_end):
+    for i in range(warmup_start, window_end):
         bar_data: dict[str, tuple[float, float]] = {}
 
         for symbol in universe:
@@ -256,14 +281,24 @@ def run_validation_window(
             elif regime == "high_vol" and symbol in vol_trackers:
                 vol_trackers[symbol].update(ret)
 
-            # Record benchmark (always-long equal-weight)
-            bench.append(ret)
-
             # Collect active long signals
             if signal is not None and signal.direction == "long":
                 bar_data[symbol] = (ret, ret_net)
 
             prev_close[symbol] = bar.close
+
+        if i < window_start:
+            continue
+
+        # Record benchmark (always-long equal-weight) for the published window.
+        bench.extend(
+            _log_return(
+                bars_by_symbol[symbol][i - 1].close,
+                bars_by_symbol[symbol][i].close,
+            )
+            for symbol in universe
+            if symbol in bars_by_symbol and 0 < i < len(bars_by_symbol[symbol])
+        )
 
         # Compute weighted portfolio return
         if bar_data:
@@ -584,7 +619,12 @@ def main() -> int:
 
     # Run validation
     print("\nRunning validation window...")
-    metrics = run_validation_window(bars_by_symbol, funding_df, funding_lookup)
+    metrics = run_observer_window(
+        bars_by_symbol,
+        funding_df,
+        funding_lookup,
+        now=datetime.now(timezone.utc),
+    )
 
     # Determine verdict
     verdict, reasons = determine_verdict(metrics)
