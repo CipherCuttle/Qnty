@@ -1,0 +1,15 @@
+[Unit]
+Description=Qnty Paper PnL Timer - Every 8h at :20 past hour (after shadow run at :10)
+# Intentionally NO Requires=/After= on qnty-shadow-run: the paper layer is a downstream
+# reader that tolerates a stale or absent observer run (decoupled by design).
+
+[Timer]
+# Run at 00:20, 08:20, 16:20 UTC - 10 minutes after the shadow observer (:10).
+OnCalendar=*-*-* 00:20:00
+OnCalendar=*-*-* 08:20:00
+OnCalendar=*-*-* 16:20:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

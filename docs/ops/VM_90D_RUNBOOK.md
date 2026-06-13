@@ -98,6 +98,107 @@ mkdir -p /srv/qnty/config
 mkdir -p /srv/qnty/backups
 ```
 
+### 3.5b Paper PnL config — archive stale output, re-init fresh
+
+The hardened paper engine (`engine_version 0.2.0`) **rejects any pre-existing
+`paper_config.json` that predates the current contract** (an old `0.1.0` config, or one
+missing `baseline_label` / `freshness`): `load_config` fails loudly and the run aborts.
+
+**Any stale `/srv/qnty/output/paper_pnl_v1/` content from before this patch (e.g. a lone
+`paper_config.json` with no fills/trades/equity) MUST be archived or deleted and re-init'd**
+with a **fresh, future `forward_start_ts`** — do not reuse a stale forward start:
+
+```bash
+# 1. Archive whatever is there (never silently overwrite a write-once config):
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+mv /srv/qnty/output/paper_pnl_v1 /srv/qnty/output/paper_pnl_v1.archived-$ts 2>/dev/null || true
+mkdir -p /srv/qnty/output/paper_pnl_v1
+
+# 2. Re-init the write-once config with a fresh FUTURE 8h boundary (no fill before it):
+cd /srv/qnty/repo
+QNTY_PAPER_OUTPUT_DIR=/srv/qnty/output/paper_pnl_v1 \
+  .venv/bin/python -m quantbot.paper.config --forward-start-ts <FUTURE_UTC_8H_BOUNDARY>
+```
+
+The paper timer remains disabled until the config is re-init'd against this engine version.
+
+> **Paper SQLite migration (Phase 4) in progress.** The JSONL paper PnL ledger + snapshot-verifier
+> authority model is being migrated to a SQLite/WAL ledger
+> (paper engine `0.3.0`); see [ADR 0001 — paper SQLite ledger](../ADR/0001-paper-sqlite-ledger.md).
+>
+> **Phase 4 status (local only, not deployed):** The wrapper (`qnty-paper-pnl-run.sh`) has been
+> repointed to the SQLite path locally. The systemd service now includes `QNTY_PAPER_DB_PATH`.
+> JSONL scripts are deprecated but kept for rollback. **The paper timer must remain disabled on the VM**
+> until Phase 5 (deployment/validation) is complete and explicitly authorized.
+
+**Paper accounting status / exit-code matrix (do not conflate them).** `scripts/qnty-paper-accounting.py`
+writes a `status` into `paper_pnl_summary.json` (and `paper_provenance.json`) and returns an
+exit code. **`exit 0` is NOT proof a normal accounting run happened** — it covers both a real
+`OK` run *and* a healthy `NO_ELIGIBLE_BARS_YET` no-op. Always read the summary `status` /
+journald log, never the exit code alone:
+
+**`paper_pnl_summary.json` is the runner's single current-run *transaction* status — NOT the
+authoritative paper trust status.** The authoritative paper status is the latest
+`paper_verify_report.json` produced by the read-only verifier against a frozen verify-run snapshot
+(see `docs/paper_pnl_v1_schema.md` § 5a); a runner `OK` is trusted only once the verifier has
+verified the run and its trusted baseline (`paper_verify_trusted_ok.json`) reflects it. The summary
+below is still useful as the runner's in-process transaction record. A run overwrites the summary
+atomically with `status: RUNNING` (`phase: preflight`)
+as its **first** write — **before** the pre-run existing-ledger health gate and the
+freshness/divergence gates, not after. This matters: those gates each publish their own
+`CORRUPT_LEDGER`/`ABORTED` bundle, and if that publication itself fails part-way a previous `OK`
+would otherwise stay visible. Writing `RUNNING` first means a stale `OK` is superseded the instant
+a run begins, so a **failed `CORRUPT_LEDGER`/`ABORTED`/`NO_ELIGIBLE_BARS_YET` publication can never
+leave the old `OK` visible**. Even a **config load failure** supersedes a stale `OK` (a minimal
+`RUNNING`/`phase: preflight_config_error` marker, written only when a summary already exists — a
+first-run config error in a fresh dir still writes nothing). The **final `OK` summary write is the
+single commit marker**, written **after** the state/watermark, so no false `OK` can survive a
+failed state/publication step either. Read this file's `status`, not `exit 0` alone.
+
+To keep the prior summary schema-checkable without reading it before preflight, the runner
+atomically stages the old summary path without parsing it, writes `RUNNING`, then validates the
+staged summary with the other persisted artifacts. No ledger/state/summary content is read before
+the authoritative `RUNNING` marker is visible.
+
+**Persisted artifacts are schema-validated, not just parse-validated.** Every reader normalizes
+permission/OS read failures and checks the deep shape of each row/object — required fields
+present, finite numbers and exact integers (no `bool`/`NaN`/`inf`), parseable timestamps,
+non-empty ids, lists-of-strings for `open_symbols`/`active_symbols`, real booleans, enumerated
+`side`/`kind`, every snapshot field including numeric `source_observation_mtime`, and every state
+field. Summaries are validated by status: `RUNNING`, `OK`, `NO_ELIGIBLE_BARS_YET`, `ABORTED`,
+reserved persisted `CONFIG_ERROR`, and `CORRUPT_LEDGER` each have required fields and types. A
+malformed or unreadable persisted artifact therefore produces `CORRUPT_LEDGER` (exit 4) and an
+operator stop/review — it is never silently normalized into `OK` or republished.
+
+| `status` | exit | meaning | writes |
+| --- | --- | --- | --- |
+| `OK` | `0` | completed accounting: freshness + config + existing-ledger health + post-mutation reconcile all passed, the state/watermark advanced, **and the full evidence bundle published** (provenance + receipt + state, then the `OK` summary **last** as the commit marker). The `OK` summary is the final commit marker: it appears only after provenance + receipt + state are already on disk, so it proves the whole bundle exists. | full ledger rows + state + summary/receipt/provenance |
+| `RUNNING` | (in flight; CLI returns `2` if it ever **returns** RUNNING) | **transaction in flight** — the authoritative marker written before any mutation, superseding any prior `OK`. A clean run replaces it with `OK` within the same invocation. A `RUNNING` summary **left on disk** means a run crashed/was killed mid-commit: the state may or may not have advanced, but **no OK was committed**. | `RUNNING` summary only (overwrites prior summary) |
+| `NO_ELIGIBLE_BARS_YET` | `0` | **healthy no-op** — observer output is clean/fresh/on-grid and the existing ledgers reconcile, but no bar has reached `forward_start_ts` yet. NOT a FLAT/zero result. | summary/receipt/provenance only; **no** ledger rows, **no** state/watermark |
+| `ABORTED` | `2` | freshness/divergence gate abort (config valid, observer output stale/missing/malformed/diverged). | clearly-marked `ABORTED` summary/receipt/provenance; **no** fills/trades/equity |
+| `CONFIG_ERROR` (`ConfigContractError`) | `3` | the `paper_config.json` that *defines* the output contract is itself **missing**, stale, or malformed (not found, invalid UTF-8, bad JSON, old `0.1.0`, wrong `schema_version`/`engine_version`/`baseline_label`, a `bool` where an int/number is required — incl. `schema_version: true`, missing/non-finite `freshness`, or hash mismatch). Clean operator message + init/archive/re-init guidance, **no Python traceback**. | **no ledger/state/provenance/receipt.** If a prior summary exists it is superseded by a minimal `RUNNING`/`phase: preflight_config_error` marker (a stale `OK` must not survive); a **first-run** config error in a fresh dir writes **nothing**. |
+| `CORRUPT_LEDGER` | `4` | a persisted artifact failed closed: an existing ledger has a **permission/OS read failure**, invalid UTF-8/JSON, a valid-JSON non-object row such as `[]`/`123`/`"x"`, is structurally malformed/partial, has an invalid status-specific summary/state shape, **or** a reconcile invariant fails (orphan fill/snapshot, disagreeing `bar_commit_id`, partial bar). Caught either on the **pre-run existing-ledger health gate** (after `RUNNING` is visible, before any new ledger mutation/no-op/divergence abort) or the **post-mutation reconcile**. No traceback. The watermark is **NOT** advanced and **no** `OK` is published. | `CORRUPT_LEDGER` summary/receipt/provenance surfacing the reconcile failures; **no** new ledger rows, **no** state |
+
+So: `exit 0` = `OK` run **or** healthy `NO_ELIGIBLE_BARS_YET` no-op (read the status) · `exit 2`
+= gate-aborted with an `ABORTED` summary (or a RUNNING/unknown status the CLI refuses to call
+complete) · `exit 3` = missing/stale/malformed-config abort with **no** writes (init/re-init
+required) · `exit 4` = `CORRUPT_LEDGER`.
+
+**A `RUNNING` summary older than one timer interval is an operator-action stop.** It means a run
+crashed or was killed mid-commit and never reached the final `OK` commit marker. The next timer
+firing normally supersedes it (it re-runs the publication and self-heals: if no new bars remain
+it republishes `OK`, otherwise it reprocesses the un-watermarked batch idempotently). If a
+`RUNNING` status persists across more than one interval, the timer is not firing or the run is
+failing repeatedly — **pause the paper timer** and review journald + `paper_pnl_summary.json`
+before any further run. Never hand-edit ledgers on the VM; capture the artifacts for off-VM review.
+
+**`CORRUPT_LEDGER` (exit 4) is an operator-action stop, not a transient.** It means the
+persisted ledger is partial/unreadable. **Pause the paper timer** (`systemctl stop
+qnty-paper-pnl.timer`) and review `paper_pnl_summary.json` → `reconcile_failures` before any
+further run. Do NOT delete or "fix" ledger rows by hand on the VM; capture the corrupt files
+and the summary for off-VM review. The watermark was not advanced, so once the underlying
+corruption is understood and resolved off-VM the run can be retried safely.
+
 ### 3.6 Copy Systemd Units
 ```bash
 cp /srv/qnty/repo/ops/systemd/*.service /etc/systemd/system/
@@ -105,12 +206,16 @@ cp /srv/qnty/repo/ops/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 ```
 
-The committed unit files use the canonical `qnty` system user. If a VM was
-intentionally built under an operator user such as `viktor`, keep the committed
-unit files canonical and add local systemd drop-ins instead:
+The committed unit files use the canonical `qnty` system user. **The current
+production VM runs these services as `viktor`, not `qnty`.** Keep the committed
+unit files canonical and add local systemd drop-ins instead — this is the
+documented deployment override referenced by `docs/paper_pnl_v1_schema.md`
+section 12. The loop below includes `qnty-paper-pnl` so the paper service runs as
+the **same user as the shadow service**; a unit whose `User=` does not exist on
+the VM fails silently at activation and its timer would never produce output:
 
 ```bash
-for svc in qnty-data-refresh qnty-shadow-run qnty-healthcheck qnty-daily-summary; do
+for svc in qnty-data-refresh qnty-shadow-run qnty-healthcheck qnty-daily-summary qnty-paper-pnl; do
   mkdir -p /etc/systemd/system/${svc}.service.d
   cat > /etc/systemd/system/${svc}.service.d/user.conf <<'EOF'
 [Service]
@@ -123,7 +228,9 @@ systemctl daemon-reload
 ```
 
 This makes local user drift visible in `systemctl cat` without changing the
-repo's production baseline.
+repo's production baseline. Verify after deploy with
+`systemctl show -p User,Group qnty-paper-pnl.service` and confirm it matches
+`qnty-shadow-run.service`.
 
 ### 3.7 Enable and Start Timers
 ```bash
@@ -398,7 +505,38 @@ code mutation occurred during the 90-day run.
 
 ---
 
-## 11. Prerequisites Before 90-Day Clock Starts
+---
+
+## 11. Paper PnL SQLite Migration Status
+
+### Phase 4 (Local Implementation — NOT deployed)
+
+The paper PnL ledger is being migrated from JSONL + snapshot verifier to a SQLite/WAL ledger. See [ADR 0001](../ADR/0001-paper-sqlite-ledger.md) for full context.
+
+**Phase 4 local changes (this repo, not deployed to VM):**
+- Wrapper script (`ops/bin/qnty-paper-pnl-run.sh`) repointed to SQLite path
+- Systemd service (`ops/systemd/qnty-paper-pnl.service`) updated with `QNTY_PAPER_DB_PATH`
+- JSONL scripts (`scripts/qnty-paper-accounting.py`, `scripts/paper_verify.py`, `scripts/paper_reconcile.py`) marked deprecated (kept for rollback)
+- Wrapper tests added (`tests/test_paper_pnl_wrapper.py`)
+- ADR documentation updated
+
+**VM deployment status:**
+- Paper timer (`qnty-paper-pnl.timer`) remains **disabled** on the VM
+- JSONL path still authoritative on VM until Phase 5 (deployment/validation) completes
+- Do NOT enable paper timer until Phase 5 is complete and explicitly authorized
+- Phase 5 manual VM preflight is separately gated by
+  [PAPER_SQLITE_PHASE5_PREFLIGHT.md](PAPER_SQLITE_PHASE5_PREFLIGHT.md); that preflight leaves the
+  paper timer disabled and does not authorize deployment or timer enablement
+
+**Environment variables (Phase 4 local testing):**
+- `QNTY_PAPER_DB_PATH` — path to SQLite DB (default: `/srv/qnty/output/paper_pnl_v1/paper_ledger.db`)
+- `QNTY_PAPER_ACCT_CMD` — override accounting command (for testing)
+- `QNTY_PAPER_VERIFY_CMD` — override verifier command (for testing)
+- `QNTY_PAPER_LOCK` — lock file path (default: `/tmp/qnty-paper-pnl.lock`)
+
+---
+
+## 12. Prerequisites Before 90-Day Clock Starts
 
 1. Burn-in completed successfully (see `VM_90D_BURNIN_CHECKLIST.md`)
 2. Clean-deploy snapshot taken

@@ -1,0 +1,24 @@
+[Unit]
+Description=Qnty Paper PnL - Additive simulated ledger over forward_obs_v1 (SIMULATION)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+# NOTE: the production VM currently runs qnty services as `viktor`, NOT `qnty`. This
+# template's User=/Group= MUST be reconciled at deploy time — either match the existing
+# qnty-shadow-run runtime user on the target VM, or ship a drop-in override at
+# /etc/systemd/system/qnty-paper-pnl.service.d/override.conf. A non-existent User= fails
+# silently at activation and the paper timer would never produce a ledger.
+# See docs/paper_pnl_v1_schema.md section 12 and docs/ops/VM_90D_RUNBOOK.md (Service user).
+User=qnty
+Group=qnty
+WorkingDirectory=/srv/qnty/repo
+Environment="PATH=/srv/qnty/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=/srv/qnty/venv"
+Environment="QNTY_PAPER_DB_PATH=/srv/qnty/output/paper_pnl_v1/paper_ledger.db"
+ExecStart=/srv/qnty/repo/ops/bin/qnty-paper-pnl-run.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qnty-paper-pnl
+TimeoutSec=600
