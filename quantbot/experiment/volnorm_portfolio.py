@@ -17,9 +17,6 @@ ONLY CHANGES: position sizing and portfolio heat handling.
 from __future__ import annotations
 
 import math
-import statistics
-from dataclasses import dataclass, field
-from typing import Optional
 
 
 # =============================================================================
@@ -46,8 +43,10 @@ VOL_FLOOR: float = 1e-6
 class VolatilityTracker:
     """
     Tracks rolling volatility (std dev of log returns) for a single symbol.
-    
-    Uses Welford's online algorithm for numerical stability.
+
+    Statistics are recomputed from the bounded return buffer after each update.
+    This makes volatility depend only on the final rolling window, not on returns
+    that were previously observed and later evicted.
     """
     
     def __init__(self, lookback: int = VOL_LOOKBACK_BARS, floor: float = VOL_FLOOR):
@@ -63,17 +62,10 @@ class VolatilityTracker:
         self._returns.append(log_return)
         if len(self._returns) > self.lookback:
             self._returns.pop(0)
-        
+
         self._n = len(self._returns)
-        if self._n < 2:
-            self._mean = sum(self._returns) / max(1, self._n)
-            return
-        
-        # Welford's online algorithm
-        delta = log_return - self._mean
-        self._mean += delta / self._n
-        delta2 = log_return - self._mean
-        self._m2 += delta * delta2
+        self._mean = math.fsum(self._returns) / max(1, self._n)
+        self._m2 = math.fsum((value - self._mean) ** 2 for value in self._returns)
     
     @property
     def volatility(self) -> float:
