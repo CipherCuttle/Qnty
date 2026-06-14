@@ -1,0 +1,171 @@
+{
+  "bars_by_symbol": {
+    "AAA": [
+      {
+        "close": 110.0,
+        "high": 110.0,
+        "low": 100.0,
+        "open": 100.0,
+        "timestamp": "2026-06-05T00:00:00",
+        "volume": 1.0
+      },
+      {
+        "close": 120.0,
+        "high": 120.0,
+        "low": 110.0,
+        "open": 110.0,
+        "timestamp": "2026-06-05T08:00:00",
+        "volume": 1.0
+      },
+      {
+        "close": 130.0,
+        "high": 130.0,
+        "low": 120.0,
+        "open": 120.0,
+        "timestamp": "2026-06-05T16:00:00",
+        "volume": 1.0
+      },
+      {
+        "close": 140.0,
+        "high": 140.0,
+        "low": 130.0,
+        "open": 130.0,
+        "timestamp": "2026-06-06T00:00:00",
+        "volume": 1.0
+      },
+      {
+        "close": 150.0,
+        "high": 150.0,
+        "low": 140.0,
+        "open": 140.0,
+        "timestamp": "2026-06-06T08:00:00",
+        "volume": 1.0
+      },
+      {
+        "close": 160.0,
+        "high": 160.0,
+        "low": 150.0,
+        "open": 150.0,
+        "timestamp": "2026-06-06T16:00:00",
+        "volume": 1.0
+      }
+    ]
+  },
+  "config": {
+    "baseline_label": "fixed_notional_active_symbols_paper_v1",
+    "config_hash": "14eba6b5c9f36b5418a64044128167a37e004f3af64d524dcbbc34854930775b",
+    "engine_version": "0.3.0",
+    "fee_model": {
+      "fee_bps": 5.0,
+      "type": "flat_taker"
+    },
+    "fill_model": "next_bar_open_pessimistic",
+    "forward_start_ts": "2026-06-05T00:00:00",
+    "freshness": {
+      "bar_interval_hours": 8,
+      "heartbeat_max_age_hours": 24.0,
+      "max_bar_staleness_hours": 24.0
+    },
+    "funding_model": {
+      "applied_as": "cash_flow",
+      "type": "accrual"
+    },
+    "initial_equity_usd": 10000.0,
+    "leverage": 1.0,
+    "notional_usd": 1000.0,
+    "schema_version": 1,
+    "signal_source": "observation_log.json:per_bar_obs",
+    "slippage_model": {
+      "slippage_bps": 5.0,
+      "type": "fixed"
+    }
+  },
+  "funding": [
+    {
+      "dt": "2026-06-05T00:00:00",
+      "fundingRate": 0.0001,
+      "symbol": "AAA"
+    },
+    {
+      "dt": "2026-06-05T08:00:00",
+      "fundingRate": 0.0001,
+      "symbol": "AAA"
+    },
+    {
+      "dt": "2026-06-05T16:00:00",
+      "fundingRate": 0.0001,
+      "symbol": "AAA"
+    },
+    {
+      "dt": "2026-06-06T00:00:00",
+      "fundingRate": 0.0001,
+      "symbol": "AAA"
+    },
+    {
+      "dt": "2026-06-06T08:00:00",
+      "fundingRate": 0.0001,
+      "symbol": "AAA"
+    },
+    {
+      "dt": "2026-06-06T16:00:00",
+      "fundingRate": 0.0001,
+      "symbol": "AAA"
+    }
+  ],
+  "per_bar_obs": [
+    {
+      "active_symbols": [],
+      "bar_index": 0,
+      "heat_cap_triggered": false,
+      "portfolio_heat": 0.0,
+      "timestamp": "2026-06-05T00:00:00",
+      "weighted_return": 0.0
+    },
+    {
+      "active_symbols": [
+        "AAA"
+      ],
+      "bar_index": 1,
+      "heat_cap_triggered": false,
+      "portfolio_heat": 0.0,
+      "timestamp": "2026-06-05T08:00:00",
+      "weighted_return": 0.0
+    },
+    {
+      "active_symbols": [
+        "AAA"
+      ],
+      "bar_index": 2,
+      "heat_cap_triggered": false,
+      "portfolio_heat": 0.0,
+      "timestamp": "2026-06-05T16:00:00",
+      "weighted_return": 0.0
+    },
+    {
+      "active_symbols": [
+        "AAA"
+      ],
+      "bar_index": 3,
+      "heat_cap_triggered": false,
+      "portfolio_heat": 0.0,
+      "timestamp": "2026-06-06T00:00:00",
+      "weighted_return": 0.0
+    },
+    {
+      "active_symbols": [],
+      "bar_index": 4,
+      "heat_cap_triggered": false,
+      "portfolio_heat": 0.0,
+      "timestamp": "2026-06-06T08:00:00",
+      "weighted_return": 0.0
+    },
+    {
+      "active_symbols": [],
+      "bar_index": 5,
+      "heat_cap_triggered": false,
+      "portfolio_heat": 0.0,
+      "timestamp": "2026-06-06T16:00:00",
+      "weighted_return": 0.0
+    }
+  ]
+}
