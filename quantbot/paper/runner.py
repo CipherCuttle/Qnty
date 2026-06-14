@@ -330,7 +330,13 @@ def run_once(
         return _no_eligible_bars(out, obs_dir, data_dir, config, fresh.reason)
 
     per_bar_obs = obs_log.get("per_bar_obs", [])
-    forward_obs = [o for o in per_bar_obs if o.get("timestamp", "") >= forward_start_ts]
+    # Parsed-instant eligibility (NOT a raw string compare): the freshness gate above has
+    # already validated that every row carries a parseable on-grid timestamp, so a bar at
+    # exactly forward_start_ts is included regardless of naive-vs-trailing-Z formatting.
+    forward_start_dt = freshness.parse_bar_utc(forward_start_ts)
+    forward_obs = [
+        o for o in per_bar_obs if freshness.parse_bar_utc(o["timestamp"]) >= forward_start_dt
+    ]
 
     # === SIGNAL SNAPSHOT DIVERGENCE GATE ===
     existing_snapshots = snapshots.read_snapshots(out)

@@ -14,6 +14,7 @@ from typing import Any
 
 from quantbot.core.determinism import sha256_file
 from quantbot.paper.config import ConfigContractError, load_config
+from quantbot.paper.freshness import parse_bar_utc
 from quantbot.paper import ledger
 from quantbot.paper.ledger import LedgerCorruptionError
 
@@ -750,10 +751,19 @@ def reconcile(output_dir: Path) -> list[str]:
                 )
 
     # --- backfill policy: no forward fill before forward_start_ts ---
+    # Compare parsed instants, not raw strings: fill_ts (T+1 open) is naive while
+    # forward_start_ts carries a trailing Z, so a lexicographic compare misrepresents the
+    # boundary. A missing/unparseable fill_ts fails closed (treated as before the boundary).
+    forward_start_dt = parse_bar_utc(forward_start_ts)
     for f in fills:
         if f.get("backfill") is not False:
             failures.append(f"fill {f.get('fill_id')} not marked backfill=false")
-        if f.get("fill_ts", "") < forward_start_ts:
+        fill_ts = f.get("fill_ts")
+        try:
+            before_boundary = fill_ts is None or parse_bar_utc(fill_ts) < forward_start_dt
+        except (TypeError, ValueError):
+            before_boundary = True  # unparseable fill_ts -> fail closed
+        if before_boundary:
             failures.append(
                 f"fill {f.get('fill_id')} fill_ts {f.get('fill_ts')} < forward_start_ts"
             )

@@ -61,9 +61,26 @@ def _ok(latest_bar_ts: str, heartbeat_ts: str | None) -> FreshnessResult:
     )
 
 
-def _parse_bar(ts: str) -> datetime:
-    """Parse a naive observer bar timestamp as UTC (tolerates a trailing Z)."""
-    return datetime.strptime(ts.rstrip("Z"), _BAR_FMT).replace(tzinfo=timezone.utc)
+def parse_bar_utc(ts: str) -> datetime:
+    """Normalize a bar/boundary timestamp to a timezone-aware UTC datetime.
+
+    Accepts BOTH the naive observer form ('2026-06-14T00:00:00') and the trailing-Z
+    UTC config form ('2026-06-14T00:00:00Z') — both denote the same instant. This is
+    THE single helper used for every forward_start_ts eligibility comparison so a bar
+    is never wrongly excluded by a lexicographic naive-vs-Z string compare (the naive
+    string sorts strictly BEFORE its own trailing-Z form, e.g.
+    '2026-06-14T00:00:00' < '2026-06-14T00:00:00Z'). Raises TypeError/ValueError on a
+    malformed/off-grid-format timestamp so callers fail CLOSED — a bad timestamp is
+    never silently accepted.
+    """
+    if not isinstance(ts, str):
+        raise TypeError(f"timestamp must be a str, got {type(ts).__name__}")
+    core = ts[:-1] if ts.endswith("Z") else ts
+    return datetime.strptime(core, _BAR_FMT).replace(tzinfo=timezone.utc)
+
+
+# Internal alias kept for existing callers (config contract gate + this module).
+_parse_bar = parse_bar_utc
 
 
 def _on_grid(dt: datetime, interval_hours: int) -> bool:
@@ -161,6 +178,13 @@ def check_freshness(
     # future validation: a stale, off-grid, duplicate, or future-dated observation must
     # abort even before the forward boundary, never silently return a normal OK. Required
     # fields and a list-of-STRINGS active_symbols are checked for every row (Blocker 3).
+    # Parse the forward boundary ONCE into a tz-aware UTC datetime so per-bar eligibility
+    # is an instant comparison, never a naive-vs-Z string compare (which would treat the
+    # bar exactly AT forward_start as "before" it and wrongly return NO_ELIGIBLE_BARS_YET).
+    forward_start_dt = (
+        parse_bar_utc(forward_start_ts) if forward_start_ts is not None else None
+    )
+
     seen_ts: set[str] = set()
     consumed_count = 0
     latest_consumed_ts: str | None = None
@@ -229,7 +253,9 @@ def check_freshness(
             latest_overall_ts = ts
 
         # Track the consumed (forward) set separately for the no-eligible-bars no-op.
-        if forward_start_ts is not None and ts < forward_start_ts:
+        # Compare parsed instants (dt was parsed above) — NOT raw strings — so a bar at
+        # exactly forward_start_ts counts as eligible regardless of trailing-Z formatting.
+        if forward_start_dt is not None and dt < forward_start_dt:
             continue
         consumed_count += 1
         if latest_consumed_ts is None or ts > latest_consumed_ts:

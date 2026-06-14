@@ -52,7 +52,7 @@ from quantbot.paper.engine import (
     new_state,
     run_engine,
 )
-from quantbot.paper.freshness import check_freshness
+from quantbot.paper.freshness import check_freshness, parse_bar_utc
 from quantbot.paper.snapshots import (
     bar_commit_id,
     check_divergence,
@@ -707,20 +707,33 @@ def _reconcile_batch_inside_tx(
                 f"events={event_count}, typed={typed_count}"
             )
 
-    # 6. No fill before forward_start_ts
+    # 6. No fill before forward_start_ts. Compare PARSED instants in Python, not a SQL
+    # string compare: a boundary fill's signal_bar_ts ('...T00:00:00') is stored naive
+    # while forward_start_ts carries a trailing Z ('...T00:00:00Z'), and a lexicographic
+    # `signal_bar_ts < forward_start_ts` would wrongly flag a fill AT the boundary as
+    # "before" it (false CORRUPT_LEDGER). An unparseable signal_bar_ts fails closed.
     cfg = conn.execute("SELECT forward_start_ts FROM paper_config WHERE id = 1").fetchone()
     if cfg:
         fwd = cfg["forward_start_ts"]
-        pre = conn.execute(
+        fwd_dt = parse_bar_utc(fwd)
+        fill_rows = conn.execute(
             """
-            SELECT COUNT(*) AS cnt FROM fills f
+            SELECT f.signal_bar_ts AS signal_bar_ts FROM fills f
             JOIN ledger_events e ON e.seq = f.seq
-            WHERE e.batch_id = ? AND f.signal_bar_ts < ?
+            WHERE e.batch_id = ?
             """,
-            (batch_id, fwd),
-        ).fetchone()
-        if pre and pre["cnt"] > 0:
-            failures.append(f"Found {pre['cnt']} fills before forward_start_ts {fwd}")
+            (batch_id,),
+        ).fetchall()
+        pre_count = 0
+        for fr in fill_rows:
+            try:
+                before = parse_bar_utc(fr["signal_bar_ts"]) < fwd_dt
+            except (TypeError, ValueError):
+                before = True  # unparseable signal_bar_ts -> fail closed
+            if before:
+                pre_count += 1
+        if pre_count > 0:
+            failures.append(f"Found {pre_count} fills before forward_start_ts {fwd}")
 
     # 7. Fill fee arithmetic: fee = fill_price * qty * fee_bps / 10000
     fee_rate = fee_bps / 10_000.0

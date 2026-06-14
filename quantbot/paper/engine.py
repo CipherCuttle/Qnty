@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from quantbot.data.types import Bar
+from quantbot.paper.freshness import parse_bar_utc
 from quantbot.paper.snapshots import bar_commit_id
 
 _BAR_FMT = "%Y-%m-%dT%H:%M:%S"
@@ -173,9 +174,14 @@ def run_engine(
 
     result = EngineResult(state=state)
 
+    # Eligibility is a parsed-instant comparison, never a raw string compare: a naive
+    # observer timestamp ('...T00:00:00') sorts lexicographically BEFORE the trailing-Z
+    # config boundary ('...T00:00:00Z'), which would silently drop the bar exactly at
+    # forward_start_ts. Parse both into tz-aware UTC datetimes (fails closed on malformed).
+    forward_start_dt = parse_bar_utc(forward_start_ts)
     forward = sorted(
-        (o for o in per_bar_obs if o["timestamp"] >= forward_start_ts),
-        key=lambda o: o["timestamp"],
+        (o for o in per_bar_obs if parse_bar_utc(o["timestamp"]) >= forward_start_dt),
+        key=lambda o: parse_bar_utc(o["timestamp"]),
     )
 
     for obs in forward:

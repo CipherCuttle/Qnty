@@ -57,6 +57,7 @@ from quantbot.paper import (
     SCHEMA_VERSION,
 )
 from quantbot.paper import ledger
+from quantbot.paper.freshness import parse_bar_utc
 from quantbot.paper.db import (
     DB_SCHEMA_VERSION,
     config_hash_from_row,
@@ -455,8 +456,16 @@ def _validate_arithmetic(
     # is intentionally not floored here (it can precede the signal bar in out-of-
     # order/synthetic data) — this matches the Phase 2 writer reconcile check.
     fills = _rows(conn, "SELECT * FROM fills")
+    # Parse the boundary once; compare instants, not raw strings. A boundary fill stores a
+    # naive signal_bar_ts ('...T00:00:00') while forward_start_ts carries a trailing Z, so a
+    # lexicographic compare would wrongly flag a fill AT forward_start_ts as before it.
+    forward_start_dt = parse_bar_utc(forward_start)
     for f in fills:
-        if f["signal_bar_ts"] < forward_start:
+        try:
+            before_boundary = parse_bar_utc(f["signal_bar_ts"]) < forward_start_dt
+        except (TypeError, ValueError):
+            before_boundary = True  # unparseable signal_bar_ts -> fail closed
+        if before_boundary:
             failures.append(
                 f"Fill {f['fill_id']} signal_bar_ts {f['signal_bar_ts']} "
                 f"< forward_start_ts {forward_start}"
