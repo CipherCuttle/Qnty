@@ -38,6 +38,7 @@ Thumbs.db
 # Runtime / generated artifacts
 data/
 output/
+output/lab/  # Fast Truth Lab diagnostic artifacts (local-only; never committed)
 experiment_results/
 tmp_rfb_evidence_sprint.py
 
