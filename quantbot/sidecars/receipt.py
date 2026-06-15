@@ -150,6 +150,7 @@ def build_watchdog_receipt(
         "overall": overall,
         "now_utc": detail.get("now_utc"),
         "grace_minutes": detail.get("grace_minutes"),
+        "processing_lag_bars": detail.get("processing_lag_bars"),
         "latest_boundary": detail.get("latest_boundary"),
         "expected_min_watermark": detail.get("expected_min_watermark"),
         "observed_watermark": detail.get("observed_watermark"),

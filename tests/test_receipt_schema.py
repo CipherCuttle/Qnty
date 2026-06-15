@@ -170,8 +170,8 @@ REQUIRED_HEALTH_KEYS = {
 
 REQUIRED_WATCHDOG_KEYS = {
     "receipt_type", "schema_version", "generated_at_utc", "generator_commit", "status",
-    "overall", "now_utc", "grace_minutes", "latest_boundary", "expected_min_watermark",
-    "observed_watermark",
+    "overall", "now_utc", "grace_minutes", "processing_lag_bars", "latest_boundary",
+    "expected_min_watermark", "observed_watermark",
 }
 
 
@@ -223,6 +223,7 @@ def test_watchdog_receipt_has_required_keys() -> None:
     assert REQUIRED_WATCHDOG_KEYS <= set(receipt)
     assert receipt["receipt_type"] == "watchdog"
     assert receipt["status"] == "OK"
+    assert receipt["processing_lag_bars"] == 1
 
 
 # --------------------------------------------------------------------------------------------
@@ -294,9 +295,9 @@ def test_health_main_ok_end_to_end(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_watchdog_main_stale_exits_nonzero(tmp_path: Path) -> None:
-    # Watermark stuck a full cycle behind -> STALE -> exit 1.
+    # Watermark two cycles behind the latest boundary outside grace -> STALE -> exit 1.
     db_path = _make_ledger_fixture(
-        tmp_path / "paper" / "paper_ledger.db", watermark="2026-06-15T00:00:00"
+        tmp_path / "paper" / "paper_ledger.db", watermark="2026-06-14T16:00:00"
     )
     out_dir = tmp_path / "receipts" / "watchdog"
     rc = watchdog.main([
@@ -311,7 +312,7 @@ def test_watchdog_main_stale_exits_nonzero(tmp_path: Path) -> None:
 
 def test_watchdog_main_ok_exits_zero(tmp_path: Path) -> None:
     db_path = _make_ledger_fixture(
-        tmp_path / "paper" / "paper_ledger.db", watermark="2026-06-15T08:00:00"
+        tmp_path / "paper" / "paper_ledger.db", watermark="2026-06-15T00:00:00"
     )
     out_dir = tmp_path / "receipts" / "watchdog"
     rc = watchdog.main([
@@ -322,6 +323,7 @@ def test_watchdog_main_ok_exits_zero(tmp_path: Path) -> None:
     assert rc == 0
     receipt = _read_json(out_dir / "watchdog_receipt.json")
     assert receipt["status"] == "OK"
+    assert receipt["processing_lag_bars"] == 1
 
 
 def _read_json(path: Path) -> dict:

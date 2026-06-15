@@ -2,7 +2,8 @@
 """Watermark watchdog — read-only observability sidecar (PR #13).
 
 Reads the ledger watermark (read-only) and checks it against the expected minimum for the
-current 8h cycle (00:00 / 08:00 / 16:00 UTC) with a grace window. Emits a watchdog receipt.
+current 8h cycle (00:00 / 08:00 / 16:00 UTC), accounting for QNTY's intentional one-bar
+processing lag and a grace window. Emits a watchdog receipt.
 
 Status / exit codes:
   OK       — observed watermark >= expected minimum            -> exit 0
@@ -33,6 +34,7 @@ from quantbot.sidecars import watchdog_receipt_dir
 from quantbot.sidecars.ledger_ro import LedgerLocked, read_head_ro
 from quantbot.sidecars.time_bars import (
     DEFAULT_GRACE_MINUTES,
+    DEFAULT_PROCESSING_LAG_BARS,
     evaluate_watchdog,
     parse_ts,
 )
@@ -50,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Paper ledger DB path (default: get_paper_db_path()).")
     parser.add_argument("--grace-minutes", type=int, default=DEFAULT_GRACE_MINUTES,
                         help=f"Grace window after a boundary (default: {DEFAULT_GRACE_MINUTES}).")
+    parser.add_argument("--processing-lag-bars", type=int, default=DEFAULT_PROCESSING_LAG_BARS,
+                        help="Intentional closed-bar processing lag "
+                             f"(default: {DEFAULT_PROCESSING_LAG_BARS}).")
     parser.add_argument("--out-dir", default=None,
                         help="Receipt output dir (default: watchdog_receipt_dir()).")
     parser.add_argument("--now", default=None,
@@ -65,12 +70,15 @@ def main(argv: list[str] | None = None) -> int:
     detail: dict = {
         "now_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "grace_minutes": args.grace_minutes,
+        "processing_lag_bars": args.processing_lag_bars,
     }
 
     try:
         head = read_head_ro(db_path)
         observed = head["components"].get("watermark_bar_ts")
-        status, detail = evaluate_watchdog(observed, now, args.grace_minutes)
+        status, detail = evaluate_watchdog(
+            observed, now, args.grace_minutes, args.processing_lag_bars
+        )
         overall = status
     except LedgerLocked:
         status = "DEFERRED"
