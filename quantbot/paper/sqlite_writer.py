@@ -605,7 +605,7 @@ def _reconcile_batch_inside_tx(
     typed_row_counts: dict[str, int],
     open_positions_reconstructed: dict[str, dict],
     state_accumulators: dict[str, float],
-    peak_equity: float,
+    prior_peak_equity: float,
     initial_equity: float,
     fee_bps: float,
 ) -> list[str]:
@@ -816,8 +816,16 @@ def _reconcile_batch_inside_tx(
                 f"got {erow['equity']:.8f}"
             )
 
-    # 11. Drawdown arithmetic
-    peak = initial_equity
+    # 11. Drawdown arithmetic.
+    # The running peak is a CROSS-batch quantity: the engine seeds it from the prior committed
+    # ledger_state.peak_equity and carries it forward (engine.run_engine), so a continuation
+    # batch whose equity sits below an earlier batch's peak records a positive drawdown. Seeding
+    # the replay at initial_equity and walking ONLY this batch's equity rows would recompute
+    # drawdown == 0 and a too-low peak — a FALSE CORRUPT_LEDGER on every dip after a prior high
+    # (the VM batch-4 failure). Seed from the prior committed peak instead; for the first batch
+    # prior_peak_equity == initial_equity, so first-batch behavior is unchanged. (No tolerance is
+    # loosened — the comparison against the stored drawdown stays at 1e-8.)
+    peak = max(initial_equity, prior_peak_equity)
     eq_all = conn.execute(
         """
         SELECT eq.equity, eq.drawdown
@@ -1334,10 +1342,15 @@ def run_sqlite_accounting(
             for et, _ in event_chain:
                 typed_counts[et] = typed_counts.get(et, 0) + 1
 
+            # Pass the PRIOR committed peak (read from ledger_state before the engine ran), not
+            # final_peak: check 11 replays the running max over this batch's equity rows starting
+            # from that prior peak, exactly as the engine does, so a dip below an earlier batch's
+            # high reconciles instead of false-CORRUPTing. (For the first batch the prior peak is
+            # initial_equity.)
             recon_failures = _reconcile_batch_inside_tx(
                 conn, batch_id, event_count, event_chain,
                 typed_counts, final_open_positions,
-                final_acc, final_peak, initial_equity, fee_bps,
+                final_acc, peak_equity, initial_equity, fee_bps,
             )
 
             if recon_failures:

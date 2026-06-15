@@ -1486,3 +1486,120 @@ class TestAscendingLifecycle:
             rows = list(csv.DictReader(fh))
         stamps = [r["timestamp"] for r in rows]
         assert stamps == sorted(stamps), "CSV timestamps must be ascending (oldest first)"
+
+
+# ---------------------------------------------------------------------------
+# Cross-batch peak/drawdown reconciliation (paper batch-4 CORRUPT_LEDGER repro)
+# ---------------------------------------------------------------------------
+#
+# Regression for the VM batch-4 failure: an OPEN position carried across runs sets a
+# running-max equity PEAK above initial_equity in batch 1, then dips (but stays above
+# initial_equity) in batch 2. The engine seeds its running peak from the prior committed
+# ledger_state.peak_equity (engine.py), so batch 2's stored drawdown is (prior_peak-equity)/
+# prior_peak > 0. The writer's in-transaction reconcile, however, used to re-seed the running
+# peak at initial_equity and replay ONLY the current batch's equity rows — so it recomputed
+# drawdown == 0 and a peak below the persisted one, producing a FALSE CORRUPT_LEDGER:
+#   "Drawdown mismatch: expected 0.00000000, got 0.00144101;
+#    ledger_state.peak_equity mismatch after batch".
+# The fix seeds the reconcile's running peak from the prior committed peak (which equals
+# initial_equity for the first batch), so the per-batch gate matches the engine and the
+# read-only verifier without loosening any tolerance.
+
+# (open, close) per bar. forward_start = TS[4]; the symbol is active on every observed bar so
+# it ENTERS once (T+1 open of TS[4] = TS[3] open) and never exits — it is carried open across
+# the two runs. Rising marks through batch 1 lift the peak above initial_equity; batch 2's mark
+# dips back toward (but above) the entry, so its equity sits below the peak yet above initial.
+_DD_PRICES = {
+    TS[5]: (100.0, 100.0),  # pre-forward_start (ineligible)
+    TS[4]: (100.0, 100.0),  # entry SIGNAL bar (book empty at its pre-fill snapshot)
+    TS[3]: (100.0, 120.0),  # entry fills at open=100; mark 120
+    TS[2]: (125.0, 130.0),  # held; mark 130 -> running-max PEAK (batch 1)
+    TS[1]: (110.0, 105.0),  # held; mark 105 dips below peak but stays above entry (batch 2)
+    TS[0]: (100.0, 100.0),  # unused
+}
+
+
+def _make_dd_bars():
+    return [
+        Bar(
+            timestamp=ts,
+            open=o,
+            high=max(o, c),
+            low=min(o, c),
+            close=c,
+            volume=1.0,
+        )
+        for ts, (o, c) in _DD_PRICES.items()
+    ]
+
+
+class TestCrossBatchPeakDrawdownReconcile:
+    """A carried-open position's peak/drawdown must reconcile across batches.
+
+    Batch 1 lifts the equity peak above initial_equity; batch 2 dips below that peak (but
+    above initial_equity). The writer must NOT fail closed with a false drawdown / peak_equity
+    mismatch — the running peak is a CROSS-batch quantity seeded from prior committed state.
+    """
+
+    def _run(self, tmp_path, db_path, per_bar_obs):
+        obs_dir = _write_observation_log(tmp_path, per_bar_obs)
+        cfg = _make_cfg()
+        cfg["forward_start_ts"] = TS[4]
+        cfg["config_hash"] = config_hash(cfg)
+        with patch(
+            "quantbot.paper.sqlite_writer.load_all_ohlcv",
+            return_value={SYMBOL: _make_dd_bars()},
+        ), patch(
+            "quantbot.paper.sqlite_writer.load_all_funding",
+            return_value=_make_funding_df(),
+        ), patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
+            return run_sqlite_accounting(db_path=db_path, forward_obs_dir=obs_dir)
+
+    def test_batch2_dip_below_prior_peak_does_not_false_corrupt(self, tmp_path: Path):
+        from quantbot.paper.sqlite_verify import verify_database
+
+        db_path = _init_test_db(tmp_path, forward_start_ts=TS[4])
+
+        # Batch 1: enter at TS[4] (fills TS[3] open) and hold through TS[3], TS[2] (the peak).
+        obs1 = [_make_obs(ts, [SYMBOL], i) for i, ts in enumerate([TS[4], TS[3], TS[2]])]
+        status1, msg1 = self._run(tmp_path, db_path, obs1)
+        assert status1 == STATUS_OK, f"batch 1 should commit: {status1}: {msg1}"
+
+        conn = connect_readonly(db_path)
+        prior_peak = conn.execute("SELECT peak_equity FROM ledger_state").fetchone()[0]
+        conn.close()
+        # Batch 1 drove the peak strictly above the starting equity (open position, rising mark).
+        assert prior_peak > 10000.0, f"batch 1 must lift the peak above initial: {prior_peak}"
+
+        # Batch 2: append the dip bar TS[1] (symbol still active -> position stays open).
+        obs2 = obs1 + [_make_obs(TS[1], [SYMBOL], 3)]
+        status2, msg2 = self._run(tmp_path, db_path, obs2)
+        assert status2 == STATUS_OK, (
+            f"batch 2 dip below the prior peak must NOT false-CORRUPT: {status2}: {msg2}"
+        )
+
+        conn = connect_readonly(db_path)
+        try:
+            batches = conn.execute("SELECT COUNT(*) FROM ledger_batches").fetchone()[0]
+            # The newest equity row is batch 2's dip bar.
+            equity, drawdown = conn.execute(
+                "SELECT equity, drawdown FROM equity_snapshots ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+            persisted_peak = conn.execute(
+                "SELECT peak_equity FROM ledger_state"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert batches == 2, f"expected two committed batches, got {batches}"
+        # The dip sits below the peak but above initial_equity -> a genuine positive drawdown.
+        assert 10000.0 < equity < persisted_peak, (
+            f"batch 2 equity {equity} should be in (initial, peak={persisted_peak})"
+        )
+        assert drawdown > 0.0, f"batch 2 should record a positive drawdown, got {drawdown}"
+        # peak_equity is carried across batches, not re-derived per batch.
+        assert abs(persisted_peak - prior_peak) < 1e-8, (
+            f"peak_equity must persist across the dip: {persisted_peak} != {prior_peak}"
+        )
+        # The read-only authoritative verifier (which walks ALL equity rows) must also agree.
+        assert verify_database(db_path).status == "OK"
