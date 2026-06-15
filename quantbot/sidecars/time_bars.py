@@ -1,9 +1,8 @@
 """Pure 8h-boundary math for the watermark watchdog (no I/O).
 
-The paper lane commits on an 8-hour grid at 00:00 / 08:00 / 16:00 UTC. A run for a given
-boundary does not commit instantly — it lands a little after the boundary. The watchdog
-therefore allows a grace window after each boundary before it expects that boundary's bar
-to be committed.
+The paper lane runs on an 8-hour grid at 00:00 / 08:00 / 16:00 UTC and intentionally
+processes one closed bar behind the latest boundary. A run also does not commit instantly,
+so the watchdog allows one further bar of tolerance during the grace window.
 
 All functions require timezone-aware datetimes and operate in UTC.
 """
@@ -16,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 BOUNDARY_HOURS = (0, 8, 16)
 BAR_INTERVAL = timedelta(hours=8)
 DEFAULT_GRACE_MINUTES = 60
+DEFAULT_PROCESSING_LAG_BARS = 1
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -51,24 +51,28 @@ def previous_boundary(now: datetime) -> datetime:
     return latest_boundary(now) - BAR_INTERVAL
 
 
-def expected_min_watermark(now: datetime, grace_minutes: int = DEFAULT_GRACE_MINUTES) -> datetime:
+def expected_min_watermark(
+    now: datetime,
+    grace_minutes: int = DEFAULT_GRACE_MINUTES,
+    processing_lag_bars: int = DEFAULT_PROCESSING_LAG_BARS,
+) -> datetime:
     """Minimum watermark a healthy ledger must have committed by *now*.
 
-    Within the grace window after a new boundary the run for that boundary may not have
-    committed yet, so we only require the *previous* boundary's bar. Once the grace window
-    has elapsed (``now - latest >= grace``) we require the latest boundary's bar.
+    QNTY intentionally processes ``processing_lag_bars`` closed bars behind the latest
+    boundary. Within grace, allow one further bar because the current cycle may not have
+    committed yet.
     """
     latest = latest_boundary(now)
     grace = timedelta(minutes=grace_minutes)
-    if _as_utc(now) - latest < grace:
-        return latest - BAR_INTERVAL
-    return latest
+    grace_lag_bars = 1 if _as_utc(now) - latest < grace else 0
+    return latest - BAR_INTERVAL * (processing_lag_bars + grace_lag_bars)
 
 
 def evaluate_watchdog(
     observed_watermark: str | datetime | None,
     now: datetime,
     grace_minutes: int = DEFAULT_GRACE_MINUTES,
+    processing_lag_bars: int = DEFAULT_PROCESSING_LAG_BARS,
 ) -> tuple[str, dict[str, object]]:
     """Compare the observed watermark against the expected minimum.
 
@@ -76,12 +80,13 @@ def evaluate_watchdog(
     (ISO-8601 UTC strings) for the receipt. A missing watermark is treated as STALE.
     """
     now_utc = _as_utc(now)
-    expected = expected_min_watermark(now_utc, grace_minutes)
+    expected = expected_min_watermark(now_utc, grace_minutes, processing_lag_bars)
     latest = latest_boundary(now_utc)
 
     detail: dict[str, object] = {
         "now_utc": _iso(now_utc),
         "grace_minutes": grace_minutes,
+        "processing_lag_bars": processing_lag_bars,
         "latest_boundary": _iso(latest),
         "expected_min_watermark": _iso(expected),
         "observed_watermark": None,
