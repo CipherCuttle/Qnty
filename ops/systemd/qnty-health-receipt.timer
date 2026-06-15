@@ -1,0 +1,16 @@
+[Unit]
+Description=Qnty Health Receipt Timer - 11 min after each paper run (00:31/08:31/16:31 UTC)
+# Decoupled from qnty-paper-pnl: the health receipt is a read-only downstream attestation that
+# tolerates a stale or absent paper run (it records whatever it observes).
+
+[Timer]
+# Paper runs at :20 past 00/08/16; the verifier publishes shortly after. Read the settled
+# report/ledger off-cadence at :31 so we never contend with the live run.
+OnCalendar=*-*-* 00:31:00
+OnCalendar=*-*-* 08:31:00
+OnCalendar=*-*-* 16:31:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
