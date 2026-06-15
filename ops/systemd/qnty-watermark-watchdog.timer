@@ -1,0 +1,14 @@
+[Unit]
+Description=Qnty Watermark Watchdog Timer - Hourly read-only staleness check
+# Decoupled from qnty-paper-pnl: the watchdog only reads the ledger watermark and applies the
+# 8h-boundary grace logic in scripts/watermark_watchdog.py, so hourly polling is sufficient.
+
+[Timer]
+# Hourly at the top of the hour; the grace window (default 60m) tolerates the post-boundary
+# commit lag, so an hourly cadence never produces a false STALE right after a boundary.
+OnCalendar=*-*-* *:00:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,28 @@
+[Unit]
+Description=Qnty Health Receipt - Read-only paper health attestation (OBSERVABILITY ONLY)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+# NOTE: the production VM currently runs qnty services as `viktor`, NOT `qnty`. This
+# template's User=/Group= MUST be reconciled at deploy time (match the existing paper/shadow
+# runtime user, or ship a drop-in override). This sidecar is read-only and is NOT enabled by
+# this PR — it is a template for a later, controlled deploy step.
+User=qnty
+Group=qnty
+WorkingDirectory=/srv/qnty/repo
+# Low priority: observability must never contend with the accounting/observer runs.
+Nice=10
+IOSchedulingClass=idle
+Environment="PATH=/srv/qnty/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=/srv/qnty/venv"
+Environment="QNTY_PAPER_DB_PATH=/srv/qnty/output/paper_pnl_v1/paper_ledger.db"
+Environment="QNTY_PAPER_OUTPUT_DIR=/srv/qnty/output/paper_pnl_v1"
+Environment="QNTY_RECEIPTS_DIR=/srv/qnty/receipts"
+# expected-commit is intentionally NOT pinned here (optional; left unset -> null/not checked).
+ExecStart=/srv/qnty/repo/ops/bin/qnty-health-receipt.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qnty-health-receipt
+TimeoutSec=120
