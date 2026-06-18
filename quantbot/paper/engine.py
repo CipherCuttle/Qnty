@@ -22,6 +22,28 @@ from quantbot.paper.snapshots import bar_commit_id
 
 _BAR_FMT = "%Y-%m-%dT%H:%M:%S"
 
+# ------------------------------------------------------------------- canonical money
+
+
+def _round8(x: float) -> float:
+    """Round a money value to the persisted 8-dp precision."""
+    return round(float(x), 8)
+
+
+def canonical_net_pnl(gross: float, fees: float, funding: float) -> float:
+    """Derive net_pnl from the SAME rounded components that are persisted.
+
+    The ledger stores gross_pnl/fees/funding each rounded to 8 dp. The in-tx
+    verifier re-derives net from those stored (rounded) columns and rejects at
+    ABS(net - (gross - fees - funding)) > 1e-8. Computing net from the unrounded
+    inputs and rounding separately can drift past that gate by ~1e-8. Deriving
+    net from the rounded components makes the persisted row self-consistent by
+    construction (residual <= 0.5e-8 < 1e-8). net_pnl is a redundant audit column
+    -- equity uses the raw accumulators -- so this cannot move any cumulative.
+    """
+    return _round8(_round8(gross) - _round8(fees) - _round8(funding))
+
+
 # ----------------------------------------------------------------------------- ids
 
 
@@ -362,7 +384,12 @@ def run_engine(
             acc["realized_gross"] += gross
             fees = pos["entry_fee"] + fee
             funding = pos["funding_accrued"]
-            net = gross - fees - funding
+            # Persist net derived from the same rounded components we store, so the
+            # row is self-consistent with the in-tx verifier (see canonical_net_pnl).
+            gross_r = _round8(gross)
+            fees_r = _round8(fees)
+            funding_r = _round8(funding)
+            net_r = canonical_net_pnl(gross, fees, funding)
             result.trades.append(
                 {
                     "trade_id": fid,
@@ -375,10 +402,10 @@ def run_engine(
                     "qty": round(qty, 10),
                     "entry_price": round(pos["entry_price"], 8),
                     "exit_price": round(fill_price, 8),
-                    "gross_pnl": round(gross, 8),
-                    "fees": round(fees, 8),
-                    "funding": round(funding, 8),
-                    "net_pnl": round(net, 8),
+                    "gross_pnl": gross_r,
+                    "fees": fees_r,
+                    "funding": funding_r,
+                    "net_pnl": net_r,
                     "hold_bars": pos["hold_bars"],
                     "backfill": False,
                 }
