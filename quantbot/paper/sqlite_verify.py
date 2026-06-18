@@ -26,6 +26,22 @@ It is a parallel implementation to the JSONL verifier in ``verify.py``; it does
 NOT reuse the JSONL snapshot / trusted-baseline authority logic. The committed DB
 is the record; this verifier reports on it.
 
+Funding coverage (after this PR):
+  After the existing arithmetic verdict is decided, the verifier stamps
+  ``funding_coverage`` / ``funding_coverage_verdict`` /
+  ``funding_coverage_diagnostic_label`` onto the report dict via the shared
+  ``check_funding_coverage_from_rows`` helper. The stamp is **additive**: it
+  does NOT change ``status``, does NOT touch the connection mode (``ro`` /
+  ``query_only=1``), and does NOT add any write to the DB. When the existing
+  arithmetic verdict is not ``STATUS_OK`` the stamp collapses to ``FAIL`` /
+  empty label; otherwise it follows the COMPLETE / NOT_REQUIRED vs PARTIAL /
+  MISSING decision per the gate plan §4.
+
+NOT covered (follow-on):
+  - runner pre-batch abort in ``quantbot.paper.runner`` — out of scope here.
+    The verifier stamps the coverage verdict; it does NOT pre-abort the runner.
+    Listed as a separate follow-on per the gate plan §3.3 and §7.
+
 Statuses / exit codes:
   OK            0   DB verified consistent
   CONFIG_ERROR  3   DB/config identity invalid
@@ -63,6 +79,17 @@ from quantbot.paper.db import (
     config_hash_from_row,
     connect_readonly,
     get_paper_db_path,
+)
+from quantbot.paper.funding_coverage import (
+    check_funding_coverage_from_rows,
+)
+from quantbot.paper.funding_status import (
+    CAVEATED_ENGINE_SEMANTICS,
+    CAVEATED_ENGINE_SEMANTICS_LABEL,
+    CLEAN_NET_OF_CARRY,
+    COVERAGE_COMPLETE,
+    COVERAGE_NOT_REQUIRED,
+    FAIL,
 )
 
 # ---------------------------------------------------------------------------
@@ -1144,6 +1171,80 @@ def _validate_initial_state(conn: sqlite3.Connection, cfg: dict) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Funding-coverage stamp (additive; does NOT change status)
+# ---------------------------------------------------------------------------
+
+def _resolve_funding_csv_dir(db_path: Path) -> Path:
+    """Resolve the source funding-CSV directory for the coverage stamp.
+
+    Mirrors ``quantbot.paper.verify``: prefer ``<db_dir>/data`` when present,
+    otherwise fall back to the repo-level ``data`` directory. Read-only
+    inspection only — no DB or filesystem mutation.
+    """
+    db_dir = db_path.parent
+    local_data = db_dir / "data"
+    if local_data.is_dir():
+        return local_data
+    return Path("data")
+
+
+def _build_funding_coverage_stamp(
+    conn: sqlite3.Connection, db_path: Path, *, arithmetic_ok: bool
+) -> dict[str, Any]:
+    """Compute the funding-coverage stamp using rows from the live ``funding`` table.
+
+    Returns a dict with ``funding_coverage``, ``funding_coverage_verdict``,
+    and ``funding_coverage_diagnostic_label`` keys, ready to be merged into
+    the existing ``report`` dict. The arithmetic verdict decides the
+    classification:
+
+      - if the existing arithmetic verdict is NOT OK, the stamp collapses to
+        ``FAIL`` / empty label (the gate plan §4 explicitly allows this).
+      - otherwise the coverage decision drives ``CLEAN_NET_OF_CARRY`` vs
+        ``CAVEATED_ENGINE_SEMANTICS``.
+
+    Read-only: the function only reads from the pinned read-only connection.
+    """
+    funding_csv_dir = _resolve_funding_csv_dir(db_path)
+    coverage_report = check_funding_coverage_from_rows(
+        _rows(conn, "SELECT * FROM funding"),
+        funding_csv_dir,
+    )
+
+    if not arithmetic_ok:
+        funding_coverage_verdict = FAIL
+        funding_coverage_diagnostic_label = ""
+    elif coverage_report.overall_decision in (COVERAGE_COMPLETE, COVERAGE_NOT_REQUIRED):
+        funding_coverage_verdict = CLEAN_NET_OF_CARRY
+        funding_coverage_diagnostic_label = ""
+    else:
+        funding_coverage_verdict = CAVEATED_ENGINE_SEMANTICS
+        funding_coverage_diagnostic_label = CAVEATED_ENGINE_SEMANTICS_LABEL
+
+    return {
+        "funding_coverage": {
+            "decision": coverage_report.overall_decision,
+            "per_symbol": dict(coverage_report.per_symbol),
+            "total_funding_rows": coverage_report.total_funding_rows,
+            "total_rate_available_zero": coverage_report.total_rate_available_zero,
+            "total_required_intervals": coverage_report.total_required_intervals,
+            "missing_window_ids": [
+                {
+                    "funding_id": row.funding_id,
+                    "symbol": row.symbol,
+                    "bar_ts": row.bar_ts,
+                    "window_start": row.window_start,
+                    "window_end": row.window_end,
+                }
+                for row in coverage_report.missing_windows
+            ],
+        },
+        "funding_coverage_verdict": funding_coverage_verdict,
+        "funding_coverage_diagnostic_label": funding_coverage_diagnostic_label,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1215,6 +1316,18 @@ def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
             [f"Verification query failed: {type(exc).__name__}: {exc}"],
             report,
         )
+
+    # === FUNDING-COVERAGE GATE (additive stamp; does NOT change status) =========
+    # Per docs/plans/FUNDING_COVERAGE_FAIL_CLOSED_GATE_PLAN.md §3-4. Mirrors the
+    # legacy JSONL verifier's block at verify.py:601-634: runs ONLY when the
+    # existing arithmetic verdict is OK; otherwise collapses to FAIL / empty
+    # label. The status field, the trusted-baseline advancement rule (none in
+    # the SQLite verifier; see ADR 0001), the connection mode (mode=ro,
+    # query_only=1), the existing arithmetic check (lines 505-520), and the
+    # content_digests keys are NOT touched. The stamp is read-only; no DB
+    # mutation occurs.
+    stamp = _build_funding_coverage_stamp(conn, db_path, arithmetic_ok=not failures)
+    report.update(stamp)
 
     report["forward_start_ts"] = cfg["forward_start_ts"]
     report["failure_count"] = len(failures)
@@ -1378,6 +1491,35 @@ def _render_receipt(report: dict[str, Any]) -> str:
         lines.append(f"## Failures ({report['failure_count']})")
         for f in report["failures"]:
             lines.append(f"- {f}")
+        lines.append("")
+    # --- Funding coverage (additive stamp; does NOT change status) ---
+    fc = report.get("funding_coverage")
+    if fc is not None:
+        fc_verdict = report.get("funding_coverage_verdict", "")
+        fc_label = report.get("funding_coverage_diagnostic_label", "")
+        lines.append("## Funding coverage")
+        lines.append("")
+        lines.append(f"- Verdict: {fc_verdict}")
+        lines.append(
+            f"- Diagnostic label: {fc_label if fc_label else '(empty)'}"
+        )
+        lines.append(f"- Decision: {fc.get('decision', 'n/a')}")
+        lines.append(f"- Total funding rows: {fc.get('total_funding_rows', 0)}")
+        lines.append(f"- Required intervals: {fc.get('total_required_intervals', 0)}")
+        lines.append(
+            f"- rate_available=0 rows: {fc.get('total_rate_available_zero', 0)}"
+        )
+        per_sym = fc.get("per_symbol") or {}
+        if per_sym:
+            lines.append(f"- Per-symbol coverage: {per_sym}")
+        miss = fc.get("missing_window_ids") or []
+        if miss:
+            lines.append(f"- Missing windows ({len(miss)}):")
+            for mw in miss:
+                lines.append(
+                    f"  - {mw.get('symbol', '?')} @ bar_ts={mw.get('bar_ts', '?')} "
+                    f"window=[{mw.get('window_start', '?')}, {mw.get('window_end', '?')}]"
+                )
         lines.append("")
     return "\n".join(lines)
 

@@ -58,6 +58,15 @@ from quantbot.paper import ledger
 from quantbot.paper.config import ConfigContractError, load_config
 from quantbot.paper.ledger import LedgerCorruptionError
 from quantbot.paper.provenance import DISCLAIMER
+from quantbot.paper.funding_coverage import check_funding_coverage
+from quantbot.paper.funding_status import (
+    CAVEATED_ENGINE_SEMANTICS,
+    CAVEATED_ENGINE_SEMANTICS_LABEL,
+    CLEAN_NET_OF_CARRY,
+    COVERAGE_COMPLETE,
+    COVERAGE_NOT_REQUIRED,
+    FAIL,
+)
 from quantbot.paper.reconcile import (
     LEDGER_JSONL_FILES,
     read_ledger_validated,
@@ -589,6 +598,49 @@ def verify(
     else:
         status = STATUS_OK
 
+    # === FUNDING-COVERAGE GATE (additive stamp; does NOT change status) =================
+    # Per docs/plans/FUNDING_COVERAGE_FAIL_CLOSED_GATE_PLAN.md §3-4. The block runs ONLY when
+    # the existing arithmetic verdict is STATUS_OK; otherwise funding_coverage_verdict = FAIL
+    # and the diagnostic label is empty. The status field, the trusted-baseline advancement
+    # rule, and the output_digests / append_only_digests keys are NOT touched.
+    #
+    # Coverage scope (after this PR):
+    #   - legacy JSONL verifier path is covered (this block).
+    #   - SQLite verifier path is covered by the follow-on PR that mirrors this block in
+    #     ``quantbot.paper.sqlite_verify._verify_connection`` (read-only, additive).
+    # NOT covered (follow-on):
+    #   - runner pre-batch abort is still NOT implemented. The verifier stamps the
+    #     diagnostic label; it does NOT pre-abort the runner.
+    funding_csv_dir = (out / "data") if (out / "data").is_dir() else Path("data")
+    coverage_report = check_funding_coverage(inputs / "paper_funding.jsonl", funding_csv_dir)
+    if status != STATUS_OK:
+        funding_coverage_verdict = FAIL
+        funding_coverage_diagnostic_label = ""
+    elif coverage_report.overall_decision in (COVERAGE_COMPLETE, COVERAGE_NOT_REQUIRED):
+        funding_coverage_verdict = CLEAN_NET_OF_CARRY
+        funding_coverage_diagnostic_label = ""
+    else:
+        funding_coverage_verdict = CAVEATED_ENGINE_SEMANTICS
+        funding_coverage_diagnostic_label = CAVEATED_ENGINE_SEMANTICS_LABEL
+
+    funding_coverage_dict: dict[str, Any] = {
+        "decision": coverage_report.overall_decision,
+        "per_symbol": dict(coverage_report.per_symbol),
+        "total_funding_rows": coverage_report.total_funding_rows,
+        "total_rate_available_zero": coverage_report.total_rate_available_zero,
+        "total_required_intervals": coverage_report.total_required_intervals,
+        "missing_window_ids": [
+            {
+                "funding_id": row.funding_id,
+                "symbol": row.symbol,
+                "bar_ts": row.bar_ts,
+                "window_start": row.window_start,
+                "window_end": row.window_end,
+            }
+            for row in coverage_report.missing_windows
+        ],
+    }
+
     # Per-ledger raw-byte pins for the trusted baseline (only persisted on OK below).
     append_only_digests = {
         name: {
@@ -624,6 +676,13 @@ def verify(
         "append_only_digests": append_only_digests,
         "current_verdict": _verdict_line(status, len(all_failures)),
         "disclaimer": DISCLAIMER,
+        # --- Funding-coverage gate (additive stamp; see FUNDING_COVERAGE_FAIL_CLOSED_GATE_PLAN.md §3-4) ---
+        # `funding_coverage_verdict` is the batch-level classification consumed by downstream
+        # comparators; it is CLEAN_NET_OF_CARRY only when arithmetic is OK AND source funding
+        # is fully covered (or no funding is required). Otherwise it is CAVEATED_* or FAIL.
+        "funding_coverage": funding_coverage_dict,
+        "funding_coverage_diagnostic_label": funding_coverage_diagnostic_label,
+        "funding_coverage_verdict": funding_coverage_verdict,
     }
 
     # === PUBLISH ==========================================================================
@@ -712,4 +771,39 @@ def _render_receipt(report: dict[str, Any]) -> str:
         for f in report["failures"]:
             lines.append(f"- {f}")
         lines.append("")
+
+    # --- Funding coverage (additive stamp; see FUNDING_COVERAGE_FAIL_CLOSED_GATE_PLAN.md §3-4) ---
+    # The first-line `## {icon} {status}` block above is the existing arithmetic verdict and
+    # is unchanged. This section adds the gate verdict on top so downstream consumers can
+    # tell at a glance whether a run is clean net-of-carry or only engine-semantically
+    # consistent.
+    fc = report.get("funding_coverage", {}) or {}
+    fc_verdict = report.get("funding_coverage_verdict", "n/a")
+    fc_label = report.get("funding_coverage_diagnostic_label", "")
+    lines.append(f"## Funding coverage: {fc_verdict}")
+    if fc_label:
+        lines.append(f"- Diagnostic label: `{fc_label}`")
+    lines.append(f"- Decision: {fc.get('decision', 'n/a')}")
+    lines.append(f"- Total funding rows: {fc.get('total_funding_rows', 0)}")
+    lines.append(
+        f"- Rate-available-zero rows: {fc.get('total_rate_available_zero', 0)}"
+    )
+    lines.append(
+        f"- Required funding intervals: {fc.get('total_required_intervals', 0)}"
+    )
+    per_sym = fc.get("per_symbol", {}) or {}
+    if per_sym:
+        lines.append("- Per-symbol coverage:")
+        for sym, dec in sorted(per_sym.items()):
+            lines.append(f"  - {sym}: {dec}")
+    missing_ids = fc.get("missing_window_ids", []) or []
+    if missing_ids:
+        lines.append(f"- Missing-window count: {len(missing_ids)}")
+        lines.append("- Missing-window ids (first 20):")
+        for m in missing_ids[:20]:
+            lines.append(
+                f"  - {m.get('symbol', '?')}|{m.get('bar_ts', '?')} "
+                f"(funding_id={m.get('funding_id', '?')})"
+            )
+    lines.append("")
     return "\n".join(lines)
