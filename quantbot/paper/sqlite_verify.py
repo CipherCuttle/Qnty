@@ -37,11 +37,6 @@ Funding coverage (after this PR):
   empty label; otherwise it follows the COMPLETE / NOT_REQUIRED vs PARTIAL /
   MISSING decision per the gate plan §4.
 
-NOT covered (follow-on):
-  - runner pre-batch abort in ``quantbot.paper.runner`` — out of scope here.
-    The verifier stamps the coverage verdict; it does NOT pre-abort the runner.
-    Listed as a separate follow-on per the gate plan §3.3 and §7.
-
 Statuses / exit codes:
   OK            0   DB verified consistent
   CONFIG_ERROR  3   DB/config identity invalid

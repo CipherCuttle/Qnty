@@ -194,6 +194,10 @@ def test_legit_append_after_ok_is_accepted(tmp_path):
     """A genuine runner append (prefix preserved, reconcile/state pass) advances trust to OK."""
     out = tmp_path / "paper"
     fwd = tmp_path / "fwd"
+    # Stage AAA funding CSV so the runner's pre-batch funding-coverage gate (§3.3) sees AAA
+    # as COMPLETE (the production symbol set in the workspace ``data/`` has no AAA CSV).
+    from tests.test_paper_pnl import _stage_aaa_csv  # noqa: WPS433
+    _stage_aaa_csv(tmp_path / "data")
     write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
     # Run 1: enter at T1 (fill T2), exit signal at T2 but withhold the T3 open -> T2 deferred,
     # so only T0,T1 commit.
@@ -201,6 +205,7 @@ def test_legit_append_after_ok_is_accepted(tmp_path):
     run_once(
         output_dir=out, forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(AAA_PRICES[:3])}, funding_df=_funding_df(),
+        data_dir=tmp_path / "data",
         now=datetime(2026, 6, 5, 16, 5, 0, tzinfo=timezone.utc),
     )
     r1 = verify(out, bootstrap=True)
@@ -212,6 +217,7 @@ def test_legit_append_after_ok_is_accepted(tmp_path):
     run_once(
         output_dir=out, forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(AAA_PRICES[:4])}, funding_df=_funding_df(),
+        data_dir=tmp_path / "data",
         now=datetime(2026, 6, 6, 0, 5, 0, tzinfo=timezone.utc),
     )
     # The append preserved the verified prefix.

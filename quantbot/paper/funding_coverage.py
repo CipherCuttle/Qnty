@@ -14,11 +14,6 @@ Covered paths (after this PR):
     ``check_funding_coverage_from_rows``.
 Both paths share the same classification logic (private ``_classify_rows`` helper).
 
-NOT covered (follow-on):
-  - runner pre-batch abort in ``quantbot.paper.runner`` — out of scope here, listed
-    as a separate follow-on per the gate plan §3.3 and §7. The verifier stamps the
-    diagnostic label; it does NOT pre-abort the runner.
-
 Public surface (per architect §3.2):
 
     @dataclass(frozen=True) CoverageRow(...)
@@ -43,9 +38,9 @@ import csv
 import json
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from quantbot.paper.funding_status import (
     COVERAGE_COMPLETE,
@@ -363,3 +358,192 @@ def check_funding_coverage_from_rows(
         and the overall decision.
     """
     return _classify_rows(rows, funding_csv_dir, symbols=symbols)
+
+
+def _csv_has_row_in_interval(
+    funding_csv_dir: Path,
+    symbol: str,
+    ws: datetime,
+    we: datetime,
+    bar_interval_hours: int,
+) -> bool:
+    """Return True iff ``<SYM>_<N>h_funding.csv`` has a row in (ws, we].
+
+    Mirrors the open-closed interval contract used by ``engine.funding_in_interval``
+    (left-open, right-closed). A missing/header-only/unreadable CSV is treated as
+    ``False`` (fail-closed). Pure read; never mutates the CSV or anything else on disk.
+    """
+    csv_path = funding_csv_dir / f"{symbol}_{bar_interval_hours}h_funding.csv"
+    if not csv_path.is_file():
+        return False
+    try:
+        with csv_path.open("r", newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            if reader.fieldnames is None or "fundingTime" not in reader.fieldnames:
+                return False
+            for row in reader:
+                ts = _parse_funding_time_ms(row.get("fundingTime", ""))
+                if ts is None:
+                    continue
+                if ws < ts <= we:
+                    return True
+            return False
+    except OSError:
+        return False
+
+
+def check_funding_coverage_for_batch(
+    forward_obs: Iterable[Mapping[str, Any]],
+    bars_by_symbol: Mapping[str, Any],
+    funding_csv_dir: Path,
+    *,
+    symbols: Iterable[str] | None = None,
+    bar_interval_hours: int = 8,
+) -> FundingCoverageReport:
+    """Pre-batch funding-coverage check used by the runner's fail-closed gate (§3.3).
+
+    For every in-scope symbol (intersection of ``bars_by_symbol.keys()`` with the
+    optional ``symbols=`` allow-list) and every required funding interval derived
+    from a ``forward_obs`` bar timestamp, this synthesises one row dict of the
+    shape consumed by ``_classify_rows`` (the shared private classifier) and
+    delegates. The runner-side classification therefore cannot diverge from the
+    legacy JSONL verifier and the SQLite verifier — both of which also delegate
+    to ``_classify_rows``.
+
+    Required interval windows (re-implements ``engine._interval_start`` math
+    locally; the private leading-underscore symbol is not imported):
+      window = (bar_ts - N hours, bar_ts]  with N = ``bar_interval_hours``.
+
+    Parameters
+    ----------
+    forward_obs
+        Iterable of per-bar observation mappings produced by the observer. Each
+        entry must carry a parseable UTC-aware bar timestamp under the key
+        ``bar_ts`` (preferred) or ``timestamp`` (the runner's actual on-disk
+        shape — accepted as a fallback for wiring convenience).
+    bars_by_symbol
+        Per-symbol bar book that the runner is about to feed to ``run_engine``.
+        Its keys define the default in-scope symbol set.
+    funding_csv_dir
+        Directory containing ``<SYM>_<N>h_funding.csv`` files. Read-only.
+    symbols
+        Optional explicit allow-list of symbols. When ``None``, every symbol in
+        ``bars_by_symbol.keys()`` is in scope.
+    bar_interval_hours
+        Funding window length in hours. Must be a positive int divisor of 24
+        (paper_pnl_v1 pins it to 8 via the config contract).
+
+    Returns
+    -------
+    FundingCoverageReport
+        Frozen dataclass with per-symbol coverage, missing windows, totals, and
+        overall decision. Empty scope or empty ``forward_obs`` yields
+        ``overall_decision == COVERAGE_NOT_REQUIRED`` — the gate is then a
+        pass-through.
+
+    Raises
+    ------
+    ValueError
+        If ``bar_interval_hours`` is not a positive int divisor of 24, or if any
+        ``forward_obs`` entry carries an unparseable / naive bar timestamp
+        (fail-closed: a malformed bar timestamp must not silently pass the gate).
+    """
+    # --- bar_interval_hours contract (positive int divisor of 24) ---
+    if (
+        not isinstance(bar_interval_hours, int)
+        or isinstance(bar_interval_hours, bool)
+        or bar_interval_hours <= 0
+        or 24 % bar_interval_hours != 0
+    ):
+        raise ValueError(
+            f"bar_interval_hours must be a positive int divisor of 24 "
+            f"(got {bar_interval_hours!r})"
+        )
+
+    # --- in-scope symbols ---
+    bars_keys = set(bars_by_symbol.keys())
+    if symbols is not None:
+        scope = bars_keys & set(symbols)
+    else:
+        scope = set(bars_keys)
+
+    if not scope:
+        # Empty scope -> NOT_REQUIRED overall (mirror the verifier semantics).
+        return FundingCoverageReport(
+            per_symbol={},
+            missing_windows=[],
+            total_funding_rows=0,
+            total_rate_available_zero=0,
+            total_required_intervals=0,
+            overall_decision=COVERAGE_NOT_REQUIRED,
+        )
+
+    # --- compute required intervals from forward_obs ---
+    intervals: list[tuple[datetime, datetime, str, str]] = []
+    seen: set[tuple[datetime, datetime]] = set()
+    for o in forward_obs:
+        if o is None:
+            continue
+        # Per spec: forward_obs entries expose bar_ts. The runner's actual on-disk
+        # shape uses ``timestamp``; accept either for wiring convenience.
+        raw_ts = o.get("bar_ts")
+        if raw_ts is None:
+            raw_ts = o.get("timestamp")
+        if raw_ts is None or raw_ts == "":
+            continue
+        raw_ts = str(raw_ts)
+        try:
+            dt = datetime.fromisoformat(raw_ts)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"forward_obs entry has non-parseable bar_ts {raw_ts!r}: {exc}"
+            ) from exc
+        # Naive timestamps are normalised to UTC (matches ``freshness.parse_bar_utc``
+        # and the verifier's ``_parse_iso``); aware timestamps are converted to UTC.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        dt_utc = dt
+        ws = dt_utc - timedelta(hours=bar_interval_hours)
+        we = dt_utc
+        key = (ws, we)
+        if key in seen:
+            continue
+        seen.add(key)
+        ws_iso = ws.strftime("%Y-%m-%dT%H:%M:%S")
+        we_iso = we.strftime("%Y-%m-%dT%H:%M:%S")
+        intervals.append((ws, we, ws_iso, we_iso))
+
+    if not intervals:
+        # No required intervals (empty forward_obs) -> NOT_REQUIRED overall.
+        return FundingCoverageReport(
+            per_symbol={sym: COVERAGE_NOT_REQUIRED for sym in sorted(scope)},
+            missing_windows=[],
+            total_funding_rows=0,
+            total_rate_available_zero=0,
+            total_required_intervals=0,
+            overall_decision=COVERAGE_NOT_REQUIRED,
+        )
+
+    # --- synthesise rows for _classify_rows ---
+    synthetic: list[dict[str, Any]] = []
+    for sym in sorted(scope):
+        for ws, we, ws_iso, we_iso in intervals:
+            has_row = _csv_has_row_in_interval(
+                funding_csv_dir, sym, ws, we, bar_interval_hours
+            )
+            # bar_ts on the synthetic row carries the midpoint of the interval,
+            # matching the per-spec synthetic-row contract.
+            midpoint = ws + timedelta(hours=bar_interval_hours / 2)
+            mid_iso = midpoint.strftime("%Y-%m-%dT%H:%M:%S")
+            synthetic.append({
+                "funding_id": f"synthetic:{sym}:{ws_iso}",
+                "symbol": sym,
+                "bar_ts": mid_iso,
+                "window_start": ws_iso,
+                "window_end": we_iso,
+                "rate_available": has_row,
+            })
+
+    return _classify_rows(synthetic, funding_csv_dir, symbols=sorted(scope))

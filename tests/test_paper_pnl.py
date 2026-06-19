@@ -95,11 +95,51 @@ def _obs(active_by_bar):
     ]
 
 
+# Default AAA funding CSV fixture for tests using ``_setup``. The repo ``data/`` dir has no
+# AAA source CSV (only the production symbol set), and the runner's pre-batch funding-coverage
+# gate (gate plan §3.3) fail-closed-aborts when any in-scope symbol lacks source coverage.
+# These tests never cared about AAA funding-source coverage before the gate existed — they only
+# need the runner to PROCEED — so staging a complete AAA CSV in a tmp data_dir restores the
+# pre-gate semantics for the legacy test fixtures while leaving the new gate in place for
+# production paths. The three rows cover the windows ending at TS[1]=08:00, TS[2]=16:00, and
+# TS[3]=00:00 (the AAA hold period for the standard ``[[], ["AAA"], ["AAA"], [], [], []]``
+# active_by_bar sequence used by the clean-run fixtures).
+_AAA_MS_D0_00H = int(datetime(2026, 6, 5, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+_AAA_MS_D0_08H = int(datetime(2026, 6, 5, 8, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+_AAA_MS_D0_16H = int(datetime(2026, 6, 5, 16, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+_AAA_MS_D1_00H = int(datetime(2026, 6, 6, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+_AAA_MS_D1_08H = int(datetime(2026, 6, 6, 8, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+_AAA_MS_D1_16H = int(datetime(2026, 6, 6, 16, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+_AAA_CSV_LINES = (
+    "fundingTime,fundingRate,markPrice\n"
+    f"{_AAA_MS_D0_00H},0.0001,100.0\n"
+    f"{_AAA_MS_D0_08H},0.0001,110.0\n"
+    f"{_AAA_MS_D0_16H},0.0001,120.0\n"
+    f"{_AAA_MS_D1_00H},0.0001,130.0\n"
+    f"{_AAA_MS_D1_08H},0.0001,140.0\n"
+    f"{_AAA_MS_D1_16H},0.0001,150.0\n"
+)
+
+
+def _stage_aaa_csv(data_dir: Path) -> None:
+    """Write the AAA funding CSV at ``<data_dir>/AAAUSDT_8h_funding.csv``."""
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "AAA_8h_funding.csv").write_text(_AAA_CSV_LINES, encoding="utf-8")
+
+
 def _setup(
-    tmp_path, active_by_bar, forward_start_ts=TS[0], funding=None, bars=None, now=NOW
+    tmp_path, active_by_bar, forward_start_ts=TS[0], funding=None, bars=None, now=NOW,
+    data_dir=None,
 ):
     out = tmp_path / "paper"
     fwd = tmp_path / "fwd"
+    # Default: stage AAA funding CSV in a tmp data_dir so the runner's pre-batch gate
+    # sees AAA as COMPLETE (the production symbol set in the workspace ``data/`` has no
+    # AAA CSV, and the gate fail-closed-aborts on missing source coverage for an in-scope
+    # symbol). Tests may override ``data_dir`` to test other coverage scenarios explicitly.
+    if data_dir is None:
+        data_dir = tmp_path / "data"
+        _stage_aaa_csv(data_dir)
     write_config_once(build_config(forward_start_ts=forward_start_ts), output_dir=out)
     _write_obs(fwd, _obs(active_by_bar))
     summary = run_once(
@@ -107,6 +147,7 @@ def _setup(
         forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(bars or AAA_PRICES)},
         funding_df=funding if funding is not None else _funding_df(),
+        data_dir=data_dir,
         now=now,
     )
     return out, fwd, summary
@@ -176,6 +217,7 @@ def test_idempotent_rerun_identical_digests(tmp_path):
         forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(AAA_PRICES)},
         funding_df=_funding_df(),
+        data_dir=out.parent / "data",
         now=NOW,
     )
     after = {n: sha256_file(out / n) for n in deterministic}
@@ -300,6 +342,7 @@ def test_missing_observation_log_aborts(tmp_path):
         forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(AAA_PRICES)},
         funding_df=_funding_df(),
+        data_dir=out.parent / "data",
         now=NOW,
     )
     assert summary["status"] == "ABORTED"
@@ -321,6 +364,7 @@ def test_malformed_per_bar_obs_aborts(tmp_path):
         forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(AAA_PRICES)},
         funding_df=_funding_df(),
+        data_dir=out.parent / "data",
         now=NOW,
     )
     assert summary["status"] == "ABORTED"
@@ -341,6 +385,7 @@ def test_off_grid_bar_aborts(tmp_path):
         forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(AAA_PRICES)},
         funding_df=_funding_df(),
+        data_dir=out.parent / "data",
         now=NOW,
     )
     assert summary["status"] == "ABORTED"
@@ -374,6 +419,7 @@ def test_no_duplicate_snapshots_on_rerun(tmp_path):
         forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(AAA_PRICES)},
         funding_df=_funding_df(),
+        data_dir=out.parent / "data",
         now=NOW,
     )
     after = sha256_file(out / "paper_signal_snapshots.jsonl")
@@ -397,6 +443,7 @@ def test_snapshot_divergence_aborts(tmp_path):
         forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(AAA_PRICES)},
         funding_df=_funding_df(),
+        data_dir=out.parent / "data",
         now=NOW,
     )
     assert summary["status"] == "ABORTED"
@@ -549,11 +596,19 @@ def test_config_wrong_engine_version_fails(tmp_path):
 
 
 def _run(out, fwd, now=NOW):
+    # The runner's pre-batch gate (§3.3) reads ``<data_dir>/<SYM>_<N>h_funding.csv``,
+    # so a re-run must use the same data_dir the seed run used. ``_setup`` stages
+    # the AAA CSV at ``<out.parent>/data``; here we auto-stage it if a test
+    # constructed ``out`` without going through ``_setup``.
+    data_dir = out.parent / "data"
+    if not (data_dir / "AAA_8h_funding.csv").is_file():
+        _stage_aaa_csv(data_dir)
     return run_once(
         output_dir=out,
         forward_obs_dir=fwd,
         bars_by_symbol={"AAA": _bars(AAA_PRICES)},
         funding_df=_funding_df(),
+        data_dir=data_dir,
         now=now,
     )
 
@@ -1720,6 +1775,9 @@ def _setup_ready_to_publish(tmp_path):
     out = tmp_path / "paper"
     fwd = tmp_path / "fwd"
     fwd.mkdir(parents=True, exist_ok=True)
+    # Stage AAA funding CSV so the runner's pre-batch funding-coverage gate sees AAA as
+    # COMPLETE (the production symbol set in the workspace ``data/`` has no AAA CSV).
+    _stage_aaa_csv(tmp_path / "data")
     write_config_once(build_config(forward_start_ts=TS[0]), output_dir=out)
     _write_obs(fwd, _obs([[], ["AAA"], ["AAA"], [], [], []]))
     return out, fwd
@@ -2914,10 +2972,7 @@ def test_second_mutating_ok_provenance_pins_new_state_not_old(tmp_path):
 
     now1 = datetime(2026, 6, 5, 16, 5, 0, tzinfo=timezone.utc)  # fresh vs T2
     _write_obs(fwd, _obs([[], ["AAA"], ["AAA"]]))
-    s1 = run_once(
-        output_dir=out, forward_obs_dir=fwd,
-        bars_by_symbol={"AAA": _bars(AAA_PRICES)}, funding_df=_funding_df(), now=now1,
-    )
+    s1 = _run(out, fwd, now=now1)
     assert s1["status"] == "OK"
     old_state_digest = sha256_file(out / "paper_position_state.json")
     prov1 = json.loads((out / "paper_provenance.json").read_text())

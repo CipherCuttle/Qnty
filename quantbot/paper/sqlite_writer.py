@@ -1109,8 +1109,74 @@ def run_sqlite_accounting(
                 "freshness": freshness_cfg,
             }
 
-            # === RUN ENGINE =====================================================
+            # === RUN ENGINE (pure compute; writes NOTHING to SQLite) ============
+            # run_engine is a pure function over (config, obs, bars, funding_df, state):
+            # it returns an EngineResult of in-memory row lists and never touches `conn`
+            # or any DB. All SQLite mutation happens below in _insert_ledger_batch and
+            # the row inserts, so a gate placed between this call and those inserts can
+            # abort with the engine's exact verdict yet leave the ledger untouched.
             result = run_engine(engine_config, per_bar_obs, bars_by_symbol, funding_df, engine_state)
+
+            # === POST-ENGINE FUNDING-COVERAGE GATE (fail closed BEFORE any insert) ===
+            # load_all_funding() SILENTLY SKIPS any symbol whose CSV is absent, so a
+            # missing source funding window reaches the engine as a held interval with
+            # NO funding event — which the engine records as rate_available=False /
+            # funding_amount=0.0 (a silent zero the verifier can only CAVEAT after the
+            # batch is already committed). We fail CLOSED on that here, before mutation.
+            #
+            # The engine is the single authority on which windows actually REQUIRE
+            # funding: the main loop skips when eff_start >= ts (entry/deferred/
+            # zero-held bars emit no row at all), so this gate can never over-fire on a
+            # legitimate deferral (it falls through to the PRE_START path below).
+            #
+            # A funding row counts as required-but-missing ONLY when it has a positive
+            # holding interval AND no source event: window_start < window_end AND
+            # rate_available == False. The right-open/degenerate exit-tail stub emits a
+            # row over (ts, exit_fill_ts] whose end can resolve to a NON-future bar when
+            # the exit cannot fill yet (window_end <= window_start) — an empty interval
+            # that charges zero funding and is NOT a missing source, so it is excluded.
+            # Duration is compared on PARSED UTC datetimes via parse_bar_utc (the single
+            # repo timestamp helper, also used by the freshness/divergence paths) — never
+            # a lexicographic string compare, which QNTY forbids because a naive string
+            # sorts before its own trailing-Z form. A missing-funding row whose timestamps
+            # do NOT parse cannot be proven a benign degenerate stub, so it fails CLOSED
+            # (counted as required-but-missing -> abort), never a silent pass. This is the
+            # same rate_available signal the SQLite verifier coverage stamp keys on,
+            # keeping writer abort and verifier caveat consistent.
+            #
+            # Mutation safety: no INSERT/UPDATE and no watermark advance has run yet
+            # (the BEGIN IMMEDIATE above only holds the write lock). We roll back and
+            # close exactly like the freshness/divergence/empty-result abort paths, so
+            # the lock is released with ZERO writes.
+            missing_funding = []
+            for f in result.funding:
+                if f.get("rate_available", True):
+                    continue
+                try:
+                    positive_duration = parse_bar_utc(
+                        str(f.get("window_start", ""))
+                    ) < parse_bar_utc(str(f.get("window_end", "")))
+                except (TypeError, ValueError):
+                    # Unparseable timestamp on a missing-funding row -> fail closed.
+                    positive_duration = True
+                if positive_duration:
+                    missing_funding.append(f)
+            if missing_funding:
+                miss = ", ".join(
+                    f'{f["symbol"]}@{f["window_start"]}' for f in missing_funding[:5]
+                )
+                suffix = (
+                    "" if len(missing_funding) <= 5
+                    else f" (+{len(missing_funding) - 5} more)"
+                )
+                conn.rollback()
+                conn.close()
+                return (
+                    STATUS_ABORTED,
+                    f"FUNDING_COVERAGE_MISSING: engine accrued {len(missing_funding)} "
+                    f"funding interval(s) with no source funding event; missing: "
+                    f"{miss}{suffix}; aborting before ledger mutation.",
+                )
 
             if not result.equity:
                 # No bar produced an equity snapshot this run — either everything

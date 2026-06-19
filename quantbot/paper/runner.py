@@ -25,6 +25,11 @@ from quantbot.paper import paper_output_dir as default_paper_output_dir
 from quantbot.paper.config import ConfigContractError, load_config
 from quantbot.paper.engine import new_state, run_engine
 from quantbot.paper import freshness
+from quantbot.paper.funding_coverage import check_funding_coverage_for_batch
+from quantbot.paper.funding_status import (
+    COVERAGE_MISSING,
+    COVERAGE_PARTIAL,
+)
 from quantbot.paper import ledger
 from quantbot.paper.ledger import LedgerCorruptionError
 from quantbot.paper import provenance
@@ -359,6 +364,42 @@ def run_once(
     state = ledger.read_state_obj(state_path) or new_state(
         float(config["initial_equity_usd"])
     )
+
+    # === PRE-BATCH FUNDING-COVERAGE GATE (gate plan §3.3) ===========================
+    # Runs AFTER the divergence gate and BEFORE the engine mutates any ledger row. The
+    # snapshot-free, ledger-free CSV check is fail-closed: a missing/partial source funding
+    # window aborts with ``FUNDING_COVERAGE_MISSING`` and never reaches ``run_engine``. An
+    # exception inside the gate (parse error / OS error / contract fault) is also a hard
+    # abort — it must not become a clean OK or a silent proceed. NOT_REQUIRED and
+    # COVERAGE_COMPLETE both proceed without further action.
+    funding_csv_dir_gate = data_dir if (out / "data").is_dir() else data_dir
+    try:
+        coverage_report = check_funding_coverage_for_batch(
+            forward_obs,
+            bars_by_symbol,
+            funding_csv_dir_gate,
+            bar_interval_hours=int(config["freshness"]["bar_interval_hours"]),
+        )
+    except Exception as exc:  # narrow fail-closed: any gate fault => abort, not proceed
+        return _abort(
+            out, obs_dir, data_dir, config,
+            "FUNDING_COVERAGE_MISSING",
+            f"funding-coverage pre-batch check failed: {type(exc).__name__}: {exc}",
+        )
+    if coverage_report.overall_decision in (COVERAGE_MISSING, COVERAGE_PARTIAL):
+        missing = ", ".join(
+            f"{row.symbol}@{row.window_start}" for row in coverage_report.missing_windows[:5]
+        )
+        suffix = (
+            "" if len(coverage_report.missing_windows) <= 5
+            else f" (+{len(coverage_report.missing_windows) - 5} more)"
+        )
+        return _abort(
+            out, obs_dir, data_dir, config,
+            "FUNDING_COVERAGE_MISSING",
+            f"required funding coverage incomplete for batch window; "
+            f"missing: {missing}{suffix}; aborting before ledger mutation.",
+        )
 
     # --- engine ---
     # The authoritative RUNNING marker was already written in preflight (Blocker 1), before the
