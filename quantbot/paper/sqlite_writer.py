@@ -53,6 +53,7 @@ from quantbot.paper.engine import (
     run_engine,
 )
 from quantbot.paper.freshness import check_freshness, parse_bar_utc
+from quantbot.paper.provenance import resolve_git_sha
 from quantbot.paper.snapshots import (
     bar_commit_id,
     check_divergence,
@@ -1189,6 +1190,27 @@ def run_sqlite_accounting(
                     return STATUS_PRE_START, "No committed eligible bars yet"
                 return STATUS_OK, "No new bars to process"
 
+            # === GIT-SHA PROVENANCE GATE (fail closed BEFORE any insert) ==========
+            # Every committed ledger_batches row must self-attest which code produced
+            # it. resolve_git_sha() returns a full 40-hex HEAD SHA rooted at the repo
+            # working tree, or None if git cannot be resolved deterministically. We
+            # NEVER persist a new batch with git_sha=None (the historical provenance
+            # gap the verifier now caveats): if the SHA is unresolved we abort here,
+            # before _insert_ledger_batch / any watermark advance, rolling back and
+            # closing exactly like the funding-coverage / freshness abort paths so the
+            # write lock is released with ZERO writes. Old git_sha=None rows already on
+            # disk are untouched and remain readable historical evidence.
+            batch_git_sha = resolve_git_sha()
+            if batch_git_sha is None:
+                conn.rollback()
+                conn.close()
+                return (
+                    STATUS_ABORTED,
+                    "GIT_SHA_UNRESOLVED: could not resolve repo HEAD (git rev-parse "
+                    "HEAD) for batch provenance; aborting before ledger mutation rather "
+                    "than committing an unprovenanced batch.",
+                )
+
             # === INSERT INTO DB INSIDE TRANSACTION ==========================
             batch_id = _insert_ledger_batch(
                 conn,
@@ -1450,7 +1472,7 @@ def run_sqlite_accounting(
                 last_event_seq=last_seq,
                 event_count=event_count,
                 committed_bar_count=committed_bar_count,
-                git_sha=None,
+                git_sha=batch_git_sha,
             )
 
             # === COMMIT ============================================================

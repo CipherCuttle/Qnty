@@ -7,6 +7,7 @@ ops/bin/qnty-write-provenance-receipt.sh).
 
 from __future__ import annotations
 
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,41 @@ DISCLAIMER = (
 
 def _now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+_FULL_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z")
+
+
+def _repo_root() -> Path:
+    """Repo working-tree root, derived deterministically from this module's path.
+
+    ``quantbot/paper/provenance.py`` -> ``parents[2]`` is the repo root (also
+    ``/srv/qnty/repo`` on the VM). Rooting ``git`` here makes SHA resolution
+    independent of the caller's CWD.
+    """
+    return Path(__file__).resolve().parents[2]
+
+
+def resolve_git_sha() -> str | None:
+    """Resolve repo HEAD as a full 40-char hex SHA, or ``None`` if it cannot be
+    determined deterministically.
+
+    Unlike :func:`git_sha` (which returns the string ``"unknown"`` for the legacy
+    JSONL provenance record), this returns ``None`` so the SQLite writer can FAIL
+    CLOSED rather than persist an unprovenanced ``ledger_batches`` row. The
+    command is ``git -C <repo_root> rev-parse HEAD``, so the result does not
+    depend on the caller's CWD, and the output is validated to be a full hex SHA
+    (a short/abbreviated/garbage value is treated as unresolved).
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(_repo_root()), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
+    return out if _FULL_SHA_RE.match(out) else None
 
 
 def git_sha() -> str:

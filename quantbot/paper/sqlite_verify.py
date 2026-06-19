@@ -1239,6 +1239,59 @@ def _build_funding_coverage_stamp(
     }
 
 
+_GIT_PROVENANCE_MAX_IDS = 50
+
+
+def _build_git_provenance_stamp(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Compute the git-SHA provenance stamp from ``ledger_batches`` (read-only).
+
+    Provenance is operator-facing evidence, NOT a status gate: a committed batch
+    with ``git_sha = NULL`` cannot self-attest which code produced it, but old
+    rows predate the writer's git-SHA gate and are legitimate *historical
+    unprovenanced* evidence — they must stay readable and OK, never flip the
+    verdict to CORRUPT. (New batches can no longer be NULL: the writer fails
+    closed.) The stamp surfaces, for the operator:
+
+      - the latest batch's git_sha and whether it is missing;
+      - whether ANY batch is missing git_sha, and how many;
+      - a loud warning string when provenance is missing (latest = strong;
+        historical-only = softer caveat).
+
+    Read-only: only SELECTs against the pinned snapshot.
+    """
+    rows = _rows(conn, "SELECT batch_id, git_sha FROM ledger_batches ORDER BY batch_id")
+    missing_ids = [r["batch_id"] for r in rows if not r["git_sha"]]
+    latest = rows[-1] if rows else None
+    latest_sha = latest["git_sha"] if latest else None
+    latest_missing = latest is not None and not latest_sha
+
+    warning: str | None = None
+    if latest_missing:
+        warning = (
+            "UNPROVENANCED_LATEST_BATCH: the latest committed batch has no git_sha; "
+            "the ledger cannot self-attest which code produced it. Treat downstream "
+            "(comparator / promotion) trust as BLOCKED until provenance is present."
+        )
+    elif missing_ids:
+        warning = (
+            f"HISTORICAL_UNPROVENANCED_BATCHES: {len(missing_ids)} older batch(es) "
+            "predate git_sha provenance and remain unprovenanced historical evidence "
+            "(immutable; not a corruption)."
+        )
+
+    return {
+        "git_provenance": {
+            "latest_batch_id": (latest["batch_id"] if latest else None),
+            "latest_batch_git_sha": latest_sha,
+            "latest_batch_git_sha_missing": latest_missing,
+            "batches_missing_git_sha": len(missing_ids),
+            "any_batch_missing_git_sha": bool(missing_ids),
+            "unprovenanced_batch_ids": missing_ids[:_GIT_PROVENANCE_MAX_IDS],
+        },
+        "git_provenance_warning": warning,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -1323,6 +1376,13 @@ def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
     # mutation occurs.
     stamp = _build_funding_coverage_stamp(conn, db_path, arithmetic_ok=not failures)
     report.update(stamp)
+
+    # === GIT-SHA PROVENANCE STAMP (additive; does NOT change status) ============
+    # Operator-facing evidence of which code produced each committed batch. Like
+    # the funding-coverage stamp, it is read-only and never flips the verdict:
+    # historical git_sha=NULL rows are immutable unprovenanced evidence, not
+    # corruption. New batches can no longer be NULL (writer fails closed).
+    report.update(_build_git_provenance_stamp(conn))
 
     report["forward_start_ts"] = cfg["forward_start_ts"]
     report["failure_count"] = len(failures)
@@ -1515,6 +1575,28 @@ def _render_receipt(report: dict[str, Any]) -> str:
                     f"  - {mw.get('symbol', '?')} @ bar_ts={mw.get('bar_ts', '?')} "
                     f"window=[{mw.get('window_start', '?')}, {mw.get('window_end', '?')}]"
                 )
+        lines.append("")
+    # --- Git-SHA provenance (additive stamp; does NOT change status) ---
+    gp = report.get("git_provenance")
+    if gp is not None:
+        gp_warning = report.get("git_provenance_warning")
+        lines.append("## Git provenance")
+        lines.append("")
+        latest_sha = gp.get("latest_batch_git_sha")
+        lines.append(f"- Latest batch id: {gp.get('latest_batch_id')}")
+        lines.append(f"- Latest batch git_sha: {latest_sha or '(missing)'}")
+        lines.append(
+            f"- Latest batch git_sha missing: {gp.get('latest_batch_git_sha_missing')}"
+        )
+        lines.append(
+            f"- Batches missing git_sha: {gp.get('batches_missing_git_sha', 0)} "
+            f"(any missing: {gp.get('any_batch_missing_git_sha')})"
+        )
+        unprov = gp.get("unprovenanced_batch_ids") or []
+        if unprov:
+            lines.append(f"- Unprovenanced batch ids: {unprov}")
+        if gp_warning:
+            lines.append(f"- ⚠️ {gp_warning}")
         lines.append("")
     return "\n".join(lines)
 
