@@ -19,7 +19,33 @@ SYMBOLS = [
 ]
 
 START_TIME_MS = 1625097600000  # 2021-07-01 00:00:00 UTC
-END_TIME_MS = 1776643200000     # 2026-04-20 00:00:00 UTC  # bounded validation refresh
+
+
+def resolve_end_time_ms() -> int:
+    """Resolve the pagination cutoff (epoch ms) for the fetch.
+
+    Reads the ``END_TIME_MS`` environment variable that
+    ``ops/bin/qnty-data-refresh.sh`` already exports. When the variable is
+    unset/blank, defaults to ``now + 1 day`` so a scheduled refresh always
+    paginates through the latest available data.
+
+    A malformed value fails closed (``ValueError``) instead of silently
+    falling back. The previous hardcoded cutoff (2026-04-20) acted only as a
+    pagination guard and silently truncated SOLUSDT funding when a symbol's
+    full pages happened to land past that stale date — never again.
+    """
+    raw = os.environ.get("END_TIME_MS")
+    if raw is None or raw.strip() == "":
+        return int(time.time() * 1000) + 86_400_000  # now + 1 day
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"END_TIME_MS must be integer epoch milliseconds, got {raw!r}"
+        ) from exc
+
+
+END_TIME_MS = resolve_end_time_ms()
 
 API_URL_TEMPLATE = "https://fapi.binance.com/fapi/v1/fundingRate?symbol={SYM}&startTime={TS}&limit=500"
 DATA_DIR = Path("data")
