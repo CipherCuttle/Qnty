@@ -75,6 +75,8 @@ from quantbot.paper.db import (
     connect_readonly,
     get_paper_db_path,
 )
+from quantbot.paper.lane_config_hash import config_hash_v2
+from quantbot.paper.lane_identity import LaneIdentity
 from quantbot.paper.funding_coverage import (
     check_funding_coverage_from_rows,
 )
@@ -296,7 +298,85 @@ def _validate_identity(conn: sqlite3.Connection) -> tuple[dict | None, list[str]
             f"recomputed={recomputed!r}"
         )
 
+    # Dual-mode lane identity validation (runs after the v1 accounting checks above,
+    # which apply in BOTH modes). v1 baseline DBs (no/NULL lane fields) add no failures.
+    failures.extend(_validate_lane_identity(cfg))
+
     return cfg, failures
+
+
+# The four core lane-identity columns. Any one non-NULL routes the row to v2/new-lane
+# mode, where ALL four are required — so a partially-populated row fails closed instead
+# of silently degrading to v1.
+_LANE_IDENTITY_FIELDS = ("lane_id", "strategy_id", "strategy_version", "config_hash_v2")
+
+
+def _validate_lane_identity(cfg: dict) -> list[str]:
+    """Dual-mode lane identity validation (VERIFIER_DUAL_MODE_LANE_IDENTITY_PHASE3_PLAN).
+
+    v1 mode — all four core lane fields NULL/absent: no additional checks, so the
+    baseline behavior is byte-identical and the golden v1 hash path is untouched.
+
+    v2/new-lane mode — any core lane field present: require all four, validate
+    ``LaneIdentity`` (which rejects invalid and baseline-impersonating ids), and
+    recompute ``config_hash_v2`` from the frozen v1 ``config_hash`` + identity,
+    comparing to the stored value.
+
+    ``pre_registration_hash`` must be NULL in this phase (generation is deferred), in
+    either mode — a non-NULL value is never legitimate yet. ``ledger_batches.lane_id``
+    is intentionally NOT checked here (batch stamping is a deferred phase).
+    """
+    failures: list[str] = []
+
+    present = {f: cfg.get(f) for f in _LANE_IDENTITY_FIELDS}
+    any_present = any(v is not None for v in present.values())
+
+    # Deferred-generation guard: a stored pre_registration_hash is never valid yet.
+    # This also fails the partial v1-mode case where only this column is set.
+    if cfg.get("pre_registration_hash") is not None:
+        failures.append(
+            "pre_registration_hash must be NULL in this phase "
+            f"(stored={cfg.get('pre_registration_hash')!r}); generation is deferred"
+        )
+
+    if not any_present:
+        return failures  # v1 mode — nothing further to validate.
+
+    # v2/new-lane mode — fail closed on any missing core field.
+    missing = [f for f, v in present.items() if v is None]
+    if missing:
+        failures.append(
+            "new-lane paper_config has partial lane identity; "
+            f"missing non-NULL field(s): {missing}"
+        )
+        return failures  # cannot validate identity/hash without all fields.
+
+    # Validate the lane identity model (rejects invalid + baseline-impersonating ids).
+    try:
+        identity = LaneIdentity(
+            lane_id=present["lane_id"],
+            strategy_id=present["strategy_id"],
+            strategy_version=present["strategy_version"],
+        )
+    except Exception as exc:  # noqa: BLE001 - report, do not crash the verifier
+        failures.append(f"invalid lane identity: {type(exc).__name__}: {exc}")
+        return failures
+
+    # Recompute config_hash_v2 from the frozen v1 accounting hash + identity.
+    try:
+        recomputed_v2 = config_hash_v2(cfg.get("config_hash"), identity)
+    except Exception as exc:  # noqa: BLE001
+        failures.append(
+            f"config_hash_v2 recomputation failed: {type(exc).__name__}: {exc}"
+        )
+        return failures
+    if present["config_hash_v2"] != recomputed_v2:
+        failures.append(
+            f"config_hash_v2 mismatch: stored={present['config_hash_v2']!r}, "
+            f"recomputed={recomputed_v2!r}"
+        )
+
+    return failures
 
 
 # ---------------------------------------------------------------------------
