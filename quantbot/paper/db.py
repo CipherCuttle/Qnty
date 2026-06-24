@@ -160,7 +160,18 @@ CREATE TABLE IF NOT EXISTS paper_config (
     freshness_max_bar_staleness_hours REAL NOT NULL,
     freshness_heartbeat_max_age_hours REAL NOT NULL,
     created_at                 TEXT NOT NULL,
-    config_hash                TEXT NOT NULL
+    config_hash                TEXT NOT NULL,
+    -- Additive new-lane identity columns (ADDITIVE_NEW_LANE_DB_SCHEMA_PHASE3_PLAN).
+    -- Nullable and unpopulated for the v1 baseline: a NULL lane_id means implicit v1
+    -- mode, so old schema-1 rows (which lack these columns entirely) and freshly
+    -- created baseline rows behave identically. The writer does NOT populate these
+    -- yet; config_hash_from_row does NOT read them. They exist only so a future
+    -- new-lane DB can store lane identity without an in-place ALTER.
+    lane_id                    TEXT,
+    strategy_id                TEXT,
+    strategy_version           TEXT,
+    config_hash_v2             TEXT,
+    pre_registration_hash      TEXT
 ) STRICT;
 
 -- 4.2 ledger_batches — mutable (updated after commit)
@@ -516,9 +527,19 @@ def config_hash_from_row(row: sqlite3.Row) -> str:
     # Reconstruct nested config structure to match build_config() output
     d = dict(row)
     d.pop("config_hash", None)
+    # Schema identity for the v1 accounting hash is the PAPER CONTRACT version, NOT
+    # the storage db_schema_version (ADDITIVE_NEW_LANE_DB_SCHEMA_PHASE3_PLAN §3). This
+    # decouples the frozen v1 accounting hash from a future storage-schema bump (e.g.
+    # db_schema_version 1 -> 2 for new-lane DBs): as long as paper_contract_version
+    # stays 1, the recomputed hash is unchanged. Fall back to db_schema_version only
+    # for legacy/synthetic rows that predate the paper_contract_version column, so the
+    # existing golden hash is preserved byte-for-byte.
+    schema_identity = d.get("paper_contract_version")
+    if schema_identity is None:
+        schema_identity = d.get("db_schema_version")
     # Rebuild nested structure
     config = {
-        "schema_version": d.get("db_schema_version"),
+        "schema_version": schema_identity,
         "engine_version": d.get("paper_engine_version"),
         "baseline_label": d.get("baseline_label"),
         "forward_start_ts": d.get("forward_start_ts"),
