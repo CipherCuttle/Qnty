@@ -27,6 +27,8 @@ from quantbot.paper import (
     PAPER_ENGINE_VERSION as PAPER_MODULE_VERSION,
 )
 from quantbot.paper.config import config_hash
+from quantbot.paper.lane_config_hash import config_hash_v2
+from quantbot.paper.lane_identity import LaneIdentity
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -473,6 +475,125 @@ def initialize_database(db_path: str | Path, config: dict[str, Any]) -> Path:
         )
 
         # Insert initial ledger_state row (singleton, id=1)
+        initial_equity = float(config.get("initial_equity_usd", 10000.0))
+        conn.execute(
+            """
+            INSERT INTO ledger_state (
+                id, watermark_bar_ts, realized_gross, fees_cum,
+                funding_cum, peak_equity, updated_at
+            ) VALUES (1, NULL, 0.0, 0.0, 0.0, ?, ?)
+            """,
+            (initial_equity, now),
+        )
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+
+    conn.close()
+    return db_path
+
+
+def initialize_lane_database(
+    db_path: str | Path,
+    config: dict[str, Any],
+    identity: LaneIdentity,
+    *,
+    baseline_db_path: str | Path | None = None,
+) -> Path:
+    """Create a fresh NEW-LANE paper ledger DB with lane identity populated.
+
+    A *sibling* of :func:`initialize_database` (WRITER_NEW_LANE_INIT_PHASE3_PLAN): it
+    deliberately does NOT call the baseline initializer and then mutate ``paper_config``
+    (that table is append-only — an UPDATE would RAISE(ABORT) — and post-hoc mutation is
+    exactly what we forbid). Instead the additive lane columns are populated in the
+    *initial* INSERT.
+
+    The frozen v1 accounting ``config_hash`` is consumed opaque: it is the same value the
+    baseline stores, and ``config_hash_v2`` is composed from it plus *identity*. The
+    baseline accounting contract is never rebuilt or perturbed.
+
+    Safety gates:
+      * *identity* is an already-validated :class:`LaneIdentity`, so ``lane_id`` cannot be
+        the production baseline id ``paper_pnl_v1`` (refused at model construction).
+      * if *baseline_db_path* is supplied, *db_path* must not resolve to it (a new lane must
+        never write into the baseline DB).
+      * refuses if *db_path* already exists (same as the baseline initializer).
+
+    Writes only the SQLite file at *db_path*. Does NOT write any output-dir files, does NOT
+    touch ``paper_config.json``, does NOT stamp ledger batches, and does NOT run a verifier.
+    Returns the resolved ``Path`` on success.
+    """
+    db_path = Path(db_path)
+    if baseline_db_path is not None and db_path.resolve() == Path(baseline_db_path).resolve():
+        raise ValueError(
+            f"Refusing to initialize a new lane at the baseline DB path {db_path} — "
+            f"a new lane must use a separate database file"
+        )
+    if db_path.exists():
+        raise FileExistsError(
+            f"Database {db_path} already exists — refusing to overwrite"
+        )
+
+    # Frozen v1 accounting hash (opaque input to v2); identity is already validated.
+    cfg_hash = config_hash(config)
+    cfg_hash_v2 = config_hash_v2(cfg_hash, identity)
+
+    conn = connect_writer(db_path)
+    try:
+        conn.executescript(_SCHEMA_SQL)
+        conn.executescript(_TRIGGER_SQL)
+
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            """
+            INSERT INTO paper_config (
+                id, db_schema_version, paper_contract_version,
+                paper_engine_version, baseline_label,
+                forward_start_ts, initial_equity_usd, notional_usd,
+                leverage, fee_type, fee_bps,
+                slippage_type, slippage_bps,
+                funding_type, funding_applied_as,
+                fill_model, signal_source,
+                freshness_bar_interval_hours,
+                freshness_max_bar_staleness_hours,
+                freshness_heartbeat_max_age_hours,
+                created_at, config_hash,
+                lane_id, strategy_id, strategy_version,
+                config_hash_v2, pre_registration_hash
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            """,
+            (
+                DB_SCHEMA_VERSION,
+                config.get("schema_version", DB_SCHEMA_VERSION),
+                PAPER_ENGINE_VERSION,
+                config.get("baseline_label", BASELINE_LABEL),
+                config["forward_start_ts"],
+                float(config.get("initial_equity_usd", 10000.0)),
+                float(config.get("notional_usd", 1000.0)),
+                float(config.get("leverage", 1.0)),
+                config.get("fee_model", {}).get("type", "flat_taker"),
+                float(config.get("fee_bps", 5.0)),
+                config.get("slippage_model", {}).get("type", "fixed"),
+                float(config.get("slippage_bps", 5.0)),
+                config.get("funding_model", {}).get("type", "accrual"),
+                config.get("funding_model", {}).get("applied_as", "cash_flow"),
+                config.get("fill_model", "next_bar_open_pessimistic"),
+                config.get("signal_source", "observation_log.json:per_bar_obs"),
+                int(config.get("freshness", {}).get("bar_interval_hours", 8)),
+                int(config.get("freshness", {}).get("max_bar_staleness_hours", 24)),
+                int(config.get("freshness", {}).get("heartbeat_max_age_hours", 24)),
+                now,
+                cfg_hash,
+                identity.lane_id,
+                identity.strategy_id,
+                identity.strategy_version,
+                cfg_hash_v2,
+            ),
+        )
+
         initial_equity = float(config.get("initial_equity_usd", 10000.0))
         conn.execute(
             """
