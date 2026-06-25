@@ -190,7 +190,13 @@ CREATE TABLE IF NOT EXISTS ledger_batches (
     event_count                INTEGER NOT NULL DEFAULT 0,
     committed_bar_count        INTEGER NOT NULL DEFAULT 0,
     paper_engine_version       TEXT NOT NULL,
-    config_hash                TEXT NOT NULL
+    config_hash                TEXT NOT NULL,
+    -- Additive new-lane batch stamping (LEDGER_BATCH_LANE_STAMPING_PHASE3_PLAN).
+    -- Nullable: NULL means v1/baseline (implicit), exactly like a NULL
+    -- paper_config.lane_id. New-lane DBs stamp every batch with paper_config.lane_id so
+    -- each batch self-attests its lane. No DB_SCHEMA_VERSION bump, no ALTER, no
+    -- migration — older DBs that lack this column entirely stay verifiable.
+    lane_id                    TEXT
 ) STRICT;
 
 -- 4.3 ledger_events — global ordered index (append-only)
