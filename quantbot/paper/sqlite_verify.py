@@ -210,6 +210,15 @@ def _scalar(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> Any:
     return row[0]
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """True if *table* has *column*. Used to tolerate older DBs that predate an
+    additive column (no ALTER/migration) — e.g. ``ledger_batches.lane_id``."""
+    return any(
+        r["name"] == column
+        for r in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    )
+
+
 def _close(value: float | None, expected: float | None, tol: float = _ABS_TOL) -> bool:
     if value is None or expected is None:
         return value is expected
@@ -536,6 +545,70 @@ def _validate_batches(conn: sqlite3.Connection) -> list[str]:
                     f"Batch {bid} config_hash {b['config_hash']!r} != "
                     f"config {cfg['config_hash']!r}"
                 )
+    failures.extend(_validate_batch_lane_stamping(conn, batches))
+    return failures
+
+
+def _validate_batch_lane_stamping(
+    conn: sqlite3.Connection, batches: list[dict]
+) -> list[str]:
+    """Dual-mode batch lane stamping check (LEDGER_BATCH_LANE_STAMPING_PHASE3_PLAN).
+
+    Lane mode (``paper_config.lane_id`` non-NULL): the DB is a new lane, so it MUST
+    have the additive ``ledger_batches.lane_id`` column and EVERY committed batch must be
+    stamped with that exact lane id — a NULL or mismatched batch lane fails closed.
+
+    v1 mode (``paper_config.lane_id`` NULL or its column absent): the baseline. An older
+    DB without the batch ``lane_id`` column passes; a DB that has the column but leaves
+    every batch NULL passes; a committed batch carrying a non-NULL lane in v1 mode is
+    unexpected and fails closed. ``source_data_digest`` is out of scope.
+    """
+    failures: list[str] = []
+
+    cfg_lane_id = None
+    if _column_exists(conn, "paper_config", "lane_id"):
+        row = conn.execute("SELECT lane_id FROM paper_config WHERE id = 1").fetchone()
+        if row is not None:
+            cfg_lane_id = row["lane_id"]
+    batch_has_lane_col = _column_exists(conn, "ledger_batches", "lane_id")
+
+    # Only committed batch rows are asserted; the writer commits a batch atomically
+    # within its insert transaction, so a persisted row is committed in practice.
+    committed = [b for b in batches if b.get("committed_at") is not None]
+
+    if cfg_lane_id is not None:
+        # Lane mode — require the column and full, exact stamping.
+        if not batch_has_lane_col:
+            failures.append(
+                f"new-lane DB (paper_config.lane_id={cfg_lane_id!r}) but ledger_batches "
+                "has no lane_id column; cannot verify batch lane stamping"
+            )
+            return failures
+        for b in committed:
+            bid = b["batch_id"]
+            blane = b.get("lane_id")
+            if blane is None:
+                failures.append(
+                    f"Batch {bid} lane_id is NULL but paper_config.lane_id="
+                    f"{cfg_lane_id!r} (a new lane must stamp every batch)"
+                )
+            elif blane != cfg_lane_id:
+                failures.append(
+                    f"Batch {bid} lane_id {blane!r} != paper_config.lane_id "
+                    f"{cfg_lane_id!r}"
+                )
+    elif batch_has_lane_col:
+        # v1 mode with the column present — every committed batch must be NULL.
+        for b in committed:
+            blane = b.get("lane_id")
+            if blane is not None:
+                failures.append(
+                    f"Batch {b['batch_id']} lane_id {blane!r} present but "
+                    "paper_config.lane_id is NULL (a v1/baseline DB must not stamp "
+                    "batch lanes)"
+                )
+    # else: v1 mode, no batch lane column at all — legacy DB, nothing to check.
+
     return failures
 
 

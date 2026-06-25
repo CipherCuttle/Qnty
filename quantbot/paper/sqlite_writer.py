@@ -182,17 +182,44 @@ def _insert_ledger_batch(
     prior_watermark: str | None,
     paper_engine_version: str,
     config_hash_val: str,
+    lane_id: str | None = None,
 ) -> int:
-    """Insert a ledger_batches row; return the new batch_id."""
-    cur = conn.execute(
-        """
-        INSERT INTO ledger_batches (
-            created_at, started_at, prior_watermark_bar_ts,
-            paper_engine_version, config_hash
-        ) VALUES (?, ?, ?, ?, ?)
-        """,
-        (created_at, started_at, prior_watermark, paper_engine_version, config_hash_val),
-    )
+    """Insert a ledger_batches row; return the new batch_id.
+
+    When *lane_id* is non-NULL (a new-lane DB whose ``paper_config.lane_id`` is set) the
+    batch is stamped with it so every batch self-attests its lane
+    (LEDGER_BATCH_LANE_STAMPING_PHASE3_PLAN). When it is None the INSERT is
+    byte-identical to the baseline path and never references the ``lane_id`` column, so a
+    v1/baseline DB — including a legacy DB whose ``ledger_batches`` lacks the column —
+    keeps working unchanged.
+    """
+    if lane_id is None:
+        cur = conn.execute(
+            """
+            INSERT INTO ledger_batches (
+                created_at, started_at, prior_watermark_bar_ts,
+                paper_engine_version, config_hash
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (created_at, started_at, prior_watermark, paper_engine_version, config_hash_val),
+        )
+    else:
+        cur = conn.execute(
+            """
+            INSERT INTO ledger_batches (
+                created_at, started_at, prior_watermark_bar_ts,
+                paper_engine_version, config_hash, lane_id
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                created_at,
+                started_at,
+                prior_watermark,
+                paper_engine_version,
+                config_hash_val,
+                lane_id,
+            ),
+        )
     return cur.lastrowid  # type: ignore[no-any-return]
 
 
@@ -1212,6 +1239,12 @@ def run_sqlite_accounting(
                 )
 
             # === INSERT INTO DB INSIDE TRANSACTION ==========================
+            # New-lane DBs stamp every batch with paper_config.lane_id so each batch
+            # self-attests its lane (LEDGER_BATCH_LANE_STAMPING_PHASE3_PLAN). db_config
+            # is the paper_config row re-read inside this transaction; .get() returns
+            # None for a baseline row (NULL lane_id) or a legacy row lacking the column,
+            # which routes _insert_ledger_batch to the byte-identical baseline INSERT.
+            batch_lane_id = db_config.get("lane_id")
             batch_id = _insert_ledger_batch(
                 conn,
                 created_at=created_at,
@@ -1219,6 +1252,7 @@ def run_sqlite_accounting(
                 prior_watermark=watermark or None,
                 paper_engine_version=engine_version,
                 config_hash_val=cfg_hash,
+                lane_id=batch_lane_id,
             )
 
             # Build the event chain for all new rows
