@@ -8,6 +8,34 @@
 
 ---
 
+## 0. Correction Note (2026-07-01, superseding stale §7 values)
+
+> **This receipt was patched after PR #38.** The asserted-identity PnL
+> reconciliation
+> ([`QNTY_V1_SHADOW_ASSERTED_IDENTITY_PNL_RECONCILIATION_AFTER_BATCH11.md`](QNTY_V1_SHADOW_ASSERTED_IDENTITY_PNL_RECONCILIATION_AFTER_BATCH11.md),
+> merged to `main`) read the live shadow DB
+> (`/srv/qnty/output/paper_pnl_null_shadow_v0/paper_ledger.db`,
+> `lane_id=paper_pnl_null_shadow_v0`, `config_hash=32c0fbcc…`) by explicit
+> absolute read-only path and established that the original §7 "Latest equity
+> snapshot" narrative — and two off-by-one entries in the cumulative-counts
+> table — were **stale copied values** (the `9980.04154734`, `num_open 0`,
+> `unrealized_pnl 0.0` line was carried over from the batch5–7-era flat bars and
+> never refreshed to the real batch11 state).
+>
+> The authoritative batch11 latest shadow snapshot is:
+> **equity `10026.20839258`, unrealized_pnl `47.12126882`, num_open `1`,
+> fees_cum `2.49109039`, funding_cum `0.60256492`, realized_gross_pnl
+> `-17.81922092`** at `bar_ts=2026-07-01T08:00:00`.
+>
+> The stale values have been corrected in place below and are marked
+> **[corrected per PR #38]**. The batch table (§7), watermark, git provenance,
+> `lane_id` and `config_hash` were verified **unchanged and already correct**.
+> This is a documentation correction only: all figures remain **paper
+> diagnostics only**, with **no** edge or profitability claim. `EDGE_UNPROVEN`
+> and `CAVEATED_ENGINE_SEMANTICS` are preserved.
+
+---
+
 ## 1. Purpose
 
 Manually authorized shadow-lane **batch11 one-bar commit** against the existing
@@ -190,17 +218,30 @@ not a verifier failure, not `CLEAN_NET_OF_CARRY`.
 | ----------------- | ----- |
 | ledger_batches    | 11    |
 | ledger_events     | 80    |
-| signal_snapshots  | 22    |
-| equity_snapshots  | 22    |
+| signal_snapshots  | 21    |
+| equity_snapshots  | 21    |
 | trades            | 2     |
 | open_positions    | 1     |
 | funding           | 10    |
 | fills             | 5     |
 
-Latest equity snapshot (`bar_ts=2026-07-01T08:00:00`, batch 11): equity
-`9980.04154734`, realized_gross_pnl `-17.81922092`, fees_cum `1.99109039`,
-funding_cum `0.14814135`, num_open `0`, unrealized_pnl `0.0` — flat over the new
-bar, **paper diagnostics only**.
+*(**[corrected per PR #38]** `signal_snapshots` and `equity_snapshots` are `21`
+after batch11 — both were stale `22` in the original. Batch10 recorded `20` each
+and batch11 committed exactly one bar, giving `21`; the live shadow DB read in
+PR #38 confirmed `equity_snapshots = 21`. All other counts were verified
+correct.)*
+
+Latest equity snapshot (`bar_ts=2026-07-01T08:00:00`, batch 11) **[corrected per
+PR #38]**: equity `10026.20839258`, realized_gross_pnl `-17.81922092`, fees_cum
+`2.49109039`, funding_cum `0.60256492`, num_open `1`, unrealized_pnl
+`47.12126882` — an **open** position carried over the new bar (peak_equity
+`10026.20839258`, drawdown `0.0`), **paper diagnostics only**.
+
+> **Superseded (stale, do not use):** the original narrative here read
+> "equity `9980.04154734`, fees_cum `1.99109039`, funding_cum `0.14814135`,
+> num_open `0`, unrealized_pnl `0.0` — flat over the new bar." Those were
+> batch5–7-era copied values, corrected above per the PR #38 asserted-identity
+> reconciliation.
 
 ---
 
