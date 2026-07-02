@@ -40,10 +40,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from quantbot.paper.funding_time import (
-    AFTER_ENDPOINT_TOLERANCE_MS,
+    ENDPOINT_SAME_SECOND_TOLERANCE_MS,
     FundingTimestampWindowClassification,
     classify_funding_timestamps_for_window,
 )
@@ -53,6 +53,10 @@ from quantbot.paper.funding_status import (
     COVERAGE_NOT_REQUIRED,
     COVERAGE_PARTIAL,
 )
+
+# Diagnostic-only: include +1000ms/+1001ms rows so coverage reports them as
+# outside the endpoint contract. Acceptance still lives in funding_time.py.
+ENDPOINT_REJECTION_DIAGNOSTIC_LOOKAHEAD_MS = ENDPOINT_SAME_SECOND_TOLERANCE_MS + 3
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -117,11 +121,12 @@ def _classify_csv_window_path(
     """Classify source CSV rows for one funding window.
 
     Reads only ``fundingTime`` and applies
-    ``FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V1``:
-    ``(window_start, window_end]`` stays open-closed, rows up to 10 ms after the
-    inclusive endpoint canonicalize to that endpoint, rows just after the open
-    boundary canonicalize to the open boundary and do not make the window clean,
-    and duplicate rows canonicalizing to the inclusive endpoint are ambiguous.
+    ``FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V2``:
+    ``(window_start, window_end]`` stays open-closed, rows in the same UTC second
+    as the inclusive endpoint canonicalize to that endpoint, rows in the same
+    UTC second as the open boundary canonicalize to the open boundary and do not
+    make the window clean, and duplicate rows canonicalizing to the inclusive
+    endpoint are ambiguous.
     """
     if not csv_path.is_file():
         return classify_funding_timestamps_for_window(
@@ -139,7 +144,9 @@ def _classify_csv_window_path(
                     window_end=we,
                 )
             candidates: list[datetime] = []
-            diagnostic_upper = we + timedelta(seconds=1)
+            diagnostic_upper = we + timedelta(
+                milliseconds=ENDPOINT_REJECTION_DIAGNOSTIC_LOOKAHEAD_MS
+            )
             for row in reader:
                 ts = _parse_funding_time_ms(row.get("fundingTime", ""))
                 if ts is None:
@@ -150,7 +157,6 @@ def _classify_csv_window_path(
                 candidates,
                 window_start=ws,
                 window_end=we,
-                tolerance_ms=AFTER_ENDPOINT_TOLERANCE_MS,
             )
     except OSError:
         # CSV unreadable: treat as no source coverage (fail-closed).
@@ -172,9 +178,101 @@ def _load_csv_window(
     )
 
 
-def _classify_rows(
+FundingWindowLoader = Callable[
+    [str, datetime, datetime],
+    FundingTimestampWindowClassification,
+]
+
+
+def _row_get(row: Any, key: str) -> Any:
+    if isinstance(row, Mapping):
+        return row.get(key)
+    get = getattr(row, "get", None)
+    if callable(get):
+        return get(key)
+    return getattr(row, key, None)
+
+
+def _coerce_source_datetime(raw: Any) -> datetime | None:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        if raw.tzinfo is None:
+            return raw.replace(tzinfo=timezone.utc)
+        return raw.astimezone(timezone.utc)
+
+    to_pydatetime = getattr(raw, "to_pydatetime", None)
+    if callable(to_pydatetime):
+        dt = to_pydatetime()
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _source_timestamps_by_symbol(source_rows: Any) -> dict[str, list[datetime]]:
+    """Return UTC funding source timestamps grouped by symbol.
+
+    Accepts the writer's pandas DataFrame from ``load_all_funding`` without
+    importing pandas here, and also tolerates iterable mapping rows for tests or
+    future callers.
+    """
+    grouped: dict[str, list[datetime]] = defaultdict(list)
+    if source_rows is None or getattr(source_rows, "empty", False):
+        return {}
+
+    if hasattr(source_rows, "iterrows"):
+        iterator = (row for _, row in source_rows.iterrows())
+    else:
+        iterator = iter(source_rows)
+
+    for row in iterator:
+        symbol = str(_row_get(row, "symbol") or "")
+        if not symbol:
+            continue
+        source_dt = _coerce_source_datetime(_row_get(row, "dt"))
+        if source_dt is None:
+            funding_time = _row_get(row, "fundingTime")
+            if funding_time is not None:
+                source_dt = _parse_funding_time_ms(str(funding_time))
+        if source_dt is not None:
+            grouped[symbol].append(source_dt)
+
+    for timestamps in grouped.values():
+        timestamps.sort()
+    return dict(grouped)
+
+
+def _classify_source_window(
+    source_by_symbol: Mapping[str, list[datetime]],
+    symbol: str,
+    ws: datetime,
+    we: datetime,
+) -> FundingTimestampWindowClassification:
+    diagnostic_upper = we + timedelta(
+        milliseconds=ENDPOINT_REJECTION_DIAGNOSTIC_LOOKAHEAD_MS
+    )
+    candidates = [
+        ts for ts in source_by_symbol.get(symbol, [])
+        if ws <= ts < diagnostic_upper
+    ]
+    return classify_funding_timestamps_for_window(
+        candidates,
+        window_start=ws,
+        window_end=we,
+    )
+
+
+def _classify_rows_with_loader(
     rows: Iterable[dict],
-    funding_csv_dir: Path,
+    load_window: FundingWindowLoader,
     *,
     symbols: Iterable[str] | None = None,
 ) -> FundingCoverageReport:
@@ -193,8 +291,9 @@ def _classify_rows(
         Iterable of dict-like funding rows. JSONL callers parse lines and pass
         the parsed dicts; SQLite callers pass the result of
         ``_rows(conn, "SELECT * FROM funding")``.
-    funding_csv_dir
-        Directory containing ``<SYM>_8h_funding.csv`` files.
+    load_window
+        Read-only callback that classifies source coverage for
+        ``(symbol, window_start, window_end)``.
     symbols
         Optional explicit allow-list of symbols. When ``None``, every symbol
         appearing in the rows is considered.
@@ -235,7 +334,7 @@ def _classify_rows(
         ws = _parse_iso(window_start_raw)
         we = _parse_iso(window_end_raw)
         symbols_in_ledger.add(symbol)
-        src = _load_csv_window(funding_csv_dir, symbol, ws, we)
+        src = load_window(symbol, ws, we)
 
         row = CoverageRow(
             funding_id=funding_id,
@@ -311,6 +410,19 @@ def _classify_rows(
         total_rate_available_zero=total_rate_zero,
         total_required_intervals=len(coverage_rows),
         overall_decision=overall,
+    )
+
+
+def _classify_rows(
+    rows: Iterable[dict],
+    funding_csv_dir: Path,
+    *,
+    symbols: Iterable[str] | None = None,
+) -> FundingCoverageReport:
+    return _classify_rows_with_loader(
+        rows,
+        lambda symbol, ws, we: _load_csv_window(funding_csv_dir, symbol, ws, we),
+        symbols=symbols,
     )
 
 
@@ -399,6 +511,32 @@ def check_funding_coverage_from_rows(
         and the overall decision.
     """
     return _classify_rows(rows, funding_csv_dir, symbols=symbols)
+
+
+def check_funding_coverage_from_source_rows(
+    rows: Iterable[dict],
+    source_rows: Any,
+    *,
+    symbols: Iterable[str] | None = None,
+) -> FundingCoverageReport:
+    """Compute funding-source coverage from in-memory writer source rows.
+
+    The SQLite writer already holds the DataFrame returned by
+    ``load_all_funding()`` before it reaches the pre-insert gate. This helper
+    lets that path reuse the same coverage decisions as the verifier without
+    rereading CSVs or duplicating timestamp-normalization rules.
+    """
+    source_by_symbol = _source_timestamps_by_symbol(source_rows)
+    return _classify_rows_with_loader(
+        rows,
+        lambda symbol, ws, we: _classify_source_window(
+            source_by_symbol,
+            symbol,
+            ws,
+            we,
+        ),
+        symbols=symbols,
+    )
 
 
 def _csv_has_row_in_interval(

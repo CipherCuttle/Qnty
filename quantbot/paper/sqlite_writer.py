@@ -52,6 +52,7 @@ from quantbot.paper.engine import (
     new_state,
     run_engine,
 )
+from quantbot.paper.funding_coverage import check_funding_coverage_from_source_rows
 from quantbot.paper.freshness import check_freshness, parse_bar_utc
 from quantbot.paper.provenance import resolve_git_sha
 from quantbot.paper.snapshots import (
@@ -1176,10 +1177,9 @@ def run_sqlite_accounting(
             # (the BEGIN IMMEDIATE above only holds the write lock). We roll back and
             # close exactly like the freshness/divergence/empty-result abort paths, so
             # the lock is released with ZERO writes.
+            required_funding_rows = []
             missing_funding = []
             for f in result.funding:
-                if f.get("rate_available", True):
-                    continue
                 try:
                     positive_duration = parse_bar_utc(
                         str(f.get("window_start", ""))
@@ -1187,7 +1187,10 @@ def run_sqlite_accounting(
                 except (TypeError, ValueError):
                     # Unparseable timestamp on a missing-funding row -> fail closed.
                     positive_duration = True
-                if positive_duration:
+                if not positive_duration:
+                    continue
+                required_funding_rows.append(f)
+                if not f.get("rate_available", True):
                     missing_funding.append(f)
             if missing_funding:
                 miss = ", ".join(
@@ -1203,6 +1206,38 @@ def run_sqlite_accounting(
                     STATUS_ABORTED,
                     f"FUNDING_COVERAGE_MISSING: engine accrued {len(missing_funding)} "
                     f"funding interval(s) with no source funding event; missing: "
+                    f"{miss}{suffix}; aborting before ledger mutation.",
+                )
+
+            try:
+                source_coverage = check_funding_coverage_from_source_rows(
+                    required_funding_rows,
+                    funding_df,
+                )
+            except Exception as exc:
+                conn.rollback()
+                conn.close()
+                return (
+                    STATUS_ABORTED,
+                    "FUNDING_COVERAGE_MISSING: funding-source coverage check "
+                    f"failed before ledger mutation: {type(exc).__name__}: {exc}",
+                )
+            if source_coverage.missing_windows:
+                miss = ", ".join(
+                    f"{row.symbol}@{row.window_start}:source_issue="
+                    f"{row.source_issue or 'rate_unavailable'}"
+                    for row in source_coverage.missing_windows[:5]
+                )
+                suffix = (
+                    "" if len(source_coverage.missing_windows) <= 5
+                    else f" (+{len(source_coverage.missing_windows) - 5} more)"
+                )
+                conn.rollback()
+                conn.close()
+                return (
+                    STATUS_ABORTED,
+                    "FUNDING_COVERAGE_MISSING: source funding coverage incomplete "
+                    "for engine-required interval(s); missing/ambiguous: "
                     f"{miss}{suffix}; aborting before ledger mutation.",
                 )
 
