@@ -1383,6 +1383,7 @@ def _build_funding_coverage_stamp(
                     "bar_ts": row.bar_ts,
                     "window_start": row.window_start,
                     "window_end": row.window_end,
+                    "source_issue": row.source_issue,
                 }
                 for row in coverage_report.missing_windows
             ],
@@ -1724,9 +1725,11 @@ def _render_receipt(report: dict[str, Any]) -> str:
         if miss:
             lines.append(f"- Missing windows ({len(miss)}):")
             for mw in miss:
+                issue = mw.get("source_issue") or "n/a"
                 lines.append(
                     f"  - {mw.get('symbol', '?')} @ bar_ts={mw.get('bar_ts', '?')} "
-                    f"window=[{mw.get('window_start', '?')}, {mw.get('window_end', '?')}]"
+                    f"window=[{mw.get('window_start', '?')}, {mw.get('window_end', '?')}] "
+                    f"source_issue={issue}"
                 )
         lines.append("")
     # --- Git-SHA provenance (additive stamp; does NOT change status) ---
