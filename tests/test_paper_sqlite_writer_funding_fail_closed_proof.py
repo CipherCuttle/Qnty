@@ -4,10 +4,9 @@ These tests use only tmp SQLite DBs, tmp forward-observation logs, and tmp
 OHLCV/funding CSVs. They never touch /srv, production DBs, shadow DBs, or
 forward_obs.
 
-The writer already fails closed when the engine sees required funding with no
-source event at all. The source-normalization gap tests below are strict xfails:
-they pin the desired writer-boundary behavior for source CSV rows that the
-shared funding timestamp normalizer rejects before durable SQLite mutation.
+The writer fails closed when the engine sees required funding with no source
+event at all, and when the shared funding timestamp normalizer rejects source
+CSV rows before durable SQLite mutation.
 """
 
 from __future__ import annotations
@@ -226,8 +225,8 @@ def test_writer_fails_closed_before_db_mutation_when_source_csv_missing(
     _assert_no_durable_mutation(db_path)
 
 
-@pytest.mark.parametrize("offset_ms", [5, 9])
-def test_writer_accepts_endpoint_jitter_before_db_commit(
+@pytest.mark.parametrize("offset_ms", [0, 5, 9])
+def test_writer_accepts_endpoint_and_endpoint_jitter_before_db_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     offset_ms: int,
@@ -245,13 +244,6 @@ def test_writer_accepts_endpoint_jitter_before_db_commit(
     _assert_committed_funding_rows(db_path)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Current SQLite writer does not yet source-validate funding rows with "
-        "the shared endpoint-tolerance classifier before insert."
-    ),
-    strict=True,
-)
 def test_writer_fails_closed_before_db_mutation_when_source_row_outside_tolerance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -265,16 +257,11 @@ def test_writer_fails_closed_before_db_mutation_when_source_row_outside_toleranc
     assert status == STATUS_ABORTED, (
         f"expected ABORTED for +11ms source rows, got {status}: {msg}"
     )
+    assert "FUNDING_COVERAGE_MISSING" in msg, msg
+    assert "outside_tolerance" in msg, msg
     _assert_no_durable_mutation(db_path)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Current SQLite writer does not yet reject duplicate canonical funding "
-        "endpoints before insert."
-    ),
-    strict=True,
-)
 def test_writer_fails_closed_before_db_mutation_when_source_rows_are_ambiguous(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -288,4 +275,6 @@ def test_writer_fails_closed_before_db_mutation_when_source_rows_are_ambiguous(
     assert status == STATUS_ABORTED, (
         f"expected ABORTED for duplicate source rows, got {status}: {msg}"
     )
+    assert "FUNDING_COVERAGE_MISSING" in msg, msg
+    assert "duplicate_canonical_endpoint" in msg, msg
     _assert_no_durable_mutation(db_path)
