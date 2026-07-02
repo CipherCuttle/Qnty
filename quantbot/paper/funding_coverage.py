@@ -40,8 +40,13 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
+from quantbot.paper.funding_time import (
+    AFTER_ENDPOINT_TOLERANCE_MS,
+    FundingTimestampWindowClassification,
+    classify_funding_timestamps_for_window,
+)
 from quantbot.paper.funding_status import (
     COVERAGE_COMPLETE,
     COVERAGE_MISSING,
@@ -89,6 +94,7 @@ class CoverageRow:
     window_end: str
     rate_available: bool
     source_row_count: int
+    source_issue: str = ""
 
 
 @dataclass(frozen=True)
@@ -103,33 +109,67 @@ class FundingCoverageReport:
     overall_decision: str = COVERAGE_NOT_REQUIRED
 
 
-def _load_csv_window(
-    funding_csv_dir: Path, symbol: str, ws: datetime, we: datetime
-) -> int:
-    """Count CSV rows for ``symbol`` with ``fundingTime`` in ``(ws, we]``.
+def _classify_csv_window_path(
+    csv_path: Path,
+    ws: datetime,
+    we: datetime,
+) -> FundingTimestampWindowClassification:
+    """Classify source CSV rows for one funding window.
 
-    Returns 0 when the CSV is absent or has no header / no data rows. A header-only
-    CSV is treated as zero rows. Open-closed interval per architect §4.2.
+    Reads only ``fundingTime`` and applies
+    ``FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V1``:
+    ``(window_start, window_end]`` stays open-closed, rows up to 10 ms after the
+    inclusive endpoint canonicalize to that endpoint, rows just after the open
+    boundary canonicalize to the open boundary and do not make the window clean,
+    and duplicate rows canonicalizing to the inclusive endpoint are ambiguous.
     """
-    csv_path = funding_csv_dir / f"{symbol}_8h_funding.csv"
     if not csv_path.is_file():
-        return 0
+        return classify_funding_timestamps_for_window(
+            [],
+            window_start=ws,
+            window_end=we,
+        )
     try:
         with csv_path.open("r", newline="", encoding="utf-8") as fh:
             reader = csv.DictReader(fh)
             if reader.fieldnames is None or "fundingTime" not in reader.fieldnames:
-                return 0
-            count = 0
+                return classify_funding_timestamps_for_window(
+                    [],
+                    window_start=ws,
+                    window_end=we,
+                )
+            candidates: list[datetime] = []
+            diagnostic_upper = we + timedelta(seconds=1)
             for row in reader:
                 ts = _parse_funding_time_ms(row.get("fundingTime", ""))
                 if ts is None:
                     continue
-                if ws < ts <= we:
-                    count += 1
-            return count
+                if ws <= ts < diagnostic_upper:
+                    candidates.append(ts)
+            return classify_funding_timestamps_for_window(
+                candidates,
+                window_start=ws,
+                window_end=we,
+                tolerance_ms=AFTER_ENDPOINT_TOLERANCE_MS,
+            )
     except OSError:
         # CSV unreadable: treat as no source coverage (fail-closed).
-        return 0
+        return classify_funding_timestamps_for_window(
+            [],
+            window_start=ws,
+            window_end=we,
+        )
+
+
+def _load_csv_window(
+    funding_csv_dir: Path, symbol: str, ws: datetime, we: datetime
+) -> FundingTimestampWindowClassification:
+    """Classify ``<SYM>_8h_funding.csv`` source rows for ``(ws, we]``."""
+    return _classify_csv_window_path(
+        funding_csv_dir / f"{symbol}_8h_funding.csv",
+        ws,
+        we,
+    )
 
 
 def _classify_rows(
@@ -195,7 +235,7 @@ def _classify_rows(
         ws = _parse_iso(window_start_raw)
         we = _parse_iso(window_end_raw)
         symbols_in_ledger.add(symbol)
-        src_count = _load_csv_window(funding_csv_dir, symbol, ws, we)
+        src = _load_csv_window(funding_csv_dir, symbol, ws, we)
 
         row = CoverageRow(
             funding_id=funding_id,
@@ -204,7 +244,8 @@ def _classify_rows(
             window_start=window_start_raw,
             window_end=window_end_raw,
             rate_available=rate_available,
-            source_row_count=src_count,
+            source_row_count=src.source_row_count,
+            source_issue="" if src.clean_net_of_carry_allowed else src.reason,
         )
         coverage_rows.append(row)
         if not rate_available:
@@ -212,7 +253,7 @@ def _classify_rows(
 
     missing = [
         r for r in coverage_rows
-        if (not r.rate_available) or (r.source_row_count == 0)
+        if (not r.rate_available) or r.source_issue
     ]
 
     # Optional explicit symbol allow-list narrows per_symbol view to the listed set
@@ -233,7 +274,7 @@ def _classify_rows(
         has_any_rows = True
         sym_rows = by_symbol[sym]
         sym_missing = [
-            r for r in sym_rows if (not r.rate_available) or (r.source_row_count == 0)
+            r for r in sym_rows if (not r.rate_available) or r.source_issue
         ]
         if not sym_missing:
             per_symbol_decision[sym] = COVERAGE_COMPLETE
@@ -367,29 +408,18 @@ def _csv_has_row_in_interval(
     we: datetime,
     bar_interval_hours: int,
 ) -> bool:
-    """Return True iff ``<SYM>_<N>h_funding.csv`` has a row in (ws, we].
+    """Return True iff ``<SYM>_<N>h_funding.csv`` cleanly backs (ws, we].
 
     Mirrors the open-closed interval contract used by ``engine.funding_in_interval``
     (left-open, right-closed). A missing/header-only/unreadable CSV is treated as
     ``False`` (fail-closed). Pure read; never mutates the CSV or anything else on disk.
     """
-    csv_path = funding_csv_dir / f"{symbol}_{bar_interval_hours}h_funding.csv"
-    if not csv_path.is_file():
-        return False
-    try:
-        with csv_path.open("r", newline="", encoding="utf-8") as fh:
-            reader = csv.DictReader(fh)
-            if reader.fieldnames is None or "fundingTime" not in reader.fieldnames:
-                return False
-            for row in reader:
-                ts = _parse_funding_time_ms(row.get("fundingTime", ""))
-                if ts is None:
-                    continue
-                if ws < ts <= we:
-                    return True
-            return False
-    except OSError:
-        return False
+    src = _classify_csv_window_path(
+        funding_csv_dir / f"{symbol}_{bar_interval_hours}h_funding.csv",
+        ws,
+        we,
+    )
+    return src.clean_net_of_carry_allowed
 
 
 def check_funding_coverage_for_batch(
