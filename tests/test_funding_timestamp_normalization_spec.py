@@ -1,12 +1,12 @@
 """Spec for shared funding timestamp normalization.
 
-FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V1 pins the intended timestamp contract
+FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V2 pins the intended timestamp contract
 implemented by the production coverage/verifier path:
 
 * funding intervals remain open-closed: (window_start, window_end]
-* source rows at window_end, window_end + 5 ms, and window_end + 9 ms back
-  that endpoint after canonicalization
-* rows outside the accepted after-endpoint tolerance, missing rows, and duplicate
+* source rows in the same UTC second as window_end canonicalize back to that
+  endpoint
+* rows outside the same-second endpoint contract, missing rows, and duplicate
   canonical endpoint rows cannot earn clean carry classification
 * rows jittered after window_start must not be moved into the next window
 
@@ -19,20 +19,22 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from quantbot.paper.funding_coverage import check_funding_coverage_from_rows
 from quantbot.paper.funding_time import (
-    AFTER_ENDPOINT_TOLERANCE_MS,
-    FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V1,
+    ENDPOINT_SAME_SECOND_TOLERANCE_MS,
+    FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V2,
     classify_funding_timestamps_for_window,
 )
 from quantbot.paper.funding_status import COVERAGE_COMPLETE
 
-SPEC_NAME = FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V1
+SPEC_NAME = FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V2
 
 _SYMBOL = "SOLUSDT"
 _WINDOW_START = "2026-06-14T16:00:00"
 _WINDOW_END = "2026-06-15T00:00:00"
-_AFTER_ENDPOINT_TOLERANCE_MS = AFTER_ENDPOINT_TOLERANCE_MS
+_ENDPOINT_SAME_SECOND_TOLERANCE_MS = ENDPOINT_SAME_SECOND_TOLERANCE_MS
 
 
 def _parse_iso_utc(raw: str) -> datetime:
@@ -50,18 +52,16 @@ def _dt_from_ms(ms: int) -> datetime:
     return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
 
 
-def _spec_normalize_funding_timestamp_v1(
+def _spec_normalize_funding_timestamp_v2(
     source_funding_times_ms: list[int],
     *,
     window_start: str = _WINDOW_START,
     window_end: str = _WINDOW_END,
-    tolerance_ms: int = _AFTER_ENDPOINT_TOLERANCE_MS,
 ):
     return classify_funding_timestamps_for_window(
         [_dt_from_ms(ms) for ms in source_funding_times_ms],
         window_start=_parse_iso_utc(window_start),
         window_end=_parse_iso_utc(window_end),
-        tolerance_ms=tolerance_ms,
     )
 
 
@@ -96,7 +96,7 @@ def _current_coverage_report(tmp_path: Path, funding_times_ms: list[int]):
 
 
 def test_spec_exact_endpoint_is_accepted() -> None:
-    result = _spec_normalize_funding_timestamp_v1([_ms_at(_WINDOW_END)])
+    result = _spec_normalize_funding_timestamp_v2([_ms_at(_WINDOW_END)])
 
     assert result.spec_name == SPEC_NAME
     assert result.clean_net_of_carry_allowed is True
@@ -104,9 +104,13 @@ def test_spec_exact_endpoint_is_accepted() -> None:
     assert result.canonical_endpoint == _parse_iso_utc(_WINDOW_END)
 
 
-def test_spec_accepts_5ms_after_endpoint() -> None:
-    result = _spec_normalize_funding_timestamp_v1(
-        [_ms_at(_WINDOW_END, offset_ms=5)]
+@pytest.mark.parametrize(
+    "offset_ms",
+    [5, 9, 28, _ENDPOINT_SAME_SECOND_TOLERANCE_MS],
+)
+def test_spec_accepts_same_second_endpoint_offsets(offset_ms: int) -> None:
+    result = _spec_normalize_funding_timestamp_v2(
+        [_ms_at(_WINDOW_END, offset_ms=offset_ms)]
     )
 
     assert result.clean_net_of_carry_allowed is True
@@ -114,19 +118,10 @@ def test_spec_accepts_5ms_after_endpoint() -> None:
     assert result.canonical_endpoint == _parse_iso_utc(_WINDOW_END)
 
 
-def test_spec_accepts_9ms_after_endpoint() -> None:
-    result = _spec_normalize_funding_timestamp_v1(
-        [_ms_at(_WINDOW_END, offset_ms=9)]
-    )
-
-    assert result.clean_net_of_carry_allowed is True
-    assert result.reason == "accepted"
-    assert result.canonical_endpoint == _parse_iso_utc(_WINDOW_END)
-
-
-def test_spec_rejects_11ms_after_endpoint() -> None:
-    result = _spec_normalize_funding_timestamp_v1(
-        [_ms_at(_WINDOW_END, offset_ms=11)]
+@pytest.mark.parametrize("offset_ms", [1000, 1001])
+def test_spec_rejects_next_second_endpoint_offsets(offset_ms: int) -> None:
+    result = _spec_normalize_funding_timestamp_v2(
+        [_ms_at(_WINDOW_END, offset_ms=offset_ms)]
     )
 
     assert result.clean_net_of_carry_allowed is False
@@ -134,7 +129,7 @@ def test_spec_rejects_11ms_after_endpoint() -> None:
 
 
 def test_spec_does_not_move_inside_window_across_boundary() -> None:
-    result = _spec_normalize_funding_timestamp_v1(
+    result = _spec_normalize_funding_timestamp_v2(
         [_ms_at(_WINDOW_START, offset_ms=5)]
     )
 
@@ -144,17 +139,17 @@ def test_spec_does_not_move_inside_window_across_boundary() -> None:
 
 
 def test_spec_missing_row_is_not_clean() -> None:
-    result = _spec_normalize_funding_timestamp_v1([])
+    result = _spec_normalize_funding_timestamp_v2([])
 
     assert result.clean_net_of_carry_allowed is False
     assert result.reason == "missing_source_row"
 
 
 def test_spec_duplicate_canonical_endpoint_is_ambiguous() -> None:
-    result = _spec_normalize_funding_timestamp_v1(
+    result = _spec_normalize_funding_timestamp_v2(
         [
             _ms_at(_WINDOW_END),
-            _ms_at(_WINDOW_END, offset_ms=5),
+            _ms_at(_WINDOW_END, offset_ms=999),
         ]
     )
 
@@ -168,36 +163,28 @@ def test_spec_duplicate_canonical_endpoint_is_ambiguous() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_current_funding_coverage_accepts_5ms_endpoint_jitter(
+@pytest.mark.parametrize("offset_ms", [0, 5, 9, 28, 999])
+def test_current_funding_coverage_accepts_same_second_endpoint_offsets(
     tmp_path: Path,
+    offset_ms: int,
 ) -> None:
     report = _current_coverage_report(
         tmp_path,
-        [_ms_at(_WINDOW_END, offset_ms=5)],
+        [_ms_at(_WINDOW_END, offset_ms=offset_ms)],
     )
 
     assert report.overall_decision == COVERAGE_COMPLETE
     assert report.missing_windows == []
 
 
-def test_current_funding_coverage_accepts_9ms_endpoint_jitter(
+@pytest.mark.parametrize("offset_ms", [1000, 1001])
+def test_current_funding_coverage_rejects_next_second_endpoint_offsets(
     tmp_path: Path,
+    offset_ms: int,
 ) -> None:
     report = _current_coverage_report(
         tmp_path,
-        [_ms_at(_WINDOW_END, offset_ms=9)],
-    )
-
-    assert report.overall_decision == COVERAGE_COMPLETE
-    assert report.missing_windows == []
-
-
-def test_current_funding_coverage_rejects_11ms_endpoint_jitter(
-    tmp_path: Path,
-) -> None:
-    report = _current_coverage_report(
-        tmp_path,
-        [_ms_at(_WINDOW_END, offset_ms=11)],
+        [_ms_at(_WINDOW_END, offset_ms=offset_ms)],
     )
 
     assert report.overall_decision != COVERAGE_COMPLETE

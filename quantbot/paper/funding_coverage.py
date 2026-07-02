@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from quantbot.paper.funding_time import (
-    AFTER_ENDPOINT_TOLERANCE_MS,
+    ENDPOINT_SAME_SECOND_TOLERANCE_MS,
     FundingTimestampWindowClassification,
     classify_funding_timestamps_for_window,
 )
@@ -53,6 +53,10 @@ from quantbot.paper.funding_status import (
     COVERAGE_NOT_REQUIRED,
     COVERAGE_PARTIAL,
 )
+
+# Diagnostic-only: include +1000ms/+1001ms rows so coverage reports them as
+# outside the endpoint contract. Acceptance still lives in funding_time.py.
+ENDPOINT_REJECTION_DIAGNOSTIC_LOOKAHEAD_MS = ENDPOINT_SAME_SECOND_TOLERANCE_MS + 3
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -117,11 +121,12 @@ def _classify_csv_window_path(
     """Classify source CSV rows for one funding window.
 
     Reads only ``fundingTime`` and applies
-    ``FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V1``:
-    ``(window_start, window_end]`` stays open-closed, rows up to 10 ms after the
-    inclusive endpoint canonicalize to that endpoint, rows just after the open
-    boundary canonicalize to the open boundary and do not make the window clean,
-    and duplicate rows canonicalizing to the inclusive endpoint are ambiguous.
+    ``FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V2``:
+    ``(window_start, window_end]`` stays open-closed, rows in the same UTC second
+    as the inclusive endpoint canonicalize to that endpoint, rows in the same
+    UTC second as the open boundary canonicalize to the open boundary and do not
+    make the window clean, and duplicate rows canonicalizing to the inclusive
+    endpoint are ambiguous.
     """
     if not csv_path.is_file():
         return classify_funding_timestamps_for_window(
@@ -139,7 +144,9 @@ def _classify_csv_window_path(
                     window_end=we,
                 )
             candidates: list[datetime] = []
-            diagnostic_upper = we + timedelta(seconds=1)
+            diagnostic_upper = we + timedelta(
+                milliseconds=ENDPOINT_REJECTION_DIAGNOSTIC_LOOKAHEAD_MS
+            )
             for row in reader:
                 ts = _parse_funding_time_ms(row.get("fundingTime", ""))
                 if ts is None:
@@ -150,7 +157,6 @@ def _classify_csv_window_path(
                 candidates,
                 window_start=ws,
                 window_end=we,
-                tolerance_ms=AFTER_ENDPOINT_TOLERANCE_MS,
             )
     except OSError:
         # CSV unreadable: treat as no source coverage (fail-closed).
@@ -250,7 +256,9 @@ def _classify_source_window(
     ws: datetime,
     we: datetime,
 ) -> FundingTimestampWindowClassification:
-    diagnostic_upper = we + timedelta(seconds=1)
+    diagnostic_upper = we + timedelta(
+        milliseconds=ENDPOINT_REJECTION_DIAGNOSTIC_LOOKAHEAD_MS
+    )
     candidates = [
         ts for ts in source_by_symbol.get(symbol, [])
         if ws <= ts < diagnostic_upper
@@ -259,7 +267,6 @@ def _classify_source_window(
         candidates,
         window_start=ws,
         window_end=we,
-        tolerance_ms=AFTER_ENDPOINT_TOLERANCE_MS,
     )
 
 

@@ -225,7 +225,7 @@ def test_writer_fails_closed_before_db_mutation_when_source_csv_missing(
     _assert_no_durable_mutation(db_path)
 
 
-@pytest.mark.parametrize("offset_ms", [0, 5, 9])
+@pytest.mark.parametrize("offset_ms", [0, 5, 9, 28, 999])
 def test_writer_accepts_endpoint_and_endpoint_jitter_before_db_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -244,18 +244,20 @@ def test_writer_accepts_endpoint_and_endpoint_jitter_before_db_commit(
     _assert_committed_funding_rows(db_path)
 
 
+@pytest.mark.parametrize("offset_ms", [1000, 1001])
 def test_writer_fails_closed_before_db_mutation_when_source_row_outside_tolerance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    offset_ms: int,
 ) -> None:
     status, msg, db_path = _run_writer(
         tmp_path,
         monkeypatch,
-        funding_times_ms=_funding_times_with_endpoint_offset(11),
+        funding_times_ms=_funding_times_with_endpoint_offset(offset_ms),
     )
 
     assert status == STATUS_ABORTED, (
-        f"expected ABORTED for +11ms source rows, got {status}: {msg}"
+        f"expected ABORTED for +{offset_ms}ms source rows, got {status}: {msg}"
     )
     assert "FUNDING_COVERAGE_MISSING" in msg, msg
     assert "outside_tolerance" in msg, msg
