@@ -14,6 +14,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from quantbot.core.determinism import sha256_file
 from quantbot.paper.db import _TRIGGER_SQL
 from quantbot.paper.funding_source_snapshot import (
     build_funding_source_snapshot_envelope_v1,
@@ -67,6 +68,38 @@ def _write_snapshot(
     path = snapshot_dir / f"funding_source_snapshot_v1_{suffix}.json"
     path.write_text(json.dumps(envelope, indent=2, sort_keys=True) + "\n")
     return path
+
+
+def _set_latest_batch_snapshot_reference(
+    db_path: Path,
+    snapshot_path: Path,
+    envelope: dict[str, Any],
+    **overrides: Any,
+) -> None:
+    payload = envelope["snapshot_payload"]
+    values = {
+        "funding_source_snapshot_path": str(snapshot_path),
+        "funding_source_snapshot_sha256": sha256_file(snapshot_path),
+        "funding_source_snapshot_bundle_sha256": payload["source_bundle_sha256"],
+        "funding_source_snapshot_schema_version": payload["schema_version"],
+        "funding_source_snapshot_write_state": payload["write_state"],
+        "funding_source_snapshot_created_at": payload["generated_at_utc"],
+    }
+    values.update(overrides)
+    assignments = ", ".join(f"{name} = ?" for name in values)
+    params = [values[name] for name in values]
+    conn = sqlite3.connect(str(db_path))
+    try:
+        batch_id = conn.execute(
+            "SELECT batch_id FROM ledger_batches ORDER BY batch_id DESC LIMIT 1"
+        ).fetchone()[0]
+        conn.execute(
+            f"UPDATE ledger_batches SET {assignments} WHERE batch_id = ?",
+            [*params, batch_id],
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _required_windows() -> list[dict[str, Any]]:
@@ -235,7 +268,9 @@ def test_missing_snapshot_refuses_clean(tmp_path: Path) -> None:
 
 def test_pending_snapshot_refuses_clean(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
-    _write_snapshot(db_path, _committed_snapshot(db_path, write_state="pending"))
+    envelope = _committed_snapshot(db_path, write_state="pending")
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
 
     report = _clean_report(db_path)
 
@@ -246,7 +281,9 @@ def test_pending_snapshot_refuses_clean(tmp_path: Path) -> None:
 
 def test_orphaned_snapshot_refuses_clean(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
-    _write_snapshot(db_path, _committed_snapshot(db_path, write_state="orphaned"))
+    envelope = _committed_snapshot(db_path, write_state="orphaned")
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
 
     report = _clean_report(db_path)
 
@@ -258,7 +295,8 @@ def test_digest_mismatch_refuses_clean(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
     envelope = _committed_snapshot(db_path)
     envelope["snapshot_sha256"] = "0" * 64
-    _write_snapshot(db_path, envelope)
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
 
     report = _clean_report(db_path)
 
@@ -271,7 +309,9 @@ def test_unsupported_schema_refuses_clean(tmp_path: Path) -> None:
     envelope = _committed_snapshot(db_path)
     payload = copy.deepcopy(envelope["snapshot_payload"])
     payload["schema_version"] = "FUNDING_SOURCE_SNAPSHOT_SCHEMA_V2"
-    _write_snapshot(db_path, build_funding_source_snapshot_envelope_v1(payload))
+    envelope = build_funding_source_snapshot_envelope_v1(payload)
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
 
     report = _clean_report(db_path)
 
@@ -281,7 +321,9 @@ def test_unsupported_schema_refuses_clean(tmp_path: Path) -> None:
 
 def test_db_lane_mismatch_refuses_clean(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
-    _write_snapshot(db_path, _committed_snapshot(db_path, lane_id="other_lane"))
+    envelope = _committed_snapshot(db_path, lane_id="other_lane")
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
 
     report = _clean_report(db_path)
 
@@ -289,7 +331,7 @@ def test_db_lane_mismatch_refuses_clean(tmp_path: Path) -> None:
     assert "funding_source_snapshot_db_mismatch" in report["reason_codes"]
 
 
-def test_multiple_snapshots_refuse_clean(tmp_path: Path) -> None:
+def test_multiple_unreferenced_snapshots_refuse_clean_as_missing(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
     envelope = _committed_snapshot(db_path)
     _write_snapshot(db_path, envelope, suffix="a")
@@ -297,14 +339,16 @@ def test_multiple_snapshots_refuse_clean(tmp_path: Path) -> None:
 
     report = _clean_report(db_path)
 
-    assert report["status"] == FUNDING_CLEAN_CARRY_STATUS_REFUSED_AMBIGUOUS_MULTIPLE
-    assert FUNDING_CLEAN_CARRY_REASON_AMBIGUOUS_MULTIPLE in report["reason_codes"]
+    assert report["status"] == FUNDING_CLEAN_CARRY_STATUS_REFUSED_MISSING_SNAPSHOT
+    assert "funding_source_snapshot_missing" in report["reason_codes"]
 
 
 def test_duplicate_canonical_endpoint_reason_refuses_clean(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
     _rewrite_sol_csv(db_path, "duplicate")
-    _write_snapshot(db_path, _committed_snapshot(db_path))
+    envelope = _committed_snapshot(db_path)
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
 
     report = _clean_report(db_path)
 
@@ -315,7 +359,9 @@ def test_duplicate_canonical_endpoint_reason_refuses_clean(tmp_path: Path) -> No
 def test_outside_same_second_reason_refuses_clean(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
     _rewrite_sol_csv(db_path, "outside")
-    _write_snapshot(db_path, _committed_snapshot(db_path))
+    envelope = _committed_snapshot(db_path)
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
 
     report = _clean_report(db_path)
 
@@ -326,7 +372,9 @@ def test_outside_same_second_reason_refuses_clean(tmp_path: Path) -> None:
 def test_missing_source_row_reason_refuses_clean(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
     _rewrite_sol_csv(db_path, "missing")
-    _write_snapshot(db_path, _committed_snapshot(db_path))
+    envelope = _committed_snapshot(db_path)
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
 
     report = _clean_report(db_path)
 
@@ -351,7 +399,9 @@ def test_valid_committed_snapshot_and_arithmetic_ok_can_return_clean(
 ) -> None:
     db_path = _db_with_complete_source(tmp_path)
     _add_latest_equity_snapshot(db_path)
-    _write_snapshot(db_path, _committed_snapshot(db_path))
+    envelope = _committed_snapshot(db_path)
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
 
     result = verify_database(db_path)
 
@@ -367,7 +417,9 @@ def test_valid_committed_snapshot_and_arithmetic_ok_can_return_clean(
 def test_funding_resum_mismatch_refuses_clean(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
     _add_latest_equity_snapshot(db_path)
-    _write_snapshot(db_path, _committed_snapshot(db_path))
+    envelope = _committed_snapshot(db_path)
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute(
@@ -392,7 +444,8 @@ def test_funding_resum_mismatch_refuses_clean(tmp_path: Path) -> None:
 def test_report_includes_reason_codes_and_snapshot_hashes(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
     envelope = _committed_snapshot(db_path, write_state="pending")
-    _write_snapshot(db_path, envelope)
+    snapshot_path = _write_snapshot(db_path, envelope)
+    _set_latest_batch_snapshot_reference(db_path, snapshot_path, envelope)
 
     verify_and_publish(db_path)
     report = json.loads((db_path.parent / "paper_verify_report.json").read_text())

@@ -2,7 +2,6 @@
 
 All tests use tmp SQLite DBs and tmp funding source snapshot sidecars only. They
 never run prod/shadow writers, never touch /srv, and never mutate forward_obs.
-Current production may xfail until the DB-linked selector implementation PR.
 """
 
 from __future__ import annotations
@@ -11,8 +10,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-import pytest
-
+from quantbot.core.determinism import sha256_file
 from quantbot.paper.config import build_config
 from quantbot.paper.db import (
     LEDGER_BATCH_SNAPSHOT_REFERENCE_COLUMNS,
@@ -35,16 +33,6 @@ from tests.test_paper_sqlite_verifier_clean_net_of_carry_gate import (
     _committed_snapshot,
     _db_with_complete_source,
     _write_snapshot,
-)
-
-IMPLEMENTATION_PENDING_REASON = (
-    "DB-linked funding snapshot selector not implemented yet"
-)
-
-implementation_pending = pytest.mark.xfail(
-    raises=AssertionError,
-    reason=IMPLEMENTATION_PENDING_REASON,
-    strict=True,
 )
 
 REQUIRED_SNAPSHOT_REFERENCE_COLUMNS = dict(LEDGER_BATCH_SNAPSHOT_REFERENCE_COLUMNS)
@@ -205,7 +193,7 @@ def _set_latest_batch_snapshot_reference(
     payload = envelope["snapshot_payload"]
     values = {
         "funding_source_snapshot_path": str(path),
-        "funding_source_snapshot_sha256": envelope["snapshot_sha256"],
+        "funding_source_snapshot_sha256": sha256_file(path),
         "funding_source_snapshot_bundle_sha256": payload["source_bundle_sha256"],
         "funding_source_snapshot_schema_version": payload["schema_version"],
         "funding_source_snapshot_write_state": payload["write_state"],
@@ -306,7 +294,6 @@ def test_only_spec_additive_ensure_adds_missing_nullable_columns_to_legacy_tmp_d
     assert all(value is None for value in row)
 
 
-@implementation_pending
 def test_only_spec_current_production_may_xfail_old_null_snapshot_reference_row_stays_caveated_even_with_sidecar(
     tmp_path: Path,
 ) -> None:
@@ -321,7 +308,6 @@ def test_only_spec_current_production_may_xfail_old_null_snapshot_reference_row_
     assert "funding_source_snapshot_missing" in clean["reason_codes"]
 
 
-@implementation_pending
 def test_only_spec_current_production_may_xfail_populated_reference_selects_batch_snapshot_deterministically(
     tmp_path: Path,
 ) -> None:
@@ -342,7 +328,6 @@ def test_only_spec_current_production_may_xfail_populated_reference_selects_batc
     assert clean["decision"] == CLEAN_NET_OF_CARRY
 
 
-@implementation_pending
 def test_only_spec_current_production_may_xfail_snapshot_sha_is_exact_selector_not_directory_scan_fallback(
     tmp_path: Path,
 ) -> None:
@@ -364,7 +349,6 @@ def test_only_spec_current_production_may_xfail_snapshot_sha_is_exact_selector_n
     assert "funding_source_snapshot_digest_mismatch" in clean["reason_codes"]
 
 
-@implementation_pending
 def test_only_spec_current_production_may_xfail_multiple_sidecars_do_not_matter_when_db_reference_is_exact(
     tmp_path: Path,
 ) -> None:
@@ -385,7 +369,6 @@ def test_only_spec_current_production_may_xfail_multiple_sidecars_do_not_matter_
     assert clean["snapshot_sha256"] == envelope["snapshot_sha256"]
 
 
-@implementation_pending
 def test_only_spec_current_production_may_xfail_missing_db_reference_fields_refuse_clean_net_of_carry(
     tmp_path: Path,
 ) -> None:

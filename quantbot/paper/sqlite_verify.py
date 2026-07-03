@@ -38,10 +38,10 @@ Funding coverage (after this PR):
   MISSING decision per the gate plan §4.
 
 Funding source snapshots:
-  The verifier also reads writer-emitted ``funding_source_snapshots`` sidecars
-  and reports envelope/provenance diagnostics. This is diagnostic-only support:
-  it does NOT implement final clean-mode and does NOT imply
-  ``CLEAN_NET_OF_CARRY``.
+  The verifier reads writer-emitted ``funding_source_snapshots`` sidecars and,
+  when a committed ledger batch carries DB-linked snapshot references, uses
+  those DB references as the deterministic clean-carry selector. Directory scans
+  remain diagnostic/provenance context only.
 
 Statuses / exit codes:
   OK            0   DB verified consistent
@@ -69,6 +69,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from quantbot.core.determinism import sha256_file
 from quantbot.paper import (
     BASELINE_LABEL,
     PAPER_ENGINE_VERSION,
@@ -1488,6 +1489,326 @@ def _expected_snapshot_lane_id(cfg: dict[str, Any]) -> str:
     return str(cfg.get("lane_id") or "paper_pnl_v1")
 
 
+_FUNDING_SOURCE_SNAPSHOT_REFERENCE_COLUMNS = (
+    "funding_source_snapshot_path",
+    "funding_source_snapshot_sha256",
+    "funding_source_snapshot_bundle_sha256",
+    "funding_source_snapshot_schema_version",
+    "funding_source_snapshot_write_state",
+    "funding_source_snapshot_created_at",
+)
+
+
+def _funding_clean_carry_target_batch(
+    conn: sqlite3.Connection,
+) -> dict[str, Any] | None:
+    """Return the committed batch represented by the current verifier state.
+
+    The SQLite verifier validates the whole committed ledger and reports the
+    latest ledger_state/equity state. The matching clean-carry target is
+    therefore the latest committed ledger batch, not an arbitrary sidecar file.
+    """
+    rows = _rows(
+        conn,
+        """
+        SELECT *
+        FROM ledger_batches
+        WHERE committed_at IS NOT NULL
+        ORDER BY batch_id DESC
+        LIMIT 1
+        """,
+    )
+    return rows[0] if rows else None
+
+
+def _snapshot_reference_columns_present(conn: sqlite3.Connection) -> bool:
+    return all(
+        _column_exists(conn, "ledger_batches", name)
+        for name in _FUNDING_SOURCE_SNAPSHOT_REFERENCE_COLUMNS
+    )
+
+
+def _db_snapshot_reference_values(batch: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        name: batch.get(name)
+        for name in _FUNDING_SOURCE_SNAPSHOT_REFERENCE_COLUMNS
+    }
+
+
+def _incomplete_snapshot_reference_fields(
+    reference: Mapping[str, Any],
+) -> list[str]:
+    return [
+        name
+        for name in _FUNDING_SOURCE_SNAPSHOT_REFERENCE_COLUMNS
+        if reference.get(name) in (None, "")
+    ]
+
+
+def _resolve_db_linked_snapshot_path(
+    db_path: Path,
+    raw_snapshot_path: Any,
+) -> tuple[Path | None, list[str]]:
+    if raw_snapshot_path in (None, ""):
+        return None, ["funding_source_snapshot_missing"]
+
+    snapshot_dir = _funding_source_snapshot_dir(db_path).resolve()
+    raw_path = Path(str(raw_snapshot_path))
+    candidate = raw_path if raw_path.is_absolute() else db_path.parent / raw_path
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(snapshot_dir)
+    except ValueError:
+        return None, ["funding_source_snapshot_path_outside_snapshot_dir"]
+
+    if resolved.name != candidate.name:
+        return None, ["funding_source_snapshot_path_traversal"]
+    if not resolved.exists():
+        return None, ["funding_source_snapshot_missing"]
+    if not resolved.is_file():
+        return None, ["funding_source_snapshot_missing"]
+    return resolved, []
+
+
+def _duplicate_db_snapshot_reference_rows(
+    conn: sqlite3.Connection,
+    target_batch_id: int,
+    snapshot_path: str,
+) -> list[int]:
+    return [
+        int(row["batch_id"])
+        for row in _rows(
+            conn,
+            """
+            SELECT batch_id
+            FROM ledger_batches
+            WHERE batch_id != ?
+              AND funding_source_snapshot_path = ?
+            ORDER BY batch_id
+            """,
+            (target_batch_id, snapshot_path),
+        )
+    ]
+
+
+def _status_from_db_linked_reason_codes(reason_codes: list[str]) -> str:
+    reason_set = set(reason_codes)
+    if "funding_source_snapshot_ambiguous_multiple" in reason_set:
+        return FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE
+    if (
+        "funding_source_snapshot_missing" in reason_set
+        or "funding_source_snapshot_path_outside_snapshot_dir" in reason_set
+        or "funding_source_snapshot_path_traversal" in reason_set
+    ):
+        return FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING
+    if (
+        "funding_source_snapshot_digest_mismatch" in reason_set
+        or "funding_source_file_digest_mismatch" in reason_set
+    ):
+        return FUNDING_SOURCE_SNAPSHOT_STATUS_DIGEST_MISMATCH
+    if "funding_source_snapshot_schema_unsupported" in reason_set:
+        return FUNDING_SOURCE_SNAPSHOT_STATUS_SCHEMA_UNSUPPORTED
+    if "funding_source_snapshot_payload_invalid" in reason_set:
+        return FUNDING_SOURCE_SNAPSHOT_STATUS_PAYLOAD_INVALID
+    if (
+        "funding_source_snapshot_db_mismatch" in reason_set
+        or "funding_source_snapshot_window_mismatch" in reason_set
+    ):
+        return FUNDING_SOURCE_SNAPSHOT_STATUS_DB_OR_LANE_MISMATCH
+    if "funding_source_snapshot_unreferenced_or_orphaned" in reason_set:
+        return FUNDING_SOURCE_SNAPSHOT_STATUS_PENDING_OR_ORPHANED
+    return FUNDING_SOURCE_SNAPSHOT_STATUS_PRESENT_VALID
+
+
+def _classify_db_linked_funding_source_snapshot(
+    conn: sqlite3.Connection,
+    db_path: Path,
+    cfg: dict[str, Any],
+    target_batch: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if target_batch is None:
+        return None
+
+    target_batch_id = int(target_batch["batch_id"])
+    reference = _db_snapshot_reference_values(target_batch)
+    report: dict[str, Any] = {
+        "selector": "ledger_batches",
+        "target_batch_id": target_batch_id,
+        "db_reference": reference,
+    }
+
+    reason_codes: list[str] = []
+    if not _snapshot_reference_columns_present(conn):
+        reason_codes.append("funding_source_snapshot_missing")
+        report["missing_reference_columns"] = list(
+            _FUNDING_SOURCE_SNAPSHOT_REFERENCE_COLUMNS
+        )
+    else:
+        incomplete = _incomplete_snapshot_reference_fields(reference)
+        if incomplete:
+            reason_codes.append("funding_source_snapshot_missing")
+            report["incomplete_reference_fields"] = incomplete
+
+    selected_path: Path | None = None
+    if not reason_codes:
+        selected_path, path_reasons = _resolve_db_linked_snapshot_path(
+            db_path,
+            reference["funding_source_snapshot_path"],
+        )
+        reason_codes.extend(path_reasons)
+        duplicate_batch_ids = _duplicate_db_snapshot_reference_rows(
+            conn,
+            target_batch_id,
+            str(reference["funding_source_snapshot_path"]),
+        )
+        if duplicate_batch_ids:
+            reason_codes.append("funding_source_snapshot_ambiguous_multiple")
+            report["duplicate_reference_batch_ids"] = duplicate_batch_ids
+
+    envelope: dict[str, Any] | None = None
+    payload: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
+    if selected_path is not None and not reason_codes:
+        report["selected_snapshot_path"] = str(selected_path)
+        actual_file_sha = sha256_file(selected_path)
+        report["file_sha256"] = actual_file_sha
+        if actual_file_sha != reference["funding_source_snapshot_sha256"]:
+            reason_codes.append("funding_source_snapshot_digest_mismatch")
+            report["file_sha256_mismatch"] = {
+                "db": reference["funding_source_snapshot_sha256"],
+                "actual": actual_file_sha,
+            }
+
+        try:
+            raw_envelope = json.loads(selected_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raw_envelope = None
+            report["error"] = f"JSONDecodeError: {exc.msg}"
+            reason_codes.append("funding_source_snapshot_payload_invalid")
+        except OSError as exc:
+            raw_envelope = None
+            report["error"] = f"{type(exc).__name__}: {exc}"
+            reason_codes.append("funding_source_snapshot_payload_invalid")
+
+        if isinstance(raw_envelope, dict):
+            envelope = raw_envelope
+            validation_reasons = validate_funding_source_snapshot_envelope_v1(envelope)
+            report["validation_reason_codes"] = list(validation_reasons)
+            reason_codes.extend(str(reason) for reason in validation_reasons)
+            payload = _payload_dict(envelope)
+            metadata = _snapshot_metadata_dict(payload)
+        else:
+            reason_codes.append("funding_source_snapshot_payload_invalid")
+
+    if envelope is not None:
+        lane = payload.get("lane") if isinstance(payload.get("lane"), dict) else {}
+        assert isinstance(lane, dict)
+        report.update(
+            {
+                "snapshot_sha256": envelope.get("snapshot_sha256"),
+                "source_bundle_sha256": payload.get("source_bundle_sha256"),
+                "schema_version": payload.get("schema_version"),
+                "write_state": payload.get("write_state"),
+                "coverage_decision": payload.get("coverage_decision"),
+                "payload_reason_codes": list(payload.get("reason_codes") or []),
+                "lane_id": lane.get("lane_id"),
+                "lane_output_dir": lane.get("output_dir"),
+                "generated_at_utc": payload.get("generated_at_utc"),
+                "db_path_reference": metadata.get("db_path_reference"),
+                "batch_start_watermark": metadata.get("batch_start_watermark"),
+                "batch_end_watermark": metadata.get("batch_end_watermark"),
+                "pending_batch_id": metadata.get("pending_batch_id"),
+                "ledger_batch_id": metadata.get("ledger_batch_id"),
+                "batch_identity_matches": metadata.get("batch_identity_matches"),
+                "evaluation_identity_matches": metadata.get(
+                    "evaluation_identity_matches"
+                ),
+            }
+        )
+
+        if payload.get("source_bundle_sha256") != reference[
+            "funding_source_snapshot_bundle_sha256"
+        ]:
+            reason_codes.append("funding_source_file_digest_mismatch")
+        if payload.get("schema_version") != reference[
+            "funding_source_snapshot_schema_version"
+        ]:
+            reason_codes.append("funding_source_snapshot_schema_unsupported")
+        if reference["funding_source_snapshot_write_state"] != "committed":
+            reason_codes.append("funding_source_snapshot_unreferenced_or_orphaned")
+        if payload.get("write_state") != "committed":
+            reason_codes.append("funding_source_snapshot_unreferenced_or_orphaned")
+        if metadata.get("write_state") != "committed":
+            reason_codes.append("funding_source_snapshot_unreferenced_or_orphaned")
+
+        mismatch_reasons: list[str] = []
+        expected_lane_id = _expected_snapshot_lane_id(cfg)
+        if lane.get("lane_id") != expected_lane_id:
+            mismatch_reasons.append(
+                f"lane_id {lane.get('lane_id')!r} != expected {expected_lane_id!r}"
+            )
+        if lane.get("output_dir") != str(db_path.parent):
+            mismatch_reasons.append(
+                f"lane.output_dir {lane.get('output_dir')!r} != db directory "
+                f"{str(db_path.parent)!r}"
+            )
+        if metadata.get("db_path_reference") != str(db_path):
+            mismatch_reasons.append(
+                "snapshot_metadata.db_path_reference "
+                f"{metadata.get('db_path_reference')!r} != db_path {str(db_path)!r}"
+            )
+        if metadata.get("ledger_batch_id") != str(target_batch_id):
+            reason_codes.append("funding_source_snapshot_unreferenced_or_orphaned")
+            report.setdefault("orphan_reasons", []).append(
+                "snapshot_metadata.ledger_batch_id "
+                f"{metadata.get('ledger_batch_id')!r} != target batch "
+                f"{str(target_batch_id)!r}"
+            )
+        if metadata.get("batch_identity_matches") is not True:
+            reason_codes.append("funding_source_snapshot_unreferenced_or_orphaned")
+            report.setdefault("orphan_reasons", []).append(
+                "snapshot_metadata.batch_identity_matches is not true"
+            )
+        if metadata.get("evaluation_identity_matches") is not True:
+            reason_codes.append("funding_source_snapshot_unreferenced_or_orphaned")
+            report.setdefault("orphan_reasons", []).append(
+                "snapshot_metadata.evaluation_identity_matches is not true"
+            )
+        if target_batch.get("prior_watermark_bar_ts") is not None and metadata.get(
+            "batch_start_watermark"
+        ) != target_batch.get("prior_watermark_bar_ts"):
+            mismatch_reasons.append(
+                "snapshot_metadata.batch_start_watermark "
+                f"{metadata.get('batch_start_watermark')!r} != target batch "
+                f"prior_watermark_bar_ts {target_batch.get('prior_watermark_bar_ts')!r}"
+            )
+        if target_batch.get("new_watermark_bar_ts") is not None and metadata.get(
+            "batch_end_watermark"
+        ) != target_batch.get("new_watermark_bar_ts"):
+            mismatch_reasons.append(
+                "snapshot_metadata.batch_end_watermark "
+                f"{metadata.get('batch_end_watermark')!r} != target batch "
+                f"new_watermark_bar_ts {target_batch.get('new_watermark_bar_ts')!r}"
+            )
+        if mismatch_reasons:
+            report["mismatch_reasons"] = mismatch_reasons
+            reason_codes.append("funding_source_snapshot_db_mismatch")
+
+    deduped = sorted(set(reason_codes))
+    status = _status_from_db_linked_reason_codes(deduped)
+    report["status"] = status
+    report["db_linked"] = True
+    report["diagnostic_only"] = False
+    report["clean_mode_gate"] = "db_linked_ledger_batches_reference"
+    report["reason_codes"] = deduped
+    if status != FUNDING_SOURCE_SNAPSHOT_STATUS_PRESENT_VALID:
+        report["caveat"] = (
+            "DB-linked snapshot reference is missing, pending, mismatched, "
+            "unsafe, or ambiguous; preserving CAVEATED_ENGINE_SEMANTICS."
+        )
+    return report
+
+
 def _classify_funding_source_snapshot_candidate(
     path: Path,
     *,
@@ -1605,13 +1926,15 @@ def _classify_funding_source_snapshot_candidate(
 
 
 def _build_funding_source_snapshot_stamp(
+    conn: sqlite3.Connection,
     db_path: Path,
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    """Read sidecar source snapshots and add a diagnostic/provenance stamp.
+    """Read sidecar snapshots and add selector/provenance stamp.
 
-    This stamp is intentionally non-gating: it never changes the arithmetic
-    verifier status and never creates the deferred clean-mode decision.
+    Directory scanning remains diagnostic. When the verifier has a committed
+    ledger batch target, clean-carry selection uses that batch's DB-linked
+    snapshot reference instead.
     """
     snapshot_dir = _funding_source_snapshot_dir(db_path)
     files = (
@@ -1629,17 +1952,17 @@ def _build_funding_source_snapshot_stamp(
         for path in files
     ]
 
-    selected: dict[str, Any] | None = None
+    directory_selected: dict[str, Any] | None = None
     if not files:
-        status = FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING
+        directory_status = FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING
     elif len(files) > 1:
-        status = FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE
+        directory_status = FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE
     else:
-        selected = candidates[0]
-        status = str(selected["status"])
+        directory_selected = candidates[0]
+        directory_status = str(directory_selected["status"])
 
     snapshot_report: dict[str, Any] = {
-        "status": status,
+        "status": directory_status,
         "diagnostic_only": True,
         "clean_mode_gate": "see_funding_clean_carry_decision",
         "note": FUNDING_SOURCE_SNAPSHOT_DIAGNOSTIC_NOTE,
@@ -1653,15 +1976,17 @@ def _build_funding_source_snapshot_stamp(
         "candidate_count": len(files),
         "expected_lane_id": expected_lane_id,
         "candidates": candidates,
+        "directory_status": directory_status,
     }
 
-    if status == FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE:
+    if directory_status == FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE:
         snapshot_report["reason"] = (
-            "multiple funding source snapshot sidecars found and DB schema v1 "
-            "has no durable selector; refusing to treat any candidate as clean evidence"
+            "multiple funding source snapshot sidecars found; directory scan has "
+            "no durable selector and is diagnostic only. Clean evidence requires "
+            "an exact DB-linked selector"
         )
-    if selected is not None:
-        snapshot_report["selected_snapshot_path"] = selected.get("path")
+    if directory_selected is not None:
+        snapshot_report["selected_snapshot_path"] = directory_selected.get("path")
         for key in (
             "snapshot_sha256",
             "source_bundle_sha256",
@@ -1674,11 +1999,35 @@ def _build_funding_source_snapshot_stamp(
             "future_clean_mode_reason_codes",
             "mismatch_reasons",
         ):
-            if key in selected:
-                snapshot_report[key] = selected[key]
+            if key in directory_selected:
+                snapshot_report[key] = directory_selected[key]
+
+    target_batch = _funding_clean_carry_target_batch(conn)
+    db_linked_report = _classify_db_linked_funding_source_snapshot(
+        conn,
+        db_path,
+        cfg,
+        target_batch,
+    )
+    if db_linked_report is not None:
+        diagnostic_report = dict(snapshot_report)
+        snapshot_report.update(db_linked_report)
+        snapshot_report["directory_diagnostic"] = diagnostic_report
+    elif target_batch is not None:
+        snapshot_report.update(
+            {
+                "status": FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING,
+                "selector": "ledger_batches",
+                "db_linked": True,
+                "diagnostic_only": False,
+                "clean_mode_gate": "db_linked_ledger_batches_reference",
+                "target_batch_id": target_batch["batch_id"],
+                "reason_codes": ["funding_source_snapshot_missing"],
+            }
+        )
 
     return {
-        "funding_source_snapshot_status": status,
+        "funding_source_snapshot_status": snapshot_report["status"],
         "funding_source_snapshot": snapshot_report,
     }
 
@@ -1925,6 +2274,9 @@ def _build_funding_clean_carry_stamp(
     if not isinstance(snapshot_report, Mapping):
         snapshot_report = {}
     snapshot_status = snapshot_report.get("status")
+    snapshot_reason_codes = snapshot_report.get("reason_codes")
+    if isinstance(snapshot_reason_codes, list):
+        reason_codes.extend(str(reason) for reason in snapshot_reason_codes)
 
     envelope: dict[str, Any] | None = None
     if snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING:
@@ -1967,6 +2319,11 @@ def _build_funding_clean_carry_stamp(
             envelope,
             expected_evaluation_window=_funding_evaluation_window(conn),
             expected_lane_id=_expected_snapshot_lane_id(cfg),
+            expected_ledger_batch_id=(
+                str(snapshot_report["target_batch_id"])
+                if snapshot_report.get("target_batch_id") is not None
+                else None
+            ),
             expected_source_file_sha256_by_path=expected_file_sha_by_path,
             expected_row_subset_sha256_by_path=expected_row_sha_by_path,
         )
@@ -2083,7 +2440,7 @@ def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
         if identity_failures:
             return VerifyResult(STATUS_CONFIG_ERROR, identity_failures, report)
         assert cfg is not None
-        report.update(_build_funding_source_snapshot_stamp(db_path, cfg))
+        report.update(_build_funding_source_snapshot_stamp(conn, db_path, cfg))
     except sqlite3.DatabaseError as exc:
         return VerifyResult(
             STATUS_CONFIG_ERROR,
