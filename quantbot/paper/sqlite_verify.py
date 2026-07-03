@@ -37,6 +37,12 @@ Funding coverage (after this PR):
   empty label; otherwise it follows the COMPLETE / NOT_REQUIRED vs PARTIAL /
   MISSING decision per the gate plan §4.
 
+Funding source snapshots:
+  The verifier also reads writer-emitted ``funding_source_snapshots`` sidecars
+  and reports envelope/provenance diagnostics. This is diagnostic-only support:
+  it does NOT implement final clean-mode and does NOT imply
+  ``CLEAN_NET_OF_CARRY``.
+
 Statuses / exit codes:
   OK            0   DB verified consistent
   CONFIG_ERROR  3   DB/config identity invalid
@@ -80,6 +86,10 @@ from quantbot.paper.lane_identity import LaneIdentity
 from quantbot.paper.funding_coverage import (
     check_funding_coverage_from_rows,
 )
+from quantbot.paper.funding_source_snapshot import (
+    clean_mode_decision_from_snapshot_v1,
+    validate_funding_source_snapshot_envelope_v1,
+)
 from quantbot.paper.funding_status import (
     CAVEATED_ENGINE_SEMANTICS,
     CAVEATED_ENGINE_SEMANTICS_LABEL,
@@ -97,6 +107,21 @@ STATUS_OK = "OK"
 STATUS_CONFIG_ERROR = "CONFIG_ERROR"
 STATUS_CORRUPT = "CORRUPT"
 STATUS_PRE_START = "PRE_START"
+
+FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING = "missing"
+FUNDING_SOURCE_SNAPSHOT_STATUS_PRESENT_VALID = "present_valid"
+FUNDING_SOURCE_SNAPSHOT_STATUS_DIGEST_MISMATCH = "present_digest_mismatch"
+FUNDING_SOURCE_SNAPSHOT_STATUS_SCHEMA_UNSUPPORTED = "present_schema_unsupported"
+FUNDING_SOURCE_SNAPSHOT_STATUS_PAYLOAD_INVALID = "present_payload_invalid"
+FUNDING_SOURCE_SNAPSHOT_STATUS_DB_OR_LANE_MISMATCH = "present_db_or_lane_mismatch"
+FUNDING_SOURCE_SNAPSHOT_STATUS_PENDING_OR_ORPHANED = "present_pending_or_orphaned"
+FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE = "present_ambiguous_multiple"
+
+FUNDING_SOURCE_SNAPSHOT_DIAGNOSTIC_NOTE = (
+    "Funding source snapshot read support is diagnostic/provenance-only. It does "
+    "not change the arithmetic verifier status, does not implement final "
+    "clean-mode, and does not imply CLEAN_NET_OF_CARRY."
+)
 
 EXIT_CODE: dict[str, int] = {
     STATUS_OK: 0,
@@ -1393,6 +1418,232 @@ def _build_funding_coverage_stamp(
     }
 
 
+# ---------------------------------------------------------------------------
+# Funding source snapshot stamp (additive; does NOT change status)
+# ---------------------------------------------------------------------------
+
+_FUNDING_SOURCE_SNAPSHOT_GLOB = "funding_source_snapshot_v1_*.json"
+
+
+def _funding_source_snapshot_dir(db_path: Path) -> Path:
+    return db_path.parent / "funding_source_snapshots"
+
+
+def _payload_dict(envelope: Any) -> dict[str, Any]:
+    if not isinstance(envelope, dict):
+        return {}
+    payload = envelope.get("snapshot_payload")
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _snapshot_metadata_dict(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata = payload.get("snapshot_metadata")
+    if not isinstance(metadata, dict):
+        return {}
+    return metadata
+
+
+def _expected_snapshot_lane_id(cfg: dict[str, Any]) -> str:
+    return str(cfg.get("lane_id") or "paper_pnl_v1")
+
+
+def _classify_funding_source_snapshot_candidate(
+    path: Path,
+    *,
+    db_path: Path,
+    expected_lane_id: str,
+) -> dict[str, Any]:
+    candidate: dict[str, Any] = {
+        "path": str(path),
+        "file_name": path.name,
+    }
+    try:
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        candidate.update(
+            {
+                "status": FUNDING_SOURCE_SNAPSHOT_STATUS_PAYLOAD_INVALID,
+                "error": f"JSONDecodeError: {exc.msg}",
+            }
+        )
+        return candidate
+    except OSError as exc:
+        candidate.update(
+            {
+                "status": FUNDING_SOURCE_SNAPSHOT_STATUS_PAYLOAD_INVALID,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+        return candidate
+
+    if not isinstance(envelope, dict):
+        candidate.update(
+            {
+                "status": FUNDING_SOURCE_SNAPSHOT_STATUS_PAYLOAD_INVALID,
+                "error": "snapshot envelope JSON root is not an object",
+            }
+        )
+        return candidate
+
+    validation_reasons = validate_funding_source_snapshot_envelope_v1(envelope)
+    candidate["validation_reason_codes"] = list(validation_reasons)
+    if "funding_source_snapshot_digest_mismatch" in validation_reasons:
+        candidate["status"] = FUNDING_SOURCE_SNAPSHOT_STATUS_DIGEST_MISMATCH
+        return candidate
+    if "funding_source_snapshot_schema_unsupported" in validation_reasons:
+        candidate["status"] = FUNDING_SOURCE_SNAPSHOT_STATUS_SCHEMA_UNSUPPORTED
+        return candidate
+    if validation_reasons:
+        candidate["status"] = FUNDING_SOURCE_SNAPSHOT_STATUS_PAYLOAD_INVALID
+        return candidate
+
+    payload = _payload_dict(envelope)
+    metadata = _snapshot_metadata_dict(payload)
+    lane = payload.get("lane") if isinstance(payload.get("lane"), dict) else {}
+    assert isinstance(lane, dict)
+
+    candidate.update(
+        {
+            "snapshot_sha256": envelope.get("snapshot_sha256"),
+            "source_bundle_sha256": payload.get("source_bundle_sha256"),
+            "schema_version": payload.get("schema_version"),
+            "write_state": payload.get("write_state"),
+            "coverage_decision": payload.get("coverage_decision"),
+            "payload_reason_codes": list(payload.get("reason_codes") or []),
+            "lane_id": lane.get("lane_id"),
+            "lane_output_dir": lane.get("output_dir"),
+            "generated_at_utc": payload.get("generated_at_utc"),
+            "db_path_reference": metadata.get("db_path_reference"),
+            "batch_start_watermark": metadata.get("batch_start_watermark"),
+            "batch_end_watermark": metadata.get("batch_end_watermark"),
+            "pending_batch_id": metadata.get("pending_batch_id"),
+            "ledger_batch_id": metadata.get("ledger_batch_id"),
+            "batch_identity_matches": metadata.get("batch_identity_matches"),
+            "evaluation_identity_matches": metadata.get(
+                "evaluation_identity_matches"
+            ),
+        }
+    )
+
+    mismatch_reasons: list[str] = []
+    if lane.get("lane_id") != expected_lane_id:
+        mismatch_reasons.append(
+            f"lane_id {lane.get('lane_id')!r} != expected {expected_lane_id!r}"
+        )
+    if (
+        lane.get("output_dir") is not None
+        and lane.get("output_dir") != str(db_path.parent)
+    ):
+        mismatch_reasons.append(
+            f"lane.output_dir {lane.get('output_dir')!r} != db directory "
+            f"{str(db_path.parent)!r}"
+        )
+    db_path_reference = metadata.get("db_path_reference")
+    if db_path_reference is not None and db_path_reference != str(db_path):
+        mismatch_reasons.append(
+            f"snapshot_metadata.db_path_reference {db_path_reference!r} != "
+            f"db_path {str(db_path)!r}"
+        )
+
+    clean_decision = clean_mode_decision_from_snapshot_v1(
+        envelope,
+        expected_lane_id=expected_lane_id,
+    )
+    clean_reason_codes = list(clean_decision.get("reason_codes") or [])
+    candidate["future_clean_mode_reason_codes"] = clean_reason_codes
+
+    if mismatch_reasons or "funding_source_snapshot_db_mismatch" in clean_reason_codes:
+        candidate["status"] = FUNDING_SOURCE_SNAPSHOT_STATUS_DB_OR_LANE_MISMATCH
+        candidate["mismatch_reasons"] = mismatch_reasons
+    elif "funding_source_snapshot_unreferenced_or_orphaned" in clean_reason_codes:
+        candidate["status"] = FUNDING_SOURCE_SNAPSHOT_STATUS_PENDING_OR_ORPHANED
+    else:
+        candidate["status"] = FUNDING_SOURCE_SNAPSHOT_STATUS_PRESENT_VALID
+
+    return candidate
+
+
+def _build_funding_source_snapshot_stamp(
+    db_path: Path,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """Read sidecar source snapshots and add a diagnostic/provenance stamp.
+
+    This stamp is intentionally non-gating: it never changes the arithmetic
+    verifier status and never creates the deferred clean-mode decision.
+    """
+    snapshot_dir = _funding_source_snapshot_dir(db_path)
+    files = (
+        sorted(snapshot_dir.glob(_FUNDING_SOURCE_SNAPSHOT_GLOB))
+        if snapshot_dir.is_dir()
+        else []
+    )
+    expected_lane_id = _expected_snapshot_lane_id(cfg)
+    candidates = [
+        _classify_funding_source_snapshot_candidate(
+            path,
+            db_path=db_path,
+            expected_lane_id=expected_lane_id,
+        )
+        for path in files
+    ]
+
+    selected: dict[str, Any] | None = None
+    if not files:
+        status = FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING
+    elif len(files) > 1:
+        status = FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE
+    else:
+        selected = candidates[0]
+        status = str(selected["status"])
+
+    snapshot_report: dict[str, Any] = {
+        "status": status,
+        "diagnostic_only": True,
+        "clean_mode_gate": "not_implemented",
+        "note": FUNDING_SOURCE_SNAPSHOT_DIAGNOSTIC_NOTE,
+        "caveat": (
+            "Missing, pending, orphaned, ambiguous, or mismatched source "
+            "snapshots preserve CAVEATED_ENGINE_SEMANTICS."
+        ),
+        "snapshot_dir": str(snapshot_dir),
+        "snapshot_dir_exists": snapshot_dir.is_dir(),
+        "glob": _FUNDING_SOURCE_SNAPSHOT_GLOB,
+        "candidate_count": len(files),
+        "expected_lane_id": expected_lane_id,
+        "candidates": candidates,
+    }
+
+    if status == FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE:
+        snapshot_report["reason"] = (
+            "multiple funding source snapshot sidecars found and DB schema v1 "
+            "has no durable selector; refusing to treat any candidate as clean evidence"
+        )
+    if selected is not None:
+        snapshot_report["selected_snapshot_path"] = selected.get("path")
+        for key in (
+            "snapshot_sha256",
+            "source_bundle_sha256",
+            "write_state",
+            "coverage_decision",
+            "lane_id",
+            "lane_output_dir",
+            "generated_at_utc",
+            "db_path_reference",
+            "future_clean_mode_reason_codes",
+            "mismatch_reasons",
+        ):
+            if key in selected:
+                snapshot_report[key] = selected[key]
+
+    return {
+        "funding_source_snapshot_status": status,
+        "funding_source_snapshot": snapshot_report,
+    }
+
+
 _GIT_PROVENANCE_MAX_IDS = 50
 
 
@@ -1475,6 +1726,7 @@ def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
         if identity_failures:
             return VerifyResult(STATUS_CONFIG_ERROR, identity_failures, report)
         assert cfg is not None
+        report.update(_build_funding_source_snapshot_stamp(db_path, cfg))
     except sqlite3.DatabaseError as exc:
         return VerifyResult(
             STATUS_CONFIG_ERROR,
@@ -1732,6 +1984,35 @@ def _render_receipt(report: dict[str, Any]) -> str:
                     f"source_issue={issue}"
                 )
         lines.append("")
+    # --- Funding source snapshot sidecars (diagnostic; does NOT change status) ---
+    fss = report.get("funding_source_snapshot")
+    if fss is not None:
+        lines.append("## Funding source snapshot")
+        lines.append("")
+        lines.append(f"- Status: {fss.get('status', 'n/a')}")
+        lines.append(f"- Diagnostic only: {fss.get('diagnostic_only') is True}")
+        lines.append(f"- Clean-mode gate: {fss.get('clean_mode_gate', 'n/a')}")
+        lines.append(f"- Candidate count: {fss.get('candidate_count', 0)}")
+        lines.append(
+            f"- Snapshot SHA-256: {fss.get('snapshot_sha256') or '(none)'}"
+        )
+        lines.append(
+            f"- Source bundle SHA-256: "
+            f"{fss.get('source_bundle_sha256') or '(none)'}"
+        )
+        lines.append(
+            f"- Note: {fss.get('note') or FUNDING_SOURCE_SNAPSHOT_DIAGNOSTIC_NOTE}"
+        )
+        caveat = fss.get("caveat")
+        if caveat:
+            lines.append(f"- Caveat: {caveat}")
+        reason = fss.get("reason")
+        if reason:
+            lines.append(f"- Reason: {reason}")
+        reason_codes = fss.get("future_clean_mode_reason_codes") or []
+        if reason_codes:
+            lines.append(f"- Future clean-mode refusal codes: {reason_codes}")
+        lines.append("")
     # --- Git-SHA provenance (additive stamp; does NOT change status) ---
     gp = report.get("git_provenance")
     if gp is not None:
@@ -1834,6 +2115,14 @@ __all__ = [
     "STATUS_CONFIG_ERROR",
     "STATUS_CORRUPT",
     "STATUS_PRE_START",
+    "FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING",
+    "FUNDING_SOURCE_SNAPSHOT_STATUS_PRESENT_VALID",
+    "FUNDING_SOURCE_SNAPSHOT_STATUS_DIGEST_MISMATCH",
+    "FUNDING_SOURCE_SNAPSHOT_STATUS_SCHEMA_UNSUPPORTED",
+    "FUNDING_SOURCE_SNAPSHOT_STATUS_PAYLOAD_INVALID",
+    "FUNDING_SOURCE_SNAPSHOT_STATUS_DB_OR_LANE_MISMATCH",
+    "FUNDING_SOURCE_SNAPSHOT_STATUS_PENDING_OR_ORPHANED",
+    "FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE",
     "EXIT_CODE",
     "VERIFIER_DISCLAIMER",
     "SQLITE_VERIFIER_VERSION",
