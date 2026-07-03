@@ -17,13 +17,12 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 from quantbot.core.determinism import sha256_file
 from quantbot.paper.funding_source_snapshot import (
@@ -45,7 +44,6 @@ from tests.test_paper_sqlite_verifier_clean_net_of_carry_gate import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_XFAIL_REASON = "deterministic verifier source path resolution not implemented yet"
 
 _SOURCE_PATH_UNAVAILABLE = "source_path_unavailable"
 _MISLEADING_SOURCE_REASON_CODES = {
@@ -76,9 +74,17 @@ _REQUIRED_READ_ONLY_JSON_FIELDS = {
 
 
 def _run_cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    python_path = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        str(_REPO_ROOT)
+        if not python_path
+        else f"{_REPO_ROOT}{os.pathsep}{python_path}"
+    )
     return subprocess.run(
         [sys.executable, "-m", "quantbot.paper.sqlite_verify", *args],
         cwd=str(cwd or _REPO_ROOT),
+        env=env,
         capture_output=True,
         text=True,
         timeout=60,
@@ -221,7 +227,6 @@ def _assert_source_path_unavailable_without_misleading_codes(
     assert reason_codes.isdisjoint(_MISLEADING_SOURCE_REASON_CODES)
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_absolute_data_dir_makes_cli_cwd_independent(tmp_path: Path) -> None:
     db_path, data_dir = _db_with_relative_snapshot_source_paths(tmp_path)
     arbitrary_cwd = tmp_path / "arbitrary_cwd"
@@ -261,7 +266,6 @@ def test_absolute_data_dir_makes_cli_cwd_independent(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_relative_data_dir_is_rejected(tmp_path: Path) -> None:
     db_path, _data_dir = _db_with_relative_snapshot_source_paths(tmp_path)
     before_sha256 = sha256_file(db_path)
@@ -286,7 +290,6 @@ def test_relative_data_dir_is_rejected(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_missing_data_dir_fails_closed_even_when_cwd_has_data(
     tmp_path: Path,
 ) -> None:
@@ -316,7 +319,6 @@ def test_missing_data_dir_fails_closed_even_when_cwd_has_data(
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_unavailable_absolute_data_dir_fails_closed_without_digest_codes(
     tmp_path: Path,
 ) -> None:
@@ -346,7 +348,6 @@ def test_unavailable_absolute_data_dir_fails_closed_without_digest_codes(
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_snapshot_provenance_source_path_is_used_when_data_dir_absent(
     tmp_path: Path,
 ) -> None:
