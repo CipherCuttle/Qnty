@@ -163,6 +163,10 @@ FUNDING_CLEAN_CARRY_REASON_AMBIGUOUS_MULTIPLE = (
     "funding_source_snapshot_ambiguous_multiple"
 )
 FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID = "funding_source_snapshot_payload_invalid"
+SOURCE_PATH_RESOLUTION_MODE_EXPLICIT_DATA_DIR = "explicit_data_dir"
+SOURCE_PATH_RESOLUTION_MODE_SNAPSHOT_PROVENANCE = "snapshot_provenance"
+SOURCE_PATH_RESOLUTION_MODE_UNAVAILABLE = "unavailable"
+SOURCE_PATH_UNAVAILABLE_REASON = "source_path_unavailable"
 
 EXIT_CODE: dict[str, int] = {
     STATUS_OK: 0,
@@ -259,6 +263,22 @@ class VerifyResult:
     @property
     def ok(self) -> bool:
         return self.status == STATUS_OK
+
+
+@dataclass(frozen=True)
+class FundingSourcePathResolution:
+    mode: str
+    resolved_dir: Path | None
+    available: bool
+
+    def report_fields(self) -> dict[str, Any]:
+        return {
+            "resolved_funding_source_dir": (
+                str(self.resolved_dir) if self.resolved_dir is not None else None
+            ),
+            "source_path_resolution_mode": self.mode,
+            "source_path_available": self.available,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1388,22 +1408,101 @@ def _validate_initial_state(conn: sqlite3.Connection, cfg: dict) -> list[str]:
 # Funding-coverage stamp (additive; does NOT change status)
 # ---------------------------------------------------------------------------
 
-def _resolve_funding_csv_dir(db_path: Path) -> Path:
-    """Resolve the source funding-CSV directory for the coverage stamp.
+def _snapshot_payload_from_report(
+    snapshot_report: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(snapshot_report, Mapping):
+        return {}
+    selected_path = snapshot_report.get("selected_snapshot_path")
+    if not selected_path:
+        return {}
+    try:
+        envelope = json.loads(Path(str(selected_path)).read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return _payload_dict(envelope)
 
-    Mirrors ``quantbot.paper.verify``: prefer ``<db_dir>/data`` when present,
-    otherwise fall back to the repo-level ``data`` directory. Read-only
-    inspection only — no DB or filesystem mutation.
-    """
-    db_dir = db_path.parent
-    local_data = db_dir / "data"
-    if local_data.is_dir():
-        return local_data
-    return Path("data")
+
+def _single_absolute_parent(paths: list[Path]) -> Path | None:
+    parents = {path.parent for path in paths if path.is_absolute()}
+    if len(parents) == 1:
+        return next(iter(parents))
+    return None
+
+
+def _snapshot_provenance_source_dir(payload: Mapping[str, Any]) -> Path | None:
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, Mapping):
+        return None
+
+    resolution = provenance.get("source_path_resolution")
+    if isinstance(resolution, Mapping):
+        raw_dir = resolution.get("resolved_funding_source_dir")
+        if raw_dir:
+            path = Path(str(raw_dir))
+            if path.is_absolute():
+                return path
+
+    paths: list[Path] = []
+    source_files = payload.get("source_files")
+    if isinstance(source_files, list):
+        for item in source_files:
+            if isinstance(item, Mapping) and item.get("path"):
+                paths.append(Path(str(item["path"])))
+
+    entity_inputs = provenance.get("entity_inputs")
+    if isinstance(entity_inputs, list):
+        for item in entity_inputs:
+            if isinstance(item, Mapping) and item.get("source_csv_path"):
+                paths.append(Path(str(item["source_csv_path"])))
+
+    return _single_absolute_parent(paths)
+
+
+def _resolve_funding_source_dir(
+    db_path: Path,
+    *,
+    explicit_data_dir: Path | None,
+    snapshot_report: Mapping[str, Any] | None,
+    allow_db_relative_data: bool,
+) -> FundingSourcePathResolution:
+    if explicit_data_dir is not None:
+        return FundingSourcePathResolution(
+            mode=SOURCE_PATH_RESOLUTION_MODE_EXPLICIT_DATA_DIR,
+            resolved_dir=explicit_data_dir,
+            available=explicit_data_dir.is_dir(),
+        )
+
+    snapshot_dir = _snapshot_provenance_source_dir(
+        _snapshot_payload_from_report(snapshot_report)
+    )
+    if snapshot_dir is not None:
+        return FundingSourcePathResolution(
+            mode=SOURCE_PATH_RESOLUTION_MODE_SNAPSHOT_PROVENANCE,
+            resolved_dir=snapshot_dir,
+            available=snapshot_dir.is_dir(),
+        )
+
+    local_data = db_path.parent / "data"
+    if allow_db_relative_data and local_data.is_dir():
+        return FundingSourcePathResolution(
+            mode=SOURCE_PATH_RESOLUTION_MODE_SNAPSHOT_PROVENANCE,
+            resolved_dir=local_data,
+            available=True,
+        )
+
+    return FundingSourcePathResolution(
+        mode=SOURCE_PATH_RESOLUTION_MODE_UNAVAILABLE,
+        resolved_dir=None,
+        available=False,
+    )
 
 
 def _build_funding_coverage_stamp(
-    conn: sqlite3.Connection, db_path: Path, *, arithmetic_ok: bool
+    conn: sqlite3.Connection,
+    *,
+    arithmetic_ok: bool,
+    source_resolution: FundingSourcePathResolution,
 ) -> dict[str, Any]:
     """Compute the funding-coverage stamp using rows from the live ``funding`` table.
 
@@ -1419,10 +1518,38 @@ def _build_funding_coverage_stamp(
 
     Read-only: the function only reads from the pinned read-only connection.
     """
-    funding_csv_dir = _resolve_funding_csv_dir(db_path)
+    funding_rows = _rows(conn, "SELECT * FROM funding")
+    source_path_required = bool(funding_rows)
+    if not source_resolution.available:
+        rate_available_zero = sum(1 for row in funding_rows if not row["rate_available"])
+        return {
+            "funding_coverage": {
+                "decision": (
+                    SOURCE_PATH_UNAVAILABLE_REASON
+                    if source_path_required
+                    else COVERAGE_NOT_REQUIRED
+                ),
+                "per_symbol": {},
+                "total_funding_rows": len(funding_rows),
+                "total_rate_available_zero": rate_available_zero,
+                "total_required_intervals": len(funding_rows),
+                "missing_window_ids": [],
+            },
+            "funding_coverage_verdict": (
+                FAIL if not arithmetic_ok else CAVEATED_ENGINE_SEMANTICS
+            ),
+            "funding_coverage_diagnostic_label": (
+                CAVEATED_ENGINE_SEMANTICS_LABEL
+                if arithmetic_ok and source_path_required
+                else ""
+            ),
+            "source_path_required": source_path_required,
+        }
+
+    assert source_resolution.resolved_dir is not None
     coverage_report = check_funding_coverage_from_rows(
-        _rows(conn, "SELECT * FROM funding"),
-        funding_csv_dir,
+        funding_rows,
+        source_resolution.resolved_dir,
     )
 
     if not arithmetic_ok:
@@ -1456,6 +1583,7 @@ def _build_funding_coverage_stamp(
         },
         "funding_coverage_verdict": funding_coverage_verdict,
         "funding_coverage_diagnostic_label": funding_coverage_diagnostic_label,
+        "source_path_required": source_path_required,
     }
 
 
@@ -2089,14 +2217,38 @@ def _funding_evaluation_window(conn: sqlite3.Connection) -> dict[str, Any] | Non
     return {"start": row["start"], "end": row["end"]}
 
 
-def _snapshot_source_file_path(db_path: Path, source_path: str) -> Path:
+def _snapshot_source_file_path(
+    db_path: Path,
+    source_path: str,
+    *,
+    source_resolution: FundingSourcePathResolution,
+) -> Path:
     raw = Path(source_path)
+    if source_resolution.resolved_dir is not None:
+        source_dir = source_resolution.resolved_dir
+        if raw.is_absolute():
+            explicit_candidate = source_dir / raw.name
+            if (
+                source_resolution.mode == SOURCE_PATH_RESOLUTION_MODE_EXPLICIT_DATA_DIR
+                and explicit_candidate.exists()
+            ):
+                return explicit_candidate
+            return raw
+
+        candidates: list[Path] = []
+        if raw.parts and raw.parts[0] == "data":
+            tail = Path(*raw.parts[1:]) if len(raw.parts) > 1 else Path(raw.name)
+            candidates.append(source_dir / tail)
+        candidates.append(source_dir / raw.name)
+        candidates.append(source_dir / raw)
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
+
     if raw.is_absolute():
         return raw
-    db_relative = db_path.parent / raw
-    if db_relative.exists():
-        return db_relative
-    return raw
+    return db_path.parent / raw
 
 
 def _source_symbol_from_snapshot_item(path: str, item: Mapping[str, Any]) -> str:
@@ -2115,6 +2267,7 @@ def _read_snapshot_source_rows(
     *,
     db_path: Path,
     source_files: list[Mapping[str, Any]],
+    source_resolution: FundingSourcePathResolution,
 ) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:
     rows: list[dict[str, Any]] = []
     full_file_sha256_by_path: dict[str, str] = {}
@@ -2125,7 +2278,11 @@ def _read_snapshot_source_rows(
         if not source_path:
             reason_codes.append("funding_source_file_digest_mismatch")
             continue
-        resolved = _snapshot_source_file_path(db_path, source_path)
+        resolved = _snapshot_source_file_path(
+            db_path,
+            source_path,
+            source_resolution=source_resolution,
+        )
         try:
             full_file_sha256_by_path[source_path] = build_source_file_digest(resolved)
             with resolved.open("r", newline="", encoding="utf-8") as fh:
@@ -2163,7 +2320,11 @@ def _snapshot_source_digest_expectations(
     *,
     db_path: Path,
     payload: Mapping[str, Any],
+    source_resolution: FundingSourcePathResolution,
 ) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    if not source_resolution.available:
+        return {}, {}, [SOURCE_PATH_UNAVAILABLE_REASON]
+
     source_files_raw = payload.get("source_files")
     if not isinstance(source_files_raw, list):
         return {}, {}, ["funding_source_file_digest_mismatch"]
@@ -2180,6 +2341,7 @@ def _snapshot_source_digest_expectations(
     source_rows, full_file_sha_by_path, reason_codes = _read_snapshot_source_rows(
         db_path=db_path,
         source_files=source_files,
+        source_resolution=source_resolution,
     )
     row_subset_sha_by_path: dict[str, str] = {}
     for item in source_files:
@@ -2238,6 +2400,7 @@ def _clean_carry_status_from_reasons(reason_codes: list[str]) -> str:
         return FUNDING_CLEAN_CARRY_STATUS_REFUSED_PENDING_OR_ORPHANED
     source_issue_codes = {
         FUNDING_CLEAN_CARRY_REASON_SOURCE_COVERAGE_NOT_COMPLETE,
+        SOURCE_PATH_UNAVAILABLE_REASON,
         "funding_source_missing",
         "funding_source_partial",
         "funding_source_duplicate_ambiguous",
@@ -2258,6 +2421,7 @@ def _build_funding_clean_carry_stamp(
     report: Mapping[str, Any],
     *,
     arithmetic_ok: bool,
+    source_resolution: FundingSourcePathResolution,
 ) -> dict[str, Any]:
     """Decide whether the strict clean-carry label is allowed for this report."""
     reason_codes: list[str] = []
@@ -2268,7 +2432,9 @@ def _build_funding_clean_carry_stamp(
     coverage_decision = (
         coverage.get("decision") if isinstance(coverage, Mapping) else None
     )
-    if coverage_decision != COVERAGE_COMPLETE:
+    if report.get("source_path_required") and not source_resolution.available:
+        reason_codes.append(SOURCE_PATH_UNAVAILABLE_REASON)
+    elif coverage_decision != COVERAGE_COMPLETE:
         reason_codes.append(FUNDING_CLEAN_CARRY_REASON_SOURCE_COVERAGE_NOT_COMPLETE)
 
     snapshot_report = report.get("funding_source_snapshot")
@@ -2314,6 +2480,7 @@ def _build_funding_clean_carry_stamp(
             ) = _snapshot_source_digest_expectations(
                 db_path=db_path,
                 payload=payload,
+                source_resolution=source_resolution,
             )
             reason_codes.extend(digest_reason_codes)
         clean_decision = clean_mode_decision_from_snapshot_v1(
@@ -2416,7 +2583,14 @@ def _build_git_provenance_stamp(conn: sqlite3.Connection) -> dict[str, Any]:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
+def _verify_connection(
+    conn: sqlite3.Connection,
+    db_path: Path,
+    *,
+    data_dir: Path | None = None,
+    allow_db_relative_data: bool = True,
+    fail_on_source_path_unavailable: bool = False,
+) -> VerifyResult:
     """Verify the single read snapshot currently held by ``conn``."""
     report: dict[str, Any] = {
         "db_path": str(db_path),
@@ -2442,6 +2616,13 @@ def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
             return VerifyResult(STATUS_CONFIG_ERROR, identity_failures, report)
         assert cfg is not None
         report.update(_build_funding_source_snapshot_stamp(conn, db_path, cfg))
+        source_resolution = _resolve_funding_source_dir(
+            db_path,
+            explicit_data_dir=data_dir,
+            snapshot_report=report.get("funding_source_snapshot"),
+            allow_db_relative_data=allow_db_relative_data,
+        )
+        report.update(source_resolution.report_fields())
     except sqlite3.DatabaseError as exc:
         return VerifyResult(
             STATUS_CONFIG_ERROR,
@@ -2496,7 +2677,11 @@ def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
     # content_digests keys are NOT touched. The stamp is read-only; no DB
     # mutation occurs.
     arithmetic_ok = not failures
-    stamp = _build_funding_coverage_stamp(conn, db_path, arithmetic_ok=arithmetic_ok)
+    stamp = _build_funding_coverage_stamp(
+        conn,
+        arithmetic_ok=arithmetic_ok,
+        source_resolution=source_resolution,
+    )
     report.update(stamp)
     report["funding_source_coverage_verdict"] = report.get(
         "funding_coverage_verdict"
@@ -2507,6 +2692,7 @@ def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
         cfg,
         report,
         arithmetic_ok=arithmetic_ok,
+        source_resolution=source_resolution,
     )
     report.update(clean_carry_stamp)
     if arithmetic_ok:
@@ -2525,6 +2711,14 @@ def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
     # historical git_sha=NULL rows are immutable unprovenanced evidence, not
     # corruption. New batches can no longer be NULL (writer fails closed).
     report.update(_build_git_provenance_stamp(conn))
+
+    if (
+        fail_on_source_path_unavailable
+        and report.get("source_path_required")
+        and not source_resolution.available
+        and SOURCE_PATH_UNAVAILABLE_REASON not in failures
+    ):
+        failures.append(SOURCE_PATH_UNAVAILABLE_REASON)
 
     report["forward_start_ts"] = cfg["forward_start_ts"]
     report["failure_count"] = len(failures)
@@ -2903,7 +3097,11 @@ def _open_readonly_immutable_connection(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def verify_database_readonly_cli(db_path: Path) -> VerifyResult:
+def verify_database_readonly_cli(
+    db_path: Path,
+    *,
+    data_dir: Path | None = None,
+) -> VerifyResult:
     """CLI verification entry point.
 
     Reuses :func:`_verify_connection` — the same structural / arithmetic /
@@ -2923,7 +3121,13 @@ def verify_database_readonly_cli(db_path: Path) -> VerifyResult:
             report,
         )
     try:
-        return _verify_connection(conn, db_path)
+        return _verify_connection(
+            conn,
+            db_path,
+            data_dir=data_dir,
+            allow_db_relative_data=True,
+            fail_on_source_path_unavailable=True,
+        )
     finally:
         conn.close()
 
@@ -2966,6 +3170,14 @@ def _build_cli_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         required=True,
         help="Emit a single JSON verification report to stdout.",
+    )
+    parser.add_argument(
+        "--data-dir",
+        help=(
+            "Absolute path to the directory containing source funding CSVs. "
+            "Relative paths are rejected; missing absolute paths fail closed "
+            "through the JSON report."
+        ),
     )
     parser.add_argument(
         "--strict-clean-carry",
@@ -3016,7 +3228,11 @@ def main(argv: list[str] | None = None) -> int:
     if not db_path.is_absolute():
         parser.error(f"--db-path must be an absolute path, got: {args.db_path!r}")
 
-    result = verify_database_readonly_cli(db_path)
+    data_dir = Path(args.data_dir) if args.data_dir else None
+    if data_dir is not None and not data_dir.is_absolute():
+        parser.error(f"--data-dir must be an absolute path, got: {args.data_dir!r}")
+
+    result = verify_database_readonly_cli(db_path, data_dir=data_dir)
     report = _cli_report(result, db_path, read_only=bool(args.read_only))
 
     exit_code = result.exit_code
