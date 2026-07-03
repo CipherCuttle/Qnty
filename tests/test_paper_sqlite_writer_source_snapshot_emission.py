@@ -3,9 +3,8 @@
 All tests use tmp SQLite DBs, tmp forward observations, and tmp OHLCV/funding
 CSVs. They never touch /srv, production DBs, shadow DBs, or forward_obs.
 
-The sidecar emitted in this PR is deliberately pending-only evidence. It is not
-clean-carry proof: without a committed batch/evaluation identity in DB schema v1,
-future verifier clean-mode must refuse unreferenced or orphaned snapshots.
+The writer first emits a pending sidecar before DB mutation, then marks the
+sidecar and DB reference committed only after the batch commit succeeds.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from quantbot.core.determinism import sha256_file
 from quantbot.paper.config import build_config, write_config_once
 from quantbot.paper.db import connect_readonly, initialize_database
 from quantbot.paper.funding_source_snapshot import (
@@ -186,6 +186,29 @@ def _load_single_snapshot(db_path: Path) -> dict:
     return json.loads(files[0].read_text(encoding="utf-8"))
 
 
+def _latest_snapshot_reference(db_path: Path) -> dict:
+    conn = connect_readonly(db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                funding_source_snapshot_path,
+                funding_source_snapshot_sha256,
+                funding_source_snapshot_bundle_sha256,
+                funding_source_snapshot_schema_version,
+                funding_source_snapshot_write_state,
+                funding_source_snapshot_created_at
+            FROM ledger_batches
+            ORDER BY batch_id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    return dict(row)
+
+
 def _assert_no_durable_mutation(db_path: Path) -> None:
     conn = connect_readonly(db_path)
     try:
@@ -218,7 +241,7 @@ def _assert_no_durable_mutation(db_path: Path) -> None:
         conn.close()
 
 
-def test_happy_path_emits_pending_snapshot_sidecar_with_valid_envelope(
+def test_happy_path_emits_committed_snapshot_sidecar_with_valid_db_reference(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -235,7 +258,7 @@ def test_happy_path_emits_pending_snapshot_sidecar_with_valid_envelope(
     payload = envelope["snapshot_payload"]
     snapshot_file = _snapshot_files(db_path)[0]
     assert payload["source_bundle_sha256"] in snapshot_file.name
-    assert payload["write_state"] == "pending"
+    assert payload["write_state"] == "committed"
     assert payload["coverage_decision"] == "complete"
     assert payload["reason_codes"] == []
     assert payload["lane"]["lane_id"] == "paper_pnl_v1"
@@ -264,13 +287,22 @@ def test_happy_path_emits_pending_snapshot_sidecar_with_valid_envelope(
     assert metadata["batch_start_watermark"] is None
     assert metadata["batch_end_watermark"] == TS[-1]
     assert metadata["pending_batch_id"].startswith("pending-")
-    assert metadata["ledger_batch_id"] is None
+    assert metadata["ledger_batch_id"] == "1"
+    assert metadata["batch_identity_matches"] is True
+
+    reference = _latest_snapshot_reference(db_path)
+    assert reference == {
+        "funding_source_snapshot_path": str(snapshot_file),
+        "funding_source_snapshot_sha256": sha256_file(snapshot_file),
+        "funding_source_snapshot_bundle_sha256": payload["source_bundle_sha256"],
+        "funding_source_snapshot_schema_version": payload["schema_version"],
+        "funding_source_snapshot_write_state": "committed",
+        "funding_source_snapshot_created_at": payload["generated_at_utc"],
+    }
 
     clean_decision = clean_mode_decision_from_snapshot_v1(envelope)
-    assert clean_decision["clean_net_of_carry_allowed"] is False
-    assert clean_decision["reason_codes"] == [
-        "funding_source_snapshot_unreferenced_or_orphaned"
-    ]
+    assert clean_decision["clean_net_of_carry_allowed"] is True
+    assert clean_decision["reason_codes"] == []
 
 
 def test_explicit_db_path_controls_snapshot_directory_not_output_env(

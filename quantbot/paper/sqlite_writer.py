@@ -28,10 +28,12 @@ import json
 import os
 import sqlite3
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quantbot.core.determinism import sha256_file
 import quantbot.data.funding_loader as _funding_loader
 from quantbot.data.multi_asset_loader import load_all_ohlcv
 from quantbot.data.funding_loader import load_all_funding
@@ -44,6 +46,7 @@ from quantbot.paper import (
 )
 from quantbot.paper.config import config_hash, load_config
 from quantbot.paper.db import (
+    LEDGER_BATCH_SNAPSHOT_REFERENCE_COLUMNS,
     PAPER_ENGINE_VERSION as DB_PAPER_ENGINE_VERSION,
     connect_writer,
     get_paper_db_path,
@@ -114,6 +117,19 @@ STATUS_LEDGER_BUSY = 6
 
 class FundingSourceSnapshotEmissionError(RuntimeError):
     """Raised when pending sidecar snapshot emission cannot complete safely."""
+
+
+@dataclass(frozen=True)
+class FundingSourceSnapshotReference:
+    """DB reference values for one funding-source snapshot sidecar."""
+
+    path: Path
+    file_sha256: str
+    source_bundle_sha256: str
+    schema_version: str
+    write_state: str
+    created_at: str
+    envelope: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +286,53 @@ def _update_batch_on_commit(
             event_count,
             committed_bar_count,
             git_sha,
+            batch_id,
+        ),
+    )
+
+
+def _require_ledger_batch_snapshot_reference_columns(
+    conn: sqlite3.Connection,
+) -> None:
+    existing = {
+        str(row["name"] if isinstance(row, sqlite3.Row) else row[1])
+        for row in conn.execute("PRAGMA table_info(ledger_batches)").fetchall()
+    }
+    missing = [
+        name
+        for name in LEDGER_BATCH_SNAPSHOT_REFERENCE_COLUMNS
+        if name not in existing
+    ]
+    if missing:
+        raise FundingSourceSnapshotEmissionError(
+            "ledger_batches missing funding source snapshot reference columns: "
+            + ", ".join(missing)
+        )
+
+
+def _update_batch_snapshot_reference(
+    conn: sqlite3.Connection,
+    batch_id: int,
+    snapshot_ref: FundingSourceSnapshotReference,
+) -> None:
+    conn.execute(
+        """
+        UPDATE ledger_batches
+        SET funding_source_snapshot_path = ?,
+            funding_source_snapshot_sha256 = ?,
+            funding_source_snapshot_bundle_sha256 = ?,
+            funding_source_snapshot_schema_version = ?,
+            funding_source_snapshot_write_state = ?,
+            funding_source_snapshot_created_at = ?
+        WHERE batch_id = ?
+        """,
+        (
+            str(snapshot_ref.path),
+            snapshot_ref.file_sha256,
+            snapshot_ref.source_bundle_sha256,
+            snapshot_ref.schema_version,
+            snapshot_ref.write_state,
+            snapshot_ref.created_at,
             batch_id,
         ),
     )
@@ -1138,8 +1201,9 @@ def _emit_pending_funding_source_snapshot(
     created_at: str,
     batch_git_sha: str,
     batch_end_watermark: str | None,
-) -> Path:
+) -> FundingSourceSnapshotReference:
     try:
+        _require_ledger_batch_snapshot_reference_columns(conn)
         required_windows = _required_funding_windows_for_snapshot(required_funding_rows)
         source_file_paths = _funding_source_csv_paths_for_snapshot(
             required_windows,
@@ -1213,18 +1277,75 @@ def _emit_pending_funding_source_snapshot(
             / f"funding_source_snapshot_v1_{source_bundle_sha256}.json"
         )
 
-        # DB schema v1 has no durable pointer from ledger_batches to this sidecar.
-        # Write state therefore starts as pending. If the later DB commit fails,
-        # this JSON may be orphaned; future verifier clean-mode must refuse any
-        # unreferenced/orphaned snapshot and must not treat it as clean-carry evidence.
         _write_json_atomic(snapshot_path, envelope)
-        return snapshot_path
+        return FundingSourceSnapshotReference(
+            path=snapshot_path,
+            file_sha256=sha256_file(snapshot_path),
+            source_bundle_sha256=source_bundle_sha256,
+            schema_version=str(payload.get("schema_version") or ""),
+            write_state=str(payload.get("write_state") or ""),
+            created_at=str(payload.get("generated_at_utc") or ""),
+            envelope=envelope,
+        )
     except FundingSourceSnapshotEmissionError:
         raise
     except Exception as exc:
         raise FundingSourceSnapshotEmissionError(
             f"{type(exc).__name__}: {exc}"
         ) from exc
+
+
+def _committed_funding_source_snapshot_reference(
+    pending_ref: FundingSourceSnapshotReference,
+    *,
+    batch_id: int,
+) -> FundingSourceSnapshotReference:
+    payload = dict(pending_ref.envelope["snapshot_payload"])
+    metadata = dict(payload.get("snapshot_metadata") or {})
+    metadata.update(
+        {
+            "write_state": "committed",
+            "ledger_batch_id": str(batch_id),
+            "batch_identity_matches": True,
+        }
+    )
+    payload["write_state"] = "committed"
+    payload["snapshot_metadata"] = metadata
+    envelope = build_funding_source_snapshot_envelope_v1(payload)
+    validation_reasons = validate_funding_source_snapshot_envelope_v1(envelope)
+    if validation_reasons:
+        raise FundingSourceSnapshotEmissionError(
+            "committed source snapshot envelope validation failed: "
+            + ", ".join(validation_reasons)
+        )
+
+    _write_json_atomic(pending_ref.path, envelope)
+    return FundingSourceSnapshotReference(
+        path=pending_ref.path,
+        file_sha256=sha256_file(pending_ref.path),
+        source_bundle_sha256=str(payload.get("source_bundle_sha256") or ""),
+        schema_version=str(payload.get("schema_version") or ""),
+        write_state="committed",
+        created_at=str(payload.get("generated_at_utc") or ""),
+        envelope=envelope,
+    )
+
+
+def _mark_funding_source_snapshot_db_reference_committed(
+    *,
+    db_path: Path,
+    batch_id: int,
+    committed_ref: FundingSourceSnapshotReference,
+) -> None:
+    conn = connect_writer(db_path)
+    try:
+        _update_batch_snapshot_reference(conn, batch_id, committed_ref)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1581,7 +1702,7 @@ def run_sqlite_accounting(
                 eq["bar_ts"] for eq in result.equity
             )
             try:
-                _emit_pending_funding_source_snapshot(
+                snapshot_ref = _emit_pending_funding_source_snapshot(
                     conn=conn,
                     db_path=db_path,
                     db_config=db_config,
@@ -1618,6 +1739,7 @@ def run_sqlite_accounting(
                 config_hash_val=cfg_hash,
                 lane_id=batch_lane_id,
             )
+            _update_batch_snapshot_reference(conn, batch_id, snapshot_ref)
 
             # Build the event chain for all new rows
             processed_bar_ts = {eq["bar_ts"] for eq in result.equity}
@@ -1877,10 +1999,37 @@ def run_sqlite_accounting(
             conn.commit()
             conn.close()
 
-            return STATUS_OK, (
+            committed_msg = (
                 f"Committed batch {batch_id}: {committed_bar_count} bars, "
                 f"{event_count} events"
             )
+            try:
+                committed_snapshot_ref = _committed_funding_source_snapshot_reference(
+                    snapshot_ref,
+                    batch_id=batch_id,
+                )
+            except Exception as exc:
+                return STATUS_OK, (
+                    f"{committed_msg}; FUNDING_SOURCE_SNAPSHOT_COMMIT_MARKER_FAILED: "
+                    f"{type(exc).__name__}: {exc}; batch remains "
+                    "CAVEATED_ENGINE_SEMANTICS."
+                )
+
+            try:
+                _mark_funding_source_snapshot_db_reference_committed(
+                    db_path=db_path,
+                    batch_id=batch_id,
+                    committed_ref=committed_snapshot_ref,
+                )
+            except Exception as exc:
+                return STATUS_OK, (
+                    f"{committed_msg}; "
+                    "FUNDING_SOURCE_SNAPSHOT_DB_REFERENCE_COMMIT_MARK_FAILED: "
+                    f"{type(exc).__name__}: {exc}; batch remains "
+                    "CAVEATED_ENGINE_SEMANTICS."
+                )
+
+            return STATUS_OK, committed_msg
 
         except Exception as exc:
             try:
