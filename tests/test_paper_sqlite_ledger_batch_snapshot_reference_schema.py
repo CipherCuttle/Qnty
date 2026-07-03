@@ -14,7 +14,11 @@ from typing import Any
 import pytest
 
 from quantbot.paper.config import build_config
-from quantbot.paper.db import initialize_database
+from quantbot.paper.db import (
+    LEDGER_BATCH_SNAPSHOT_REFERENCE_COLUMNS,
+    ensure_ledger_batch_snapshot_reference_columns,
+    initialize_database,
+)
 from quantbot.paper.funding_status import (
     CAVEATED_ENGINE_SEMANTICS,
     CLEAN_NET_OF_CARRY,
@@ -34,7 +38,7 @@ from tests.test_paper_sqlite_verifier_clean_net_of_carry_gate import (
 )
 
 IMPLEMENTATION_PENDING_REASON = (
-    "ledger batch snapshot reference schema not implemented yet"
+    "DB-linked funding snapshot selector not implemented yet"
 )
 
 implementation_pending = pytest.mark.xfail(
@@ -43,14 +47,7 @@ implementation_pending = pytest.mark.xfail(
     strict=True,
 )
 
-REQUIRED_SNAPSHOT_REFERENCE_COLUMNS = {
-    "funding_source_snapshot_path": "TEXT",
-    "funding_source_snapshot_sha256": "TEXT",
-    "funding_source_snapshot_bundle_sha256": "TEXT",
-    "funding_source_snapshot_schema_version": "TEXT",
-    "funding_source_snapshot_write_state": "TEXT",
-    "funding_source_snapshot_created_at": "TEXT",
-}
+REQUIRED_SNAPSHOT_REFERENCE_COLUMNS = dict(LEDGER_BATCH_SNAPSHOT_REFERENCE_COLUMNS)
 
 OPTIONAL_LATER_SNAPSHOT_REFERENCE_COLUMNS = {
     "funding_source_snapshot_payload_sha256",
@@ -121,12 +118,9 @@ def _require_snapshot_reference_schema(db_path: Path) -> dict[str, dict[str, Any
 
 
 def _add_test_only_snapshot_reference_columns(db_path: Path) -> None:
-    existing = _ledger_batches_schema(db_path)
     conn = sqlite3.connect(str(db_path))
     try:
-        for name in REQUIRED_SNAPSHOT_REFERENCE_COLUMNS:
-            if name not in existing:
-                conn.execute(f"ALTER TABLE ledger_batches ADD COLUMN {name} TEXT")
+        ensure_ledger_batch_snapshot_reference_columns(conn)
         conn.commit()
     finally:
         conn.close()
@@ -168,6 +162,38 @@ def _insert_old_style_ledger_batch(conn: sqlite3.Connection) -> int:
         ),
     )
     return int(cur.lastrowid)
+
+
+def _legacy_db_without_snapshot_reference_columns(tmp_path: Path) -> Path:
+    db_path = tmp_path / "legacy" / "paper_ledger.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE ledger_batches (
+                batch_id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at                 TEXT NOT NULL,
+                started_at                 TEXT,
+                committed_at               TEXT,
+                git_sha                    TEXT,
+                prior_watermark_bar_ts     TEXT,
+                new_watermark_bar_ts       TEXT,
+                first_event_seq            INTEGER,
+                last_event_seq             INTEGER,
+                event_count                INTEGER NOT NULL DEFAULT 0,
+                committed_bar_count        INTEGER NOT NULL DEFAULT 0,
+                paper_engine_version       TEXT NOT NULL,
+                config_hash                TEXT NOT NULL,
+                lane_id                    TEXT
+            ) STRICT
+            """
+        )
+        _insert_old_style_ledger_batch(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
 
 
 def _set_latest_batch_snapshot_reference(
@@ -213,8 +239,7 @@ def test_only_spec_optional_later_snapshot_reference_columns_are_not_required_ye
     )
 
 
-@implementation_pending
-def test_only_spec_current_production_may_xfail_new_schema_includes_all_six_nullable_snapshot_reference_columns(
+def test_new_schema_includes_all_six_nullable_snapshot_reference_columns(
     tmp_path: Path,
 ) -> None:
     db_path = _empty_db(tmp_path)
@@ -224,8 +249,7 @@ def test_only_spec_current_production_may_xfail_new_schema_includes_all_six_null
     assert set(REQUIRED_SNAPSHOT_REFERENCE_COLUMNS) <= set(schema)
 
 
-@implementation_pending
-def test_only_spec_current_production_may_xfail_snapshot_reference_columns_are_nullable_for_historical_rows(
+def test_snapshot_reference_columns_are_nullable_for_historical_rows(
     tmp_path: Path,
 ) -> None:
     db_path = _empty_db(tmp_path)
@@ -236,8 +260,7 @@ def test_only_spec_current_production_may_xfail_snapshot_reference_columns_are_n
         assert schema[name]["notnull"] == 0
 
 
-@implementation_pending
-def test_only_spec_current_production_may_xfail_existing_insert_path_can_create_old_style_batch_with_null_snapshot_refs(
+def test_existing_insert_path_can_create_old_style_batch_with_null_snapshot_refs(
     tmp_path: Path,
 ) -> None:
     db_path = _empty_db(tmp_path)
@@ -255,6 +278,30 @@ def test_only_spec_current_production_may_xfail_existing_insert_path_can_create_
     finally:
         conn.close()
 
+    assert row is not None
+    assert all(value is None for value in row)
+
+
+def test_only_spec_additive_ensure_adds_missing_nullable_columns_to_legacy_tmp_db(
+    tmp_path: Path,
+) -> None:
+    db_path = _legacy_db_without_snapshot_reference_columns(tmp_path)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        added = ensure_ledger_batch_snapshot_reference_columns(conn)
+        conn.commit()
+        row = conn.execute(
+            "SELECT "
+            + ", ".join(REQUIRED_SNAPSHOT_REFERENCE_COLUMNS)
+            + " FROM ledger_batches WHERE batch_id = 1",
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert added == list(REQUIRED_SNAPSHOT_REFERENCE_COLUMNS)
+    schema = _require_snapshot_reference_schema(db_path)
+    for name in REQUIRED_SNAPSHOT_REFERENCE_COLUMNS:
+        assert schema[name]["notnull"] == 0
     assert row is not None
     assert all(value is None for value in row)
 
@@ -363,8 +410,7 @@ def test_only_spec_current_production_may_xfail_missing_db_reference_fields_refu
     assert "funding_source_snapshot_missing" in clean["reason_codes"]
 
 
-@implementation_pending
-def test_only_spec_current_production_may_xfail_snapshot_schema_change_is_additive_only(
+def test_snapshot_schema_change_is_additive_only(
     tmp_path: Path,
 ) -> None:
     db_path = _empty_db(tmp_path)
