@@ -1,20 +1,17 @@
-"""Read-only SQLite verifier CLI/API contract (spec-only, test-only).
+"""Read-only SQLite verifier CLI/API contract.
 
-This file specifies — but does NOT implement — an explicit, safe, read-only
-CLI surface for ``python -m quantbot.paper.sqlite_verify``. It exists because
-a prior read-only prod DB-linked snapshot acceptance audit
+This file specifies AND verifies an explicit, safe, read-only CLI surface for
+``python -m quantbot.paper.sqlite_verify``. It exists because a prior
+read-only prod DB-linked snapshot acceptance audit
 (``docs/plans/QNTY_READ_ONLY_PROD_DB_LINKED_SNAPSHOT_ACCEPTANCE_AUDIT.md``)
 found that ``sqlite_verify --help`` produced no useful DB-path/read-only
 contract, so the strict verifier had to be skipped for that audit.
 
-Today ``python -m quantbot.paper.sqlite_verify`` has no ``__main__``/argparse
-entry point at all: any invocation (``--help``, garbage flags, no flags)
-silently no-ops with exit code 0 and empty stdout. Every test below therefore
-specifies the FUTURE contract via ``pytest.mark.xfail(strict=True, ...)`` and
-must fail today. None of these tests may pass until a CLI is implemented in
-``quantbot/paper/sqlite_verify.py`` (out of scope for this change).
+``python -m quantbot.paper.sqlite_verify`` now has an argparse entry point
+(``main`` in ``quantbot/paper/sqlite_verify.py``) implementing the CLI surface
+below.
 
-Required future CLI surface:
+Required CLI surface:
   --db-path <absolute path>   required; no implicit prod path in CLI mode
   --read-only                 opens via file:<abs>?mode=ro&immutable=1 (or
                                equivalent) and sets PRAGMA query_only=ON
@@ -58,8 +55,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from quantbot.core.determinism import sha256_file
 from quantbot.paper.funding_status import (
     CAVEATED_ENGINE_SEMANTICS,
@@ -82,8 +77,6 @@ from tests.test_paper_sqlite_verifier_db_linked_snapshot_selector import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-
-_XFAIL_REASON = "read-only sqlite verifier CLI contract not implemented yet"
 
 
 def _run_cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -108,7 +101,6 @@ def _run_cli_json(db_path: Path, *extra_args: str) -> dict[str, Any]:
     return json.loads(proc.stdout)
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_help_exits_zero_and_documents_required_flags() -> None:
     proc = _run_cli("--help")
 
@@ -118,7 +110,6 @@ def test_help_exits_zero_and_documents_required_flags() -> None:
     assert "--json" in proc.stdout
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_db_path_required_for_cli_verification() -> None:
     proc = _run_cli("--read-only", "--json")
 
@@ -126,7 +117,6 @@ def test_db_path_required_for_cli_verification() -> None:
     assert "--db-path" in (proc.stderr + proc.stdout)
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_relative_db_path_is_rejected(tmp_path: Path) -> None:
     db_path = _db_with_complete_source(tmp_path)
     relative = db_path.relative_to(_REPO_ROOT) if db_path.is_relative_to(
@@ -141,7 +131,6 @@ def test_relative_db_path_is_rejected(tmp_path: Path) -> None:
     assert "absolute" in (proc.stderr + proc.stdout).lower()
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_cli_does_not_create_modify_or_delete_db_file(tmp_path: Path) -> None:
     db_path = _db_ready_for_db_linked_clean(tmp_path)
     before_sha = sha256_file(db_path)
@@ -157,7 +146,6 @@ def test_cli_does_not_create_modify_or_delete_db_file(tmp_path: Path) -> None:
     assert report["db_mutation_performed"] is False
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_cli_does_not_create_wal_or_shm_files(tmp_path: Path) -> None:
     db_path = _db_ready_for_db_linked_clean(tmp_path)
     before = _side_car_files(db_path)
@@ -174,7 +162,6 @@ def test_cli_does_not_create_wal_or_shm_files(tmp_path: Path) -> None:
     assert report["wal_shm_files_created"] is False
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_cli_read_only_sets_query_only_pragma(tmp_path: Path) -> None:
     db_path = _db_ready_for_db_linked_clean(tmp_path)
 
@@ -185,7 +172,6 @@ def test_cli_read_only_sets_query_only_pragma(tmp_path: Path) -> None:
     assert report["db_path"] == str(db_path)
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_cli_does_not_run_schema_ensure_helpers(tmp_path: Path) -> None:
     """A DB with no tables at all must be reported, not silently fixed up."""
     db_path = tmp_path / "empty.db"
@@ -210,7 +196,6 @@ def test_cli_does_not_run_schema_ensure_helpers(tmp_path: Path) -> None:
     assert report["status"] != STATUS_OK
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_cli_does_not_run_writers_or_publish_side_cars(tmp_path: Path) -> None:
     db_path = _db_ready_for_db_linked_clean(tmp_path)
     before = _side_car_files(db_path)
@@ -228,7 +213,6 @@ def test_cli_does_not_run_writers_or_publish_side_cars(tmp_path: Path) -> None:
     assert created.isdisjoint(forbidden)
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_json_report_contains_required_verifier_fields(tmp_path: Path) -> None:
     db_path = _db_ready_for_db_linked_clean(tmp_path)
     envelope = _committed_snapshot(db_path)
@@ -250,7 +234,6 @@ def test_json_report_contains_required_verifier_fields(tmp_path: Path) -> None:
         assert field in report, f"missing required field: {field}"
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_valid_committed_snapshot_returns_clean_net_of_carry_via_cli(
     tmp_path: Path,
 ) -> None:
@@ -266,7 +249,6 @@ def test_valid_committed_snapshot_returns_clean_net_of_carry_via_cli(
     assert report["funding_clean_carry_reason_codes"] == []
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_missing_snapshot_returns_caveated_refused_via_cli(tmp_path: Path) -> None:
     db_path = _db_ready_for_db_linked_clean(tmp_path)
 
@@ -279,7 +261,6 @@ def test_missing_snapshot_returns_caveated_refused_via_cli(tmp_path: Path) -> No
     assert "funding_source_snapshot_missing" in report["funding_clean_carry_reason_codes"]
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_pending_snapshot_returns_caveated_refused_via_cli(tmp_path: Path) -> None:
     db_path = _db_ready_for_db_linked_clean(tmp_path)
     envelope = _committed_snapshot(db_path, write_state="pending")
@@ -293,7 +274,6 @@ def test_pending_snapshot_returns_caveated_refused_via_cli(tmp_path: Path) -> No
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_mismatched_db_file_sha_returns_caveated_refused_via_cli(
     tmp_path: Path,
 ) -> None:
