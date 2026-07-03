@@ -23,12 +23,16 @@ See docs/ADR/0001-paper-sqlite-ledger.md and docs/paper_pnl_v1_schema.md.
 
 from __future__ import annotations
 
+import csv
 import json
+import os
 import sqlite3
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import quantbot.data.funding_loader as _funding_loader
 from quantbot.data.multi_asset_loader import load_all_ohlcv
 from quantbot.data.funding_loader import load_all_funding
 from quantbot.data.types import Bar
@@ -53,6 +57,13 @@ from quantbot.paper.engine import (
     run_engine,
 )
 from quantbot.paper.funding_coverage import check_funding_coverage_from_source_rows
+from quantbot.paper.funding_source_snapshot import (
+    build_funding_source_snapshot_envelope_v1,
+    build_funding_source_snapshot_payload_v1,
+    canonical_json,
+    sha256_text,
+    validate_funding_source_snapshot_envelope_v1,
+)
 from quantbot.paper.freshness import check_freshness, parse_bar_utc
 from quantbot.paper.provenance import resolve_git_sha
 from quantbot.paper.snapshots import (
@@ -99,6 +110,10 @@ STATUS_CONFIG_ERROR = 3
 STATUS_CORRUPT_LEDGER = 4
 STATUS_PRE_START = 5
 STATUS_LEDGER_BUSY = 6
+
+
+class FundingSourceSnapshotEmissionError(RuntimeError):
+    """Raised when pending sidecar snapshot emission cannot complete safely."""
 
 
 # ---------------------------------------------------------------------------
@@ -924,6 +939,295 @@ def _reconcile_batch_inside_tx(
 
 
 # ---------------------------------------------------------------------------
+# Funding source snapshot sidecar emission (outside DB schema v1).
+# ---------------------------------------------------------------------------
+
+def _source_row_get(row: Any, key: str, default: Any = None) -> Any:
+    if isinstance(row, dict):
+        return row.get(key, default)
+    get = getattr(row, "get", None)
+    if callable(get):
+        return get(key, default)
+    return getattr(row, key, default)
+
+
+def _funding_df_has_column(funding_df: Any, column: str) -> bool:
+    columns = getattr(funding_df, "columns", ())
+    return column in columns
+
+
+def _iter_funding_df_rows(funding_df: Any) -> list[Any]:
+    if funding_df is None or getattr(funding_df, "empty", False):
+        return []
+    if hasattr(funding_df, "iterrows"):
+        return [row for _, row in funding_df.iterrows()]
+    return list(funding_df)
+
+
+def _funding_source_symbol_from_path(path: Path) -> str:
+    name = path.name
+    if name.endswith("_8h_funding.csv"):
+        return name.removesuffix("_8h_funding.csv")
+    if "_" in name:
+        return name.split("_", 1)[0]
+    return path.stem
+
+
+def _required_funding_windows_for_snapshot(
+    required_funding_rows: list[dict],
+) -> list[dict[str, str]]:
+    windows: dict[tuple[str, str, str], dict[str, str]] = {}
+    for row in required_funding_rows:
+        symbol = str(row.get("symbol", ""))
+        window_start = str(row.get("window_start", ""))
+        window_end = str(row.get("window_end", ""))
+        if not symbol or not window_start or not window_end:
+            raise FundingSourceSnapshotEmissionError(
+                "source snapshot cannot derive required funding window identity "
+                f"from row {row!r}"
+            )
+        key = (symbol, window_start, window_end)
+        windows[key] = {
+            "symbol": symbol,
+            "window_start": window_start,
+            "window_end": window_end,
+            "required_by": "paper_engine_funding_interval",
+        }
+    return [windows[key] for key in sorted(windows)]
+
+
+def _funding_source_csv_paths_for_snapshot(
+    required_windows: list[dict[str, str]],
+    funding_df: Any,
+    data_dir: Path | None,
+) -> list[Path]:
+    symbols = sorted({window["symbol"] for window in required_windows})
+    if not symbols:
+        return []
+
+    # Test and future non-loader seams may attach explicit source paths to the
+    # in-memory funding rows. When present, those paths are stronger than the
+    # loader's module-level data dir and keep manual tmp DB tests hermetic.
+    explicit_paths: set[Path] = set()
+    if _funding_df_has_column(funding_df, "source_file_path"):
+        required_symbols = set(symbols)
+        for row in _iter_funding_df_rows(funding_df):
+            symbol = str(_source_row_get(row, "symbol", ""))
+            if symbol in required_symbols:
+                raw_path = _source_row_get(row, "source_file_path")
+                if raw_path:
+                    explicit_paths.add(Path(str(raw_path)))
+    if explicit_paths:
+        return sorted(explicit_paths, key=lambda path: str(path))
+
+    funding_data_dir = Path(data_dir) if data_dir is not None else Path(_funding_loader._DATA_DIR)
+    return [funding_data_dir / f"{symbol}_8h_funding.csv" for symbol in symbols]
+
+
+def _read_funding_source_csv_rows(source_file_paths: list[Path]) -> list[dict[str, Any]]:
+    source_rows: list[dict[str, Any]] = []
+    for path in source_file_paths:
+        symbol = _funding_source_symbol_from_path(path)
+        try:
+            with path.open("r", newline="", encoding="utf-8") as fh:
+                reader = csv.DictReader(fh)
+                if reader.fieldnames is None:
+                    raise FundingSourceSnapshotEmissionError(
+                        f"funding source CSV has no header: {path}"
+                    )
+                missing = {"fundingTime", "fundingRate"} - set(reader.fieldnames)
+                if missing:
+                    raise FundingSourceSnapshotEmissionError(
+                        f"funding source CSV {path} missing column(s): {sorted(missing)}"
+                    )
+                for row_index, row in enumerate(reader, start=1):
+                    try:
+                        funding_time_ms = int(row["fundingTime"])
+                    except (TypeError, ValueError) as exc:
+                        raise FundingSourceSnapshotEmissionError(
+                            f"funding source CSV {path} row {row_index} has invalid "
+                            f"fundingTime {row.get('fundingTime')!r}"
+                        ) from exc
+                    source_rows.append(
+                        {
+                            "symbol": symbol,
+                            "fundingTime_ms": funding_time_ms,
+                            "source_file_path": str(path),
+                            "row_index": row_index,
+                            "funding_rate": str(row["fundingRate"]),
+                        }
+                    )
+        except FundingSourceSnapshotEmissionError:
+            raise
+        except OSError as exc:
+            raise FundingSourceSnapshotEmissionError(
+                f"funding source CSV cannot be read for snapshot digest: {path}: {exc}"
+            ) from exc
+    return source_rows
+
+
+def _sqlite_value(row: sqlite3.Row, key: str) -> Any:
+    return row[key] if key in row.keys() else None
+
+
+def _db_identity_hash_before_snapshot(
+    conn: sqlite3.Connection,
+    db_path: Path,
+    db_config: dict[str, Any],
+    state_row: sqlite3.Row,
+) -> str:
+    latest_batch_id = conn.execute("SELECT MAX(batch_id) FROM ledger_batches").fetchone()[0]
+    latest_event_seq = conn.execute("SELECT MAX(seq) FROM ledger_events").fetchone()[0]
+    identity = {
+        "db_path_reference": str(db_path),
+        "paper_engine_version": db_config.get("paper_engine_version"),
+        "config_hash": db_config.get("config_hash"),
+        "lane_id": db_config.get("lane_id"),
+        "watermark_bar_ts": _sqlite_value(state_row, "watermark_bar_ts"),
+        "latest_batch_id": latest_batch_id,
+        "latest_event_seq": latest_event_seq,
+    }
+    return sha256_text(canonical_json(identity))
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        dir_fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+        text=True,
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(value, fh, ensure_ascii=True, indent=2, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+        _fsync_directory(path.parent)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _emit_pending_funding_source_snapshot(
+    *,
+    conn: sqlite3.Connection,
+    db_path: Path,
+    db_config: dict[str, Any],
+    state_row: sqlite3.Row,
+    required_funding_rows: list[dict],
+    funding_df: Any,
+    data_dir: Path | None,
+    created_at: str,
+    batch_git_sha: str,
+    batch_end_watermark: str | None,
+) -> Path:
+    try:
+        required_windows = _required_funding_windows_for_snapshot(required_funding_rows)
+        source_file_paths = _funding_source_csv_paths_for_snapshot(
+            required_windows,
+            funding_df,
+            data_dir,
+        )
+        if required_windows and not source_file_paths:
+            raise FundingSourceSnapshotEmissionError(
+                "source snapshot has required funding windows but no source CSV paths"
+            )
+        source_rows = _read_funding_source_csv_rows(source_file_paths)
+        db_identity_hash_before = _db_identity_hash_before_snapshot(
+            conn,
+            db_path,
+            db_config,
+            state_row,
+        )
+        batch_start_watermark = _sqlite_value(state_row, "watermark_bar_ts")
+        pending_seed = {
+            "db_path_reference": str(db_path),
+            "created_at": created_at,
+            "batch_start_watermark": batch_start_watermark,
+            "batch_end_watermark": batch_end_watermark,
+            "required_windows": required_windows,
+        }
+        pending_batch_id = f"pending-{sha256_text(canonical_json(pending_seed))[:24]}"
+        lane_id = str(db_config.get("lane_id") or "paper_pnl_v1")
+
+        payload = build_funding_source_snapshot_payload_v1(
+            source_rows=source_rows,
+            source_file_paths=source_file_paths,
+            required_windows=required_windows,
+            generated_at_utc=created_at,
+            lane_id=lane_id,
+            output_dir=str(db_path.parent),
+            writer_or_verifier_command=(
+                "quantbot.paper.sqlite_writer.run_sqlite_accounting "
+                f"--db-path {db_path}"
+            ),
+            qnty_git_commit=batch_git_sha,
+            write_state="pending",
+            db_identity_hash_before=db_identity_hash_before,
+            pending_batch_id=pending_batch_id,
+            ledger_batch_id=None,
+            batch_identity_matches=False,
+            evaluation_identity_matches=True,
+            db_path_reference=str(db_path),
+            batch_start_watermark=batch_start_watermark,
+            batch_end_watermark=batch_end_watermark,
+        )
+        if required_windows and not payload.get("source_files"):
+            raise FundingSourceSnapshotEmissionError(
+                "source snapshot digest construction produced no source_files"
+            )
+        envelope = build_funding_source_snapshot_envelope_v1(payload)
+        validation_reasons = validate_funding_source_snapshot_envelope_v1(envelope)
+        if validation_reasons:
+            raise FundingSourceSnapshotEmissionError(
+                "source snapshot envelope validation failed: "
+                + ", ".join(validation_reasons)
+            )
+
+        source_bundle_sha256 = str(payload.get("source_bundle_sha256") or "")
+        if len(source_bundle_sha256) != 64:
+            raise FundingSourceSnapshotEmissionError(
+                f"source snapshot bundle digest invalid: {source_bundle_sha256!r}"
+            )
+        snapshot_path = (
+            db_path.parent
+            / "funding_source_snapshots"
+            / f"funding_source_snapshot_v1_{source_bundle_sha256}.json"
+        )
+
+        # DB schema v1 has no durable pointer from ledger_batches to this sidecar.
+        # Write state therefore starts as pending. If the later DB commit fails,
+        # this JSON may be orphaned; future verifier clean-mode must refuse any
+        # unreferenced/orphaned snapshot and must not treat it as clean-carry evidence.
+        _write_json_atomic(snapshot_path, envelope)
+        return snapshot_path
+    except FundingSourceSnapshotEmissionError:
+        raise
+    except Exception as exc:
+        raise FundingSourceSnapshotEmissionError(
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
 # Main entry point.
 # ---------------------------------------------------------------------------
 
@@ -1271,6 +1575,31 @@ def run_sqlite_accounting(
                     "GIT_SHA_UNRESOLVED: could not resolve repo HEAD (git rev-parse "
                     "HEAD) for batch provenance; aborting before ledger mutation rather "
                     "than committing an unprovenanced batch.",
+                )
+
+            snapshot_batch_end_watermark = max(
+                eq["bar_ts"] for eq in result.equity
+            )
+            try:
+                _emit_pending_funding_source_snapshot(
+                    conn=conn,
+                    db_path=db_path,
+                    db_config=db_config,
+                    state_row=state_row,
+                    required_funding_rows=required_funding_rows,
+                    funding_df=funding_df,
+                    data_dir=data_dir,
+                    created_at=created_at,
+                    batch_git_sha=batch_git_sha,
+                    batch_end_watermark=snapshot_batch_end_watermark,
+                )
+            except FundingSourceSnapshotEmissionError as exc:
+                conn.rollback()
+                conn.close()
+                return (
+                    STATUS_ABORTED,
+                    "FUNDING_SOURCE_SNAPSHOT_EMISSION_FAILED: "
+                    f"{exc}; aborting before ledger mutation.",
                 )
 
             # === INSERT INTO DB INSIDE TRANSACTION ==========================

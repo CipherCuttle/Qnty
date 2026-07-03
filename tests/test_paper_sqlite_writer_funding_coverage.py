@@ -47,6 +47,7 @@ no production DB.
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -138,6 +139,48 @@ def _funding_df_missing_symbol() -> pd.DataFrame:
     return pd.DataFrame(columns=["symbol", "dt", "fundingRate", "abs_rate"])
 
 
+def _funding_df_with_tmp_source_files(db_path: Path, funding_df: pd.DataFrame) -> pd.DataFrame:
+    """Attach real tmp CSV provenance to patched funding rows.
+
+    The writer now emits source snapshot sidecars from source-file digests before
+    committing. Tests that patch ``load_all_funding`` must therefore provide the
+    same provenance a real loader-backed run would have, while still staying
+    entirely inside tmp_path and away from /srv.
+    """
+    if funding_df.empty:
+        return funding_df
+
+    source_dir = db_path.parent / "funding_source_csvs"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    enriched = funding_df.copy()
+    source_file_by_index: dict[int, str] = {}
+    row_index_by_index: dict[int, int] = {}
+    funding_time_by_index: dict[int, int] = {}
+
+    for symbol, group in enriched.groupby("symbol", sort=True):
+        csv_path = source_dir / f"{symbol}_8h_funding.csv"
+        ordered = group.sort_values("dt")
+        with csv_path.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["fundingTime", "fundingRate", "markPrice"])
+            for row_index, (idx, row) in enumerate(ordered.iterrows(), start=1):
+                dt = pd.Timestamp(row["dt"])
+                if dt.tzinfo is None:
+                    dt = dt.tz_localize("UTC")
+                else:
+                    dt = dt.tz_convert("UTC")
+                funding_time_ms = int(dt.timestamp() * 1000)
+                writer.writerow([funding_time_ms, str(row["fundingRate"]), "100.0"])
+                source_file_by_index[idx] = str(csv_path)
+                row_index_by_index[idx] = row_index
+                funding_time_by_index[idx] = funding_time_ms
+
+    enriched["source_file_path"] = enriched.index.map(source_file_by_index)
+    enriched["row_index"] = enriched.index.map(row_index_by_index)
+    enriched["fundingTime_ms"] = enriched.index.map(funding_time_by_index)
+    return enriched
+
+
 def _write_observation_log(tmp_path: Path, per_bar_obs: list[dict]) -> Path:
     obs_dir = tmp_path / "forward_obs_v1"
     obs_dir.mkdir(parents=True, exist_ok=True)
@@ -184,6 +227,7 @@ def _run(db_path: Path, obs_dir: Path, funding_df: pd.DataFrame, forward_start_t
     The patched load_config MUST match the DB-stored config identity, so it is
     built from the same forward_start_ts the DB was initialised with.
     """
+    funding_df = _funding_df_with_tmp_source_files(db_path, funding_df)
     p_ohlcv = patch(
         "quantbot.paper.sqlite_writer.load_all_ohlcv",
         return_value={SYMBOL: _make_bars()},
