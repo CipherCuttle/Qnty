@@ -59,6 +59,7 @@ subset). See ``docs/ADR/0001-paper-sqlite-ledger.md``.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import hashlib
 import json
@@ -2876,6 +2877,164 @@ def verify_and_publish(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Read-only CLI
+# (docs/plans/QNTY_READ_ONLY_PROD_DB_LINKED_SNAPSHOT_ACCEPTANCE_AUDIT.md contract,
+# specified by tests/test_paper_sqlite_verify_read_only_cli_contract.py)
+# ---------------------------------------------------------------------------
+
+CLI_CONTRACT_VERSION = "1.0.0"
+
+
+def _open_readonly_immutable_connection(db_path: Path) -> sqlite3.Connection:
+    """Open *db_path* via the strict CLI read-only contract.
+
+    Uses ``file:<abs>?mode=ro&immutable=1`` + ``PRAGMA query_only=ON``. Unlike
+    :func:`quantbot.paper.db.connect_readonly` (plain ``mode=ro``, used by
+    :func:`verify_database` via :func:`_open_snapshot`), ``immutable=1`` tells
+    SQLite the file will never change for the life of the connection, so it
+    skips WAL-index setup and never creates ``-wal``/``-shm`` sidecars even
+    against a WAL-mode DB — the stronger no-side-effect guarantee this CLI
+    makes for a prod DB-linked read-only audit.
+    """
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    return conn
+
+
+def verify_database_readonly_cli(db_path: Path) -> VerifyResult:
+    """CLI verification entry point.
+
+    Reuses :func:`_verify_connection` — the same structural / arithmetic /
+    funding clean-carry gate logic :func:`verify_database` uses — over a
+    connection opened via the stricter immutable read-only URI above. Never
+    runs schema-ensure helpers, migrations, or writer code.
+    """
+    report: dict[str, Any] = {"db_path": str(db_path)}
+    if not db_path.exists():
+        return VerifyResult(STATUS_CONFIG_ERROR, [f"DB not found: {db_path}"], report)
+    try:
+        conn = _open_readonly_immutable_connection(db_path)
+    except sqlite3.Error as exc:
+        return VerifyResult(
+            STATUS_CONFIG_ERROR,
+            [f"Could not open DB read-only: {type(exc).__name__}: {exc}"],
+            report,
+        )
+    try:
+        return _verify_connection(conn, db_path)
+    finally:
+        conn.close()
+
+
+def _build_cli_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m quantbot.paper.sqlite_verify",
+        description=(
+            "Read-only SQLite paper-ledger verifier. Opens --db-path via "
+            "file:<abs>?mode=ro&immutable=1 with PRAGMA query_only=ON, runs "
+            "the existing structural/arithmetic/funding clean-carry gate "
+            "read-only, and emits one JSON report. Never writes the DB, "
+            "never runs schema-ensure/migration/writer code, and never "
+            "creates -wal/-shm sidecars or paper_verify_report.json/receipt/"
+            "log files (that is verify_and_publish's job, not this CLI's)."
+        ),
+    )
+    parser.add_argument(
+        "--db-path",
+        required=True,
+        help=(
+            "Absolute path to paper_ledger.db. Required; there is no "
+            "implicit prod DB path in this CLI mode, and relative paths "
+            "are rejected."
+        ),
+    )
+    parser.add_argument(
+        "--read-only",
+        action="store_true",
+        required=True,
+        help=(
+            "Open the DB via the immutable read-only URI contract "
+            "(file:<abs>?mode=ro&immutable=1) and PRAGMA query_only=ON. "
+            "This CLI has no write mode; the flag is required so that is "
+            "explicit at every call site."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        required=True,
+        help="Emit a single JSON verification report to stdout.",
+    )
+    parser.add_argument(
+        "--strict-clean-carry",
+        action="store_true",
+        help=(
+            "Also fail closed (nonzero exit) when "
+            "funding_clean_carry_decision is not CLEAN_NET_OF_CARRY. "
+            "Diagnostic-only: never changes any report field, only the "
+            "process exit code."
+        ),
+    )
+    parser.add_argument(
+        "--no-wal-checkpoint",
+        action="store_true",
+        help=(
+            "No-op safety flag: this CLI never runs a WAL checkpoint, with "
+            "or without this flag. Accepted for forward-compatible receipt "
+            "tooling."
+        ),
+    )
+    return parser
+
+
+def _cli_report(result: VerifyResult, db_path: Path, *, read_only: bool) -> dict[str, Any]:
+    report = dict(result.report)
+    report["status"] = result.status
+    report["read_only"] = read_only
+    report["db_path"] = str(db_path)
+    report["db_mutation_performed"] = False
+    report["query_only_pragma_enabled"] = (
+        bool(report["query_only"]) if "query_only" in report else read_only
+    )
+    report["wal_shm_files_created"] = False
+    report["sqlite_open_mode"] = (
+        "file_uri_mode_ro_immutable" if read_only else "file_uri_mode_ro"
+    )
+    report["verifier_cli_contract_version"] = CLI_CONTRACT_VERSION
+    if result.failures:
+        report["failures"] = result.failures
+    return report
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_cli_arg_parser()
+    args = parser.parse_args(argv)
+
+    db_path = Path(args.db_path)
+    if not db_path.is_absolute():
+        parser.error(f"--db-path must be an absolute path, got: {args.db_path!r}")
+
+    result = verify_database_readonly_cli(db_path)
+    report = _cli_report(result, db_path, read_only=bool(args.read_only))
+
+    exit_code = result.exit_code
+    if (
+        args.strict_clean_carry
+        and exit_code == EXIT_CODE[STATUS_OK]
+        and report.get("funding_clean_carry_decision") != CLEAN_NET_OF_CARRY
+    ):
+        exit_code = EXIT_CODE[STATUS_CORRUPT]
+
+    print(json.dumps(report, sort_keys=True, default=str))
+    return exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
 __all__ = [
     "STATUS_OK",
     "STATUS_CONFIG_ERROR",
@@ -2898,4 +3057,7 @@ __all__ = [
     "VerifyResult",
     "verify_database",
     "verify_and_publish",
+    "verify_database_readonly_cli",
+    "CLI_CONTRACT_VERSION",
+    "main",
 ]
