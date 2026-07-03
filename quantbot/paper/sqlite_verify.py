@@ -163,6 +163,9 @@ FUNDING_CLEAN_CARRY_REASON_AMBIGUOUS_MULTIPLE = (
     "funding_source_snapshot_ambiguous_multiple"
 )
 FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID = "funding_source_snapshot_payload_invalid"
+FUNDING_CLEAN_CARRY_REASON_BATCH_WINDOW_MISMATCH = (
+    "funding_source_batch_window_mismatch"
+)
 SOURCE_PATH_RESOLUTION_MODE_EXPLICIT_DATA_DIR = "explicit_data_dir"
 SOURCE_PATH_RESOLUTION_MODE_SNAPSHOT_PROVENANCE = "snapshot_provenance"
 SOURCE_PATH_RESOLUTION_MODE_UNAVAILABLE = "unavailable"
@@ -2217,6 +2220,36 @@ def _funding_evaluation_window(conn: sqlite3.Connection) -> dict[str, Any] | Non
     return {"start": row["start"], "end": row["end"]}
 
 
+def _batch_evaluation_window(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """Return the evaluation window for the latest committed ledger batch.
+
+    Uses the batch's ``prior_watermark_bar_ts`` and ``new_watermark_bar_ts``
+    as the definitive batch-scoped window, NOT the full funding-table span.
+    """
+    row = conn.execute(
+        """
+        SELECT prior_watermark_bar_ts, new_watermark_bar_ts
+        FROM ledger_batches
+        WHERE committed_at IS NOT NULL
+        ORDER BY batch_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    if row is None:
+        return None
+    prior = row["prior_watermark_bar_ts"]
+    new_ = row["new_watermark_bar_ts"]
+    if prior is None or new_ is None:
+        return None
+    # Normalize to ISO Z format for consistency with snapshot payload windows
+    start_dt = parse_bar_utc(prior)
+    end_dt = parse_bar_utc(new_)
+    return {
+        "start": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "end": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
 def _snapshot_source_file_path(
     db_path: Path,
     source_path: str,
@@ -2394,6 +2427,7 @@ def _clean_carry_status_from_reasons(reason_codes: list[str]) -> str:
     if (
         "funding_source_snapshot_db_mismatch" in reason_set
         or "funding_source_snapshot_window_mismatch" in reason_set
+        or "funding_source_batch_window_mismatch" in reason_set
     ):
         return FUNDING_CLEAN_CARRY_STATUS_REFUSED_DB_OR_LANE_MISMATCH
     if "funding_source_snapshot_unreferenced_or_orphaned" in reason_set:
@@ -2523,6 +2557,218 @@ def _build_funding_clean_carry_stamp(
         "funding_clean_carry_status": status,
         "funding_clean_carry_reason_codes": deduped_reasons,
         "funding_clean_carry": clean_report,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Batch-scoped clean-carry gate (additive; does NOT change full-ledger fields)
+# ---------------------------------------------------------------------------
+
+
+def _build_funding_clean_carry_batch_stamp(
+    conn: sqlite3.Connection,
+    db_path: Path,
+    cfg: dict[str, Any],
+    report: Mapping[str, Any],
+    *,
+    arithmetic_ok: bool,
+    source_resolution: FundingSourcePathResolution,
+) -> dict[str, Any]:
+    """Decide batch-scoped clean-carry for the latest DB-linked ledger batch.
+
+    This is additive to the existing full-ledger clean-carry gate. It evaluates
+    only the latest committed ``ledger_batches`` row and compares its DB-linked
+    funding source snapshot against the batch's own watermark window
+    (``prior_watermark_bar_ts`` -> ``new_watermark_bar_ts``), NOT the full
+    funding-table span.
+
+    Returns a dict with keys ``funding_clean_carry_batch_decision``,
+    ``funding_clean_carry_batch_status``,
+    ``funding_clean_carry_batch_reason_codes``, and
+    ``funding_clean_carry_batch`` (detail sub-dict).
+    """
+    reason_codes: list[str] = []
+
+    # --- 1. Get the latest committed batch ---------------------------------
+    target_batch = _funding_clean_carry_target_batch(conn)
+    if target_batch is None:
+        reason_codes.append("funding_source_snapshot_missing")
+        deduped = sorted(set(reason_codes))
+        status = _clean_carry_status_from_reasons(deduped)
+        decision = CAVEATED_ENGINE_SEMANTICS
+        raw_ledger_window = _funding_evaluation_window(conn)
+        if raw_ledger_window is not None:
+            normalized_ledger_window = {
+                "start": parse_bar_utc(raw_ledger_window["start"]).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "end": parse_bar_utc(raw_ledger_window["end"]).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+            }
+        else:
+            normalized_ledger_window = None
+        batch_report = {
+            "decision": decision,
+            "status": status,
+            "reason_codes": deduped,
+            "target_batch_id": None,
+            "evaluation_window": None,
+            "full_ledger_evaluation_window": normalized_ledger_window,
+            "arithmetic_ok": arithmetic_ok,
+            "note": FUNDING_CLEAN_CARRY_NOTE,
+        }
+        return {
+            "funding_clean_carry_batch_decision": decision,
+            "funding_clean_carry_batch_status": status,
+            "funding_clean_carry_batch_reason_codes": deduped,
+            "funding_clean_carry_batch": batch_report,
+        }
+
+    target_batch_id = int(target_batch["batch_id"])
+
+    # --- 2. Determine the batch-scoped evaluation window -------------------
+    batch_window = _batch_evaluation_window(conn)
+    if batch_window is None:
+        reason_codes.append(FUNDING_CLEAN_CARRY_REASON_BATCH_WINDOW_MISMATCH)
+
+    # --- 3. Arithmetic check -----------------------------------------------
+    if not arithmetic_ok:
+        reason_codes.append(FUNDING_CLEAN_CARRY_REASON_ARITHMETIC_NOT_OK)
+
+    # --- 4. Coverage / source-path check -----------------------------------
+    coverage = report.get("funding_coverage")
+    coverage_decision = (
+        coverage.get("decision") if isinstance(coverage, Mapping) else None
+    )
+    if report.get("source_path_required") and not source_resolution.available:
+        reason_codes.append(SOURCE_PATH_UNAVAILABLE_REASON)
+    elif coverage_decision != COVERAGE_COMPLETE:
+        reason_codes.append(FUNDING_CLEAN_CARRY_REASON_SOURCE_COVERAGE_NOT_COMPLETE)
+
+    # --- 5. Snapshot reference on latest batch ----------------------------
+    reference = _db_snapshot_reference_values(target_batch)
+    missing_fields = _incomplete_snapshot_reference_fields(reference)
+    if missing_fields:
+        reason_codes.append("funding_source_snapshot_missing")
+    else:
+        snapshot_path_str = str(reference.get("funding_source_snapshot_path") or "")
+        expected_sha = str(reference.get("funding_source_snapshot_sha256") or "")
+
+        # 5a. Resolve snapshot file path
+        resolved_path, resolve_reasons = _resolve_db_linked_snapshot_path(
+            db_path, snapshot_path_str
+        )
+        reason_codes.extend(resolve_reasons)
+
+        if resolved_path is not None:
+            # 5b. Verify on-disk SHA256 matches DB reference
+            try:
+                actual_sha = sha256_file(resolved_path)
+                if actual_sha != expected_sha:
+                    reason_codes.append("funding_source_snapshot_digest_mismatch")
+            except (OSError, ValueError):
+                reason_codes.append("funding_source_snapshot_missing")
+
+            if "funding_source_snapshot_digest_mismatch" not in reason_codes:
+                # 5c. Read and validate snapshot envelope
+                try:
+                    envelope_raw = json.loads(
+                        resolved_path.read_text(encoding="utf-8")
+                    )
+                except (json.JSONDecodeError, OSError):
+                    envelope_raw = None
+                    reason_codes.append(FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID)
+
+                if isinstance(envelope_raw, dict):
+                    envelope: dict[str, Any] = envelope_raw
+                    env_reasons = validate_funding_source_snapshot_envelope_v1(
+                        envelope
+                    )
+                    reason_codes.extend(env_reasons)
+
+                    if not env_reasons:
+                        payload = _payload_dict(envelope)
+
+                        # 5d. Source digest expectations
+                        (
+                            expected_file_sha_by_path,
+                            expected_row_sha_by_path,
+                            digest_reason_codes,
+                        ) = _snapshot_source_digest_expectations(
+                            db_path=db_path,
+                            payload=payload,
+                            source_resolution=source_resolution,
+                        )
+                        reason_codes.extend(digest_reason_codes)
+
+                        # 5e. Validate against batch-scoped window
+                        clean_decision = clean_mode_decision_from_snapshot_v1(
+                            envelope,
+                            expected_evaluation_window=batch_window,
+                            expected_lane_id=_expected_snapshot_lane_id(cfg),
+                            expected_ledger_batch_id=str(target_batch_id),
+                            expected_source_file_sha256_by_path=(
+                                expected_file_sha_by_path
+                            ),
+                            expected_row_subset_sha256_by_path=(
+                                expected_row_sha_by_path
+                            ),
+                        )
+                        decision_reasons = list(
+                            str(r)
+                            for r in clean_decision.get("reason_codes") or []
+                        )
+
+                        # Translate window-mismatch to batch-scoped code
+                        for r in decision_reasons:
+                            if r == "funding_source_snapshot_window_mismatch":
+                                reason_codes.append(
+                                    FUNDING_CLEAN_CARRY_REASON_BATCH_WINDOW_MISMATCH
+                                )
+                            else:
+                                reason_codes.append(r)
+                else:
+                    reason_codes.append(FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID)
+
+    # --- 6. Funding re-sum check -------------------------------------------
+    resum_check = _funding_resum_check(conn)
+    reason_codes.extend(str(r) for r in resum_check.get("reason_codes") or [])
+
+    # --- 7. Compute final decision / status --------------------------------
+    deduped_reasons = sorted(set(reason_codes))
+    status = _clean_carry_status_from_reasons(deduped_reasons)
+    clean_allowed = status == FUNDING_CLEAN_CARRY_STATUS_CLEAN
+    decision = CLEAN_NET_OF_CARRY if clean_allowed else CAVEATED_ENGINE_SEMANTICS
+
+    full_ledger_window = _funding_evaluation_window(conn)
+    if full_ledger_window is not None:
+        full_ledger_window = {
+            "start": parse_bar_utc(full_ledger_window["start"]).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+            "end": parse_bar_utc(full_ledger_window["end"]).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        }
+
+    batch_report = {
+        "decision": decision,
+        "status": status,
+        "reason_codes": deduped_reasons,
+        "target_batch_id": target_batch_id,
+        "evaluation_window": dict(batch_window) if batch_window else None,
+        "full_ledger_evaluation_window": full_ledger_window,
+        "arithmetic_ok": arithmetic_ok,
+        "resum_check": dict(resum_check),
+        "note": FUNDING_CLEAN_CARRY_NOTE,
+    }
+
+    return {
+        "funding_clean_carry_batch_decision": decision,
+        "funding_clean_carry_batch_status": status,
+        "funding_clean_carry_batch_reason_codes": deduped_reasons,
+        "funding_clean_carry_batch": batch_report,
     }
 
 
@@ -2704,6 +2950,17 @@ def _verify_connection(
             if report["funding_coverage_verdict"] == CLEAN_NET_OF_CARRY
             else CAVEATED_ENGINE_SEMANTICS_LABEL
         )
+
+    # === BATCH-SCOPED CLEAN-CARRY STAMP (additive; does NOT change full-ledger) =
+    batch_clean_carry_stamp = _build_funding_clean_carry_batch_stamp(
+        conn,
+        db_path,
+        cfg,
+        report,
+        arithmetic_ok=arithmetic_ok,
+        source_resolution=source_resolution,
+    )
+    report.update(batch_clean_carry_stamp)
 
     # === GIT-SHA PROVENANCE STAMP (additive; does NOT change status) ============
     # Operator-facing evidence of which code produced each committed batch. Like
