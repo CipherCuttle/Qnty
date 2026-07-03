@@ -1,41 +1,28 @@
-"""Test-local schema spec for future funding source snapshots.
-
-These tests intentionally do not import or exercise a production snapshot
-builder. They pin the v1 artifact contract before implementation exists.
-"""
+"""Schema contract tests for the production funding source snapshot builder."""
 
 from __future__ import annotations
 
 import copy
-import hashlib
-import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from quantbot.paper.funding_source_snapshot import (
+    FUNDING_SOURCE_SNAPSHOT_SCHEMA_V1,
+    REASON_CODES_V1,
+    WRITE_STATES_V1,
+    build_canonical_row_subset_digest,
+    build_funding_source_snapshot_envelope_v1,
+    build_funding_source_snapshot_payload_v1,
+    build_source_file_digest,
+    canonical_json,
+    clean_mode_decision_from_snapshot_v1,
+    sha256_text,
+    validate_funding_source_snapshot_envelope_v1,
+)
 from quantbot.paper.funding_time import FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V2
-
-FUNDING_SOURCE_SNAPSHOT_SCHEMA_V1 = "FUNDING_SOURCE_SNAPSHOT_SCHEMA_V1"
-
-REASON_CODES_V1 = {
-    "funding_source_snapshot_missing",
-    "funding_source_snapshot_digest_mismatch",
-    "funding_source_snapshot_schema_unsupported",
-    "funding_source_snapshot_window_mismatch",
-    "funding_source_snapshot_db_mismatch",
-    "funding_source_snapshot_unreferenced_or_orphaned",
-    "funding_source_file_digest_mismatch",
-    "funding_source_row_digest_mismatch",
-    "funding_source_missing",
-    "funding_source_partial",
-    "funding_source_duplicate_ambiguous",
-    "funding_timestamp_outside_tolerance",
-    "funding_timestamp_open_boundary",
-    "funding_resum_mismatch",
-}
-
-WRITE_STATES_V1 = {"pending", "committed", "orphaned"}
 
 _WINDOW_START = "2026-06-14T16:00:00Z"
 _WINDOW_END = "2026-06-15T00:00:00Z"
@@ -43,6 +30,11 @@ _GENERATED_AT = "2026-06-15T00:01:00Z"
 _DB_IDENTITY = "paper-ledger-db-identity-sha256"
 _LANE_ID = "paper_pnl_v1"
 _SOURCE_PATH = "data/SOLUSDT_8h_funding.csv"
+_WRITER_OR_VERIFIER_COMMAND = (
+    "qnty-paper-sqlite-verify --clean-mode "
+    "--snapshot funding_source_snapshot_v1.json"
+)
+_QNTY_GIT_COMMIT = "41bbc86246489c393c53c46349b8e8f5d5967522"
 
 
 def _parse_utc(raw: str) -> datetime:
@@ -65,20 +57,15 @@ def _dt_from_ms(ms: int) -> datetime:
 
 
 def _spec_canonical_json(value: Any) -> str:
-    return json.dumps(
-        value,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    return canonical_json(value)
 
 
 def _spec_sha256_json(value: Any) -> str:
-    return hashlib.sha256(_spec_canonical_json(value).encode("utf-8")).hexdigest()
+    return sha256_text(_spec_canonical_json(value))
 
 
 def _spec_sha256_text(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return sha256_text(value)
 
 
 def _required_window(
@@ -185,12 +172,10 @@ def _spec_canonical_row_subset_sha256(
     *,
     source_file_path: str | None = None,
 ) -> str:
-    return _spec_sha256_json(
-        _canonical_subset_rows(
-            source_rows,
-            required_windows,
-            source_file_path=source_file_path,
-        )
+    return build_canonical_row_subset_digest(
+        source_rows,
+        required_windows,
+        source_file_path=source_file_path,
     )
 
 
@@ -333,114 +318,33 @@ def _spec_build_snapshot_payload_v1(
     lane_id: str = _LANE_ID,
     batch_identity_matches: bool = True,
 ) -> dict[str, Any]:
-    assert write_state in WRITE_STATES_V1
-    window_records = [
-        _window_record(window, source_rows)
-        for window in required_windows
-    ]
-    reason_codes = sorted(
-        {
-            reason
-            for record in window_records
-            for reason in record["reason_codes"]
-        }
+    return build_funding_source_snapshot_payload_v1(
+        source_rows=source_rows,
+        source_file_contents_by_path=source_file_contents_by_path,
+        required_windows=required_windows,
+        generated_at_utc=_GENERATED_AT,
+        write_state=write_state,
+        db_identity_hash_before=db_identity_hash_before,
+        pending_batch_id="pending-2026-06-15T00:00:00Z",
+        ledger_batch_id="batch-36" if write_state == "committed" else None,
+        batch_identity_matches=batch_identity_matches,
+        evaluation_identity_matches=batch_identity_matches,
+        lane_id=lane_id,
+        output_dir=f"/sanitized/{lane_id}",
+        writer_or_verifier_command=_WRITER_OR_VERIFIER_COMMAND,
+        qnty_git_commit=_QNTY_GIT_COMMIT,
+        sanitized_host_user_label="local-test",
     )
-    if _coverage_decision(window_records) == "partial":
-        reason_codes.append("funding_source_partial")
-
-    source_paths = sorted(source_file_contents_by_path)
-    source_files = [
-        {
-            "symbol": path.split("/")[-1].split("_8h_funding.csv")[0],
-            "path": path,
-            "full_file_sha256": _spec_sha256_text(source_file_contents_by_path[path]),
-            "canonical_row_subset_sha256": _spec_canonical_row_subset_sha256(
-                source_rows,
-                required_windows,
-                source_file_path=path,
-            ),
-        }
-        for path in source_paths
-    ]
-
-    payload = {
-        "schema_version": FUNDING_SOURCE_SNAPSHOT_SCHEMA_V1,
-        "generated_at_utc": _GENERATED_AT,
-        "evaluation_window": {
-            "start": required_windows[0]["window_start"],
-            "end": required_windows[-1]["window_end"],
-        },
-        "lane": {
-            "lane_id": lane_id,
-            "output_dir": f"/sanitized/{lane_id}",
-        },
-        "provenance": {
-            "entity_inputs": [
-                {
-                    "source_csv_path": item["path"],
-                    "source_csv_sha256": item["full_file_sha256"],
-                    "canonical_row_subset_sha256": item[
-                        "canonical_row_subset_sha256"
-                    ],
-                }
-                for item in source_files
-            ],
-            "activity": {
-                "writer_or_verifier_command": (
-                    "qnty-paper-sqlite-verify --clean-mode "
-                    "--snapshot funding_source_snapshot_v1.json"
-                ),
-                "qnty_git_commit": "41bbc86246489c393c53c46349b8e8f5d5967522",
-                "normalization_spec_version": (
-                    FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V2
-                ),
-                "generated_at_utc": _GENERATED_AT,
-            },
-            "agent": {
-                "qnty_component_name": "quantbot.paper.funding_source_snapshot",
-                "lane_id": lane_id,
-                "sanitized_host_user_label": "local-test",
-            },
-        },
-        "normalization_spec_version": FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V2,
-        "source_files": source_files,
-        "symbols_covered": sorted({window["symbol"] for window in required_windows}),
-        "required_funding_windows": window_records,
-        "coverage_decision": _coverage_decision(window_records),
-        "reason_codes": reason_codes,
-        "source_bundle_sha256": _spec_sha256_json(source_files),
-        "snapshot_metadata": {
-            "write_state": write_state,
-            "db_identity_hash_before": db_identity_hash_before,
-            "pending_batch_id": "pending-2026-06-15T00:00:00Z",
-            "ledger_batch_id": "batch-36" if write_state == "committed" else None,
-            "batch_identity_matches": batch_identity_matches,
-            "evaluation_identity_matches": batch_identity_matches,
-        },
-    }
-    return payload
 
 
 def _spec_build_snapshot_envelope_v1(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "snapshot_payload": payload,
-        "snapshot_sha256": _spec_sha256_json(payload),
-    }
+    return build_funding_source_snapshot_envelope_v1(payload)
 
 
 def _spec_validate_snapshot_envelope_v1(
     envelope: dict[str, Any] | None,
 ) -> list[str]:
-    if envelope is None:
-        return ["funding_source_snapshot_missing"]
-    if set(envelope) != {"snapshot_payload", "snapshot_sha256"}:
-        return ["funding_source_snapshot_schema_unsupported"]
-    payload = envelope["snapshot_payload"]
-    if envelope["snapshot_sha256"] != _spec_sha256_json(payload):
-        return ["funding_source_snapshot_digest_mismatch"]
-    if payload.get("schema_version") != FUNDING_SOURCE_SNAPSHOT_SCHEMA_V1:
-        return ["funding_source_snapshot_schema_unsupported"]
-    return []
+    return validate_funding_source_snapshot_envelope_v1(envelope)
 
 
 def _spec_clean_mode_decision_from_snapshot_v1(
@@ -452,51 +356,18 @@ def _spec_clean_mode_decision_from_snapshot_v1(
     expected_source_file_sha256_by_path: dict[str, str] | None = None,
     expected_row_subset_sha256_by_path: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    reason_codes = _spec_validate_snapshot_envelope_v1(envelope)
-    if reason_codes:
-        return {"clean_net_of_carry_allowed": False, "reason_codes": reason_codes}
-
-    assert envelope is not None
-    payload = envelope["snapshot_payload"]
     expected_window = expected_evaluation_window or {
         "start": _WINDOW_START,
         "end": _WINDOW_END,
     }
-    if payload["evaluation_window"] != expected_window:
-        reason_codes.append("funding_source_snapshot_window_mismatch")
-    if (
-        payload["lane"]["lane_id"] != expected_lane_id
-        or payload["snapshot_metadata"]["db_identity_hash_before"]
-        != expected_db_identity_hash_before
-    ):
-        reason_codes.append("funding_source_snapshot_db_mismatch")
-    if (
-        payload["snapshot_metadata"]["write_state"] != "committed"
-        or not payload["snapshot_metadata"]["batch_identity_matches"]
-        or not payload["snapshot_metadata"]["evaluation_identity_matches"]
-    ):
-        reason_codes.append("funding_source_snapshot_unreferenced_or_orphaned")
-
-    source_files_by_path = {item["path"]: item for item in payload["source_files"]}
-    if expected_source_file_sha256_by_path is not None:
-        for path, expected_sha in expected_source_file_sha256_by_path.items():
-            if source_files_by_path[path]["full_file_sha256"] != expected_sha:
-                reason_codes.append("funding_source_file_digest_mismatch")
-                break
-    if expected_row_subset_sha256_by_path is not None:
-        for path, expected_sha in expected_row_subset_sha256_by_path.items():
-            if source_files_by_path[path]["canonical_row_subset_sha256"] != expected_sha:
-                reason_codes.append("funding_source_row_digest_mismatch")
-                break
-
-    reason_codes.extend(payload["reason_codes"])
-    if payload["coverage_decision"] != "complete" and not payload["reason_codes"]:
-        reason_codes.append("funding_source_partial")
-
-    return {
-        "clean_net_of_carry_allowed": not reason_codes,
-        "reason_codes": sorted(set(reason_codes)),
-    }
+    return clean_mode_decision_from_snapshot_v1(
+        envelope,
+        expected_evaluation_window=expected_window,
+        expected_lane_id=expected_lane_id,
+        expected_db_identity_hash_before=expected_db_identity_hash_before,
+        expected_source_file_sha256_by_path=expected_source_file_sha256_by_path,
+        expected_row_subset_sha256_by_path=expected_row_subset_sha256_by_path,
+    )
 
 
 def _accepted_payload() -> dict[str, Any]:
@@ -556,6 +427,7 @@ def test_payload_and_provenance_fields_pin_schema_v1() -> None:
         "coverage_decision",
         "reason_codes",
         "source_bundle_sha256",
+        "write_state",
     } <= set(payload)
     assert payload["schema_version"] == FUNDING_SOURCE_SNAPSHOT_SCHEMA_V1
     assert (
@@ -590,7 +462,9 @@ def test_payload_and_provenance_fields_pin_schema_v1() -> None:
     )
 
 
-def test_source_digest_policy_separates_full_file_and_row_subset_hashes() -> None:
+def test_source_digest_policy_separates_full_file_and_row_subset_hashes(
+    tmp_path: Path,
+) -> None:
     required_windows = [_required_window()]
     accepted_row = _source_row(source_file_path=_SOURCE_PATH, offset_ms=5)
     irrelevant_row = _source_row(
@@ -610,6 +484,38 @@ def test_source_digest_policy_separates_full_file_and_row_subset_hashes() -> Non
     )
 
     assert _spec_sha256_text(base_csv) != _spec_sha256_text(appended_csv)
+
+    temp_source_file = tmp_path / "SOLUSDT_8h_funding.csv"
+    temp_source_file.write_text(base_csv, encoding="utf-8")
+    assert build_source_file_digest(temp_source_file) == _spec_sha256_text(base_csv)
+    temp_row = {
+        **accepted_row,
+        "source_file_path": str(temp_source_file),
+    }
+    temp_payload = build_funding_source_snapshot_payload_v1(
+        source_rows=[temp_row],
+        source_file_paths=[temp_source_file],
+        required_windows=required_windows,
+        generated_at_utc=_GENERATED_AT,
+        lane_id=_LANE_ID,
+        output_dir=f"/sanitized/{_LANE_ID}",
+        writer_or_verifier_command=_WRITER_OR_VERIFIER_COMMAND,
+        qnty_git_commit=_QNTY_GIT_COMMIT,
+        db_identity_hash_before=_DB_IDENTITY,
+    )
+    assert temp_payload["source_files"] == [
+        {
+            "symbol": "SOLUSDT",
+            "path": str(temp_source_file),
+            "full_file_sha256": _spec_sha256_text(base_csv),
+            "canonical_row_subset_sha256": _spec_canonical_row_subset_sha256(
+                [temp_row],
+                required_windows,
+                source_file_path=str(temp_source_file),
+            ),
+        }
+    ]
+
     assert _spec_canonical_row_subset_sha256(
         [accepted_row],
         required_windows,
