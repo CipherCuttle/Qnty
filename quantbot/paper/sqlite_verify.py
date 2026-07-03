@@ -59,6 +59,7 @@ subset). See ``docs/ADR/0001-paper-sqlite-ledger.md``.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import re
@@ -66,7 +67,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from quantbot.paper import (
     BASELINE_LABEL,
@@ -87,6 +88,8 @@ from quantbot.paper.funding_coverage import (
     check_funding_coverage_from_rows,
 )
 from quantbot.paper.funding_source_snapshot import (
+    build_canonical_row_subset_digest,
+    build_source_file_digest,
     clean_mode_decision_from_snapshot_v1,
     validate_funding_source_snapshot_envelope_v1,
 )
@@ -119,9 +122,45 @@ FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE = "present_ambiguous_multiple"
 
 FUNDING_SOURCE_SNAPSHOT_DIAGNOSTIC_NOTE = (
     "Funding source snapshot read support is diagnostic/provenance-only. It does "
-    "not change the arithmetic verifier status, does not implement final "
-    "clean-mode, and does not imply CLEAN_NET_OF_CARRY."
+    "not change the arithmetic verifier status. CLEAN_NET_OF_CARRY is decided "
+    "only by the strict funding_clean_carry_* gate."
 )
+
+FUNDING_CLEAN_CARRY_STATUS_CLEAN = "clean_net_of_carry"
+FUNDING_CLEAN_CARRY_STATUS_CAVEATED = "caveated_engine_semantics"
+FUNDING_CLEAN_CARRY_STATUS_REFUSED_MISSING_SNAPSHOT = "refused_missing_snapshot"
+FUNDING_CLEAN_CARRY_STATUS_REFUSED_DIGEST_MISMATCH = "refused_digest_mismatch"
+FUNDING_CLEAN_CARRY_STATUS_REFUSED_SCHEMA_UNSUPPORTED = "refused_schema_unsupported"
+FUNDING_CLEAN_CARRY_STATUS_REFUSED_DB_OR_LANE_MISMATCH = (
+    "refused_db_or_lane_mismatch"
+)
+FUNDING_CLEAN_CARRY_STATUS_REFUSED_PENDING_OR_ORPHANED = (
+    "refused_pending_or_orphaned"
+)
+FUNDING_CLEAN_CARRY_STATUS_REFUSED_AMBIGUOUS_MULTIPLE = (
+    "refused_ambiguous_multiple_snapshots"
+)
+FUNDING_CLEAN_CARRY_STATUS_REFUSED_SOURCE_COVERAGE = (
+    "refused_source_coverage_issue"
+)
+FUNDING_CLEAN_CARRY_STATUS_REFUSED_RESUM_MISMATCH = "refused_resum_mismatch"
+
+FUNDING_CLEAN_CARRY_NOTE = (
+    "Arithmetic OK and complete source coverage are necessary but not sufficient "
+    "for CLEAN_NET_OF_CARRY. The clean label requires one committed, DB-linked, "
+    "digest-valid funding source snapshot plus an independent funding re-sum. "
+    "Missing, pending, orphaned, ambiguous, or mismatched snapshots preserve "
+    "CAVEATED_ENGINE_SEMANTICS."
+)
+
+FUNDING_CLEAN_CARRY_REASON_ARITHMETIC_NOT_OK = "funding_arithmetic_status_not_ok"
+FUNDING_CLEAN_CARRY_REASON_SOURCE_COVERAGE_NOT_COMPLETE = (
+    "funding_source_coverage_not_complete"
+)
+FUNDING_CLEAN_CARRY_REASON_AMBIGUOUS_MULTIPLE = (
+    "funding_source_snapshot_ambiguous_multiple"
+)
+FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID = "funding_source_snapshot_payload_invalid"
 
 EXIT_CODE: dict[str, int] = {
     STATUS_OK: 0,
@@ -1602,7 +1641,7 @@ def _build_funding_source_snapshot_stamp(
     snapshot_report: dict[str, Any] = {
         "status": status,
         "diagnostic_only": True,
-        "clean_mode_gate": "not_implemented",
+        "clean_mode_gate": "see_funding_clean_carry_decision",
         "note": FUNDING_SOURCE_SNAPSHOT_DIAGNOSTIC_NOTE,
         "caveat": (
             "Missing, pending, orphaned, ambiguous, or mismatched source "
@@ -1641,6 +1680,324 @@ def _build_funding_source_snapshot_stamp(
     return {
         "funding_source_snapshot_status": status,
         "funding_source_snapshot": snapshot_report,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Strict funding clean-carry gate (additive; does NOT change arithmetic status)
+# ---------------------------------------------------------------------------
+
+def _funding_resum_check(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Independently re-sum funding and compare it to latest state/equity."""
+    funding_sum = float(
+        _scalar(conn, "SELECT COALESCE(SUM(funding_amount), 0.0) FROM funding")
+        or 0.0
+    )
+    funding_rows = int(_scalar(conn, "SELECT COUNT(*) FROM funding") or 0)
+    state_row = conn.execute(
+        "SELECT funding_cum FROM ledger_state WHERE id = 1"
+    ).fetchone()
+    latest_equity = conn.execute(
+        "SELECT bar_ts, funding_cum FROM equity_snapshots "
+        "ORDER BY bar_ts DESC, seq DESC LIMIT 1"
+    ).fetchone()
+
+    state_value = float(state_row["funding_cum"]) if state_row is not None else None
+    equity_value = (
+        float(latest_equity["funding_cum"]) if latest_equity is not None else None
+    )
+
+    issues: list[str] = []
+    if state_value is None or not _close(state_value, funding_sum):
+        issues.append("ledger_state_funding_cum_mismatch")
+    if funding_rows > 0 and equity_value is None:
+        issues.append("latest_equity_funding_cum_missing")
+    elif equity_value is not None and not _close(equity_value, funding_sum):
+        issues.append("latest_equity_funding_cum_mismatch")
+
+    return {
+        "status": "ok" if not issues else "mismatch",
+        "tolerance_abs": _ABS_TOL,
+        "funding_rows": funding_rows,
+        "funding_amount_sum": funding_sum,
+        "ledger_state_funding_cum": state_value,
+        "latest_equity_bar_ts": (
+            latest_equity["bar_ts"] if latest_equity is not None else None
+        ),
+        "latest_equity_funding_cum": equity_value,
+        "reason_codes": ["funding_resum_mismatch"] if issues else [],
+        "issues": issues,
+    }
+
+
+def _funding_evaluation_window(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT MIN(window_start) AS start, MAX(window_end) AS end FROM funding"
+    ).fetchone()
+    if row is None or row["start"] is None or row["end"] is None:
+        return None
+    return {"start": row["start"], "end": row["end"]}
+
+
+def _snapshot_source_file_path(db_path: Path, source_path: str) -> Path:
+    raw = Path(source_path)
+    if raw.is_absolute():
+        return raw
+    db_relative = db_path.parent / raw
+    if db_relative.exists():
+        return db_relative
+    return raw
+
+
+def _source_symbol_from_snapshot_item(path: str, item: Mapping[str, Any]) -> str:
+    symbol = item.get("symbol")
+    if symbol:
+        return str(symbol)
+    name = Path(path).name
+    if name.endswith("_8h_funding.csv"):
+        return name.removesuffix("_8h_funding.csv")
+    if "_" in name:
+        return name.split("_", 1)[0]
+    return Path(path).stem
+
+
+def _read_snapshot_source_rows(
+    *,
+    db_path: Path,
+    source_files: list[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:
+    rows: list[dict[str, Any]] = []
+    full_file_sha256_by_path: dict[str, str] = {}
+    reason_codes: list[str] = []
+
+    for item in source_files:
+        source_path = str(item.get("path") or "")
+        if not source_path:
+            reason_codes.append("funding_source_file_digest_mismatch")
+            continue
+        resolved = _snapshot_source_file_path(db_path, source_path)
+        try:
+            full_file_sha256_by_path[source_path] = build_source_file_digest(resolved)
+            with resolved.open("r", newline="", encoding="utf-8") as fh:
+                reader = csv.DictReader(fh)
+                if reader.fieldnames is None:
+                    reason_codes.append("funding_source_row_digest_mismatch")
+                    continue
+                missing = {"fundingTime", "fundingRate"} - set(reader.fieldnames)
+                if missing:
+                    reason_codes.append("funding_source_row_digest_mismatch")
+                    continue
+                symbol = _source_symbol_from_snapshot_item(source_path, item)
+                for row_index, row in enumerate(reader, start=1):
+                    try:
+                        funding_time_ms = int(row["fundingTime"])
+                    except (TypeError, ValueError):
+                        reason_codes.append("funding_source_row_digest_mismatch")
+                        continue
+                    rows.append(
+                        {
+                            "symbol": symbol,
+                            "fundingTime_ms": funding_time_ms,
+                            "source_file_path": source_path,
+                            "row_index": row_index,
+                            "funding_rate": str(row["fundingRate"]),
+                        }
+                    )
+        except OSError:
+            reason_codes.append("funding_source_file_digest_mismatch")
+
+    return rows, full_file_sha256_by_path, sorted(set(reason_codes))
+
+
+def _snapshot_source_digest_expectations(
+    *,
+    db_path: Path,
+    payload: Mapping[str, Any],
+) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    source_files_raw = payload.get("source_files")
+    if not isinstance(source_files_raw, list):
+        return {}, {}, ["funding_source_file_digest_mismatch"]
+    source_files = [
+        item for item in source_files_raw if isinstance(item, Mapping)
+    ]
+    required_windows_raw = payload.get("required_funding_windows")
+    if not isinstance(required_windows_raw, list):
+        return {}, {}, ["funding_source_row_digest_mismatch"]
+    required_windows = [
+        item for item in required_windows_raw if isinstance(item, Mapping)
+    ]
+
+    source_rows, full_file_sha_by_path, reason_codes = _read_snapshot_source_rows(
+        db_path=db_path,
+        source_files=source_files,
+    )
+    row_subset_sha_by_path: dict[str, str] = {}
+    for item in source_files:
+        source_path = str(item.get("path") or "")
+        if not source_path:
+            continue
+        row_subset_sha_by_path[source_path] = build_canonical_row_subset_digest(
+            source_rows,
+            required_windows,
+            source_file_path=source_path,
+        )
+
+    return full_file_sha_by_path, row_subset_sha_by_path, reason_codes
+
+
+def _read_snapshot_envelope_for_clean_gate(
+    snapshot_report: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    selected_path = snapshot_report.get("selected_snapshot_path")
+    if not selected_path:
+        return None, []
+    try:
+        envelope = json.loads(Path(str(selected_path)).read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None, [FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID]
+    if not isinstance(envelope, dict):
+        return None, [FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID]
+    return envelope, []
+
+
+def _clean_carry_status_from_reasons(reason_codes: list[str]) -> str:
+    reason_set = set(reason_codes)
+    if not reason_set:
+        return FUNDING_CLEAN_CARRY_STATUS_CLEAN
+    if FUNDING_CLEAN_CARRY_REASON_AMBIGUOUS_MULTIPLE in reason_set:
+        return FUNDING_CLEAN_CARRY_STATUS_REFUSED_AMBIGUOUS_MULTIPLE
+    if "funding_source_snapshot_missing" in reason_set:
+        return FUNDING_CLEAN_CARRY_STATUS_REFUSED_MISSING_SNAPSHOT
+    if (
+        "funding_source_snapshot_digest_mismatch" in reason_set
+        or "funding_source_file_digest_mismatch" in reason_set
+        or "funding_source_row_digest_mismatch" in reason_set
+    ):
+        return FUNDING_CLEAN_CARRY_STATUS_REFUSED_DIGEST_MISMATCH
+    if (
+        "funding_source_snapshot_schema_unsupported" in reason_set
+        or FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID in reason_set
+    ):
+        return FUNDING_CLEAN_CARRY_STATUS_REFUSED_SCHEMA_UNSUPPORTED
+    if (
+        "funding_source_snapshot_db_mismatch" in reason_set
+        or "funding_source_snapshot_window_mismatch" in reason_set
+    ):
+        return FUNDING_CLEAN_CARRY_STATUS_REFUSED_DB_OR_LANE_MISMATCH
+    if "funding_source_snapshot_unreferenced_or_orphaned" in reason_set:
+        return FUNDING_CLEAN_CARRY_STATUS_REFUSED_PENDING_OR_ORPHANED
+    source_issue_codes = {
+        FUNDING_CLEAN_CARRY_REASON_SOURCE_COVERAGE_NOT_COMPLETE,
+        "funding_source_missing",
+        "funding_source_partial",
+        "funding_source_duplicate_ambiguous",
+        "funding_timestamp_outside_tolerance",
+        "funding_timestamp_open_boundary",
+    }
+    if reason_set & source_issue_codes:
+        return FUNDING_CLEAN_CARRY_STATUS_REFUSED_SOURCE_COVERAGE
+    if "funding_resum_mismatch" in reason_set:
+        return FUNDING_CLEAN_CARRY_STATUS_REFUSED_RESUM_MISMATCH
+    return FUNDING_CLEAN_CARRY_STATUS_CAVEATED
+
+
+def _build_funding_clean_carry_stamp(
+    conn: sqlite3.Connection,
+    db_path: Path,
+    cfg: dict[str, Any],
+    report: Mapping[str, Any],
+    *,
+    arithmetic_ok: bool,
+) -> dict[str, Any]:
+    """Decide whether the strict clean-carry label is allowed for this report."""
+    reason_codes: list[str] = []
+    if not arithmetic_ok:
+        reason_codes.append(FUNDING_CLEAN_CARRY_REASON_ARITHMETIC_NOT_OK)
+
+    coverage = report.get("funding_coverage")
+    coverage_decision = (
+        coverage.get("decision") if isinstance(coverage, Mapping) else None
+    )
+    if coverage_decision != COVERAGE_COMPLETE:
+        reason_codes.append(FUNDING_CLEAN_CARRY_REASON_SOURCE_COVERAGE_NOT_COMPLETE)
+
+    snapshot_report = report.get("funding_source_snapshot")
+    if not isinstance(snapshot_report, Mapping):
+        snapshot_report = {}
+    snapshot_status = snapshot_report.get("status")
+
+    envelope: dict[str, Any] | None = None
+    if snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING:
+        reason_codes.append("funding_source_snapshot_missing")
+    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE:
+        reason_codes.append(FUNDING_CLEAN_CARRY_REASON_AMBIGUOUS_MULTIPLE)
+    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_DIGEST_MISMATCH:
+        reason_codes.append("funding_source_snapshot_digest_mismatch")
+    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_SCHEMA_UNSUPPORTED:
+        reason_codes.append("funding_source_snapshot_schema_unsupported")
+    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_PAYLOAD_INVALID:
+        reason_codes.append(FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID)
+    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_DB_OR_LANE_MISMATCH:
+        reason_codes.append("funding_source_snapshot_db_mismatch")
+    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_PENDING_OR_ORPHANED:
+        reason_codes.append("funding_source_snapshot_unreferenced_or_orphaned")
+    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_PRESENT_VALID:
+        envelope, read_reasons = _read_snapshot_envelope_for_clean_gate(
+            snapshot_report
+        )
+        reason_codes.extend(read_reasons)
+    else:
+        reason_codes.append("funding_source_snapshot_missing")
+
+    if envelope is not None:
+        payload = _payload_dict(envelope)
+        expected_file_sha_by_path: dict[str, str] | None = None
+        expected_row_sha_by_path: dict[str, str] | None = None
+        if isinstance(payload, Mapping):
+            (
+                expected_file_sha_by_path,
+                expected_row_sha_by_path,
+                digest_reason_codes,
+            ) = _snapshot_source_digest_expectations(
+                db_path=db_path,
+                payload=payload,
+            )
+            reason_codes.extend(digest_reason_codes)
+        clean_decision = clean_mode_decision_from_snapshot_v1(
+            envelope,
+            expected_evaluation_window=_funding_evaluation_window(conn),
+            expected_lane_id=_expected_snapshot_lane_id(cfg),
+            expected_source_file_sha256_by_path=expected_file_sha_by_path,
+            expected_row_subset_sha256_by_path=expected_row_sha_by_path,
+        )
+        reason_codes.extend(str(r) for r in clean_decision.get("reason_codes") or [])
+
+    resum_check = _funding_resum_check(conn)
+    reason_codes.extend(str(r) for r in resum_check.get("reason_codes") or [])
+
+    deduped_reasons = sorted(set(reason_codes))
+    status = _clean_carry_status_from_reasons(deduped_reasons)
+    clean_allowed = status == FUNDING_CLEAN_CARRY_STATUS_CLEAN
+    decision = CLEAN_NET_OF_CARRY if clean_allowed else CAVEATED_ENGINE_SEMANTICS
+
+    clean_report = {
+        "decision": decision,
+        "status": status,
+        "reason_codes": deduped_reasons,
+        "arithmetic_status": STATUS_OK if arithmetic_ok else STATUS_CORRUPT,
+        "arithmetic_ok": arithmetic_ok,
+        "funding_coverage_decision": coverage_decision,
+        "snapshot_status": snapshot_status,
+        "snapshot_sha256": snapshot_report.get("snapshot_sha256"),
+        "source_bundle_sha256": snapshot_report.get("source_bundle_sha256"),
+        "resum_check": resum_check,
+        "note": FUNDING_CLEAN_CARRY_NOTE,
+    }
+    return {
+        "funding_clean_carry_decision": decision,
+        "funding_clean_carry_status": status,
+        "funding_clean_carry_reason_codes": deduped_reasons,
+        "funding_clean_carry": clean_report,
     }
 
 
@@ -1780,8 +2137,29 @@ def _verify_connection(conn: sqlite3.Connection, db_path: Path) -> VerifyResult:
     # query_only=1), the existing arithmetic check (lines 505-520), and the
     # content_digests keys are NOT touched. The stamp is read-only; no DB
     # mutation occurs.
-    stamp = _build_funding_coverage_stamp(conn, db_path, arithmetic_ok=not failures)
+    arithmetic_ok = not failures
+    stamp = _build_funding_coverage_stamp(conn, db_path, arithmetic_ok=arithmetic_ok)
     report.update(stamp)
+    report["funding_source_coverage_verdict"] = report.get(
+        "funding_coverage_verdict"
+    )
+    clean_carry_stamp = _build_funding_clean_carry_stamp(
+        conn,
+        db_path,
+        cfg,
+        report,
+        arithmetic_ok=arithmetic_ok,
+    )
+    report.update(clean_carry_stamp)
+    if arithmetic_ok:
+        report["funding_coverage_verdict"] = report[
+            "funding_clean_carry_decision"
+        ]
+        report["funding_coverage_diagnostic_label"] = (
+            ""
+            if report["funding_coverage_verdict"] == CLEAN_NET_OF_CARRY
+            else CAVEATED_ENGINE_SEMANTICS_LABEL
+        )
 
     # === GIT-SHA PROVENANCE STAMP (additive; does NOT change status) ============
     # Operator-facing evidence of which code produced each committed batch. Like
@@ -1958,9 +2336,14 @@ def _render_receipt(report: dict[str, Any]) -> str:
     if fc is not None:
         fc_verdict = report.get("funding_coverage_verdict", "")
         fc_label = report.get("funding_coverage_diagnostic_label", "")
+        fc_source_verdict = report.get("funding_source_coverage_verdict")
         lines.append("## Funding coverage")
         lines.append("")
         lines.append(f"- Verdict: {fc_verdict}")
+        if fc_source_verdict is not None:
+            lines.append(
+                f"- Source coverage verdict before clean-carry gate: {fc_source_verdict}"
+            )
         lines.append(
             f"- Diagnostic label: {fc_label if fc_label else '(empty)'}"
         )
@@ -1983,6 +2366,32 @@ def _render_receipt(report: dict[str, Any]) -> str:
                     f"window=[{mw.get('window_start', '?')}, {mw.get('window_end', '?')}] "
                     f"source_issue={issue}"
                 )
+        lines.append("")
+    # --- Strict funding clean-carry gate (additive; does NOT change status) ---
+    fcc = report.get("funding_clean_carry")
+    if isinstance(fcc, dict):
+        lines.append("## Funding clean-carry gate")
+        lines.append("")
+        lines.append(f"- Decision: {fcc.get('decision', 'n/a')}")
+        lines.append(f"- Status: {fcc.get('status', 'n/a')}")
+        lines.append(f"- Reason codes: {fcc.get('reason_codes') or []}")
+        lines.append(
+            f"- Snapshot SHA-256: {fcc.get('snapshot_sha256') or '(none)'}"
+        )
+        lines.append(
+            f"- Source bundle SHA-256: "
+            f"{fcc.get('source_bundle_sha256') or '(none)'}"
+        )
+        resum = fcc.get("resum_check") or {}
+        if isinstance(resum, dict):
+            lines.append(f"- Re-sum status: {resum.get('status', 'n/a')}")
+            lines.append(
+                f"- Re-sum funding sum/state/equity: "
+                f"{resum.get('funding_amount_sum')} / "
+                f"{resum.get('ledger_state_funding_cum')} / "
+                f"{resum.get('latest_equity_funding_cum')}"
+            )
+        lines.append(f"- Note: {fcc.get('note') or FUNDING_CLEAN_CARRY_NOTE}")
         lines.append("")
     # --- Funding source snapshot sidecars (diagnostic; does NOT change status) ---
     fss = report.get("funding_source_snapshot")

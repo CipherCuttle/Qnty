@@ -2,8 +2,9 @@
 
 Five tests, mirroring docs/plans/FUNDING_COVERAGE_FAIL_CLOSED_GATE_PLAN.md §6:
 
-  1. test_sqlite_complete_funding_is_clean_net_of_carry — every funding row is
-     backed by a source CSV row.
+  1. test_sqlite_complete_funding_still_requires_snapshot_for_clean_carry —
+     every funding row is backed by a source CSV row, but no clean sidecar is
+     present.
   2. test_sqlite_missing_sol_funding_is_caveated_engine_semantics — BTC backed,
      SOL rows have rate_available=0 / funding_amount=0.0 and the source SOL CSV
      is empty.
@@ -54,6 +55,7 @@ from quantbot.paper.funding_status import (
     COVERAGE_PARTIAL,
 )
 from quantbot.paper.sqlite_verify import (
+    FUNDING_CLEAN_CARRY_STATUS_REFUSED_MISSING_SNAPSHOT,
     STATUS_OK,
     verify_database,
 )
@@ -375,15 +377,15 @@ def _sol_csv_one_row() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Test 1: complete funding -> CLEAN_NET_OF_CARRY
+# Test 1: complete source coverage is not enough for strict clean-carry
 # ---------------------------------------------------------------------------
 
-def test_sqlite_complete_funding_is_clean_net_of_carry(tmp_path):
+def test_sqlite_complete_funding_still_requires_snapshot_for_clean_carry(tmp_path):
     """Every funding row is backed by a source CSV row.
 
     The arithmetic check passes (rate_available=1, funding_amount=notional*rate),
-    the coverage check classifies every symbol as COMPLETE, and the verifier
-    stamps CLEAN_NET_OF_CARRY with an empty diagnostic label.
+    the coverage check classifies every symbol as COMPLETE, but the strict
+    clean-carry gate refuses CLEAN_NET_OF_CARRY without snapshot proof.
     """
     csv_dir = _tmp_csv_complete(tmp_path)
     db_path = _build_funding_db(tmp_path, _funding_rows_complete())
@@ -391,8 +393,15 @@ def test_sqlite_complete_funding_is_clean_net_of_carry(tmp_path):
 
     result = verify_database(db_path)
     assert result.status == STATUS_OK, result.failures
-    assert result.report["funding_coverage_verdict"] == CLEAN_NET_OF_CARRY
-    assert result.report["funding_coverage_diagnostic_label"] == ""
+    assert result.report["funding_source_coverage_verdict"] == CLEAN_NET_OF_CARRY
+    assert result.report["funding_coverage_verdict"] == CAVEATED_ENGINE_SEMANTICS
+    assert (
+        result.report["funding_coverage_diagnostic_label"]
+        == CAVEATED_ENGINE_SEMANTICS_LABEL
+    )
+    assert result.report["funding_clean_carry_status"] == (
+        FUNDING_CLEAN_CARRY_STATUS_REFUSED_MISSING_SNAPSHOT
+    )
     assert result.report["funding_coverage"]["decision"] == COVERAGE_COMPLETE
     assert result.report["funding_coverage"]["per_symbol"] == {
         "BTCUSDT": COVERAGE_COMPLETE,
