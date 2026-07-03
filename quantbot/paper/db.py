@@ -47,6 +47,15 @@ DEFAULT_DB_PATH = Path(
     )
 )
 
+LEDGER_BATCH_SNAPSHOT_REFERENCE_COLUMNS: dict[str, str] = {
+    "funding_source_snapshot_path": "TEXT",
+    "funding_source_snapshot_sha256": "TEXT",
+    "funding_source_snapshot_bundle_sha256": "TEXT",
+    "funding_source_snapshot_schema_version": "TEXT",
+    "funding_source_snapshot_write_state": "TEXT",
+    "funding_source_snapshot_created_at": "TEXT",
+}
+
 
 # ---------------------------------------------------------------------------
 # Path helper
@@ -196,7 +205,15 @@ CREATE TABLE IF NOT EXISTS ledger_batches (
     -- paper_config.lane_id. New-lane DBs stamp every batch with paper_config.lane_id so
     -- each batch self-attests its lane. No DB_SCHEMA_VERSION bump, no ALTER, no
     -- migration — older DBs that lack this column entirely stay verifiable.
-    lane_id                    TEXT
+    lane_id                    TEXT,
+    -- Additive funding-source snapshot selector references. Nullable: NULL means
+    -- no committed DB-linked sidecar reference exists for this batch.
+    funding_source_snapshot_path             TEXT,
+    funding_source_snapshot_sha256           TEXT,
+    funding_source_snapshot_bundle_sha256    TEXT,
+    funding_source_snapshot_schema_version   TEXT,
+    funding_source_snapshot_write_state      TEXT,
+    funding_source_snapshot_created_at       TEXT
 ) STRICT;
 
 -- 4.3 ledger_events — global ordered index (append-only)
@@ -415,6 +432,31 @@ _TRIGGER_SQL = _build_trigger_sql()
 # ---------------------------------------------------------------------------
 # Database initialisation
 # ---------------------------------------------------------------------------
+
+def _pragma_column_name(row: sqlite3.Row | tuple[Any, ...]) -> str:
+    return str(row["name"] if isinstance(row, sqlite3.Row) else row[1])
+
+
+def ensure_ledger_batch_snapshot_reference_columns(
+    conn: sqlite3.Connection,
+) -> list[str]:
+    """Add missing nullable snapshot-reference columns to ``ledger_batches``.
+
+    This is an explicit additive helper for local/tmp DB upgrades. It does not
+    commit; callers keep transaction control and choose where it is safe to run.
+    """
+    existing = {
+        _pragma_column_name(row)
+        for row in conn.execute("PRAGMA table_info(ledger_batches)").fetchall()
+    }
+    added: list[str] = []
+    for name, declared_type in LEDGER_BATCH_SNAPSHOT_REFERENCE_COLUMNS.items():
+        if name in existing:
+            continue
+        conn.execute(f"ALTER TABLE ledger_batches ADD COLUMN {name} {declared_type}")
+        added.append(name)
+    return added
+
 
 def initialize_database(db_path: str | Path, config: dict[str, Any]) -> Path:
     """Create a fresh paper ledger DB and insert the singleton config row.
