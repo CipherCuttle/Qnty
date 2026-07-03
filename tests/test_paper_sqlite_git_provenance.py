@@ -35,7 +35,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from quantbot.paper.db import connect_readonly
-from quantbot.paper.funding_status import CLEAN_NET_OF_CARRY
+from quantbot.paper.funding_status import (
+    CAVEATED_ENGINE_SEMANTICS,
+    CLEAN_NET_OF_CARRY,
+)
 from quantbot.paper.provenance import resolve_git_sha
 from quantbot.paper.sqlite_verify import (
     RECEIPT_FILE,
@@ -222,5 +225,6 @@ def test_published_report_contains_funding_coverage_verdict(tmp_path: Path):
     report = json.loads((db_path.parent / REPORT_FILE).read_text())
 
     assert "funding_coverage_verdict" in report
-    assert report["funding_coverage_verdict"] == CLEAN_NET_OF_CARRY
+    assert report["funding_coverage_verdict"] == CAVEATED_ENGINE_SEMANTICS
+    assert report["funding_source_coverage_verdict"] == CLEAN_NET_OF_CARRY
     assert "funding_coverage" in report

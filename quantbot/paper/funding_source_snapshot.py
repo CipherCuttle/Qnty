@@ -717,6 +717,14 @@ def clean_mode_decision_from_snapshot_v1(
     if payload.get("coverage_decision") != "complete" and not payload_reasons:
         reason_codes.append("funding_source_partial")
 
+    source_files = payload.get("source_files")
+    if not isinstance(source_files, list):
+        reason_codes.append("funding_source_file_digest_mismatch")
+    elif payload.get("source_bundle_sha256") != sha256_text(
+        canonical_json(source_files)
+    ):
+        reason_codes.append("funding_source_file_digest_mismatch")
+
     return {
         "clean_net_of_carry_allowed": not reason_codes,
         "reason_codes": sorted(set(reason_codes)),

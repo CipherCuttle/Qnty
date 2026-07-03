@@ -177,7 +177,7 @@ def test_one_valid_pending_snapshot_reports_pending_or_orphaned(tmp_path: Path) 
 
     assert snapshot["status"] == FUNDING_SOURCE_SNAPSHOT_STATUS_PENDING_OR_ORPHANED
     assert snapshot["diagnostic_only"] is True
-    assert snapshot["clean_mode_gate"] == "not_implemented"
+    assert snapshot["clean_mode_gate"] == "see_funding_clean_carry_decision"
     assert "CAVEATED_ENGINE_SEMANTICS" in snapshot["caveat"]
     assert "funding_source_snapshot_unreferenced_or_orphaned" in (
         snapshot["future_clean_mode_reason_codes"]
