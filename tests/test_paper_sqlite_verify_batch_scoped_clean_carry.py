@@ -62,10 +62,6 @@ from tests.test_paper_sqlite_verifier_clean_net_of_carry_gate import (
     _write_snapshot,
 )
 
-pytestmark = pytest.mark.xfail(
-    strict=True,
-    reason="batch-scoped clean-carry verifier not implemented yet",
-)
 
 _BATCH_START = "2026-06-15T00:00:00"
 _BATCH_END = "2026-06-15T08:00:00"
