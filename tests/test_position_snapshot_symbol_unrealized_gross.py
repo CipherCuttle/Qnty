@@ -10,13 +10,9 @@ intended behavior is that a moved open position records its per-symbol
 unrealized PnL contribution ``(mark - entry_price) * qty``, and that the
 per-symbol figures aggregate to the ledger-level unrealized within tolerance.
 
-These are specs, not a fix. The moved-position expectations therefore fail
-under current behavior and are marked ``xfail(strict=True)``: they must start
-passing once the writer (or reporter) populates per-symbol unrealized, and a
-premature XPASS fails the suite. This file is tests-only — it does not modify
-the writer, reporter, schema, or any prod/shadow ledger. Every scenario is
-built end-to-end through the real writer against a throwaway SQLite DB under
-``tmp_path``.
+This file is tests-only — it does not modify the writer, reporter, schema, or
+any prod/shadow ledger. Every scenario is built end-to-end through the real
+writer against a throwaway SQLite DB under ``tmp_path``.
 """
 
 from __future__ import annotations
@@ -37,11 +33,6 @@ if str(REPO_ROOT) not in sys.path:
 from quantbot.paper.config import build_config, config_hash, write_config_once
 from quantbot.paper.db import connect_readonly, initialize_database
 from quantbot.paper.sqlite_writer import STATUS_OK, run_sqlite_accounting
-
-XFAIL_REASON = (
-    "position_snapshot_symbols.unrealized_gross is currently a documented gap; "
-    "see QNTY_SHADOW_VERIFIER_AND_POSITION_UNREALIZED_DIAGNOSIS_PLAN.md"
-)
 
 TOL = 1e-6
 
@@ -168,7 +159,7 @@ def _build_open_position_db(
     """Run the real writer to a committed batch with open, marked positions.
 
     Returns the db_path. Asserts the writer returned OK so a broken fixture
-    surfaces as a hard error rather than a misleading xfail.
+    surfaces as a hard error rather than a misleading expected failure.
     """
     config = _make_config()
     db_path = tmp_path / "paper" / "paper_ledger.db"
@@ -236,7 +227,6 @@ def flat_marked_db(tmp_path: Path) -> Path:
 # Specs
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=XFAIL_REASON)
 def test_moved_long_position_records_nonzero_unrealized(single_moved_db: Path):
     """A moved open long records nonzero per-symbol unrealized, not 0.0.
 
@@ -261,7 +251,6 @@ def test_moved_long_position_records_nonzero_unrealized(single_moved_db: Path):
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason=XFAIL_REASON)
 def test_latest_snapshot_unrealized_sum_matches_ledger(multi_moved_db: Path):
     """Sum of per-symbol unrealized in the latest snapshot == ledger unrealized."""
     conn = connect_readonly(multi_moved_db)
@@ -278,7 +267,6 @@ def test_latest_snapshot_unrealized_sum_matches_ledger(multi_moved_db: Path):
         conn.close()
 
 
-@pytest.mark.xfail(strict=True, reason=XFAIL_REASON)
 def test_each_open_symbol_carries_its_own_unrealized(multi_moved_db: Path):
     """With multiple open symbols, each carries its own nonzero contribution."""
     conn = connect_readonly(multi_moved_db)

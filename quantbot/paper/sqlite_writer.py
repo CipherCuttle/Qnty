@@ -594,6 +594,29 @@ def _build_signal_snapshots_for_bars(
     return results
 
 
+def _snapshot_positions_with_unrealized(
+    open_positions: dict[str, dict],
+    close_by_symbol_ts: dict[str, dict[str, float]],
+    bar_ts: str,
+) -> dict[str, dict]:
+    positions: dict[str, dict] = {}
+    for sym, pos in open_positions.items():
+        marked = dict(pos)
+        close = close_by_symbol_ts.get(sym, {}).get(bar_ts)
+        unrealized_gross = 0.0
+        if close is not None:
+            qty = float(marked["qty"])
+            entry = float(marked["entry_price"])
+            side = str(marked.get("side", "long")).lower()
+            if side == "short":
+                unrealized_gross = (entry - close) * abs(qty)
+            else:
+                unrealized_gross = (close - entry) * qty
+        marked["unrealized_gross"] = round(unrealized_gross, 8)
+        positions[sym] = marked
+    return positions
+
+
 def _group_engine_result_by_bar(
     engine_result: Any,
     per_bar_obs: list[dict],
@@ -1826,6 +1849,10 @@ def run_sqlite_accounting(
                 row["symbol"]: dict(row)
                 for row in conn.execute("SELECT * FROM open_positions").fetchall()
             }
+            close_by_symbol_ts = {
+                sym: {bar.timestamp: bar.close for bar in bars}
+                for sym, bars in bars_by_symbol.items()
+            }
 
             for bar_dict in bars_data:
                 ts = bar_dict["bar_ts"]
@@ -1850,7 +1877,11 @@ def run_sqlite_accounting(
                     conn, batch_id, ts, commit_id, result,
                     event_seq_by_key,
                     snap_rows, fund_rows, fill_rows, trade_rows,
-                    pos_snap, eq_row, replay_positions,
+                    pos_snap,
+                    eq_row,
+                    _snapshot_positions_with_unrealized(
+                        replay_positions, close_by_symbol_ts, ts
+                    ),
                 )
 
                 # Apply fills to replay_positions (post-snapshot)
