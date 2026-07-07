@@ -64,5 +64,26 @@ Do not mine generated/sensitive paths: `data/`, `output/`, `experiment_results/`
 Do not enable hooks or autosave by default.
 If MemPalace conflicts with git/docs/verifier output, trust git/docs/verifier.
 
+## Context / limits hygiene
+
+Preserve work quality and safety, but avoid dragging unnecessary context.
+
+- At the start of a session, read this file and use MemPalace `qnty` recall for the
+  current task instead of relying on huge prior chat context.
+- Use `/compact` after completing a coherent phase, before switching from investigation
+  to implementation, or when context is getting large. Before compacting, write a short
+  checkpoint: current branch, open PR, changed files, key findings, commands run,
+  blockers, and next action.
+- Use `/clear` when switching to an unrelated task after the checkpoint/PR state is saved.
+- Prefer targeted file reads, `rg`, and specific tests over broad repo scans.
+- Do not spawn subagents by default. Use subagents only when parallel investigation
+  clearly saves time or when the user asks. State why a subagent is needed.
+- Avoid `/run` unless the task genuinely needs a skill/workflow. Prefer normal targeted
+  commands for QNTY docs, tests, verifier receipts, and PR review.
+- Keep final reports compact but complete: PLAN -> CHANGESET -> VERIFY -> VERDICT, with
+  exact changed files and commands.
+- Never reduce safety checks to save tokens. Guardrails, DB immutability checks, hash
+  checks, and verifier receipts are mandatory when relevant.
+
 ## Final response format for non-trivial work
 PLAN -> CHANGESET -> VERIFY -> VERDICT.

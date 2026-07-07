@@ -60,3 +60,10 @@ the server config.
 ## Source-of-truth rule
 MemPalace is recall-only. Source of truth is git, `CLAUDE.md`, `docs/status/`,
 `docs/plans/`, and verifier output. On conflict, trust git/docs/verifier.
+
+## Context / limits hygiene
+
+`CLAUDE.md` also records a conservative context-hygiene policy:
+use MemPalace recall instead of carrying giant sessions, compact after coherent phases,
+clear between unrelated tasks, avoid default subagents, and avoid `/run` unless needed.
+This is cost hygiene only; safety checks and verifier gates must not be skipped.
