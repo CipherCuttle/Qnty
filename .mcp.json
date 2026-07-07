@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "mempalace-qnty": {
+      "type": "stdio",
+      "command": "mempalace-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
