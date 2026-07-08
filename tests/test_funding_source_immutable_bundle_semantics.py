@@ -1,32 +1,29 @@
-"""Spec-first tests for immutable funding-source bundle semantics.
+"""Tests for immutable funding-source bundle semantics.
 
 This file pins the observable contract described in
-``docs/specs/funding_source_immutable_bundle_semantics_v0.md`` (planned in
-PR #105) **before** implementation. It adds no production verifier/writer/
-reporter behavior.
+``docs/specs/funding_source_immutable_bundle_semantics_v0.md``. It was authored
+spec-first in PR #106 (bundle-mode tests marked ``xfail`` until implementation);
+the ``funding_source_bundle`` module + verifier ``source_mode`` support now make
+the bundle-mode tests pass, so the ``xfail`` marks are removed.
 
-Two kinds of tests live here:
+The tests cover:
 
-* Passing today (helper-only / regression-guard): canonical-serialization
-  determinism against the existing snapshot primitives, and a reproduction of
-  the PR #104 live-CSV drift flip that motivates bundle mode.
-* Planned-behavior, marked ``xfail(strict=True)`` with reason
-  ``immutable source bundle semantics not implemented yet``: bundle-mode
-  verifier behavior. These fail today because bundle mode does not exist; when
-  the implementation lands they will XPASS and ``strict=True`` will force the
-  ``xfail`` marks to be removed.
+* canonical-serialization determinism against the existing snapshot primitives;
+* the PR #104 live-CSV drift flip that motivates bundle mode (regression guard);
+* bundle mode surviving live drift, and refusing on missing/corrupt/
+  hash-mismatch/incomplete-window/re-sum-mismatch;
+* ``live-current`` mode still detecting drift and labelling the resolution mode;
+* the report exposing ``source_resolution_mode`` + source identity.
 
-All fixtures are tmp SQLite DBs, tmp CSVs, and tmp snapshot sidecars only. The
-tests never touch /srv, never run prod/shadow writers, never mutate a real DB,
-official report, live CSV, or service/timer.
+All fixtures are tmp SQLite DBs, tmp CSVs, tmp snapshot sidecars, and tmp
+bundles only. The tests never touch /srv, never run prod/shadow writers, never
+mutate a real DB, official report, live CSV, or service/timer.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 from quantbot.paper.funding_source_snapshot import (
     _canonical_row_sort_key,
@@ -52,14 +49,7 @@ from tests.test_paper_sqlite_verifier_clean_net_of_carry_gate import (
     _write_snapshot,
 )
 
-# Marker for behavior the follow-on implementation PR must satisfy. strict=True
-# means: when bundle mode is implemented and the test starts passing, pytest
-# reports XPASS as a failure, forcing this mark to be removed.
-XFAIL_REASON = "immutable source bundle semantics not implemented yet"
-planned = pytest.mark.xfail(strict=True, reason=XFAIL_REASON)
-
-# Planned report/contract vocabulary (see the spec doc). Referenced as literals
-# so this module imports cleanly today; the implementation PR must honor them.
+# Report/contract vocabulary (see the spec doc), honored by the implementation.
 PLANNED_MODE_BUNDLE = "bundle"
 PLANNED_MODE_LIVE_CURRENT = "live-current"
 PLANNED_REASON_BUNDLE_MISSING = "funding_source_bundle_missing"
@@ -187,17 +177,16 @@ def test_current_default_mode_flips_clean_to_refused_when_live_csv_drifts(
 
 
 # ---------------------------------------------------------------------------
-# Planned behavior (xfail until bundle mode is implemented). Each test drives
-# the verifier in an explicit source mode that does not exist yet, so it fails
-# today; strict=True forces removal of the mark once implemented.
+# Bundle-mode behavior. Each test drives the verifier in an explicit source mode
+# and asserts the pinned contract (survive drift; refuse on missing/corrupt/
+# hash/window/re-sum; expose resolution mode + identity).
 # ---------------------------------------------------------------------------
 
 
 def _build_planned_bundle(db_path: Path, envelope: dict[str, Any]) -> Path:
-    """Planned helper: capture an immutable, content-addressed source bundle
-    from a committed snapshot envelope. Imported lazily because the module does
-    not exist yet (its absence is the expected xfail cause)."""
-    from quantbot.paper.funding_source_bundle import (  # noqa: PLC0415
+    """Capture an immutable, content-addressed source bundle from a committed
+    snapshot envelope and write it under the DB's bundle directory."""
+    from quantbot.paper.funding_source_bundle import (
         build_funding_source_bundle_v1,
         write_funding_source_bundle,
     )
@@ -211,7 +200,6 @@ def _verify_bundle_mode(db_path: Path) -> dict[str, Any]:
     return result.report["funding_clean_carry"]
 
 
-@planned
 def test_bundle_mode_survives_live_csv_drift(tmp_path: Path) -> None:
     db_path = _clean_setup(tmp_path)
     envelope = _committed_snapshot(db_path)
@@ -228,7 +216,6 @@ def test_bundle_mode_survives_live_csv_drift(tmp_path: Path) -> None:
     assert report["decision"] == CLEAN_NET_OF_CARRY
 
 
-@planned
 def test_missing_bundle_refuses_clean_in_bundle_mode(tmp_path: Path) -> None:
     db_path = _clean_setup(tmp_path)
     # No bundle captured, but bundle mode is requested with a recorded reference.
@@ -239,7 +226,6 @@ def test_missing_bundle_refuses_clean_in_bundle_mode(tmp_path: Path) -> None:
     assert PLANNED_REASON_BUNDLE_MISSING in report["reason_codes"]
 
 
-@planned
 def test_corrupt_bundle_refuses_clean(tmp_path: Path) -> None:
     db_path = _clean_setup(tmp_path)
     envelope = _committed_snapshot(db_path)
@@ -252,7 +238,6 @@ def test_corrupt_bundle_refuses_clean(tmp_path: Path) -> None:
     assert PLANNED_REASON_BUNDLE_CORRUPT in report["reason_codes"]
 
 
-@planned
 def test_bundle_hash_mismatch_refuses_clean(tmp_path: Path) -> None:
     db_path = _clean_setup(tmp_path)
     envelope = _committed_snapshot(db_path)
@@ -268,7 +253,6 @@ def test_bundle_hash_mismatch_refuses_clean(tmp_path: Path) -> None:
     assert PLANNED_REASON_BUNDLE_HASH_MISMATCH in report["reason_codes"]
 
 
-@planned
 def test_incomplete_window_bundle_refuses_clean(tmp_path: Path) -> None:
     db_path = _clean_setup(tmp_path)
     # A bundle that covers less than the full-ledger funding window must refuse.
@@ -289,7 +273,6 @@ def test_incomplete_window_bundle_refuses_clean(tmp_path: Path) -> None:
     assert PLANNED_REASON_BUNDLE_INCOMPLETE_WINDOW in report["reason_codes"]
 
 
-@planned
 def test_funding_resum_mismatch_over_bundle_refuses_clean(tmp_path: Path) -> None:
     import sqlite3  # noqa: PLC0415
 
@@ -313,7 +296,6 @@ def test_funding_resum_mismatch_over_bundle_refuses_clean(tmp_path: Path) -> Non
     assert PLANNED_REASON_RESUM_MISMATCH in report["reason_codes"]
 
 
-@planned
 def test_live_current_mode_labels_resolution_and_still_detects_drift(
     tmp_path: Path,
 ) -> None:
@@ -329,7 +311,6 @@ def test_live_current_mode_labels_resolution_and_still_detects_drift(
     assert set(report["reason_codes"]) & _DIGEST_MISMATCH_REASONS
 
 
-@planned
 def test_report_exposes_source_resolution_mode_and_source_identity(
     tmp_path: Path,
 ) -> None:
