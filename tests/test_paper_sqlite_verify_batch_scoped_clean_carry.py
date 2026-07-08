@@ -280,13 +280,20 @@ def test_batch_scope_compares_snapshot_window_to_latest_batch_watermarks_not_ful
 
 
 def test_batch_scope_refuses_window_mismatch(tmp_path: Path) -> None:
+    """Snapshot window that does NOT cover the batch window is refused.
+
+    Under covering-superset semantics, the snapshot evaluation window must
+    start <= batch start AND end >= batch end. Here the snapshot window
+    starts AFTER the batch start AND ends BEFORE the batch end, so it is
+    a strict subset — not a covering superset — and must be refused.
+    """
     db_path = _db_with_latest_batch_window(tmp_path)
     envelope = _batch_scoped_snapshot(
         db_path,
-        batch_start_watermark="2026-06-14T16:00:00",
+        batch_start_watermark="2026-06-15T01:00:00",
         evaluation_window={
-            "start": "2026-06-14T16:00:00",
-            "end": _BATCH_END,
+            "start": "2026-06-15T01:00:00",
+            "end": "2026-06-15T07:00:00",
         },
     )
     _attach_latest_batch_snapshot(db_path, envelope)
@@ -559,3 +566,222 @@ def test_bundle_mode_does_not_weaken_full_ledger_gate(tmp_path: Path) -> None:
     assert report["funding_clean_carry"]["source_resolution_mode"] == (
         SOURCE_MODE_BUNDLE
     )
+
+
+# ---------------------------------------------------------------------------
+# Covering-superset window semantics tests.
+#
+# The window comparison in clean_mode_decision_from_snapshot_v1() was changed
+# from strict equality to covering-superset semantics:
+#
+#   Before: snapshot evaluation window must exactly equal expected window
+#   After:  snapshot evaluation window must cover (start <= expected_start
+#           AND end >= expected_end) the expected window
+#
+# These tests validate the new semantics and guard against regressions.
+# ---------------------------------------------------------------------------
+
+
+def test_batch_scope_accepts_covering_superset_window(tmp_path: Path) -> None:
+    """PR #114 regression: bundle/source evaluation window that is a covering
+    superset of the batch window is accepted.
+
+    Snapshot window: 2026-06-25T08:00:00Z → 2026-07-05T16:00:00Z
+    Batch window:    2026-07-03T08:00:00Z → 2026-07-05T16:00:00Z
+
+    The snapshot window starts before the batch window (covers earlier) and
+    ends at the same time, so it is a covering superset → should pass.
+    """
+    db_path = _db_with_latest_batch_window(tmp_path)
+    # Override DB watermarks to match the PR #114 scenario batch window.
+    _set_latest_batch_watermarks(
+        db_path,
+        prior="2026-07-03T08:00:00",
+        new="2026-07-05T16:00:00",
+    )
+    envelope = _batch_scoped_snapshot(
+        db_path,
+        batch_start_watermark="2026-07-03T08:00:00",
+        batch_end_watermark="2026-07-05T16:00:00",
+        evaluation_window={
+            "start": "2026-06-25T08:00:00Z",
+            "end": "2026-07-05T16:00:00Z",
+        },
+    )
+    _attach_latest_batch_snapshot(db_path, envelope)
+
+    report = _verify_with_explicit_data_dir(db_path)
+
+    _assert_batch_fields_present(report)
+    assert report["funding_clean_carry_batch_decision"] == CLEAN_NET_OF_CARRY
+    assert report["funding_clean_carry_batch_status"] == (
+        FUNDING_CLEAN_CARRY_STATUS_CLEAN
+    )
+    assert "funding_source_batch_window_mismatch" not in (
+        report["funding_clean_carry_batch_reason_codes"]
+    )
+    _assert_full_ledger_stays_caveated(report)
+
+
+def test_batch_scope_accepts_exact_window(tmp_path: Path) -> None:
+    """Exact window match still works (regression guard)."""
+    db_path = _db_with_latest_batch_window(tmp_path)
+    envelope = _batch_scoped_snapshot(db_path)
+    _attach_latest_batch_snapshot(db_path, envelope)
+
+    report = _verify_with_explicit_data_dir(db_path)
+
+    _assert_batch_fields_present(report)
+    assert report["funding_clean_carry_batch_decision"] == CLEAN_NET_OF_CARRY
+    assert report["funding_clean_carry_batch_status"] == (
+        FUNDING_CLEAN_CARRY_STATUS_CLEAN
+    )
+    assert report["funding_clean_carry_batch_reason_codes"] == []
+    _assert_full_ledger_stays_caveated(report)
+
+
+def test_batch_scope_refuses_window_start_after_batch_start(tmp_path: Path) -> None:
+    """Snapshot window starts after batch window start → refused.
+
+    The snapshot window starts at 01:00 (after batch start 00:00) and ends
+    at 08:00 (same as batch end). Since start > batch start, it does not
+    cover the batch window.
+    """
+    db_path = _db_with_latest_batch_window(tmp_path)
+    envelope = _batch_scoped_snapshot(
+        db_path,
+        batch_start_watermark="2026-06-15T01:00:00",
+        evaluation_window={
+            "start": "2026-06-15T01:00:00",
+            "end": _BATCH_END,
+        },
+    )
+    _attach_latest_batch_snapshot(db_path, envelope)
+
+    report = _verify_with_explicit_data_dir(db_path)
+
+    _assert_batch_fields_present(report)
+    assert report["funding_clean_carry_batch_decision"] == CAVEATED_ENGINE_SEMANTICS
+    assert report["funding_clean_carry_batch_status"] == (
+        FUNDING_CLEAN_CARRY_STATUS_REFUSED_DB_OR_LANE_MISMATCH
+    )
+    assert "funding_source_batch_window_mismatch" in (
+        report["funding_clean_carry_batch_reason_codes"]
+    )
+    _assert_full_ledger_stays_caveated(report)
+
+
+def test_batch_scope_refuses_window_end_before_batch_end(tmp_path: Path) -> None:
+    """Snapshot window ends before batch window end → refused.
+
+    The snapshot window starts at 00:00 (same as batch start) but ends at
+    07:00 (before batch end 08:00). Since end < batch end, it does not
+    cover the batch window.
+    """
+    db_path = _db_with_latest_batch_window(tmp_path)
+    envelope = _batch_scoped_snapshot(
+        db_path,
+        batch_start_watermark=_BATCH_START,
+        evaluation_window={
+            "start": _BATCH_START,
+            "end": "2026-06-15T07:00:00",
+        },
+    )
+    _attach_latest_batch_snapshot(db_path, envelope)
+
+    report = _verify_with_explicit_data_dir(db_path)
+
+    _assert_batch_fields_present(report)
+    assert report["funding_clean_carry_batch_decision"] == CAVEATED_ENGINE_SEMANTICS
+    assert report["funding_clean_carry_batch_status"] == (
+        FUNDING_CLEAN_CARRY_STATUS_REFUSED_DB_OR_LANE_MISMATCH
+    )
+    assert "funding_source_batch_window_mismatch" in (
+        report["funding_clean_carry_batch_reason_codes"]
+    )
+    _assert_full_ledger_stays_caveated(report)
+
+
+def test_batch_scope_refuses_missing_window_boundaries(tmp_path: Path) -> None:
+    """Snapshot window with None/missing start or end → refused.
+
+    The payload builder validates evaluation_window values, so we build a
+    valid envelope first, then corrupt the evaluation_window in the written
+    JSON file to simulate a None boundary.
+    """
+    import json
+
+    db_path = _db_with_latest_batch_window(tmp_path)
+    # Build a valid envelope first.
+    envelope = _batch_scoped_snapshot(db_path)
+    # Corrupt the evaluation_window start to None in the payload.
+    envelope["snapshot_payload"]["evaluation_window"] = {
+        "start": None,
+        "end": _BATCH_END,
+    }
+    # Recompute the SHA256 since we mutated the payload.
+    from quantbot.paper.funding_source_snapshot import canonical_json, sha256_text
+
+    envelope["snapshot_sha256"] = sha256_text(
+        canonical_json(envelope["snapshot_payload"])
+    )
+    _attach_latest_batch_snapshot(db_path, envelope)
+
+    report = _verify_with_explicit_data_dir(db_path)
+
+    _assert_batch_fields_present(report)
+    assert report["funding_clean_carry_batch_decision"] == CAVEATED_ENGINE_SEMANTICS
+    assert report["funding_clean_carry_batch_status"] == (
+        FUNDING_CLEAN_CARRY_STATUS_REFUSED_DB_OR_LANE_MISMATCH
+    )
+    assert "funding_source_batch_window_mismatch" in (
+        report["funding_clean_carry_batch_reason_codes"]
+    )
+    _assert_full_ledger_stays_caveated(report)
+
+
+def test_full_ledger_clean_carry_unchanged(tmp_path: Path) -> None:
+    """Full-ledger clean-carry behavior remains unchanged.
+
+    The full-ledger gate still uses strict equality semantics and is not
+    affected by the covering-superset change. A batch-scoped snapshot whose
+    window does not match the full funding span should still produce
+    CAVEATED on the full-ledger fields.
+    """
+    db_path = _db_with_latest_batch_window(tmp_path)
+    envelope = _batch_scoped_snapshot(db_path)
+    _attach_latest_batch_snapshot(db_path, envelope)
+
+    report = _verify_with_explicit_data_dir(db_path)
+
+    _assert_full_ledger_stays_caveated(report)
+    assert "funding_source_snapshot_window_mismatch" in (
+        report["funding_clean_carry_reason_codes"]
+    )
+    # Batch-scoped fields are clean (covering-superset passes)
+    assert report["funding_clean_carry_batch_decision"] == CLEAN_NET_OF_CARRY
+    assert report["funding_clean_carry_batch_reason_codes"] == []
+
+
+def test_batch_stamp_live_current_compatible(tmp_path: Path) -> None:
+    """Live-current/default mode remains compatible with existing expectations.
+
+    A clean batch-scoped snapshot with live-current source mode should
+    produce CLEAN_NET_OF_CARRY on the batch stamp and CAVEATED on the
+    full-ledger fields.
+    """
+    db_path = _db_with_latest_batch_window(tmp_path)
+    envelope = _batch_scoped_snapshot(db_path)
+    _attach_latest_batch_snapshot(db_path, envelope)
+
+    report = _verify_with_explicit_data_dir(db_path)
+
+    _assert_batch_fields_present(report)
+    _assert_full_ledger_stays_caveated(report)
+    assert report["funding_clean_carry_batch_decision"] == CLEAN_NET_OF_CARRY
+    assert report["funding_clean_carry_batch_status"] == (
+        FUNDING_CLEAN_CARRY_STATUS_CLEAN
+    )
+    assert report["funding_clean_carry_batch_reason_codes"] == []
+    batch = report["funding_clean_carry_batch"]
+    assert batch["source_resolution_mode"] == SOURCE_MODE_LIVE_CURRENT

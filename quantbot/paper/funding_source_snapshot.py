@@ -629,6 +629,21 @@ def _source_files_by_path(payload: Mapping[str, Any]) -> dict[str, Mapping[str, 
     }
 
 
+def _window_covers(outer: dict[str, Any], inner: dict[str, Any]) -> bool:
+    """Return True if outer window covers (is a superset of) inner window.
+
+    outer["start"] <= inner["start"] AND outer["end"] >= inner["end"]
+    """
+    try:
+        outer_start = _parse_utc(outer.get("start"))
+        outer_end = _parse_utc(outer.get("end"))
+        inner_start = _parse_utc(inner.get("start"))
+        inner_end = _parse_utc(inner.get("end"))
+    except (TypeError, ValueError, KeyError):
+        return False
+    return outer_start <= inner_start and outer_end >= inner_end
+
+
 def clean_mode_decision_from_snapshot_v1(
     envelope: Mapping[str, Any] | None,
     *,
@@ -663,7 +678,7 @@ def clean_mode_decision_from_snapshot_v1(
             "start": _iso_z(_parse_utc(expected_evaluation_window["start"])),
             "end": _iso_z(_parse_utc(expected_evaluation_window["end"])),
         }
-        if payload.get("evaluation_window") != expected_window:
+        if not _window_covers(payload.get("evaluation_window", {}), expected_window):
             reason_codes.append("funding_source_snapshot_window_mismatch")
 
     lane = payload.get("lane", {})
