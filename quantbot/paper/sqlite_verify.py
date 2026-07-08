@@ -2643,6 +2643,7 @@ def _build_funding_clean_carry_batch_stamp(
     *,
     arithmetic_ok: bool,
     source_resolution: FundingSourcePathResolution,
+    source_mode: str = SOURCE_MODE_LIVE_CURRENT,
 ) -> dict[str, Any]:
     """Decide batch-scoped clean-carry for the latest DB-linked ledger batch.
 
@@ -2656,8 +2657,16 @@ def _build_funding_clean_carry_batch_stamp(
     ``funding_clean_carry_batch_status``,
     ``funding_clean_carry_batch_reason_codes``, and
     ``funding_clean_carry_batch`` (detail sub-dict).
+
+    ``source_mode`` selects how funding-source digest expectations are resolved,
+    mirroring the full-ledger clean-carry gate: ``live-current`` compares the
+    committed snapshot against the mutable ``data/*.csv`` files, while ``bundle``
+    resolves expectations from the pinned immutable funding-source bundle and
+    never reads the live CSVs. This keeps the additive batch stamp internally
+    consistent with the verifier mode actually requested.
     """
     reason_codes: list[str] = []
+    resolution_fields: dict[str, Any] = {"source_resolution_mode": source_mode}
 
     # --- 1. Get the latest committed batch ---------------------------------
     target_batch = _funding_clean_carry_target_batch(conn)
@@ -2688,6 +2697,7 @@ def _build_funding_clean_carry_batch_stamp(
             "arithmetic_ok": arithmetic_ok,
             "note": FUNDING_CLEAN_CARRY_NOTE,
         }
+        batch_report.update(resolution_fields)
         return {
             "funding_clean_carry_batch_decision": decision,
             "funding_clean_carry_batch_status": status,
@@ -2760,17 +2770,39 @@ def _build_funding_clean_carry_batch_stamp(
                     if not env_reasons:
                         payload = _payload_dict(envelope)
 
-                        # 5d. Source digest expectations
-                        (
-                            expected_file_sha_by_path,
-                            expected_row_sha_by_path,
-                            digest_reason_codes,
-                        ) = _snapshot_source_digest_expectations(
-                            db_path=db_path,
-                            payload=payload,
-                            source_resolution=source_resolution,
-                        )
-                        reason_codes.extend(digest_reason_codes)
+                        # 5d. Source digest expectations. Mirror the full-ledger
+                        # gate: in bundle mode resolve digests from the pinned
+                        # immutable bundle instead of the mutable live CSVs, so
+                        # bundle-mode reports are internally consistent and the
+                        # batch stamp never reads drifted ``data/*.csv``.
+                        expected_file_sha_by_path: dict[str, str] | None
+                        expected_row_sha_by_path: dict[str, str] | None
+                        if source_mode == SOURCE_MODE_BUNDLE:
+                            (
+                                expected_file_sha_by_path,
+                                expected_row_sha_by_path,
+                                bundle_reason_codes,
+                                bundle_identity,
+                            ) = _bundle_source_digest_expectations(
+                                db_path=db_path,
+                                payload=payload,
+                            )
+                            reason_codes.extend(bundle_reason_codes)
+                            resolution_fields.update(bundle_identity)
+                        else:
+                            (
+                                expected_file_sha_by_path,
+                                expected_row_sha_by_path,
+                                digest_reason_codes,
+                            ) = _snapshot_source_digest_expectations(
+                                db_path=db_path,
+                                payload=payload,
+                                source_resolution=source_resolution,
+                            )
+                            reason_codes.extend(digest_reason_codes)
+                            resolution_fields["live_source_digests"] = (
+                                expected_file_sha_by_path or {}
+                            )
 
                         # 5e. Validate against batch-scoped window
                         clean_decision = clean_mode_decision_from_snapshot_v1(
@@ -2833,6 +2865,7 @@ def _build_funding_clean_carry_batch_stamp(
         "resum_check": dict(resum_check),
         "note": FUNDING_CLEAN_CARRY_NOTE,
     }
+    batch_report.update(resolution_fields)
 
     return {
         "funding_clean_carry_batch_decision": decision,
@@ -3031,6 +3064,7 @@ def _verify_connection(
         report,
         arithmetic_ok=arithmetic_ok,
         source_resolution=source_resolution,
+        source_mode=source_mode,
     )
     report.update(batch_clean_carry_stamp)
 
