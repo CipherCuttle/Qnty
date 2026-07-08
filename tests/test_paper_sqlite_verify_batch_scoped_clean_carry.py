@@ -39,16 +39,29 @@ from quantbot.paper.funding_status import (
     CAVEATED_ENGINE_SEMANTICS,
     CLEAN_NET_OF_CARRY,
 )
+from quantbot.paper.funding_source_bundle import (
+    BUNDLE_REASON_CORRUPT,
+    BUNDLE_REASON_HASH_MISMATCH,
+    BUNDLE_REASON_MISSING,
+)
 from quantbot.paper.sqlite_verify import (
     FUNDING_CLEAN_CARRY_STATUS_CLEAN,
+    FUNDING_CLEAN_CARRY_STATUS_REFUSED_BUNDLE,
     FUNDING_CLEAN_CARRY_STATUS_REFUSED_DB_OR_LANE_MISMATCH,
     FUNDING_CLEAN_CARRY_STATUS_REFUSED_DIGEST_MISMATCH,
     FUNDING_CLEAN_CARRY_STATUS_REFUSED_MISSING_SNAPSHOT,
     FUNDING_CLEAN_CARRY_STATUS_REFUSED_PENDING_OR_ORPHANED,
     FUNDING_CLEAN_CARRY_STATUS_REFUSED_SCHEMA_UNSUPPORTED,
     FUNDING_CLEAN_CARRY_STATUS_REFUSED_SOURCE_COVERAGE,
+    SOURCE_MODE_BUNDLE,
+    SOURCE_MODE_LIVE_CURRENT,
     STATUS_OK,
+    verify_database,
     verify_database_readonly_cli,
+)
+from tests.test_funding_source_immutable_bundle_semantics import (
+    _build_planned_bundle,
+    _drift_live_sol_funding_rate,
 )
 from tests.test_paper_sqlite_funding_coverage import _funding_rows_complete
 from tests.test_paper_sqlite_verifier_clean_net_of_carry_gate import (
@@ -406,3 +419,143 @@ def test_batch_scope_preserves_existing_full_ledger_clean_carry_fields(
         report["funding_clean_carry_reason_codes"]
     )
     assert report["funding_clean_carry_batch_reason_codes"] == []
+
+
+# ---------------------------------------------------------------------------
+# source_mode="bundle" semantics for the batch-scoped stamp.
+#
+# The batch stamp must honor ``source_mode`` the same way the full-ledger gate
+# already does: in bundle mode it resolves funding-source digest expectations
+# from the pinned immutable bundle instead of the mutable live ``data/*.csv``,
+# so bundle-mode reports are internally consistent and the additive batch stamp
+# never reads drifted live CSVs. ``live-current`` (default) is unchanged.
+#
+# These setups build a batch-scoped snapshot + DB reference AND a bundle frozen
+# from that same batch envelope, then drive the verifier via ``verify_database``
+# (which threads ``source_mode`` end-to-end). All fixtures are tmp DBs / CSVs /
+# sidecars / bundles; nothing touches /srv, prod, or real services.
+# ---------------------------------------------------------------------------
+
+
+def _batch_snapshot_setup(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+    db_path = _db_with_latest_batch_window(tmp_path)
+    envelope = _batch_scoped_snapshot(db_path)
+    _attach_latest_batch_snapshot(db_path, envelope)
+    return db_path, envelope
+
+
+def _batch_stamp(db_path: Path, source_mode: str) -> dict[str, Any]:
+    result = verify_database(db_path, source_mode=source_mode)
+    assert result.status == STATUS_OK, result.failures
+    return result.report["funding_clean_carry_batch"]
+
+
+def test_batch_stamp_live_current_still_detects_live_csv_drift(
+    tmp_path: Path,
+) -> None:
+    """(1) live-current batch stamp must still flip on live CSV drift."""
+    db_path, _envelope = _batch_snapshot_setup(tmp_path)
+
+    _drift_live_sol_funding_rate(db_path)
+
+    batch = _batch_stamp(db_path, SOURCE_MODE_LIVE_CURRENT)
+    assert batch["source_resolution_mode"] == SOURCE_MODE_LIVE_CURRENT
+    assert batch["decision"] == CAVEATED_ENGINE_SEMANTICS
+    assert batch["status"] == FUNDING_CLEAN_CARRY_STATUS_REFUSED_DIGEST_MISMATCH
+    assert "funding_source_file_digest_mismatch" in batch["reason_codes"]
+
+
+def test_batch_stamp_bundle_mode_survives_live_csv_drift(tmp_path: Path) -> None:
+    """(2) bundle-mode batch stamp survives live CSV drift with a valid bundle."""
+    db_path, envelope = _batch_snapshot_setup(tmp_path)
+    _build_planned_bundle(db_path, envelope)
+
+    # Live CSVs drift after the bundle is frozen (scheduled-refresh analogue).
+    _drift_live_sol_funding_rate(db_path)
+
+    batch = _batch_stamp(db_path, SOURCE_MODE_BUNDLE)
+    assert batch["source_resolution_mode"] == SOURCE_MODE_BUNDLE
+    assert batch["decision"] == CLEAN_NET_OF_CARRY
+    assert batch["status"] == FUNDING_CLEAN_CARRY_STATUS_CLEAN
+    assert "funding_source_file_digest_mismatch" not in batch["reason_codes"]
+    # Bundle identity is recorded on the batch stamp, not live CSV digests.
+    assert batch["source_bundle_sha256"]
+    assert "live_source_digests" not in batch
+
+
+def test_batch_stamp_bundle_mode_refuses_missing_bundle(tmp_path: Path) -> None:
+    """(3a) bundle mode refuses when no bundle exists for the snapshot."""
+    db_path, _envelope = _batch_snapshot_setup(tmp_path)
+    # No bundle captured; live CSVs still match the snapshot digests.
+
+    batch = _batch_stamp(db_path, SOURCE_MODE_BUNDLE)
+    assert batch["source_resolution_mode"] == SOURCE_MODE_BUNDLE
+    assert batch["decision"] == CAVEATED_ENGINE_SEMANTICS
+    assert batch["status"] == FUNDING_CLEAN_CARRY_STATUS_REFUSED_BUNDLE
+    assert BUNDLE_REASON_MISSING in batch["reason_codes"]
+
+
+def test_batch_stamp_bundle_mode_refuses_corrupt_bundle(tmp_path: Path) -> None:
+    """(3b) bundle mode refuses when the bundle file is corrupt."""
+    db_path, envelope = _batch_snapshot_setup(tmp_path)
+    bundle_path = _build_planned_bundle(db_path, envelope)
+    bundle_path.write_text("{ not valid bundle json", encoding="utf-8")
+
+    batch = _batch_stamp(db_path, SOURCE_MODE_BUNDLE)
+    assert batch["decision"] == CAVEATED_ENGINE_SEMANTICS
+    assert batch["status"] == FUNDING_CLEAN_CARRY_STATUS_REFUSED_BUNDLE
+    assert BUNDLE_REASON_CORRUPT in batch["reason_codes"]
+
+
+def test_batch_stamp_bundle_mode_refuses_hash_mismatch(tmp_path: Path) -> None:
+    """(3c) bundle mode refuses when the bundle bytes no longer recompute."""
+    db_path, envelope = _batch_snapshot_setup(tmp_path)
+    bundle_path = _build_planned_bundle(db_path, envelope)
+    text = bundle_path.read_text(encoding="utf-8")
+    bundle_path.write_text(text.replace("0.0001", "0.0009", 1), encoding="utf-8")
+
+    batch = _batch_stamp(db_path, SOURCE_MODE_BUNDLE)
+    assert batch["decision"] == CAVEATED_ENGINE_SEMANTICS
+    assert batch["status"] == FUNDING_CLEAN_CARRY_STATUS_REFUSED_BUNDLE
+    assert BUNDLE_REASON_HASH_MISMATCH in batch["reason_codes"]
+
+
+def test_batch_stamp_default_mode_is_live_current_and_labeled(
+    tmp_path: Path,
+) -> None:
+    """(5) default (no source_mode) stays live-current and labels the mode."""
+    db_path, _envelope = _batch_snapshot_setup(tmp_path)
+
+    report = _verify_with_explicit_data_dir(db_path)
+    batch = report["funding_clean_carry_batch"]
+    assert batch["source_resolution_mode"] == SOURCE_MODE_LIVE_CURRENT
+    assert report["funding_clean_carry_batch_decision"] == CLEAN_NET_OF_CARRY
+    assert report["funding_clean_carry_batch_status"] == (
+        FUNDING_CLEAN_CARRY_STATUS_CLEAN
+    )
+
+
+def test_bundle_mode_does_not_weaken_full_ledger_gate(tmp_path: Path) -> None:
+    """(4) full-ledger gate semantics are unchanged by the batch-stamp change.
+
+    The full-ledger clean-carry gate already honored bundle mode; threading
+    ``source_mode`` through the additive batch stamp must not alter it. With a
+    batch-scoped snapshot (whose window != the full-ledger span), the full-ledger
+    gate stays CAVEATED on a window mismatch even under bundle mode, while the
+    batch stamp is CLEAN.
+    """
+    db_path, envelope = _batch_snapshot_setup(tmp_path)
+    _build_planned_bundle(db_path, envelope)
+    _drift_live_sol_funding_rate(db_path)
+
+    result = verify_database(db_path, source_mode=SOURCE_MODE_BUNDLE)
+    assert result.status == STATUS_OK, result.failures
+    report = result.report
+
+    assert report["funding_clean_carry_batch_decision"] == CLEAN_NET_OF_CARRY
+    # Full-ledger gate still refuses: the batch-scoped snapshot window does not
+    # cover the full funding span, independent of source_mode.
+    assert report["funding_clean_carry_decision"] == CAVEATED_ENGINE_SEMANTICS
+    assert report["funding_clean_carry"]["source_resolution_mode"] == (
+        SOURCE_MODE_BUNDLE
+    )
