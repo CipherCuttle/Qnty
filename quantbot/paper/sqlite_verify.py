@@ -95,6 +95,10 @@ from quantbot.paper.funding_source_snapshot import (
     clean_mode_decision_from_snapshot_v1,
     validate_funding_source_snapshot_envelope_v1,
 )
+from quantbot.paper.funding_source_bundle import (
+    BUNDLE_REFUSAL_REASONS,
+    resolve_funding_source_bundle,
+)
 from quantbot.paper.funding_status import (
     CAVEATED_ENGINE_SEMANTICS,
     CAVEATED_ENGINE_SEMANTICS_LABEL,
@@ -146,6 +150,16 @@ FUNDING_CLEAN_CARRY_STATUS_REFUSED_SOURCE_COVERAGE = (
     "refused_source_coverage_issue"
 )
 FUNDING_CLEAN_CARRY_STATUS_REFUSED_RESUM_MISMATCH = "refused_resum_mismatch"
+FUNDING_CLEAN_CARRY_STATUS_REFUSED_BUNDLE = "refused_bundle"
+
+# Source-resolution modes for the clean-carry gate. ``live-current`` (default)
+# resolves funding digests from the live, mutable CSVs and still detects current
+# drift, exactly as before. ``bundle`` resolves from a pinned immutable,
+# content-addressed source bundle so scheduled CSV refreshes cannot flip a
+# recorded verdict (see funding_source_bundle + the immutable-bundle spec).
+SOURCE_MODE_LIVE_CURRENT = "live-current"
+SOURCE_MODE_BUNDLE = "bundle"
+SOURCE_RESOLUTION_MODES = frozenset({SOURCE_MODE_LIVE_CURRENT, SOURCE_MODE_BUNDLE})
 
 FUNDING_CLEAN_CARRY_NOTE = (
     "Arithmetic OK and complete source coverage are necessary but not sufficient "
@@ -2390,6 +2404,41 @@ def _snapshot_source_digest_expectations(
     return full_file_sha_by_path, row_subset_sha_by_path, reason_codes
 
 
+def _bundle_source_digest_expectations(
+    *,
+    db_path: Path,
+    payload: Mapping[str, Any],
+) -> tuple[dict[str, str] | None, dict[str, str] | None, list[str], dict[str, Any]]:
+    """Resolve funding-source digests from the pinned immutable bundle.
+
+    Unlike the live-current path, this never reads the mutable ``data/*.csv``
+    files: it validates the frozen, content-addressed bundle bound to this
+    committed snapshot and returns the captured digests. When the bundle is
+    missing/corrupt/tampered/incomplete, it returns no expectations plus the
+    refusal reason codes (which force clean-carry refusal).
+    """
+    bundle_dir = db_path.parent / "funding_source_bundles"
+    expected_snapshot_bundle_sha256 = payload.get("source_bundle_sha256")
+    bundle_payload, reason_codes, identity = resolve_funding_source_bundle(
+        bundle_dir,
+        str(expected_snapshot_bundle_sha256)
+        if expected_snapshot_bundle_sha256 is not None
+        else None,
+    )
+    if bundle_payload is None or reason_codes:
+        return None, None, list(reason_codes), identity
+
+    expected_file_sha_by_path = {
+        str(path): str(sha)
+        for path, sha in (bundle_payload.get("original_source_digests") or {}).items()
+    }
+    expected_row_sha_by_path = {
+        str(path): str(sha)
+        for path, sha in (bundle_payload.get("row_subset_digests") or {}).items()
+    }
+    return expected_file_sha_by_path, expected_row_sha_by_path, [], identity
+
+
 def _read_snapshot_envelope_for_clean_gate(
     snapshot_report: Mapping[str, Any],
 ) -> tuple[dict[str, Any] | None, list[str]]:
@@ -2409,6 +2458,8 @@ def _clean_carry_status_from_reasons(reason_codes: list[str]) -> str:
     reason_set = set(reason_codes)
     if not reason_set:
         return FUNDING_CLEAN_CARRY_STATUS_CLEAN
+    if reason_set & BUNDLE_REFUSAL_REASONS:
+        return FUNDING_CLEAN_CARRY_STATUS_REFUSED_BUNDLE
     if FUNDING_CLEAN_CARRY_REASON_AMBIGUOUS_MULTIPLE in reason_set:
         return FUNDING_CLEAN_CARRY_STATUS_REFUSED_AMBIGUOUS_MULTIPLE
     if "funding_source_snapshot_missing" in reason_set:
@@ -2456,9 +2507,11 @@ def _build_funding_clean_carry_stamp(
     *,
     arithmetic_ok: bool,
     source_resolution: FundingSourcePathResolution,
+    source_mode: str = SOURCE_MODE_LIVE_CURRENT,
 ) -> dict[str, Any]:
     """Decide whether the strict clean-carry label is allowed for this report."""
     reason_codes: list[str] = []
+    resolution_fields: dict[str, Any] = {"source_resolution_mode": source_mode}
     if not arithmetic_ok:
         reason_codes.append(FUNDING_CLEAN_CARRY_REASON_ARITHMETIC_NOT_OK)
 
@@ -2507,16 +2560,32 @@ def _build_funding_clean_carry_stamp(
         expected_file_sha_by_path: dict[str, str] | None = None
         expected_row_sha_by_path: dict[str, str] | None = None
         if isinstance(payload, Mapping):
-            (
-                expected_file_sha_by_path,
-                expected_row_sha_by_path,
-                digest_reason_codes,
-            ) = _snapshot_source_digest_expectations(
-                db_path=db_path,
-                payload=payload,
-                source_resolution=source_resolution,
-            )
-            reason_codes.extend(digest_reason_codes)
+            if source_mode == SOURCE_MODE_BUNDLE:
+                (
+                    expected_file_sha_by_path,
+                    expected_row_sha_by_path,
+                    bundle_reason_codes,
+                    bundle_identity,
+                ) = _bundle_source_digest_expectations(
+                    db_path=db_path,
+                    payload=payload,
+                )
+                reason_codes.extend(bundle_reason_codes)
+                resolution_fields.update(bundle_identity)
+            else:
+                (
+                    expected_file_sha_by_path,
+                    expected_row_sha_by_path,
+                    digest_reason_codes,
+                ) = _snapshot_source_digest_expectations(
+                    db_path=db_path,
+                    payload=payload,
+                    source_resolution=source_resolution,
+                )
+                reason_codes.extend(digest_reason_codes)
+                resolution_fields["live_source_digests"] = (
+                    expected_file_sha_by_path or {}
+                )
         clean_decision = clean_mode_decision_from_snapshot_v1(
             envelope,
             expected_evaluation_window=_funding_evaluation_window(conn),
@@ -2552,6 +2621,7 @@ def _build_funding_clean_carry_stamp(
         "resum_check": resum_check,
         "note": FUNDING_CLEAN_CARRY_NOTE,
     }
+    clean_report.update(resolution_fields)
     return {
         "funding_clean_carry_decision": decision,
         "funding_clean_carry_status": status,
@@ -2836,6 +2906,7 @@ def _verify_connection(
     data_dir: Path | None = None,
     allow_db_relative_data: bool = True,
     fail_on_source_path_unavailable: bool = False,
+    source_mode: str = SOURCE_MODE_LIVE_CURRENT,
 ) -> VerifyResult:
     """Verify the single read snapshot currently held by ``conn``."""
     report: dict[str, Any] = {
@@ -2939,6 +3010,7 @@ def _verify_connection(
         report,
         arithmetic_ok=arithmetic_ok,
         source_resolution=source_resolution,
+        source_mode=source_mode,
     )
     report.update(clean_carry_stamp)
     if arithmetic_ok:
@@ -2993,8 +3065,19 @@ def _open_snapshot(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def verify_database(db_path: str | Path | None = None) -> VerifyResult:
-    """Verify one committed paper-ledger snapshot read-only. Never writes anything."""
+def verify_database(
+    db_path: str | Path | None = None,
+    *,
+    source_mode: str = SOURCE_MODE_LIVE_CURRENT,
+) -> VerifyResult:
+    """Verify one committed paper-ledger snapshot read-only. Never writes anything.
+
+    ``source_mode`` selects how the clean-carry gate resolves funding-source
+    evidence: ``live-current`` (default) reads the live CSVs and still detects
+    drift; ``bundle`` validates against the pinned immutable source bundle.
+    """
+    if source_mode not in SOURCE_RESOLUTION_MODES:
+        raise ValueError(f"unsupported source_mode: {source_mode!r}")
     db_path = get_paper_db_path(db_path)
     report = {"db_path": str(db_path), "disclaimer": VERIFIER_DISCLAIMER}
     if not Path(db_path).exists():
@@ -3009,7 +3092,7 @@ def verify_database(db_path: str | Path | None = None) -> VerifyResult:
             report,
         )
     try:
-        return _verify_connection(conn, Path(db_path))
+        return _verify_connection(conn, Path(db_path), source_mode=source_mode)
     finally:
         conn.close()
 
