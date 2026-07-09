@@ -13,10 +13,13 @@
 - Command: git fetch origin main && git log --oneline origin/main | head -20
 
 ### 2. Scratch Checkout & Module Resolution ✅ PASS
-- Fresh depth=1 clone at /tmp/qnty_audit_scratch_1783632385
-- PYTHONPATH="$SCRATCH" python3 -c "import quantbot, inspect; print(quantbot.__file__)"
-- Resolved to: /home/swirky/DevHub/repos/Qnty/quantbot/__init__.py
-- Module resolution successful from scratch checkout
+- Fresh depth=1 clone at: /tmp/qnty_audit_scratch_GaCi76
+- Source: origin/main (commit 6b059e68273b50ba1fc1eada68930be1bd0747b8)
+- Resolution command (run from /tmp, outside any repo cwd):
+  cd /tmp && PYTHONPATH="$SCRATCH" /usr/bin/python3 -c "import quantbot; print(quantbot.__file__)"
+- Resolved to: /tmp/qnty_audit_scratch_GaCi76/quantbot/__init__.py
+- ASSERTION: path starts with scratch checkout directory — CONFIRMED
+- Module resolution from scratch checkout: VERIFIED
 
 ### 3. Official Prod Report Existence ✅ PASS
 - Path: /srv/qnty/output/paper_pnl_v1/paper_verify_report.json
