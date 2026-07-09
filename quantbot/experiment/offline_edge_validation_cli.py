@@ -25,6 +25,15 @@ from quantbot.experiment.offline_edge_schema import (
 PROD_PATH_PREFIX = "/srv/qnty"
 PROD_PAPER_PNL_V1_PATH = "/srv/qnty/output/paper_pnl_v1"
 OFFICIAL_REPORT_PATTERNS = ("paper_verify_report.json", "official_report")
+ALLOWED_OUTPUT_PREFIXES = ("/tmp",)
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _resolve_abs(path_str: str) -> str:
+    """Resolve a path string to an absolute, real (no symlinks) path."""
+    return os.path.realpath(os.path.abspath(os.path.expanduser(path_str)))
 
 
 # ── Argument Parser ───────────────────────────────────────────────────────
@@ -45,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         required=True,
-        help="Directory to write validation_receipt.json",
+        help="Directory to write validation_receipt.json (must be under /tmp)",
     )
     parser.add_argument(
         "--bars-dir",
@@ -71,33 +80,40 @@ def build_parser() -> argparse.ArgumentParser:
 # ── Prod-path Guard ──────────────────────────────────────────────────────
 
 
-def refuse_prod_path(path_str: str) -> None:
-    """Exit with code 3 if *path_str* is a production or official-report path.
+def refuse_prod_path(path_str: str, output_path: bool = False) -> None:
+    """Refuse if path is a production path or (if output_path) not in allowed prefixes.
+
+    All paths are resolved to absolute, real paths before checking.
+    output_path=True also checks the positive allowlist (must be under /tmp).
 
     Parameters
     ----------
     path_str : str
         The path to check.
+    output_path : bool
+        If True, also enforce the positive allowlist (ALLOWED_OUTPUT_PREFIXES).
 
     Exits
     -----
     sys.exit(3)
-        If *path_str* starts with ``PROD_PATH_PREFIX`` or contains any
-        ``OFFICIAL_REPORT_PATTERNS`` substring.
+        If the resolved path is not allowed.
     """
-    if path_str.startswith(PROD_PATH_PREFIX):
-        print(
-            f"Refusing to operate on production path: {path_str}",
-            file=sys.stderr,
-        )
+    resolved = _resolve_abs(path_str)
+
+    # Positive allowlist for output dirs
+    if output_path:
+        if not any(resolved.startswith(prefix) for prefix in ALLOWED_OUTPUT_PREFIXES):
+            print(f"FATAL: Output directory must be under {ALLOWED_OUTPUT_PREFIXES}, got: {resolved}")
+            sys.exit(3)
+
+    # Negative prod-path refusals (applies to all paths)
+    if resolved.startswith(PROD_PATH_PREFIX):
+        print(f"Refusing prod path: {resolved}")
         sys.exit(3)
 
     for pattern in OFFICIAL_REPORT_PATTERNS:
-        if pattern in path_str:
-            print(
-                f"Refusing to operate on official report path: {path_str}",
-                file=sys.stderr,
-            )
+        if pattern in resolved:
+            print(f"Refusing official report path: {resolved}")
             sys.exit(3)
 
 
@@ -110,7 +126,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Guard production paths
-    refuse_prod_path(args.output_dir)
+    refuse_prod_path(args.output_dir, output_path=True)
     if args.bars_dir is not None:
         refuse_prod_path(args.bars_dir)
     if args.funding_dir is not None:
@@ -121,7 +137,7 @@ def main() -> None:
     # Build skeleton receipt
     receipt: ValidationReceipt = ValidationReceipt(
         validation_receipt=ReceiptMetadata(
-            tool_name="offline_edge_validator",
+            tool_name="offline_edge_validation",
             tool_version="0.1.0",
             timestamp_utc=datetime.now(timezone.utc).isoformat(),
             pipeline_description="skeleton",

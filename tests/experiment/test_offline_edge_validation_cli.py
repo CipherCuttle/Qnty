@@ -40,32 +40,35 @@ class TestRefusesWithoutReadOnly:
 
 class TestRefusesProdPaths:
     def test_refuses_srv_qnty_output(self) -> None:
+        # NOT under /tmp → allowlist check fires first with FATAL
         result = _run_cli(
             "--read-only",
             "--output-dir",
             "/srv/qnty/output/paper_pnl_v1",
         )
         assert result.returncode == 3
-        assert "Refusing" in result.stderr
+        assert "must be under" in result.stdout
 
     def test_refuses_srv_qnty_prefix(self) -> None:
+        # NOT under /tmp → allowlist check fires first with FATAL
         result = _run_cli(
             "--read-only",
             "--output-dir",
             "/srv/qnty/anything/else",
         )
         assert result.returncode == 3
-        assert "Refusing" in result.stderr
+        assert "must be under" in result.stdout
 
     def test_refuses_official_report_path(self) -> None:
-        """Test with a path that contains official report pattern."""
+        """Test with a path that contains official report pattern.
+        Path IS under /tmp, so allowlist passes; caught by pattern check."""
         result = _run_cli(
             "--read-only",
             "--output-dir",
             "/tmp/some/path/paper_verify_report.json",
         )
         assert result.returncode == 3
-        assert "official report" in result.stderr
+        assert "official report" in result.stdout
 
 
 class TestRefusesProdPathsOnFixtureDirs:
@@ -78,7 +81,7 @@ class TestRefusesProdPathsOnFixtureDirs:
             "/srv/qnty/data/bars",
         )
         assert result.returncode == 3
-        assert "Refusing" in result.stderr
+        assert "Refusing" in result.stdout
 
     def test_refuses_funding_dir_prod(self) -> None:
         result = _run_cli(
@@ -89,7 +92,7 @@ class TestRefusesProdPathsOnFixtureDirs:
             "/srv/qnty/data/funding",
         )
         assert result.returncode == 3
-        assert "Refusing" in result.stderr
+        assert "Refusing" in result.stdout
 
     def test_refuses_manifest_dir_official_report(self) -> None:
         result = _run_cli(
@@ -100,7 +103,7 @@ class TestRefusesProdPathsOnFixtureDirs:
             "/tmp/data/official_report/v1",
         )
         assert result.returncode == 3
-        assert "official report" in result.stderr
+        assert "official report" in result.stdout
 
 
 class TestAcceptsTmpOutput:
@@ -153,6 +156,19 @@ class TestReceiptContents:
                 receipt = json.load(f)
             assert receipt["final_verdict"] in ("SKELETON_ONLY", "INCONCLUSIVE")
             assert receipt["final_verdict"] != "EDGE_CANDIDATE"
+
+    def test_receipt_tool_name_is_offline_edge_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+            )
+            assert result.returncode == 0
+            receipt_path = os.path.join(tmpdir, "validation_receipt.json")
+            with open(receipt_path) as f:
+                receipt = json.load(f)
+            assert receipt["validation_receipt"]["tool_name"] == "offline_edge_validation"
 
 
 class TestNoExchangeModules:
@@ -213,3 +229,41 @@ class TestFixtureSha256Unchanged:
             assert sha_before == sha_after, (
                 "Fixture file was mutated by CLI run"
             )
+
+
+class TestRefusesNonTempOutput:
+    def test_refuses_output_outside_tmp(self) -> None:
+        """--output-dir outside /tmp should be refused by positive allowlist."""
+        result = _run_cli(
+            "--read-only",
+            "--output-dir",
+            "/home/swirky/qnty-test-output",
+        )
+        assert result.returncode == 3
+        assert "must be under" in result.stdout or "/tmp" in result.stdout
+
+    def test_refuses_path_traversal_to_srv_qnty(self) -> None:
+        """Path traversal /tmp/../../srv/qnty/... resolves to /srv/qnty/... and is refused."""
+        import os
+        traversal_path = os.path.join("/tmp", "..", "..", "srv", "qnty", "output")
+        result = _run_cli(
+            "--read-only",
+            "--output-dir",
+            traversal_path,
+        )
+        # After realpath resolution: /tmp/../../srv/qnty/output -> /srv/qnty/output
+        # Refused by allowlist (not under /tmp) and/or prod-path check
+        assert result.returncode == 3
+        assert "Refusing" in result.stdout or "must be under" in result.stdout
+
+    def test_refuses_path_traversal_outside_tmp(self) -> None:
+        """Path traversal /tmp/../etc -> resolves to /etc, not under /tmp."""
+        import os
+        traversal_path = os.path.join("/tmp", "..", "etc", "qnty-test")
+        result = _run_cli(
+            "--read-only",
+            "--output-dir",
+            traversal_path,
+        )
+        # After realpath: /tmp/../etc -> /etc, refused by allowlist
+        assert result.returncode == 3
