@@ -11,7 +11,7 @@
 
 **Current status:** The prod official report has reached [`CLEAN_NET_OF_CARRY`](docs/status/qnty_prod_clean_carry_status_summary_after_report_promotion_2026-07-09.md) under full-window source state. This means the publication-schema verifier gate — which checks that funding-source snapshots, bundle digests, and ledger rows are internally consistent and that the DB hash matches the report — has passed with zero failure codes. The infrastructure pipeline (snapshot → bundle → candidate → promotion → audit) is functional and auditable.
 
-**Non-status:** Edge/profit/live readiness is **NOT** proven. [`CLEAN_NET_OF_CARRY`](https://github.com/swirky/QNTY/blob/main/docs/plans/QNTY_CLEAN_NET_OF_CARRY_REPAIR_PLAN.md) means only "not killed by verifier gate." It says nothing about:
+**Non-status:** Edge/profit/live readiness is **NOT** proven. [`CLEAN_NET_OF_CARRY`](https://github.com/CipherCuttle/Qnty/blob/main/docs/plans/QNTY_CLEAN_NET_OF_CARRY_REPAIR_PLAN.md) means only "not killed by verifier gate." It says nothing about:
 - Whether the strategy generates excess returns after costs
 - Whether forward performance replicates backtest expectations
 - Whether the system is safe to attach to real exchange connectivity
@@ -200,7 +200,8 @@ The smallest safe next step is a **docs-only plan for offline edge validation** 
 | 6 | VM validation of publication candidate | PR #131 | Completed |
 | 7 | Official report promotion (42-key, CLEAN_NET_OF_CARRY) | PR #132 | Executed |
 | 8 | Post-merge audit (13/13) | PR #133 | Completed |
-| 9 | **Risk/readiness gap analysis** | **PR #134 (this PR)** | **Open, unmerged** |
+| 9 | Clean-carry status summary | PR #134 | Merged |
+| 10 | **Risk/readiness gap analysis** | **PR #135 (this PR)** | **Open, unmerged** |
 
 ### B. Active Hard Blocks (unchanged)
 
