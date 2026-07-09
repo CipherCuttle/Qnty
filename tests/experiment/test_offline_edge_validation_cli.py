@@ -267,3 +267,33 @@ class TestRefusesNonTempOutput:
         )
         # After realpath: /tmp/../etc -> /etc, refused by allowlist
         assert result.returncode == 3
+
+
+class TestRefusesTmpBoundaryBypass:
+    """Output paths that look like /tmp but are not actually under /tmp."""
+
+    def test_refuses_tmp_evil(self) -> None:
+        result = _run_cli("--read-only", "--output-dir", "/tmp_evil")
+        assert result.returncode == 3
+        assert "must be under" in result.stdout or "/tmp" in result.stdout
+
+    def test_refuses_tmp123(self) -> None:
+        result = _run_cli("--read-only", "--output-dir", "/tmp123")
+        assert result.returncode == 3
+        assert "must be under" in result.stdout
+
+    def test_refuses_tmp_not_actually_tmp(self) -> None:
+        result = _run_cli("--read-only", "--output-dir", "/tmp-not-actually-tmp")
+        assert result.returncode == 3
+        assert "must be under" in result.stdout
+
+    def test_accepts_tmp_nested_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                os.path.join(tmpdir, "qnty-valid-output"),
+            )
+            assert result.returncode == 0
+            receipt_path = os.path.join(tmpdir, "qnty-valid-output", "validation_receipt.json")
+            assert os.path.exists(receipt_path)

@@ -36,6 +36,22 @@ def _resolve_abs(path_str: str) -> str:
     return os.path.realpath(os.path.abspath(os.path.expanduser(path_str)))
 
 
+def _is_under_dir(path: str, parent: str) -> bool:
+    """Return True if resolved path is strictly under parent directory.
+
+    Uses os.path.commonpath to prevent prefix-bypass attacks like
+    /tmp_evil, /tmp123, or /tmp-not-actually-tmp from matching /tmp.
+
+    Examples
+    --------
+    >>> _is_under_dir("/tmp/qnty-output", "/tmp")
+    True
+    >>> _is_under_dir("/tmp_evil", "/tmp")
+    False
+    """
+    return os.path.commonpath([path, parent]) == parent
+
+
 # ── Argument Parser ───────────────────────────────────────────────────────
 
 
@@ -102,7 +118,7 @@ def refuse_prod_path(path_str: str, output_path: bool = False) -> None:
 
     # Positive allowlist for output dirs
     if output_path:
-        if not any(resolved.startswith(prefix) for prefix in ALLOWED_OUTPUT_PREFIXES):
+        if not any(_is_under_dir(resolved, prefix) for prefix in ALLOWED_OUTPUT_PREFIXES):
             print(f"FATAL: Output directory must be under {ALLOWED_OUTPUT_PREFIXES}, got: {resolved}")
             sys.exit(3)
 
