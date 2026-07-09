@@ -7,6 +7,7 @@ import pytest
 from quantbot.experiment.offline_edge_schema import (
     ReceiptMetadata,
     CostModelAssumptions,
+    PLACEHOLDER_SKELETON_NO_OP,
     StageMetrics,
     ValidationReceipt,
     SKELETON_ONLY,
@@ -30,6 +31,9 @@ class TestSchemaConstants:
         assert NO_EDGE == "NO_EDGE"
         assert NEEDS_MORE_DATA == "NEEDS_MORE_DATA"
         assert BLOCKED_BY_DATA_QUALITY == "BLOCKED_BY_DATA_QUALITY"
+
+    def test_placeholder_skeleton_no_op_constant(self):
+        assert PLACEHOLDER_SKELETON_NO_OP == "PLACEHOLDER_SKELETON_NO_OP"
 
 
 class TestCostModelDefaults:
@@ -124,3 +128,24 @@ class TestValidationReceiptStructure:
             "final_verdict",
         }
         assert receipt["final_verdict"] == SKELETON_ONLY
+
+    def test_receipt_with_placeholder_fingerprint(self):
+        receipt = ValidationReceipt(
+            validation_receipt=ReceiptMetadata(
+                tool_name="offline_edge_validator",
+                tool_version="0.1.0",
+                timestamp_utc="2026-07-09T00:00:00Z",
+                pipeline_description="skeleton",
+            ),
+            input_manifest_fingerprint=PLACEHOLDER_SKELETON_NO_OP,
+            cost_model_assumptions=CostModelAssumptions(
+                slippage_bps_per_side=5.0,
+                commission_bps_per_side=5.0,
+                heat_cap=1.0,
+                vol_lookback_bars=90,
+                vol_floor=1e-6,
+            ),
+            per_stage_metrics={},
+            final_verdict=SKELETON_ONLY,
+        )
+        assert receipt["input_manifest_fingerprint"] == PLACEHOLDER_SKELETON_NO_OP

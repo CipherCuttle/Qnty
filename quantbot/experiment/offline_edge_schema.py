@@ -14,6 +14,9 @@ from typing import TypedDict
 SKELETON_ONLY: str = "SKELETON_ONLY"
 INCONCLUSIVE: str = "INCONCLUSIVE"
 
+# Placeholder fingerprint for when no input directories are provided
+PLACEHOLDER_SKELETON_NO_OP: str = "PLACEHOLDER_SKELETON_NO_OP"
+
 # Forbidden future verdicts — named here for refusal tests only
 EDGE_CANDIDATE: str = "EDGE_CANDIDATE"
 NO_EDGE: str = "NO_EDGE"

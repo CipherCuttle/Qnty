@@ -39,5 +39,27 @@ will compare CLI output against golden receipts stored here.
 ## Integration Tests
 
 The fixture-only CLI contract requires `--bars-dir`, `--funding-dir`, and `--manifest-dir`
-to point to directories containing these files. The CLI will read the SHA256 of each
-file as `input_manifest_fingerprint` in a future PR.
+to point to directories containing these files. The CLI computes the SHA256 of each
+file as `input_manifest_fingerprint` in the receipt.
+
+## PR B — Input Manifest Inventory
+
+Added in PR B:
+
+| File | Purpose |
+|------|---------|
+| [`sample_bars.csv`](sample_bars.csv) | Deterministic OHLCV bar data (3 rows) for fingerprint tests |
+| [`sample_funding.csv`](sample_funding.csv) | Deterministic funding rate data (3 rows) for fingerprint tests |
+| [`sample_manifest.json`](sample_manifest.json) | Sample manifest referencing the above CSVs |
+
+These fixtures are consumed by:
+- [`offline_edge_input_manifest.py`](../../../quantbot/experiment/offline_edge_input_manifest.py) — stdlib-only helpers for hashing and discovery
+- [`test_offline_edge_input_manifest.py`](../../../tests/experiment/test_offline_edge_input_manifest.py) — unit tests for the manifest module
+- [`test_offline_edge_validation_cli.py`](../../../tests/experiment/test_offline_edge_validation_cli.py) — integration tests verifying CLI reads fixture dirs and computes a real fingerprint
+
+Known golden hashes (deterministic, verified in test):
+
+```
+sample_bars.csv    SHA256 = computed at test time against fixture
+sample_funding.csv SHA256 = computed at test time against fixture
+```
