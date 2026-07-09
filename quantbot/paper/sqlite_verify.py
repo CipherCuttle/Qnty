@@ -90,6 +90,7 @@ from quantbot.paper.funding_coverage import (
     check_funding_coverage_from_rows,
 )
 from quantbot.paper.funding_source_snapshot import (
+    SNAPSHOT_SCOPE_FULL_WINDOW,
     build_canonical_row_subset_digest,
     build_source_file_digest,
     clean_mode_decision_from_snapshot_v1,
@@ -2264,6 +2265,29 @@ def _batch_evaluation_window(conn: sqlite3.Connection) -> dict[str, Any] | None:
     }
 
 
+def _committed_batch_count(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM ledger_batches WHERE committed_at IS NOT NULL"
+    ).fetchone()
+    if row is None or row["n"] is None:
+        return 0
+    return int(row["n"])
+
+
+def _full_ledger_requires_full_window_scope(conn: sqlite3.Connection) -> bool:
+    """Whether full-ledger clean-carry requires an explicit full-window snapshot.
+
+    When the committed ledger spans more than one batch, a single 8h batch
+    snapshot structurally cannot cover the multi-batch full-ledger window (this
+    is the PR #119 blocker). In that case the full-ledger gate demands an
+    explicit ``full_window``-scoped snapshot. A single-batch ledger (existing
+    synthetic/test DBs, and any lane with exactly one committed batch) is
+    unchanged: no full-window scope is required, so a covering batch snapshot
+    may still be CLEAN exactly as before.
+    """
+    return _committed_batch_count(conn) > 1
+
+
 def _snapshot_source_file_path(
     db_path: Path,
     source_path: str,
@@ -2462,7 +2486,10 @@ def _clean_carry_status_from_reasons(reason_codes: list[str]) -> str:
         return FUNDING_CLEAN_CARRY_STATUS_REFUSED_BUNDLE
     if FUNDING_CLEAN_CARRY_REASON_AMBIGUOUS_MULTIPLE in reason_set:
         return FUNDING_CLEAN_CARRY_STATUS_REFUSED_AMBIGUOUS_MULTIPLE
-    if "funding_source_snapshot_missing" in reason_set:
+    if (
+        "funding_source_snapshot_missing" in reason_set
+        or "funding_source_full_window_snapshot_missing" in reason_set
+    ):
         return FUNDING_CLEAN_CARRY_STATUS_REFUSED_MISSING_SNAPSHOT
     if (
         "funding_source_snapshot_digest_mismatch" in reason_set
@@ -2479,6 +2506,7 @@ def _clean_carry_status_from_reasons(reason_codes: list[str]) -> str:
         "funding_source_snapshot_db_mismatch" in reason_set
         or "funding_source_snapshot_window_mismatch" in reason_set
         or "funding_source_batch_window_mismatch" in reason_set
+        or "funding_source_snapshot_scope_mismatch" in reason_set
     ):
         return FUNDING_CLEAN_CARRY_STATUS_REFUSED_DB_OR_LANE_MISMATCH
     if "funding_source_snapshot_unreferenced_or_orphaned" in reason_set:
@@ -2597,6 +2625,11 @@ def _build_funding_clean_carry_stamp(
             ),
             expected_source_file_sha256_by_path=expected_file_sha_by_path,
             expected_row_subset_sha256_by_path=expected_row_sha_by_path,
+            expected_snapshot_scope=(
+                SNAPSHOT_SCOPE_FULL_WINDOW
+                if _full_ledger_requires_full_window_scope(conn)
+                else None
+            ),
         )
         reason_codes.extend(str(r) for r in clean_decision.get("reason_codes") or [])
 

@@ -31,7 +31,11 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from quantbot.paper.funding_source_snapshot import canonical_json, sha256_text
+from quantbot.paper.funding_source_snapshot import (
+    SNAPSHOT_SCOPE_BATCH,
+    canonical_json,
+    sha256_text,
+)
 
 FUNDING_SOURCE_BUNDLE_SCHEMA_V1 = "FUNDING_SOURCE_BUNDLE_SCHEMA_V1"
 BUNDLE_FILENAME_PREFIX = "funding_source_bundle_v1_"
@@ -112,6 +116,23 @@ def _required_windows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     return required
 
 
+def _resolved_funding_source_dir(payload: Mapping[str, Any]) -> str | None:
+    """Return the absolute resolved funding source dir recorded in the snapshot."""
+    provenance = payload.get("provenance")
+    if isinstance(provenance, Mapping):
+        resolution = provenance.get("source_path_resolution")
+        if isinstance(resolution, Mapping):
+            raw = resolution.get("resolved_funding_source_dir")
+            if isinstance(raw, str) and raw:
+                return raw
+    metadata = payload.get("snapshot_metadata")
+    if isinstance(metadata, Mapping):
+        raw = metadata.get("resolved_funding_source_dir")
+        if isinstance(raw, str) and raw:
+            return raw
+    return None
+
+
 def _digests_by_path(payload: Mapping[str, Any], field: str) -> dict[str, str]:
     source_files = payload.get("source_files")
     out: dict[str, str] = {}
@@ -154,6 +175,13 @@ def build_funding_source_bundle_v1(envelope: Mapping[str, Any]) -> dict[str, Any
         "symbols": list(payload.get("symbols_covered") or []),
         "row_counts": {"total": len(canonical_rows), "by_symbol": by_symbol},
         "evaluation_window": payload.get("evaluation_window"),
+        # Carry the explicit snapshot scope (batch default) and absolute source
+        # dir through the bundle so a full-window snapshot yields a full-window
+        # bundle without any ambiguous multi-snapshot discovery. These fields do
+        # not participate in ``source_bundle_sha256`` (which content-addresses
+        # only ``canonical_rows``), so existing bundle identity is unchanged.
+        "snapshot_scope": payload.get("snapshot_scope", SNAPSHOT_SCOPE_BATCH),
+        "resolved_funding_source_dir": _resolved_funding_source_dir(payload),
         "required_windows": _required_windows(payload),
         # Bind this bundle to the committed snapshot it was frozen from.
         "snapshot_bundle_sha256": payload.get("source_bundle_sha256"),

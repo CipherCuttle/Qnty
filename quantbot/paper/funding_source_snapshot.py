@@ -26,6 +26,16 @@ from quantbot.paper.funding_time import (
 
 FUNDING_SOURCE_SNAPSHOT_SCHEMA_V1 = "FUNDING_SOURCE_SNAPSHOT_SCHEMA_V1"
 
+# Explicit snapshot-scope discriminator (added for full-window clean-carry
+# support). ``batch`` snapshots cover exactly one 8h ledger batch window (the
+# historical, default behavior). ``full_window`` snapshots explicitly cover the
+# whole full-ledger evaluation span across every committed batch. The scope is
+# always explicit in the schema: an unscoped/older payload is read as ``batch``
+# and is NEVER silently reinterpreted as a full-window snapshot.
+SNAPSHOT_SCOPE_BATCH = "batch"
+SNAPSHOT_SCOPE_FULL_WINDOW = "full_window"
+SNAPSHOT_SCOPES_V1 = {SNAPSHOT_SCOPE_BATCH, SNAPSHOT_SCOPE_FULL_WINDOW}
+
 REASON_CODES_V1 = {
     "funding_source_snapshot_missing",
     "funding_source_snapshot_digest_mismatch",
@@ -41,6 +51,9 @@ REASON_CODES_V1 = {
     "funding_timestamp_outside_tolerance",
     "funding_timestamp_open_boundary",
     "funding_resum_mismatch",
+    # Full-window clean-carry evidence codes.
+    "funding_source_full_window_snapshot_missing",
+    "funding_source_snapshot_scope_mismatch",
 }
 
 WRITE_STATES_V1 = {"pending", "committed", "orphaned"}
@@ -497,10 +510,29 @@ def build_funding_source_snapshot_payload_v1(
     batch_start_watermark: str | None = None,
     batch_end_watermark: str | None = None,
     qnty_component_name: str = _COMPONENT_NAME,
+    snapshot_scope: str = SNAPSHOT_SCOPE_BATCH,
+    resolved_funding_source_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Build a deterministic v1 snapshot payload from caller-provided inputs."""
+    """Build a deterministic v1 snapshot payload from caller-provided inputs.
+
+    ``snapshot_scope`` is an explicit discriminator (``batch`` default, or
+    ``full_window``). It never changes the payload shape; it only records what
+    coverage this snapshot claims so the clean-carry gate can require the right
+    scope. ``resolved_funding_source_dir`` (absolute) is recorded under
+    ``provenance.source_path_resolution`` so default/source provenance can be
+    resolved deterministically by the verifier.
+    """
     if write_state not in WRITE_STATES_V1:
         raise ValueError(f"unsupported write_state: {write_state!r}")
+    if snapshot_scope not in SNAPSHOT_SCOPES_V1:
+        raise ValueError(f"unsupported snapshot_scope: {snapshot_scope!r}")
+    if resolved_funding_source_dir is not None and not Path(
+        resolved_funding_source_dir
+    ).is_absolute():
+        raise ValueError(
+            "resolved_funding_source_dir must be absolute: "
+            f"{resolved_funding_source_dir!r}"
+        )
 
     rows = list(source_rows)
     windows = list(required_windows)
@@ -556,8 +588,12 @@ def build_funding_source_snapshot_payload_v1(
                 "lane_id": lane_id,
                 "sanitized_host_user_label": sanitized_host_user_label,
             },
+            "source_path_resolution": {
+                "resolved_funding_source_dir": resolved_funding_source_dir,
+            },
         },
         "normalization_spec_version": FUNDING_TIMESTAMP_NORMALIZATION_SPEC_V2,
+        "snapshot_scope": snapshot_scope,
         "source_files": source_files,
         "symbols_covered": sorted({_window_symbol(window) for window in windows}),
         "required_funding_windows": window_records,
@@ -567,8 +603,10 @@ def build_funding_source_snapshot_payload_v1(
         "write_state": write_state,
         "snapshot_metadata": {
             "write_state": write_state,
+            "snapshot_scope": snapshot_scope,
             "db_identity_hash_before": db_identity_hash_before,
             "db_path_reference": db_path_reference,
+            "resolved_funding_source_dir": resolved_funding_source_dir,
             "batch_start_watermark": batch_start_watermark,
             "batch_end_watermark": batch_end_watermark,
             "pending_batch_id": pending_batch_id,
@@ -578,6 +616,59 @@ def build_funding_source_snapshot_payload_v1(
         },
     }
     return payload
+
+
+def build_full_window_funding_source_snapshot_payload_v1(
+    *,
+    source_rows: Iterable[Any],
+    required_windows: Iterable[Mapping[str, Any]],
+    full_ledger_evaluation_window: Mapping[str, Any],
+    generated_at_utc: str,
+    lane_id: str,
+    output_dir: str,
+    resolved_funding_source_dir: str,
+    writer_or_verifier_command: str,
+    qnty_git_commit: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Build a ``full_window`` snapshot payload bound to a full-ledger window.
+
+    This is a thin, explicit wrapper over
+    :func:`build_funding_source_snapshot_payload_v1` that:
+
+    * pins ``snapshot_scope="full_window"`` so the artifact is never confused
+      with an 8h batch snapshot;
+    * pins the caller-computed full-ledger ``evaluation_window`` (rather than
+      inferring a batch-scoped window), so the full-ledger clean-carry gate can
+      compare full-window coverage against the full-ledger span cleanly;
+    * requires an absolute ``resolved_funding_source_dir`` so default/source
+      provenance is deterministic.
+
+    ``required_windows`` should be the union of every funding window the
+    full-ledger span requires (every committed batch), not one 8h batch. All
+    other builder inputs (db/lane/batch/watermark binding, digests) flow through
+    ``kwargs`` unchanged, so binding and digest strictness are identical to the
+    batch builder.
+    """
+    if "snapshot_scope" in kwargs:
+        raise ValueError("snapshot_scope is fixed to full_window for this builder")
+    if "evaluation_window" in kwargs:
+        raise ValueError(
+            "pass the full-ledger window via full_ledger_evaluation_window"
+        )
+    return build_funding_source_snapshot_payload_v1(
+        source_rows=source_rows,
+        required_windows=required_windows,
+        generated_at_utc=generated_at_utc,
+        lane_id=lane_id,
+        output_dir=output_dir,
+        writer_or_verifier_command=writer_or_verifier_command,
+        qnty_git_commit=qnty_git_commit,
+        evaluation_window=full_ledger_evaluation_window,
+        snapshot_scope=SNAPSHOT_SCOPE_FULL_WINDOW,
+        resolved_funding_source_dir=resolved_funding_source_dir,
+        **kwargs,
+    )
 
 
 def build_funding_source_snapshot_envelope_v1(
@@ -654,15 +745,31 @@ def clean_mode_decision_from_snapshot_v1(
     expected_row_subset_sha256_by_path: Mapping[str, str] | None = None,
     expected_pending_batch_id: str | None = None,
     expected_ledger_batch_id: str | None = None,
+    expected_snapshot_scope: str | None = None,
 ) -> dict[str, Any]:
     """Classify whether a snapshot would allow a future clean-mode verdict.
 
     This is intentionally pure and does not classify any current ledger as clean.
     It only centralizes future refusal semantics for missing, mismatched,
     ambiguous, pending, or orphaned funding source evidence.
+
+    ``expected_snapshot_scope`` (``"full_window"`` or ``"batch"``), when set,
+    strictly requires the snapshot's declared ``snapshot_scope`` to match. A
+    ``full_window`` requirement against a missing snapshot yields the explicit
+    ``funding_source_full_window_snapshot_missing`` code; against a
+    wrong-scope snapshot it yields ``funding_source_snapshot_scope_mismatch``.
+    An unset requirement preserves the historical (batch) behavior byte-for-byte.
     """
     reason_codes = validate_funding_source_snapshot_envelope_v1(envelope)
     if reason_codes:
+        if (
+            expected_snapshot_scope == SNAPSHOT_SCOPE_FULL_WINDOW
+            and reason_codes == ["funding_source_snapshot_missing"]
+        ):
+            return {
+                "clean_net_of_carry_allowed": False,
+                "reason_codes": ["funding_source_full_window_snapshot_missing"],
+            }
         return {
             "clean_net_of_carry_allowed": False,
             "reason_codes": reason_codes,
@@ -672,6 +779,11 @@ def clean_mode_decision_from_snapshot_v1(
     payload = envelope["snapshot_payload"]
     assert isinstance(payload, Mapping)
     metadata = _snapshot_metadata(payload)
+
+    if expected_snapshot_scope is not None:
+        payload_scope = payload.get("snapshot_scope", SNAPSHOT_SCOPE_BATCH)
+        if payload_scope != expected_snapshot_scope:
+            reason_codes.append("funding_source_snapshot_scope_mismatch")
 
     if expected_evaluation_window is not None:
         expected_window = {
@@ -748,6 +860,9 @@ def clean_mode_decision_from_snapshot_v1(
 
 __all__ = [
     "FUNDING_SOURCE_SNAPSHOT_SCHEMA_V1",
+    "SNAPSHOT_SCOPE_BATCH",
+    "SNAPSHOT_SCOPE_FULL_WINDOW",
+    "SNAPSHOT_SCOPES_V1",
     "REASON_CODES_V1",
     "WRITE_STATES_V1",
     "canonical_json",
@@ -756,6 +871,7 @@ __all__ = [
     "build_source_file_digest",
     "build_canonical_row_subset_digest",
     "build_funding_source_snapshot_payload_v1",
+    "build_full_window_funding_source_snapshot_payload_v1",
     "build_funding_source_snapshot_envelope_v1",
     "validate_funding_source_snapshot_envelope_v1",
     "clean_mode_decision_from_snapshot_v1",
