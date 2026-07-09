@@ -36,6 +36,31 @@ SNAPSHOT_SCOPE_BATCH = "batch"
 SNAPSHOT_SCOPE_FULL_WINDOW = "full_window"
 SNAPSHOT_SCOPES_V1 = {SNAPSHOT_SCOPE_BATCH, SNAPSHOT_SCOPE_FULL_WINDOW}
 
+# Distinct filename prefix for the (writer-emitted) full-window snapshot sidecar.
+# A full-window sidecar is selected by an exact, batch-bound filename so the
+# verifier never does fuzzy multi-snapshot discovery, and so it never collides
+# with the content-addressed 8h batch snapshots (``funding_source_snapshot_v1_*``)
+# that share the same ``funding_source_snapshots/`` directory. Defined here (in
+# the pure module) so the writer/emit path and the verifier agree byte-for-byte
+# without importing one another.
+FULL_WINDOW_SNAPSHOT_FILENAME_PREFIX = "funding_source_full_window_snapshot_v1_"
+
+
+def full_window_snapshot_filename(target_batch_id: int) -> str:
+    """Return the deterministic full-window snapshot filename for a batch id."""
+    return f"{FULL_WINDOW_SNAPSHOT_FILENAME_PREFIX}batch{int(target_batch_id)}.json"
+
+
+def full_window_snapshot_path(
+    lane_output_dir: str | Path, target_batch_id: int
+) -> Path:
+    """Return the exact expected full-window snapshot path (no glob discovery)."""
+    return (
+        Path(lane_output_dir)
+        / "funding_source_snapshots"
+        / full_window_snapshot_filename(target_batch_id)
+    )
+
 REASON_CODES_V1 = {
     "funding_source_snapshot_missing",
     "funding_source_snapshot_digest_mismatch",
@@ -863,6 +888,9 @@ __all__ = [
     "SNAPSHOT_SCOPE_BATCH",
     "SNAPSHOT_SCOPE_FULL_WINDOW",
     "SNAPSHOT_SCOPES_V1",
+    "FULL_WINDOW_SNAPSHOT_FILENAME_PREFIX",
+    "full_window_snapshot_filename",
+    "full_window_snapshot_path",
     "REASON_CODES_V1",
     "WRITE_STATES_V1",
     "canonical_json",
