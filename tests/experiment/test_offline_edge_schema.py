@@ -52,6 +52,35 @@ class TestCostModelDefaults:
         assert assumptions["vol_floor"] == 1e-6
 
 
+class TestCostModelPRCFields:
+    def test_prc_fields_accepted(self):
+        # PR C fixture-only cost-model fields are backwards-compatible additions.
+        assumptions = CostModelAssumptions(
+            slippage_bps_per_side=5.0,
+            commission_bps_per_side=5.0,
+            heat_cap=1.0,
+            vol_lookback_bars=90,
+            vol_floor=1e-6,
+            cost_model_version="1.0",
+            spread_bps_per_side=1.0,
+            funding_cost_placeholder=0.0,
+        )
+        assert assumptions["cost_model_version"] == "1.0"
+        assert assumptions["spread_bps_per_side"] == 1.0
+        assert assumptions["funding_cost_placeholder"] == 0.0
+
+    def test_legacy_assumptions_still_valid_without_prc_fields(self):
+        # Existing PR-A/B receipts omit the new keys; construction must not fail.
+        assumptions = CostModelAssumptions(
+            slippage_bps_per_side=5.0,
+            commission_bps_per_side=5.0,
+            heat_cap=1.0,
+            vol_lookback_bars=90,
+            vol_floor=1e-6,
+        )
+        assert "cost_model_version" not in assumptions
+
+
 class TestValidateSkeletonVerdict:
     def test_accepts_skeleton_only(self):
         assert validate_skeleton_verdict(SKELETON_ONLY) == SKELETON_ONLY

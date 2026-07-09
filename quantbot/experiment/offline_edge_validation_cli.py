@@ -17,6 +17,7 @@ from quantbot.experiment.offline_edge_input_manifest import (
     build_input_manifest_summary,
     discover_input_files,
 )
+from quantbot.experiment.offline_edge_cost_model import COST_MODEL_VERSION
 from quantbot.experiment.offline_edge_schema import (
     CostModelAssumptions,
     PLACEHOLDER_SKELETON_NO_OP,
@@ -189,6 +190,11 @@ def main() -> None:
             heat_cap=1.0,
             vol_lookback_bars=90,
             vol_floor=1e-6,
+            # PR C — fixture-only cost-model placeholders. These are assumptions
+            # only: the CLI does NOT apply them to any trade or compute PnL.
+            cost_model_version=COST_MODEL_VERSION,
+            spread_bps_per_side=1.0,
+            funding_cost_placeholder=0.0,
         ),
         per_stage_metrics={},
         final_verdict=SKELETON_ONLY,

@@ -63,3 +63,21 @@ Known golden hashes (deterministic, verified in test):
 sample_bars.csv    SHA256 = computed at test time against fixture
 sample_funding.csv SHA256 = computed at test time against fixture
 ```
+
+## PR C — Cost-Model Fixtures
+
+Added in PR C:
+
+| File | Purpose |
+|------|---------|
+| [`sample_cost_model.json`](sample_cost_model.json) | Fixture-only cost-model assumptions (commission/slippage/spread bps + funding placeholder) |
+
+These document the deterministic assumptions consumed by:
+- [`offline_edge_cost_model.py`](../../../quantbot/experiment/offline_edge_cost_model.py) — stdlib-only pure cost-math helpers
+- [`test_offline_edge_cost_model.py`](../../../tests/experiment/test_offline_edge_cost_model.py) — unit tests for the cost-math helpers
+
+**Scope note:** PR C is fixture-only cost math. It does **not** compute strategy
+performance, does **not** apply costs to trades, does **not** call the paper engine,
+and does **not** replay real funding. The CLI verdict remains `SKELETON_ONLY`.
+`EDGE_UNPROVEN` / `BLOCK_LIVE_INTEGRATION` remain in force; long-only / 1x is the
+only assumed lane.

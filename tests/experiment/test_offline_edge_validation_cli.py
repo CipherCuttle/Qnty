@@ -194,6 +194,33 @@ class TestReceiptContents:
             assert receipt["validation_receipt"]["tool_name"] == "offline_edge_validation"
 
 
+class TestCostModelAssumptionsInReceipt:
+    """PR C — receipt carries fixture-only cost-model assumptions, no PnL."""
+
+    def _receipt(self, tmpdir: str) -> dict:
+        result = _run_cli("--read-only", "--output-dir", tmpdir)
+        assert result.returncode == 0
+        with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+            return json.load(f)
+
+    def test_receipt_includes_cost_model_assumptions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cma = self._receipt(tmpdir)["cost_model_assumptions"]
+            assert cma["commission_bps_per_side"] == 5.0
+            assert cma["slippage_bps_per_side"] == 5.0
+            assert cma["spread_bps_per_side"] == 1.0
+            assert cma["cost_model_version"] == "1.0"
+            assert cma["funding_cost_placeholder"] == 0.0
+
+    def test_receipt_has_no_pnl_or_edge_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            receipt = self._receipt(tmpdir)
+            # Cost-model PR must not introduce strategy performance / edge output.
+            for forbidden in ("pnl", "strategy_performance", "edge_candidate", "returns"):
+                assert forbidden not in receipt
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+
+
 class TestNoExchangeModules:
     def test_no_exchange_modules_imported(self) -> None:
         """Verify that importing the CLI doesn't pull in exchange modules."""
