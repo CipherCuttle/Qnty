@@ -63,6 +63,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -3568,6 +3569,245 @@ def verify_and_publish(
 
 
 # ---------------------------------------------------------------------------
+# Candidate publication (non-prod, /tmp) — publication-schema-compatible report
+# (QNTY_PROD_FULL_WINDOW_REPORT_PROMOTION_SCHEMA_RECONCILIATION_IMPLEMENTATION)
+# ---------------------------------------------------------------------------
+#
+# The official published report is assembled by verify_and_publish() ->
+# _build_published_report() (the 42-key authoritative envelope). The read-only
+# diagnostic CLI (main -> _cli_report) emits a DIFFERENT 36-key diagnostics
+# shape, so a clean full-window CLEAN_NET_OF_CARRY reachable only through the
+# read-only path could not be expressed in the publication schema.
+#
+# This layer closes that gap SAFELY: it reuses the SAME _build_published_report()
+# envelope builder as verify_and_publish (never hand-duplicating the schema),
+# honors an explicit --data-dir so the full-window clean-carry gate can reach
+# CLEAN from source-path-available mode, but writes ONLY a candidate report json
+# to an explicit NON-PROD path and NEVER publishes the official prod report /
+# receipt / log. It is fail-closed on any ambiguous or prod-lane output path.
+
+# Anti-footgun anchors. The literal official prod report path this candidate
+# writer must never equal, and the prod lane dir it must never write inside
+# (unless a future task explicitly opts in via allow_prod_lane).
+OFFICIAL_PROD_REPORT_PATH = Path(
+    "/srv/qnty/output/paper_pnl_v1/paper_verify_report.json"
+)
+PROD_LANE_DIR = Path("/srv/qnty/output/paper_pnl_v1")
+
+
+class CandidateOutputRefused(ValueError):
+    """Raised when a candidate report output path fails an anti-footgun guard."""
+
+
+def _norm_abs(path: str | Path) -> Path:
+    """Normalize (collapse ``.``/``..``, no symlink resolution) an absolute path.
+
+    Symlinks are intentionally NOT resolved (``Path.resolve`` touches the
+    filesystem and can fail on a not-yet-created candidate path); we only need a
+    stable lexical form to compare against the prod anchors.
+    """
+    return Path(os.path.normpath(str(Path(path))))
+
+
+def _is_within(path: str | Path, ancestor: str | Path) -> bool:
+    p = _norm_abs(path)
+    a = _norm_abs(ancestor)
+    return p == a or a in p.parents
+
+
+def assert_safe_candidate_output_path(
+    candidate_report_out: str | Path,
+    *,
+    allow_prod_lane: bool = False,
+) -> Path:
+    """Fail closed unless *candidate_report_out* is a safe non-prod report sink.
+
+    Refuses (raises :class:`CandidateOutputRefused`):
+      - an empty or relative path (ambiguous — fail closed),
+      - the exact official prod report path (:data:`OFFICIAL_PROD_REPORT_PATH`),
+      - any path inside :data:`PROD_LANE_DIR` unless ``allow_prod_lane`` is set,
+      - a path whose parent directory does not exist and is NOT under ``/tmp``
+        (so this never mkdirs outside ``/tmp``; an existing parent elsewhere,
+        e.g. a test's tmp dir, is accepted but never created here).
+
+    Returns the normalized absolute :class:`Path` on success.
+    """
+    if not candidate_report_out:
+        raise CandidateOutputRefused("candidate report output path is empty")
+    raw = Path(candidate_report_out)
+    if not raw.is_absolute():
+        raise CandidateOutputRefused(
+            "candidate report output must be an absolute path, got "
+            f"{candidate_report_out!r}"
+        )
+    out = _norm_abs(raw)
+
+    if out == _norm_abs(OFFICIAL_PROD_REPORT_PATH):
+        raise CandidateOutputRefused(
+            "candidate report output must not equal the official prod report path "
+            f"{OFFICIAL_PROD_REPORT_PATH}"
+        )
+    if _is_within(out, PROD_LANE_DIR) and not allow_prod_lane:
+        raise CandidateOutputRefused(
+            f"candidate report output {out} is inside the prod lane dir "
+            f"{PROD_LANE_DIR}; refusing unless explicitly allowed"
+        )
+
+    parent = out.parent
+    if parent.exists():
+        pass
+    elif _is_within(parent, Path("/tmp")):
+        # Only ever auto-create directories under /tmp.
+        parent.mkdir(parents=True, exist_ok=True)
+    elif allow_prod_lane and _is_within(out, PROD_LANE_DIR):
+        # Explicit prod-lane opt-in: the caller owns directory creation; never
+        # mkdir into the prod lane from here.
+        pass
+    else:
+        raise CandidateOutputRefused(
+            f"parent directory {parent} does not exist and is not under /tmp; "
+            "refusing to create it"
+        )
+    return out
+
+
+@dataclass(frozen=True)
+class PublishedSchemaComparison:
+    ok: bool
+    missing_keys: frozenset[str]
+    extra_keys: frozenset[str]
+
+
+def compare_published_report_schema(
+    candidate_report: Mapping[str, Any],
+    reference_report: Mapping[str, Any],
+    *,
+    allow_missing: frozenset[str] = frozenset(),
+    allow_extra: frozenset[str] = frozenset(),
+) -> PublishedSchemaComparison:
+    """Compare the TOP-LEVEL key sets of a candidate vs a reference published report.
+
+    ``ok`` is True iff the candidate has neither missing nor extra top-level keys
+    relative to the reference, ignoring keys explicitly whitelisted via
+    ``allow_missing`` / ``allow_extra`` (used only when a schema migration is
+    separately planned). This inspects only the key set, never values.
+    """
+    cand = set(candidate_report.keys())
+    ref = set(reference_report.keys())
+    missing = frozenset((ref - cand) - set(allow_missing))
+    extra = frozenset((cand - ref) - set(allow_extra))
+    return PublishedSchemaComparison(
+        ok=(not missing and not extra),
+        missing_keys=missing,
+        extra_keys=extra,
+    )
+
+
+def assert_candidate_report_schema(
+    candidate_report: Mapping[str, Any],
+    reference_report: Mapping[str, Any],
+    *,
+    allow_missing: frozenset[str] = frozenset(),
+    allow_extra: frozenset[str] = frozenset(),
+) -> None:
+    """Raise :class:`CandidateOutputRefused` if the candidate top-level schema
+    does not match the reference published report (modulo whitelists)."""
+    comparison = compare_published_report_schema(
+        candidate_report,
+        reference_report,
+        allow_missing=allow_missing,
+        allow_extra=allow_extra,
+    )
+    if not comparison.ok:
+        raise CandidateOutputRefused(
+            "candidate report top-level schema mismatch vs reference published "
+            f"report: missing={sorted(comparison.missing_keys)}, "
+            f"extra={sorted(comparison.extra_keys)}"
+        )
+
+
+def verify_and_publish_candidate(
+    db_path: str | Path,
+    candidate_report_out: str | Path,
+    *,
+    data_dir: str | Path | None = None,
+    now: datetime | None = None,
+    allow_prod_lane: bool = False,
+) -> tuple[VerifyResult, Path]:
+    """Build the AUTHORITATIVE published-report envelope for a candidate DB and
+    write it to a NON-PROD candidate path — without publishing the prod lane.
+
+    Reuses :func:`_build_published_report` (the same 42-key envelope builder
+    :func:`verify_and_publish` uses — the schema is never hand-duplicated), so
+    the candidate report is publication-schema-compatible with the official
+    report, while:
+
+      - opening the DB via the strict immutable read-only URI
+        (:func:`_open_readonly_immutable_connection` — no ``-wal``/``-shm``, no
+        mutation), the same contract the read-only CLI uses;
+      - honoring an explicit ``data_dir`` so the full-window clean-carry gate can
+        reach ``CLEAN_NET_OF_CARRY`` from source-path-available mode, preserving
+        the full-window snapshot/bundle selection semantics of
+        :func:`_verify_connection`;
+      - writing ONLY the candidate report json (never the prod
+        :data:`REPORT_FILE` / :data:`RECEIPT_FILE` / :data:`LOG_FILE`, never a
+        publish/replacement of an authoritative report); and
+      - failing closed on any unsafe output path (see
+        :func:`assert_safe_candidate_output_path`).
+
+    Returns ``(VerifyResult with the published envelope, resolved candidate path)``.
+    """
+    out_path = assert_safe_candidate_output_path(
+        candidate_report_out, allow_prod_lane=allow_prod_lane
+    )
+    db_path = Path(db_path)
+    data_dir_path = Path(data_dir) if data_dir is not None else None
+
+    report_seed = {"db_path": str(db_path), "disclaimer": VERIFIER_DISCLAIMER}
+    if not db_path.exists():
+        result = VerifyResult(
+            STATUS_CONFIG_ERROR, [f"DB not found: {db_path}"], report_seed
+        )
+        digests: dict[str, str] = {}
+    else:
+        try:
+            conn = _open_readonly_immutable_connection(db_path)
+        except sqlite3.Error as exc:
+            result = VerifyResult(
+                STATUS_CONFIG_ERROR,
+                [f"Could not open DB read-only: {type(exc).__name__}: {exc}"],
+                report_seed,
+            )
+            digests = {}
+        else:
+            try:
+                result = _verify_connection(
+                    conn,
+                    db_path,
+                    data_dir=data_dir_path,
+                    allow_db_relative_data=True,
+                    fail_on_source_path_unavailable=True,
+                )
+                digests = _content_digests(conn)
+                if result.status == STATUS_OK and not digests.get("content_sha256"):
+                    result = VerifyResult(
+                        STATUS_CORRUPT,
+                        ["Could not digest the validated SQLite snapshot"],
+                        result.report,
+                    )
+            finally:
+                conn.close()
+
+    report = _build_published_report(db_path, result, digests, now)
+    # Only the candidate report json is written, and only to the vetted non-prod
+    # path. No REPORT_FILE/RECEIPT_FILE/LOG_FILE publish next to a (possibly prod)
+    # DB — this path never mutates an authoritative report.
+    ledger.write_json_atomic(out_path, report)
+    result.report = report
+    return result, out_path
+
+
+# ---------------------------------------------------------------------------
 # Read-only CLI
 # (docs/plans/QNTY_READ_ONLY_PROD_DB_LINKED_SNAPSHOT_ACCEPTANCE_AUDIT.md contract,
 # specified by tests/test_paper_sqlite_verify_read_only_cli_contract.py)
@@ -3694,6 +3934,27 @@ def _build_cli_arg_parser() -> argparse.ArgumentParser:
             "tooling."
         ),
     )
+    parser.add_argument(
+        "--candidate-report-out",
+        help=(
+            "Absolute NON-PROD path to write a publication-schema-compatible "
+            "candidate report json (same 42-key envelope as the official "
+            "paper_verify_report.json, built by the authoritative "
+            "_build_published_report). Fails closed if the path equals the "
+            "official prod report path or is inside the prod lane dir (unless "
+            "--allow-prod-lane). Only the candidate json is written; no prod "
+            "report/receipt/log is published."
+        ),
+    )
+    parser.add_argument(
+        "--allow-prod-lane",
+        action="store_true",
+        help=(
+            "Escape hatch (default off): permit --candidate-report-out inside "
+            "the prod lane dir. Still refuses the exact official prod report "
+            "path. Intended only for a future, explicitly-planned promotion."
+        ),
+    )
     return parser
 
 
@@ -3727,6 +3988,33 @@ def main(argv: list[str] | None = None) -> int:
     data_dir = Path(args.data_dir) if args.data_dir else None
     if data_dir is not None and not data_dir.is_absolute():
         parser.error(f"--data-dir must be an absolute path, got: {args.data_dir!r}")
+
+    # Candidate publication mode: build + write the authoritative published-report
+    # envelope to a vetted NON-PROD path. Never publishes the official prod report.
+    if args.candidate_report_out:
+        try:
+            cand_result, cand_out = verify_and_publish_candidate(
+                db_path,
+                args.candidate_report_out,
+                data_dir=data_dir,
+                allow_prod_lane=bool(args.allow_prod_lane),
+            )
+        except CandidateOutputRefused as exc:
+            parser.error(str(exc))
+        # Echo the published envelope to stdout (plus, as a non-persisted
+        # convenience key, where it was written — the ON-DISK file keeps the
+        # exact publication schema, no extra key).
+        report = dict(cand_result.report)
+        report["candidate_report_path"] = str(cand_out)
+        exit_code = cand_result.exit_code
+        if (
+            args.strict_clean_carry
+            and exit_code == EXIT_CODE[STATUS_OK]
+            and report.get("funding_clean_carry_decision") != CLEAN_NET_OF_CARRY
+        ):
+            exit_code = EXIT_CODE[STATUS_CORRUPT]
+        print(json.dumps(report, sort_keys=True, default=str))
+        return exit_code
 
     result = verify_database_readonly_cli(db_path, data_dir=data_dir)
     report = _cli_report(result, db_path, read_only=bool(args.read_only))
@@ -3769,6 +4057,14 @@ __all__ = [
     "VerifyResult",
     "verify_database",
     "verify_and_publish",
+    "verify_and_publish_candidate",
+    "assert_safe_candidate_output_path",
+    "compare_published_report_schema",
+    "assert_candidate_report_schema",
+    "PublishedSchemaComparison",
+    "CandidateOutputRefused",
+    "OFFICIAL_PROD_REPORT_PATH",
+    "PROD_LANE_DIR",
     "verify_database_readonly_cli",
     "CLI_CONTRACT_VERSION",
     "main",
