@@ -12,10 +12,20 @@ import os
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
+from quantbot.experiment.offline_edge_input_manifest import (
+    discover_input_files,
+    compute_input_manifest_fingerprint,
+)
+
 CLI_MODULE = "quantbot.experiment.offline_edge_validation_cli"
+
+FIXTURE_DIR = Path(
+    "tests/fixtures/edge_validation_golden"
+).resolve()
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess:
@@ -109,16 +119,29 @@ class TestRefusesProdPathsOnFixtureDirs:
 class TestAcceptsTmpOutput:
     def test_accepts_tmp_output_with_fixtures(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Create actual fixture directories with at least one file
+            bars_dir = os.path.join(tmpdir, "bars")
+            funding_dir = os.path.join(tmpdir, "funding")
+            manifest_dir = os.path.join(tmpdir, "manifest")
+            os.makedirs(bars_dir)
+            os.makedirs(funding_dir)
+            os.makedirs(manifest_dir)
+            # Write dummy fixture files so CLI can discover them
+            with open(os.path.join(bars_dir, "bars.csv"), "w") as f:
+                f.write("timestamp,open,high,low,close,volume\n")
+            with open(os.path.join(funding_dir, "funding.csv"), "w") as f:
+                f.write("timestamp,funding_rate\n")
+
             result = _run_cli(
                 "--read-only",
                 "--output-dir",
                 tmpdir,
                 "--bars-dir",
-                "/tmp/fake_bars",
+                bars_dir,
                 "--funding-dir",
-                "/tmp/fake_funding",
+                funding_dir,
                 "--manifest-dir",
-                "/tmp/fake_manifest",
+                manifest_dir,
             )
             assert result.returncode == 0
             receipt_path = os.path.join(tmpdir, "validation_receipt.json")
@@ -297,3 +320,200 @@ class TestRefusesTmpBoundaryBypass:
             assert result.returncode == 0
             receipt_path = os.path.join(tmpdir, "qnty-valid-output", "validation_receipt.json")
             assert os.path.exists(receipt_path)
+
+
+class TestInputManifestFingerprint:
+    """Tests for input_manifest_fingerprint in CLI output."""
+
+    def test_cli_with_fixture_dirs_writes_non_placeholder_fingerprint(self) -> None:
+        """CLI with fixture dirs computes real fingerprint (not PLACEHOLDER)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--bars-dir",
+                str(FIXTURE_DIR),
+                "--funding-dir",
+                str(FIXTURE_DIR),
+                "--manifest-dir",
+                str(FIXTURE_DIR),
+            )
+            assert result.returncode == 0
+            receipt_path = os.path.join(tmpdir, "validation_receipt.json")
+            with open(receipt_path) as f:
+                receipt = json.load(f)
+            fp = receipt["input_manifest_fingerprint"]
+            assert fp != "PLACEHOLDER_SKELETON_NO_OP"
+            assert len(fp) == 64
+
+    def test_cli_no_input_dirs_still_placeholder_fingerprint(self) -> None:
+        """CLI with no input dirs still writes PLACEHOLDER_SKELETON_NO_OP."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+            )
+            assert result.returncode == 0
+            receipt_path = os.path.join(tmpdir, "validation_receipt.json")
+            with open(receipt_path) as f:
+                receipt = json.load(f)
+            assert receipt["input_manifest_fingerprint"] == "PLACEHOLDER_SKELETON_NO_OP"
+
+    def test_cli_with_fixture_dirs_final_verdict_still_skeleton_only(self) -> None:
+        """final_verdict remains SKELETON_ONLY even with fixture dirs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--bars-dir",
+                str(FIXTURE_DIR),
+            )
+            assert result.returncode == 0
+            receipt_path = os.path.join(tmpdir, "validation_receipt.json")
+            with open(receipt_path) as f:
+                receipt = json.load(f)
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+            assert receipt["final_verdict"] != "EDGE_CANDIDATE"
+
+    def test_cli_refuses_srv_qnty_path_via_bars_dir(self) -> None:
+        """Using --bars-dir pointing under /srv/qnty fails."""
+        result = _run_cli(
+            "--read-only",
+            "--output-dir",
+            "/tmp/safe_output",
+            "--bars-dir",
+            "/srv/qnty/data/bars",
+        )
+        assert result.returncode == 3
+        assert "Refusing" in result.stdout
+
+    def test_cli_refuses_srv_qnty_path_via_funding_dir(self) -> None:
+        """Using --funding-dir pointing under /srv/qnty fails."""
+        result = _run_cli(
+            "--read-only",
+            "--output-dir",
+            "/tmp/safe_output",
+            "--funding-dir",
+            "/srv/qnty/data/funding",
+        )
+        assert result.returncode == 3
+        assert "Refusing" in result.stdout
+
+    def test_cli_refuses_srv_qnty_path_via_manifest_dir(self) -> None:
+        """Using --manifest-dir pointing under /srv/qnty fails."""
+        result = _run_cli(
+            "--read-only",
+            "--output-dir",
+            "/tmp/safe_output",
+            "--manifest-dir",
+            "/srv/qnty/manifests/v1",
+        )
+        assert result.returncode == 3
+        assert "Refusing" in result.stdout
+
+    def test_cli_fingerprint_deterministic_across_invocations(self) -> None:
+        """Fingerprint is deterministic across separate CLI invocations."""
+        with tempfile.TemporaryDirectory() as tmpdir1:
+            result1 = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir1,
+                "--bars-dir",
+                str(FIXTURE_DIR),
+            )
+            assert result1.returncode == 0
+
+            with tempfile.TemporaryDirectory() as tmpdir2:
+                result2 = _run_cli(
+                    "--read-only",
+                    "--output-dir",
+                    tmpdir2,
+                    "--bars-dir",
+                    str(FIXTURE_DIR),
+                )
+                assert result2.returncode == 0
+
+                with open(os.path.join(tmpdir1, "validation_receipt.json")) as f:
+                    r1 = json.load(f)
+                with open(os.path.join(tmpdir2, "validation_receipt.json")) as f:
+                    r2 = json.load(f)
+                assert r1["input_manifest_fingerprint"] == r2["input_manifest_fingerprint"]
+
+
+class TestInputManifestSummaryInReceipt:
+    """Tests for input_manifest_summary in receipt when fixture dirs provided."""
+
+    def test_summary_present_when_fixture_dirs_provided(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--bars-dir",
+                str(FIXTURE_DIR),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert "input_manifest_summary" in receipt
+            summary = receipt["input_manifest_summary"]
+            assert "file_count" in summary
+            assert summary["file_count"] > 0
+            assert "files" in summary
+            assert "fingerprint" in summary
+            assert len(summary["fingerprint"]) == 64
+
+    def test_summary_not_present_without_fixture_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert "input_manifest_summary" not in receipt
+
+    def test_summary_fingerprint_matches_top_level(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--bars-dir",
+                str(FIXTURE_DIR),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert receipt["input_manifest_summary"]["fingerprint"] == receipt["input_manifest_fingerprint"]
+
+
+class TestInputManifestFingerprintMatchesDirect:
+    """Verify CLI's fingerprint matches a direct call to discover_input_files."""
+
+    def test_cli_fingerprint_matches_direct_computation(self) -> None:
+        """Fingerprint from CLI run matches directly calling discover_input_files + compute."""
+        discovered = discover_input_files([FIXTURE_DIR])
+        expected_fp = compute_input_manifest_fingerprint(discovered)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--bars-dir",
+                str(FIXTURE_DIR),
+                "--funding-dir",
+                str(FIXTURE_DIR),
+                "--manifest-dir",
+                str(FIXTURE_DIR),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert receipt["input_manifest_fingerprint"] == expected_fp

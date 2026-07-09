@@ -13,8 +13,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quantbot.experiment.offline_edge_input_manifest import (
+    build_input_manifest_summary,
+    discover_input_files,
+)
 from quantbot.experiment.offline_edge_schema import (
     CostModelAssumptions,
+    PLACEHOLDER_SKELETON_NO_OP,
     ReceiptMetadata,
     SKELETON_ONLY,
     ValidationReceipt,
@@ -150,15 +155,34 @@ def main() -> None:
     if args.manifest_dir is not None:
         refuse_prod_path(args.manifest_dir)
 
+    # Collect input paths for manifest fingerprinting
+    input_dirs: list[Path] = []
+    if args.bars_dir is not None:
+        input_dirs.append(Path(args.bars_dir))
+    if args.funding_dir is not None:
+        input_dirs.append(Path(args.funding_dir))
+    if args.manifest_dir is not None:
+        input_dirs.append(Path(args.manifest_dir))
+
+    # Compute fingerprint if any input directories are provided
+    has_input = len(input_dirs) > 0
+    input_manifest_summary: dict | None = None
+    if has_input:
+        discovered = discover_input_files(input_dirs)
+        input_manifest_summary = build_input_manifest_summary(discovered)
+        fingerprint = input_manifest_summary["fingerprint"]
+    else:
+        fingerprint = PLACEHOLDER_SKELETON_NO_OP
+
     # Build skeleton receipt
-    receipt: ValidationReceipt = ValidationReceipt(
+    receipt_kwargs: dict = ValidationReceipt(
         validation_receipt=ReceiptMetadata(
             tool_name="offline_edge_validation",
             tool_version="0.1.0",
             timestamp_utc=datetime.now(timezone.utc).isoformat(),
             pipeline_description="skeleton",
         ),
-        input_manifest_fingerprint="PLACEHOLDER_SKELETON_NO_OP",
+        input_manifest_fingerprint=fingerprint,
         cost_model_assumptions=CostModelAssumptions(
             slippage_bps_per_side=5.0,
             commission_bps_per_side=5.0,
@@ -169,6 +193,9 @@ def main() -> None:
         per_stage_metrics={},
         final_verdict=SKELETON_ONLY,
     )
+    receipt: ValidationReceipt = dict(receipt_kwargs)  # type: ignore[arg-type]
+    if input_manifest_summary is not None:
+        receipt["input_manifest_summary"] = input_manifest_summary
 
     # Ensure output directory exists
     output_dir = Path(args.output_dir)
@@ -182,6 +209,10 @@ def main() -> None:
     # Summary to stdout
     print(f"Validation receipt written to {receipt_path}")
     print(f"Final verdict: {receipt['final_verdict']}")
+    if has_input:
+        print(f"Input manifest fingerprint: {fingerprint}")
+    else:
+        print("Input manifest: PLACEHOLDER_SKELETON_NO_OP (no input dirs)")
     print("Mode: read-only skeleton (no-op)")
 
 

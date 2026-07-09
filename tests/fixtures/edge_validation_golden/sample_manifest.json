@@ -1,0 +1,13 @@
+{
+  "manifest_version": "1.0",
+  "description": "Test fixture for offline edge validation input manifest fingerprint",
+  "created_at": "2026-07-09T00:00:00Z",
+  "files": {
+    "sample_bars.csv": {"sha256": null},
+    "sample_funding.csv": {"sha256": null}
+  },
+  "symbol": "TESTUSDT",
+  "timeframe": "1h",
+  "bars": "sample_bars.csv",
+  "funding": "sample_funding.csv"
+}
