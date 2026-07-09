@@ -94,6 +94,7 @@ from quantbot.paper.funding_source_snapshot import (
     build_canonical_row_subset_digest,
     build_source_file_digest,
     clean_mode_decision_from_snapshot_v1,
+    full_window_snapshot_path,
     validate_funding_source_snapshot_envelope_v1,
 )
 from quantbot.paper.funding_source_bundle import (
@@ -2478,6 +2479,64 @@ def _read_snapshot_envelope_for_clean_gate(
     return envelope, []
 
 
+def _resolve_full_window_snapshot_for_gate(
+    db_path: Path,
+    cfg: dict[str, Any],
+    target_batch_id: int | None,
+) -> tuple[dict[str, Any] | None, str | None, list[str]]:
+    """Resolve the writer-emitted full-window snapshot for the full-ledger gate.
+
+    Selection is by an exact, batch-bound filename (never a fuzzy glob), so there
+    is no ambiguous multi-snapshot discovery. Returns
+    ``(envelope | None, selected_path | None, reason_codes)``. A present, valid,
+    correctly-bound ``full_window`` sidecar returns the envelope with no reasons;
+    a missing sidecar returns ``funding_source_full_window_snapshot_missing``; a
+    wrong-scope or wrong lane/DB/batch binding returns the matching refusal code
+    with ``envelope=None`` so the clean gate refuses. No digest or binding check
+    is weakened here — the envelope that IS returned is still fully re-validated
+    (window/scope/lane/batch + source digests) by
+    :func:`clean_mode_decision_from_snapshot_v1` in the caller.
+    """
+    if target_batch_id is None:
+        return None, None, ["funding_source_full_window_snapshot_missing"]
+
+    path = full_window_snapshot_path(db_path.parent, target_batch_id)
+    if not path.is_file():
+        return None, None, ["funding_source_full_window_snapshot_missing"]
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None, str(path), [FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID]
+    if not isinstance(raw, dict):
+        return None, str(path), [FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID]
+
+    validation_reasons = list(validate_funding_source_snapshot_envelope_v1(raw))
+    if validation_reasons:
+        return None, str(path), validation_reasons
+
+    payload = _payload_dict(raw)
+    if payload.get("snapshot_scope") != SNAPSHOT_SCOPE_FULL_WINDOW:
+        return None, str(path), ["funding_source_snapshot_scope_mismatch"]
+
+    metadata = _snapshot_metadata_dict(payload)
+    lane = payload.get("lane") if isinstance(payload.get("lane"), dict) else {}
+    assert isinstance(lane, dict)
+    binding_reasons: list[str] = []
+    if lane.get("lane_id") != _expected_snapshot_lane_id(cfg):
+        binding_reasons.append("funding_source_snapshot_db_mismatch")
+    if lane.get("output_dir") not in (None, str(db_path.parent)):
+        binding_reasons.append("funding_source_snapshot_db_mismatch")
+    if metadata.get("db_path_reference") not in (None, str(db_path)):
+        binding_reasons.append("funding_source_snapshot_db_mismatch")
+    if metadata.get("ledger_batch_id") != str(target_batch_id):
+        binding_reasons.append("funding_source_snapshot_unreferenced_or_orphaned")
+    if binding_reasons:
+        return None, str(path), sorted(set(binding_reasons))
+
+    return raw, str(path), []
+
+
 def _clean_carry_status_from_reasons(reason_codes: list[str]) -> str:
     reason_set = set(reason_codes)
     if not reason_set:
@@ -2556,32 +2615,62 @@ def _build_funding_clean_carry_stamp(
     if not isinstance(snapshot_report, Mapping):
         snapshot_report = {}
     snapshot_status = snapshot_report.get("status")
-    snapshot_reason_codes = snapshot_report.get("reason_codes")
-    if isinstance(snapshot_reason_codes, list):
-        reason_codes.extend(str(reason) for reason in snapshot_reason_codes)
 
+    # When the committed ledger spans more than one batch, the full-ledger gate
+    # requires an explicit ``full_window`` sidecar (PR #119/#120): an 8h batch
+    # snapshot structurally cannot cover the multi-batch span. In that case the
+    # verifier SELECTS the writer-emitted full-window sidecar by its exact
+    # batch-bound path (no ambiguous discovery) instead of the DB-linked batch
+    # snapshot. Single-batch ledgers keep the historical batch selection.
+    full_window_required = _full_ledger_requires_full_window_scope(conn)
+    expected_scope = SNAPSHOT_SCOPE_FULL_WINDOW if full_window_required else None
     envelope: dict[str, Any] | None = None
-    if snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING:
-        reason_codes.append("funding_source_snapshot_missing")
-    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE:
-        reason_codes.append(FUNDING_CLEAN_CARRY_REASON_AMBIGUOUS_MULTIPLE)
-    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_DIGEST_MISMATCH:
-        reason_codes.append("funding_source_snapshot_digest_mismatch")
-    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_SCHEMA_UNSUPPORTED:
-        reason_codes.append("funding_source_snapshot_schema_unsupported")
-    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_PAYLOAD_INVALID:
-        reason_codes.append(FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID)
-    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_DB_OR_LANE_MISMATCH:
-        reason_codes.append("funding_source_snapshot_db_mismatch")
-    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_PENDING_OR_ORPHANED:
-        reason_codes.append("funding_source_snapshot_unreferenced_or_orphaned")
-    elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_PRESENT_VALID:
-        envelope, read_reasons = _read_snapshot_envelope_for_clean_gate(
-            snapshot_report
+    expected_ledger_batch_id: str | None = None
+
+    if full_window_required:
+        target_batch = _funding_clean_carry_target_batch(conn)
+        target_batch_id = (
+            int(target_batch["batch_id"]) if target_batch is not None else None
         )
-        reason_codes.extend(read_reasons)
+        envelope, full_window_path, full_window_reasons = (
+            _resolve_full_window_snapshot_for_gate(db_path, cfg, target_batch_id)
+        )
+        reason_codes.extend(full_window_reasons)
+        expected_ledger_batch_id = (
+            str(target_batch_id) if target_batch_id is not None else None
+        )
+        resolution_fields["full_window_scope_required"] = True
+        resolution_fields["full_window_snapshot_selected_path"] = full_window_path
     else:
-        reason_codes.append("funding_source_snapshot_missing")
+        snapshot_reason_codes = snapshot_report.get("reason_codes")
+        if isinstance(snapshot_reason_codes, list):
+            reason_codes.extend(str(reason) for reason in snapshot_reason_codes)
+        if snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_MISSING:
+            reason_codes.append("funding_source_snapshot_missing")
+        elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_AMBIGUOUS_MULTIPLE:
+            reason_codes.append(FUNDING_CLEAN_CARRY_REASON_AMBIGUOUS_MULTIPLE)
+        elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_DIGEST_MISMATCH:
+            reason_codes.append("funding_source_snapshot_digest_mismatch")
+        elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_SCHEMA_UNSUPPORTED:
+            reason_codes.append("funding_source_snapshot_schema_unsupported")
+        elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_PAYLOAD_INVALID:
+            reason_codes.append(FUNDING_CLEAN_CARRY_REASON_PAYLOAD_INVALID)
+        elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_DB_OR_LANE_MISMATCH:
+            reason_codes.append("funding_source_snapshot_db_mismatch")
+        elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_PENDING_OR_ORPHANED:
+            reason_codes.append("funding_source_snapshot_unreferenced_or_orphaned")
+        elif snapshot_status == FUNDING_SOURCE_SNAPSHOT_STATUS_PRESENT_VALID:
+            envelope, read_reasons = _read_snapshot_envelope_for_clean_gate(
+                snapshot_report
+            )
+            reason_codes.extend(read_reasons)
+        else:
+            reason_codes.append("funding_source_snapshot_missing")
+        expected_ledger_batch_id = (
+            str(snapshot_report["target_batch_id"])
+            if snapshot_report.get("target_batch_id") is not None
+            else None
+        )
 
     if envelope is not None:
         payload = _payload_dict(envelope)
