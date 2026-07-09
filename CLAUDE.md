@@ -40,11 +40,25 @@ State exactly which rungs you ran; if you skipped one, say why.
   explicit caveats. `GO`/`PASSED`/`SURVIVED` mean "not killed by this test", not approval.
 - Prefer minimal diffs. Update/add tests with code changes.
 
+## Model routing
+
+Default to `sonnet` for Qnty implementation and verification. Use `haiku` only for
+low-risk search/summarization/mechanical docs work (grep, file listing, log/TODO
+summaries, typo/formatting-only edits, obvious mechanical refactors with existing
+tests). Use `opus` only for architecture, research-method, statistical-validity,
+ledger/receipt/pre-registration-sensitive reasoning, or subtle regressions after a
+cheaper model fails. Use `fable` only if available for long-running agentic planning /
+repo-wide refactor decomposition / very-long-context synthesis. Escalate only with a
+brief reason + expected payoff, then return to `sonnet` for ordinary implementation;
+never keep an expensive model active just because it was needed earlier. Never route
+risky source/ledger edits to the cheapest model.
+
 ## Plugin usage
 - Relevant: code-review (review diffs), github (PR/issue read; don't mutate GH state
   unasked), security-guidance, hookify, claude-md-management.
-- Not applicable here: frontend-design, playwright, typescript-lsp (no UI/TS).
-- context7 only if a numpy/pandas/requests API is genuinely uncertain.
+- Not applicable here (disabled repo-local in `.claude/settings.local.json`):
+  frontend-design, playwright, typescript-lsp, context7. Re-enable context7 only if a
+  numpy/pandas/requests API is genuinely uncertain.
 
 ## Memory / MemPalace
 
