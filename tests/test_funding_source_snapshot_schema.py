@@ -661,6 +661,8 @@ def test_reason_codes_are_pinned_schema_values() -> None:
         "funding_timestamp_outside_tolerance",
         "funding_timestamp_open_boundary",
         "funding_resum_mismatch",
+        "funding_source_full_window_snapshot_missing",
+        "funding_source_snapshot_scope_mismatch",
     }
 
 
