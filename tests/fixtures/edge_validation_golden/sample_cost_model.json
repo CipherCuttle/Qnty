@@ -1,0 +1,9 @@
+{
+  "cost_model_version": "1.0",
+  "description": "Fixture-only cost-model assumptions for offline edge validation (PR C). Assumptions only; not applied to any trade and not a strategy PnL.",
+  "commission_bps_per_side": 5.0,
+  "slippage_bps_per_side": 5.0,
+  "spread_bps_per_side": 1.0,
+  "funding_cost_placeholder": 0.0,
+  "notes": "Round-trip = per-side * 2 (entry + exit). Funding rate may be negative (received). Long-only / 1x lane only. EDGE_UNPROVEN / BLOCK_LIVE_INTEGRATION remain."
+}

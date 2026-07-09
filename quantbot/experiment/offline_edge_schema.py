@@ -35,14 +35,24 @@ class ReceiptMetadata(TypedDict):
     pipeline_description: str
 
 
-class CostModelAssumptions(TypedDict):
-    """Deterministic cost-model assumptions used during validation."""
+class CostModelAssumptions(TypedDict, total=False):
+    """Deterministic cost-model assumptions used during validation.
+
+    The original PR-A keys (slippage/commission/heat_cap/vol_*) remain for
+    backwards compatibility.  PR C adds fixture-only cost-model fields
+    (``cost_model_version``, ``spread_bps_per_side``, ``funding_cost_placeholder``).
+    ``total=False`` keeps every key optional so existing receipts stay valid.
+    """
 
     slippage_bps_per_side: float
     commission_bps_per_side: float
     heat_cap: float
     vol_lookback_bars: int
     vol_floor: float
+    # PR C — fixture-only cost-model additions.
+    cost_model_version: str
+    spread_bps_per_side: float
+    funding_cost_placeholder: float
 
 
 class StageMetrics(TypedDict):
