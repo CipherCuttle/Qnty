@@ -24,6 +24,7 @@ qnty-replay = "quantbot.cli:main"
 qnty-experiment = "quantbot.experiment_cli:main"
 qnty-walkforward = "quantbot.walkforward_cli:main"
 qnty-index = "quantbot.index_cli:main"
+qnty-full-window-emit = "quantbot.paper.funding_source_full_window_emit_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
