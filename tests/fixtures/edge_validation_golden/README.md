@@ -155,3 +155,21 @@ paper engine, does **not** run walk-forward, does **not** create Lane B, and
 does **not** emit `EDGE_CANDIDATE`. The CLI verdict remains `SKELETON_ONLY`.
 `EDGE_UNPROVEN` / `BLOCK_LIVE_INTEGRATION` remain in force; long-only / 1x is
 the only assumed lane.
+
+## Real Validation Receipt Skeleton (no new fixtures added)
+
+Added no new fixture files here. This slice implements
+[`offline_edge_real_validation.py`](../../../quantbot/experiment/offline_edge_real_validation.py)
+— the schema/skeleton for the first *real* offline validation receipt
+described in
+[QNTY_OFFLINE_EDGE_VALIDATION_REAL_VALIDATION_EXECUTION_PLAN.md](../../../docs/status/QNTY_OFFLINE_EDGE_VALIDATION_REAL_VALIDATION_EXECUTION_PLAN.md).
+Its tests in
+[`test_offline_edge_real_validation.py`](../../../tests/experiment/test_offline_edge_real_validation.py)
+use inline fixture data (fingerprints, timestamps) rather than files in this
+directory, since the split-builder and cost-case matrix are pure functions
+over opaque strings, not real bar/funding data.
+
+**Scope note:** this slice does **not** compute returns, PnL, Sharpe, or run
+any engine, and does **not** emit `OFFLINE_EDGE_CANDIDATE` — every receipt it
+builds is fixed to `final_offline_verdict: BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+`EDGE_UNPROVEN` / `BLOCK_LIVE_INTEGRATION` remain in force.
