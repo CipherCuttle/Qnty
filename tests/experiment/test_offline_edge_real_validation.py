@@ -35,6 +35,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_observational_adjustments,
     materialize_funding_to_bars_alignment_diagnostics,
     materialize_funding_to_bars_temporal_joinability_diagnostics,
+    materialize_funding_to_bars_timestamp_convention_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -2730,3 +2731,527 @@ class TestFundingToBarsTemporalJoinabilityDiagnostics:
                 funding_timestamps=[_T1, _T2, _T3],
                 split_definitions=splits,
             )
+
+
+# ── Funding-to-bars timestamp convention / offset diagnostics tests ────
+
+
+_B1 = "2026-01-01T00:00:00Z"
+_B2 = "2026-01-02T00:00:00Z"
+_B3 = "2026-01-03T00:00:00Z"
+_B4 = "2026-01-04T00:00:00Z"
+
+_B1_PLUS_8H = "2026-01-01T08:00:00Z"
+_B2_PLUS_8H = "2026-01-02T08:00:00Z"
+_B3_PLUS_8H = "2026-01-03T08:00:00Z"
+
+_B1_MINUS_8H = "2025-12-31T16:00:00Z"
+_B2_MINUS_8H = "2026-01-01T16:00:00Z"
+_B3_MINUS_8H = "2026-01-02T16:00:00Z"
+
+_B1_PLUS_1H = "2026-01-01T01:00:00Z"
+_B2_PLUS_1H = "2026-01-02T01:00:00Z"
+_B3_PLUS_1H = "2026-01-03T01:00:00Z"
+
+_B1_PLUS_2H = "2026-01-01T02:00:00Z"
+_B2_PLUS_2H = "2026-01-02T02:00:00Z"
+
+
+class TestFundingToBarsTimestampConventionDiagnostics:
+    @staticmethod
+    def _inventory(
+        tmp_path: Path,
+        *,
+        bars_timestamps: list[str],
+        funding_timestamps: list[str],
+        bars_filename: str = "BTCUSDT_8h_ohlcv.csv",
+        funding_filename: str = "BTCUSDT_funding.csv",
+    ) -> dict:
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir(exist_ok=True)
+        funding_dir.mkdir(exist_ok=True)
+        _write_bars_csv_with_timestamps(bars_dir, bars_filename, bars_timestamps)
+        _write_funding_csv_with_timestamps(
+            funding_dir, funding_filename, funding_timestamps
+        )
+        return build_real_validation_input_inventory(
+            bars_dir=bars_dir, funding_dir=funding_dir
+        )
+
+    def _build(
+        self, tmp_path, *, split_definitions=None, candidate_offsets=None, **kwargs
+    ):
+        inventory = self._inventory(tmp_path, **kwargs)
+        return materialize_funding_to_bars_timestamp_convention_diagnostics(
+            inventory=inventory,
+            split_definitions=split_definitions or _two_split_windows(),
+            candidate_offsets=candidate_offsets,
+        )
+
+    # 1. Exact 0h match ranks 0h as best.
+    def test_exact_0h_match_ranks_0h_best(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2, _B3],
+            funding_timestamps=[_B1, _B2, _B3],
+        )
+        assert result["calculation_status"] == (
+            "FUNDING_TO_BARS_TIMESTAMP_CONVENTION_DIAGNOSTIC_ONLY"
+        )
+        assert result["timestamp_match_policy"] == (
+            "DIAGNOSTIC_EXACT_AND_SHIFTED_UTC_TIMESTAMP_SETS_ONLY"
+        )
+        assert result["funding_application_status"] == "NOT_EXECUTED"
+        assert result["symbol_count"] == 1
+        symbol = result["symbols"][0]
+        assert symbol["symbol"] == "BTCUSDT"
+        assert symbol["funding_application_status"] == "NOT_EXECUTED"
+        best = symbol["best_offset_by_matched_count"]
+        assert best["offset_label"] == "0h"
+        assert best["matched_timestamp_count"] == 3
+        assert best["tie_count"] == 1
+        zero_entry = next(o for o in symbol["offsets"] if o["offset_label"] == "0h")
+        assert zero_entry["exact_shifted_set_status"] == (
+            "EXACT_SHIFTED_TIMESTAMP_SET_MATCH"
+        )
+        assert zero_entry["shift_direction"] == "BARS_SHIFTED_BEFORE_COMPARISON_TO_FUNDING"
+        assert "best_offset_by_bars_match_ratio" in symbol
+        assert "best_offset_by_funding_match_ratio" in symbol
+
+    # 2. Constant +8h shifted match ranks +8h best; funding is not applied.
+    def test_constant_plus_8h_shift_ranks_plus8h_best(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2, _B3],
+            funding_timestamps=[_B1_PLUS_8H, _B2_PLUS_8H, _B3_PLUS_8H],
+        )
+        symbol = result["symbols"][0]
+        best = symbol["best_offset_by_matched_count"]
+        assert best["offset_label"] == "+8h"
+        assert best["matched_timestamp_count"] == 3
+        zero_entry = next(o for o in symbol["offsets"] if o["offset_label"] == "0h")
+        assert zero_entry["matched_timestamp_count"] == 0
+        assert symbol["funding_application_status"] == "NOT_EXECUTED"
+        assert result["funding_application_status"] == "NOT_EXECUTED"
+        # No row-level joined/applied data leaks into the diagnostic payload.
+        assert "funding_adjusted_bars" not in symbol
+        assert "joined_rows" not in symbol
+
+    # 3. Constant -8h shifted match ranks -8h best.
+    def test_constant_minus_8h_shift_ranks_minus8h_best(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2, _B3],
+            funding_timestamps=[_B1_MINUS_8H, _B2_MINUS_8H, _B3_MINUS_8H],
+        )
+        symbol = result["symbols"][0]
+        best = symbol["best_offset_by_matched_count"]
+        assert best["offset_label"] == "-8h"
+        assert best["matched_timestamp_count"] == 3
+
+    # 4. Partial mixed-regime timestamps produce partial best-offset diagnostics.
+    def test_partial_mixed_regime_produces_partial_diagnostics(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2, _B3, _B4],
+            funding_timestamps=[_B1, _B2_PLUS_8H, _B3, _B4],
+        )
+        symbol = result["symbols"][0]
+        best = symbol["best_offset_by_matched_count"]
+        assert best["offset_label"] == "0h"
+        assert 0 < best["matched_timestamp_count"] < symbol["bars_timestamp_count"]
+        zero_entry = next(o for o in symbol["offsets"] if o["offset_label"] == "0h")
+        assert zero_entry["exact_shifted_set_status"] == (
+            "PARTIAL_SHIFTED_TIMESTAMP_SET_MATCH"
+        )
+
+    # 5. Equal row counts with offset timestamps do not claim exact match.
+    def test_equal_row_counts_offset_timestamps_no_exact_claim(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2, _B3],
+            funding_timestamps=[_B1_PLUS_1H, _B2_PLUS_1H, _B3_PLUS_1H],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["bars_timestamp_count"] == symbol["funding_timestamp_count"] == 3
+        zero_entry = next(o for o in symbol["offsets"] if o["offset_label"] == "0h")
+        assert zero_entry["exact_shifted_set_status"] == "NO_SHIFTED_TIMESTAMP_MATCH"
+        assert zero_entry["matched_timestamp_count"] == 0
+        plus1h_entry = next(o for o in symbol["offsets"] if o["offset_label"] == "+1h")
+        assert plus1h_entry["exact_shifted_set_status"] == (
+            "EXACT_SHIFTED_TIMESTAMP_SET_MATCH"
+        )
+        assert symbol["best_offset_by_matched_count"]["offset_label"] == "+1h"
+
+    # 6. No overlap produces zero shifted matches for all candidates.
+    def test_no_overlap_zero_shifted_matches_all_candidates(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2],
+            funding_timestamps=[_T10, _T11],
+        )
+        symbol = result["symbols"][0]
+        assert all(o["matched_timestamp_count"] == 0 for o in symbol["offsets"])
+        assert symbol["best_offset_by_matched_count"]["matched_timestamp_count"] == 0
+        assert symbol["best_offset_by_matched_count"]["tie_count"] == len(
+            result["candidate_offsets"]
+        )
+
+    # 7. Both sides empty emits empty-both style diagnostics safely.
+    def test_both_sides_empty(self, tmp_path):
+        result = self._build(tmp_path, bars_timestamps=[], funding_timestamps=[])
+        symbol = result["symbols"][0]
+        assert symbol["bars_timestamp_count"] == 0
+        assert symbol["funding_timestamp_count"] == 0
+        assert all(
+            o["exact_shifted_set_status"] == "EMPTY_BOTH" for o in symbol["offsets"]
+        )
+        assert symbol["nearest_funding_delta_seconds_histogram"] == []
+        assert symbol["most_common_nearest_funding_delta_seconds"] is None
+        assert symbol["nearest_delta_sample_size"] == 0
+        assert symbol["bars_mode_step_seconds"] is None
+        assert symbol["bars_non_mode_step_count"] == 0
+        assert symbol["bars_residue_mod_8h_counts"] == []
+
+    # 8. Bars cadence mode and non-mode step count are emitted.
+    def test_bars_cadence_mode_and_non_mode_step_count(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2, _B3, "2026-01-05T00:00:00Z"],
+            funding_timestamps=[_B1, _B2, _B3, "2026-01-05T00:00:00Z"],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["bars_mode_step_seconds"] == 86400
+        assert symbol["bars_non_mode_step_count"] == 1
+
+    # 9. Funding cadence mode and non-mode step count are emitted.
+    def test_funding_cadence_mode_and_non_mode_step_count(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2, _B3, "2026-01-07T00:00:00Z"],
+            funding_timestamps=[_B1, _B2, _B3, "2026-01-07T00:00:00Z"],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["funding_mode_step_seconds"] == 86400
+        assert symbol["funding_non_mode_step_count"] == 1
+
+    # 10. Residue modulo 8h counts distinguish two conventions.
+    def test_residue_mod_8h_distinguishes_conventions(self, tmp_path):
+        # +8h is itself a multiple of the 8h modulus, so it alone would not
+        # move the residue bucket; use a +1h convention to prove the residue
+        # histogram actually distinguishes conventions.
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2, _B3],
+            funding_timestamps=[_B1_PLUS_1H, _B2_PLUS_1H, _B3_PLUS_1H],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["bars_residue_mod_8h_counts"] == [
+            {"residue_seconds": 0, "residue_label": "00:00:00", "count": 3}
+        ]
+        assert symbol["funding_residue_mod_8h_counts"] == [
+            {"residue_seconds": 3600, "residue_label": "01:00:00", "count": 3}
+        ]
+
+    # 11. Nearest-delta histogram records diagnostic deltas but does not join.
+    def test_nearest_delta_histogram_records_but_does_not_join(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2],
+            funding_timestamps=[_B1_PLUS_2H, _B2_PLUS_2H],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["nearest_funding_delta_seconds_histogram"] == [
+            {"delta_seconds": 7200, "count": 2}
+        ]
+        assert symbol["most_common_nearest_funding_delta_seconds"] == 7200
+        assert symbol["nearest_delta_sample_size"] == 2
+        assert "funding_adjusted_bars" not in symbol
+        assert "joined_rows" not in symbol
+
+    # 12. Per-split best-offset diagnostics use existing split boundary policy.
+    def test_per_split_best_offset_uses_existing_boundary_policy(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T2, _T3],
+            split_definitions=_two_split_windows(),
+        )
+        symbol = result["symbols"][0]
+        splits = {split["split_id"]: split for split in symbol["splits"]}
+        # split_00: train window [T1, T1) is empty; validation [T1, T2) excludes T2.
+        assert splits["split_00"]["train_window"]["bars_count"] == 0
+        assert splits["split_00"]["validation_window"]["bars_count"] == 1
+        assert splits["split_00"]["validation_window"]["matched_count_at_0h"] == 1
+        assert splits["split_00"]["validation_window"]["status_at_0h"] == (
+            "EXACT_SHIFTED_TIMESTAMP_SET_MATCH"
+        )
+        # split_01: train window [T1, T2) excludes T2; validation [T2, T3] is
+        # final and inclusive of both ends, so it covers T2 and T3.
+        assert splits["split_01"]["train_window"]["bars_count"] == 1
+        assert splits["split_01"]["validation_window"]["bars_count"] == 2
+        assert splits["split_01"]["validation_window"]["matched_count_at_0h"] == 2
+        assert splits["split_01"]["validation_window"]["status_at_0h"] == (
+            "EXACT_SHIFTED_TIMESTAMP_SET_MATCH"
+        )
+
+    # 13. Duplicate bars timestamp fails closed.
+    def test_duplicate_bars_timestamp_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="Duplicate timestamp"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T1],
+                funding_timestamps=[_T1],
+            )
+
+    # 14. Duplicate funding timestamp fails closed.
+    def test_duplicate_funding_timestamp_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="Duplicate fundingTime"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1],
+                funding_timestamps=[_T1, _T1],
+            )
+
+    # 15. Non-monotonic timestamps fail closed.
+    def test_non_monotonic_timestamps_fail_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="Non-monotonic timestamp"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T2, _T1],
+                funding_timestamps=[_T1],
+            )
+
+    # 16. Malformed timestamps fail closed.
+    def test_malformed_timestamps_fail_closed(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\nnot-a-time,1,1,1,1,1\n"
+        )
+        _write_funding_csv_with_timestamps(
+            funding_dir, "BTCUSDT_funding.csv", [_T1]
+        )
+        with pytest.raises(ValueError, match="Malformed timestamp"):
+            inventory = build_real_validation_input_inventory(
+                bars_dir=bars_dir, funding_dir=funding_dir
+            )
+            materialize_funding_to_bars_timestamp_convention_diagnostics(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    # 17. Missing timestamp/fundingTime header fails closed.
+    @pytest.mark.parametrize("missing_role", ["bars", "funding"])
+    def test_missing_timestamp_header_fails_closed(self, tmp_path, missing_role):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        if missing_role == "bars":
+            (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+                "open,high,low,close,volume\n1,1,1,1,1\n"
+            )
+            expected_match = "Missing timestamp column"
+        else:
+            (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+                "timestamp,open,high,low,close,volume\n" f"{_T1},1,1,1,1,1\n"
+            )
+        if missing_role == "funding":
+            (funding_dir / "BTCUSDT_funding.csv").write_text(
+                "fundingRate,markPrice\n0.0001,50000.0\n"
+            )
+            expected_match = "Missing fundingTime column"
+        else:
+            _write_funding_csv_with_timestamps(
+                funding_dir, "BTCUSDT_funding.csv", [_T1]
+            )
+
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir, funding_dir=funding_dir
+        )
+        with pytest.raises(ValueError, match=expected_match):
+            materialize_funding_to_bars_timestamp_convention_diagnostics(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    # 18. Inventory hash mismatch fails closed.
+    def test_inventory_hash_mismatch_fails_closed(self, tmp_path):
+        inventory = self._inventory(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T2, _T3],
+        )
+        (tmp_path / "bars" / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n" f"{_T1},1,1,1,1,1\n"
+        )
+        with pytest.raises(ValueError, match="Inventoried SHA256 changed"):
+            materialize_funding_to_bars_timestamp_convention_diagnostics(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    # 19. Invalid candidate offset definition fails closed.
+    def test_invalid_candidate_offset_definition_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="Invalid candidate offset definition"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1],
+                funding_timestamps=[_T1],
+                candidate_offsets=["not-a-pair"],
+            )
+
+    def test_candidate_offsets_missing_zero_baseline_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="0-second baseline"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1],
+                funding_timestamps=[_T1],
+                candidate_offsets=[("+1h", 3600)],
+            )
+
+    def test_duplicate_candidate_offset_label_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="Duplicate candidate offset label"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1],
+                funding_timestamps=[_T1],
+                candidate_offsets=[("0h", 0), ("0h", 3600)],
+            )
+
+    # 20. CLI receipt includes the new section for real-style filenames.
+    def test_cli_receipt_contains_timestamp_convention_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+
+        out_dir = Path("/tmp") / f"qnty_cli_convention_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                    "--funding-dir",
+                    str(funding_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_to_bars_timestamp_convention_diagnostics" in written
+            section = written["funding_to_bars_timestamp_convention_diagnostics"]
+            assert section["calculation_status"] == (
+                "FUNDING_TO_BARS_TIMESTAMP_CONVENTION_DIAGNOSTIC_ONLY"
+            )
+            assert section["timestamp_match_policy"] == (
+                "DIAGNOSTIC_EXACT_AND_SHIFTED_UTC_TIMESTAMP_SETS_ONLY"
+            )
+            assert section["funding_application_status"] == "NOT_EXECUTED"
+            assert section["symbols"][0]["symbol"] == "BTCUSDT"
+            assert len(section["candidate_offsets"]) == 13
+            # Existing sections are preserved alongside the new one.
+            assert "funding_to_bars_alignment_diagnostics" in written
+            assert "funding_to_bars_temporal_joinability_diagnostics" in written
+            assert written["final_offline_verdict"] == (
+                BLOCKED_BY_VALIDATION_IMPLEMENTATION
+            )
+            assert "EDGE_CANDIDATE" not in json.dumps(written)
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # 21. CLI without funding omits the section.
+    def test_cli_without_funding_omits_timestamp_convention_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+
+        out_dir = Path("/tmp") / f"qnty_cli_convention_no_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_to_bars_timestamp_convention_diagnostics" not in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # 22. Receipt/safety-key regression remains green.
+    def test_safe_keys_and_receipt_guardrails(self, tmp_path):
+        diagnostics = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T2, _T3],
+        )
+        forbidden = {
+            "pnl", "sharpe", "edge", "strategy_performance", "return", "returns",
+            "net_return_value", "cost_adjusted_return", "funding_adjusted_return",
+            "price_change", "trade", "trades", "signal", "signals", "position",
+            "positions", "portfolio", "live_ready", "deploy_ready", "profitable",
+        }
+        assert forbidden.isdisjoint(_all_dict_keys(diagnostics))
+        assert "OFFLINE_EDGE_CANDIDATE" not in json.dumps(diagnostics)
+        assert "EDGE_CANDIDATE" not in json.dumps(diagnostics)
+
+        receipt = _base_receipt(
+            funding_to_bars_timestamp_convention_diagnostics=diagnostics
+        )
+        validate_real_validation_receipt(receipt)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        assert all(
+            value is False for value in receipt["required_outputs_present"].values()
+        )
+        assert all(
+            value is False
+            for value in receipt["forbidden_calculation_status"].values()
+        )
+        assert all(value is True for value in receipt["guardrail_status"].values())
+        serialized = json.dumps(receipt)
+        assert "OFFLINE_EDGE_CANDIDATE" not in serialized
+        assert "EDGE_CANDIDATE" not in serialized
