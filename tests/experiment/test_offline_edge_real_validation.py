@@ -359,3 +359,58 @@ class TestCLI:
             timeout=30,
         )
         assert result.returncode != 0
+
+
+class TestValidateRealValidationReceiptNestedProdPaths:
+    """Recursive production-path scanning for validate_real_validation_receipt.
+
+    Every receipt that contains a nested field with a value containing
+    ``/srv/qnty/`` (or resolving under ``/srv/qnty``) must be rejected
+    with ``AssertionError``.  Sibling paths like ``/srv/qnty2/...`` must
+    NOT be rejected.
+    """
+
+    def test_nested_split_definitions_source_path_rejected(self):
+        """A split_definitions entry with a source_path under /srv/qnty/ must be rejected."""
+        receipt = _base_receipt()
+        receipt["split_definitions"] = [
+            {"source_path": "/srv/qnty/data/foo.csv", "split_id": "split_00"}
+        ]
+        with pytest.raises(AssertionError, match=r"PROD_BASE|/srv/qnty"):
+            validate_real_validation_receipt(receipt)
+
+    def test_nested_cost_cases_debug_path_rejected(self):
+        """A cost_cases entry with a debug_path under /srv/qnty/ must be rejected."""
+        receipt = _base_receipt()
+        receipt["cost_cases"] = [
+            {"cost_case": "low", "debug_path": "/srv/qnty/output/foo.json"}
+        ]
+        with pytest.raises(AssertionError):
+            validate_real_validation_receipt(receipt)
+
+    def test_nested_validation_receipt_artifact_path_rejected(self):
+        """A deeply nested validation_receipt.artifact_path under /srv/qnty/ must be rejected."""
+        receipt = _base_receipt()
+        receipt["validation_receipt"]["artifact_path"] = "/srv/qnty/artifacts/result.json"
+        with pytest.raises(AssertionError):
+            validate_real_validation_receipt(receipt)
+
+    def test_sibling_prod_qnty2_not_rejected(self):
+        """A path under /srv/qnty2/ (sibling directory) must NOT be rejected."""
+        receipt = _base_receipt()
+        receipt["some_path"] = "/srv/qnty2/data/file.csv"
+        # The trailing-slash substring check: "/srv/qnty/" is NOT in "/srv/qnty2/data/file.csv".
+        # The boundary check also rejects correctly since /srv/qnty2 is not under /srv/qnty.
+        validate_real_validation_receipt(receipt)
+
+    def test_normal_skeleton_receipt_still_validates(self):
+        """A standard skeleton receipt with no prod paths must still pass validation."""
+        receipt = _base_receipt()
+        # No exception from the recursive scanner; existing validation logic applies.
+        validate_real_validation_receipt(receipt)
+
+    def test_writer_still_refuses_srv_qnty_output(self, tmp_path):
+        """write_real_validation_receipt must still refuse /srv/qnty output paths."""
+        receipt = _base_receipt()
+        with pytest.raises(ValueError):
+            write_real_validation_receipt(receipt, Path("/srv/qnty/output/receipt.json"))

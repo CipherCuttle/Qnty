@@ -98,6 +98,47 @@ def _refuse_if_not_tmp(resolved: Path) -> None:
         raise ValueError(f"Refusing path not under /tmp: {resolved}")
 
 
+def _assert_no_prod_paths_in_receipt(value: Any, path: str = "$") -> None:
+    """Recursively scan *value* for any occurrence of PROD_BASE (/srv/qnty).
+
+    Scans dict values, list/tuple values, and string values.
+
+    For strings:
+    - If the string contains ``/srv/qnty/`` as a substring, reject immediately
+      with ``AssertionError``.
+    - If the string looks like an absolute path, resolve it via ``_resolve``
+      and reject if it resolves under ``PROD_BASE`` using
+      ``os.path.commonpath`` boundary logic.
+    - Sibling safety: ``/srv/qnty2`` must NOT be falsely rejected by the
+      boundary check (``/srv/qnty/`` with trailing slash avoids false
+      positives on ``/srv/qnty2/...``).
+
+    For other types (int, float, bool, None): skip.
+    """
+    if isinstance(value, str):
+        # Raw substring check with trailing slash for sibling safety.
+        if "/srv/qnty/" in value:
+            raise AssertionError(
+                f"Receipt field {path!r} contains PROD_BASE path: {value!r}"
+            )
+        # Boundary check for absolute paths.
+        if value.startswith("/"):
+            try:
+                resolved = _resolve(Path(value))
+                if _is_under(resolved, PROD_BASE):
+                    raise AssertionError(
+                        f"Receipt field {path!r} resolves under PROD_BASE: {value!r}"
+                    )
+            except (OSError, ValueError):
+                pass
+    elif isinstance(value, dict):
+        for key, v in value.items():
+            _assert_no_prod_paths_in_receipt(v, path + "." + key)
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            _assert_no_prod_paths_in_receipt(v, path + "[" + str(i) + "]")
+
+
 # ── Split builder skeleton ──────────────────────────────────────────────
 
 
@@ -350,6 +391,8 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
         resolved = Path(str(output_path)).resolve()
         _refuse_if_prod_path(resolved)
         _refuse_if_not_tmp(resolved)
+
+    _assert_no_prod_paths_in_receipt(receipt)
 
 
 # ── Output writer ─────────────────────────────────────────────────────────
