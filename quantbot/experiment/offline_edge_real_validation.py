@@ -160,13 +160,33 @@ def _assert_no_prod_paths_in_receipt(value: Any, path: str = "$") -> None:
 
 
 def _parse_timestamp(ts: str) -> datetime:
-    """Parse an ISO-8601 timestamp string, handling trailing 'Z'."""
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    """Parse an ISO-8601 or Unix epoch timestamp as a UTC datetime.
+
+    Digit-only values are treated as epoch milliseconds when they contain
+    at least 13 digits (or exceed a 10-digit epoch-seconds range), otherwise
+    as epoch seconds. Naive ISO timestamps are deterministically interpreted
+    as UTC.
+    """
+    value = ts.strip()
+    if value.isdigit():
+        epoch_value = int(value)
+        if len(value) >= 13 or epoch_value > 10_000_000_000:
+            epoch_value /= 1000
+        return datetime.fromtimestamp(epoch_value, tz=timezone.utc)
+
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _format_timestamp(dt: datetime) -> str:
     """Format a datetime as ISO-8601 UTC string ending in 'Z'."""
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── Input inventory ─────────────────────────────────────────────────────
@@ -193,29 +213,35 @@ def _build_role_inventory(
 
     No price columns are parsed. No returns/PnL/Sharpe are computed.
     """
-    csv_paths = sorted(directory.glob("*.csv"))
+    csv_paths: list[Path] = []
     filenames: list[str] = []
     files: list[dict[str, Any]] = []
     total_size_bytes: int = 0
     sha256_digests: list[str] = []
 
-    for csv_path in csv_paths:
+    for csv_path in sorted(directory.glob("*.csv")):
+        resolved_csv = csv_path.resolve()
+        _refuse_if_prod_path(resolved_csv)
+        if not resolved_csv.is_file():
+            continue
+
+        csv_paths.append(csv_path)
         filename = csv_path.name
         filenames.append(filename)
-        size_bytes = csv_path.stat().st_size
+        size_bytes = resolved_csv.stat().st_size
         total_size_bytes += size_bytes
 
         # SHA256 of file content.
-        sha256_hex = hashlib.sha256(csv_path.read_bytes()).hexdigest()
+        sha256_hex = hashlib.sha256(resolved_csv.read_bytes()).hexdigest()
         sha256_digests.append(sha256_hex)
 
         # Timestamp metadata (CSV header scan, timestamp column only).
         row_count: int = 0
-        min_timestamp: str | None = None
-        max_timestamp: str | None = None
+        min_timestamp_dt: datetime | None = None
+        max_timestamp_dt: datetime | None = None
         has_timestamp_column: bool = False
 
-        with open(csv_path, newline="") as f:
+        with open(resolved_csv, newline="") as f:
             reader = csv.DictReader(f)
             if reader.fieldnames is None:
                 # Empty file — no columns at all.
@@ -228,15 +254,22 @@ def _build_role_inventory(
 
                 if actual_col is not None:
                     has_timestamp_column = True
-                    for row in reader:
+                    for row_number, row in enumerate(reader, start=2):
+                        row_count += 1
                         ts_val = row.get(actual_col)
                         if ts_val is not None and ts_val.strip():
                             ts_val = ts_val.strip()
-                            row_count += 1
-                            if min_timestamp is None or ts_val < min_timestamp:
-                                min_timestamp = ts_val
-                            if max_timestamp is None or ts_val > max_timestamp:
-                                max_timestamp = ts_val
+                            try:
+                                parsed_ts = _parse_timestamp(ts_val)
+                            except (OverflowError, OSError, ValueError) as exc:
+                                raise ValueError(
+                                    f"Malformed timestamp in {filename} row "
+                                    f"{row_number}, column {actual_col}: {ts_val!r}"
+                                ) from exc
+                            if min_timestamp_dt is None or parsed_ts < min_timestamp_dt:
+                                min_timestamp_dt = parsed_ts
+                            if max_timestamp_dt is None or parsed_ts > max_timestamp_dt:
+                                max_timestamp_dt = parsed_ts
                 else:
                     # Column not found — still count rows but no timestamp info.
                     for _ in reader:
@@ -247,8 +280,16 @@ def _build_role_inventory(
             "size_bytes": size_bytes,
             "sha256": sha256_hex,
             "row_count": row_count,
-            "min_timestamp": min_timestamp,
-            "max_timestamp": max_timestamp,
+            "min_timestamp": (
+                _format_timestamp(min_timestamp_dt)
+                if min_timestamp_dt is not None
+                else None
+            ),
+            "max_timestamp": (
+                _format_timestamp(max_timestamp_dt)
+                if max_timestamp_dt is not None
+                else None
+            ),
             "has_timestamp_column": has_timestamp_column,
         }
         files.append(file_entry)
@@ -361,8 +402,8 @@ def _derive_global_timestamp_bounds(
 
     Raises ``ValueError`` if no timestamp data is available.
     """
-    global_min: str | None = None
-    global_max: str | None = None
+    global_min: datetime | None = None
+    global_max: datetime | None = None
     bars_file_count: int = 0
     funding_file_count: int = 0
 
@@ -379,11 +420,13 @@ def _derive_global_timestamp_bounds(
             fmin = file_entry.get("min_timestamp")
             fmax = file_entry.get("max_timestamp")
             if fmin is not None:
-                if global_min is None or fmin < global_min:
-                    global_min = fmin
+                parsed_min = _parse_timestamp(fmin)
+                if global_min is None or parsed_min < global_min:
+                    global_min = parsed_min
             if fmax is not None:
-                if global_max is None or fmax > global_max:
-                    global_max = fmax
+                parsed_max = _parse_timestamp(fmax)
+                if global_max is None or parsed_max > global_max:
+                    global_max = parsed_max
 
     if global_min is None or global_max is None:
         raise ValueError(
@@ -391,7 +434,12 @@ def _derive_global_timestamp_bounds(
             "no timestamp data available"
         )
 
-    return global_min, global_max, bars_file_count, funding_file_count
+    return (
+        _format_timestamp(global_min),
+        _format_timestamp(global_max),
+        bars_file_count,
+        funding_file_count,
+    )
 
 
 def materialize_split_definitions_from_inventory(

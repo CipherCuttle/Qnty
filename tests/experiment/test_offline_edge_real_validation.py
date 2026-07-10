@@ -22,7 +22,9 @@ from pathlib import Path
 
 import pytest
 
+import quantbot.experiment.offline_edge_real_validation as real_validation
 from quantbot.experiment.offline_edge_real_validation import (
+    _parse_timestamp,
     build_cost_case_matrix,
     build_deterministic_split_definitions,
     build_real_validation_input_inventory,
@@ -88,6 +90,19 @@ def _write_tiny_funding_csv(tmp_path: Path, filename: str = "funding.csv") -> Pa
         "fundingTime,fundingRate,markPrice\n"
         "2026-01-01T12:00:00Z,0.0001,50000.0\n"
         "2026-01-02T12:00:00Z,0.0002,50100.0\n"
+    )
+    return path
+
+
+def _write_tiny_numeric_funding_csv(
+    tmp_path: Path, filename: str = "funding.csv"
+) -> Path:
+    """Write a tiny Binance-style funding CSV using epoch milliseconds."""
+    path = tmp_path / filename
+    path.write_text(
+        "fundingTime,fundingRate,markPrice\n"
+        "1625097600000,0.0001,50000.0\n"
+        "1625184000000,0.0002,50100.0\n"
     )
     return path
 
@@ -487,6 +502,20 @@ class TestBuildRealValidationInputInventory:
                 bars_dir=missing,
             )
 
+    def test_refuses_symlinked_csv_resolving_under_prod_base(
+        self, tmp_path, monkeypatch
+    ):
+        fake_prod = tmp_path / "fake_prod"
+        safe_bars = tmp_path / "safe_bars"
+        fake_prod.mkdir()
+        safe_bars.mkdir()
+        prod_csv = _write_tiny_bars_csv(fake_prod, "prod_bars.csv")
+        (safe_bars / "linked.csv").symlink_to(prod_csv)
+        monkeypatch.setattr(real_validation, "PROD_BASE", fake_prod)
+
+        with pytest.raises(ValueError, match="Refusing path under prod base"):
+            build_real_validation_input_inventory(bars_dir=safe_bars)
+
     def test_lists_only_csvs(self, tmp_path):
         # Create a CSV file and a non-CSV file.
         (tmp_path / "bars.csv").write_text("timestamp,val\n2026-01-01T00:00:00Z,1.0\n")
@@ -555,6 +584,20 @@ class TestBuildRealValidationInputInventory:
 # ── New: Timestamp metadata tests ───────────────────────────────────────
 
 
+class TestTimestampParser:
+    def test_epoch_milliseconds_are_parsed_as_utc(self):
+        parsed = _parse_timestamp("1625097600000")
+        assert parsed.isoformat() == "2021-07-01T00:00:00+00:00"
+
+    def test_naive_iso_is_deterministically_parsed_as_utc(self):
+        parsed = _parse_timestamp("2026-04-22T16:00:00")
+        assert parsed.isoformat() == "2026-04-22T16:00:00+00:00"
+
+    def test_z_iso_is_parsed_as_utc(self):
+        parsed = _parse_timestamp("2026-04-22T16:00:00Z")
+        assert parsed.isoformat() == "2026-04-22T16:00:00+00:00"
+
+
 class TestTimestampMetadata:
     def test_bars_timestamp_metadata_from_tiny_fixture_csv(self, tmp_path):
         _write_tiny_bars_csv(tmp_path)
@@ -580,6 +623,48 @@ class TestTimestampMetadata:
         assert file_entry["row_count"] == 2  # 2 data rows
         assert file_entry["min_timestamp"] == "2026-01-01T12:00:00Z"
         assert file_entry["max_timestamp"] == "2026-01-02T12:00:00Z"
+
+    def test_numeric_funding_time_builds_canonical_inventory(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+        _write_tiny_numeric_funding_csv(funding_dir)
+
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir,
+            funding_dir=funding_dir,
+        )
+        funding_role = [
+            role for role in inventory["roles"] if role["role"] == "funding"
+        ][0]
+        file_entry = funding_role["files"][0]
+        assert file_entry["row_count"] == 2
+        assert file_entry["min_timestamp"] == "2021-07-01T00:00:00Z"
+        assert file_entry["max_timestamp"] == "2021-07-02T00:00:00Z"
+
+    def test_row_count_includes_empty_timestamp_cells(self, tmp_path):
+        (tmp_path / "bars.csv").write_text(
+            "timestamp,close\n"
+            "2026-01-01T00:00:00Z,100\n"
+            ",101\n"
+            "2026-01-03T00:00:00Z,102\n"
+        )
+
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        file_entry = inventory["roles"][0]["files"][0]
+        assert file_entry["row_count"] == 3
+        assert file_entry["min_timestamp"] == "2026-01-01T00:00:00Z"
+        assert file_entry["max_timestamp"] == "2026-01-03T00:00:00Z"
+
+    def test_malformed_timestamp_fails_closed(self, tmp_path):
+        (tmp_path / "bars.csv").write_text(
+            "timestamp,close\nnot-a-timestamp,100\n"
+        )
+
+        with pytest.raises(ValueError, match="Malformed timestamp.*row 2"):
+            build_real_validation_input_inventory(bars_dir=tmp_path)
 
     def test_missing_timestamp_column_reported(self, tmp_path):
         csv_path = tmp_path / "no_ts.csv"
@@ -648,6 +733,29 @@ class TestSplitMaterialization:
         splits = materialize_split_definitions_from_inventory(inventory=inventory, split_count=3)
         for split in splits:
             assert split["calculation_status"] == "NOT_EXECUTED"
+
+    def test_mixed_iso_bars_and_epoch_ms_funding_materialize(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+        _write_tiny_numeric_funding_csv(funding_dir)
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir,
+            funding_dir=funding_dir,
+        )
+
+        splits = materialize_split_definitions_from_inventory(
+            inventory=inventory,
+            split_count=3,
+        )
+
+        assert len(splits) == 3
+        assert splits[-1]["validation_window"]["end"] == "2026-01-03T00:00:00Z"
+        for split in splits:
+            assert split["calculation_status"] == "NOT_EXECUTED"
+            assert {"return", "returns", "pnl", "sharpe"}.isdisjoint(split)
 
 
 # ── New: Receipt with inventory tests ───────────────────────────────────
@@ -985,7 +1093,7 @@ class TestCLIWithDirs:
         bars_dir.mkdir()
         funding_dir.mkdir()
         _write_tiny_bars_csv(bars_dir)
-        _write_tiny_funding_csv(funding_dir)
+        _write_tiny_numeric_funding_csv(funding_dir)
 
         out_dir = Path("/tmp") / f"qnty_cli_dirs_both_{uuid.uuid4().hex}"
         receipt_path = out_dir / "real_validation_receipt.json"
@@ -1018,6 +1126,15 @@ class TestCLIWithDirs:
                 written = json.load(f)
             assert written["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
             assert "input_inventory" in written
+            assert all(
+                value is False
+                for value in written["forbidden_calculation_status"].values()
+            )
+            assert all(
+                value is False for value in written["required_outputs_present"].values()
+            )
+            assert OFFLINE_EDGE_CANDIDATE not in result.stdout
+            assert OFFLINE_EDGE_CANDIDATE not in json.dumps(written)
             roles = written["input_inventory"]["roles"]
             role_names = {r["role"] for r in roles}
             assert role_names == {"bars", "funding"}
