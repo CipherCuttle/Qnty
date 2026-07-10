@@ -18,11 +18,17 @@ from quantbot.experiment.offline_edge_input_manifest import (
     discover_input_files,
 )
 from quantbot.experiment.offline_edge_cost_model import COST_MODEL_VERSION
+from quantbot.experiment.offline_edge_volnorm import (
+    reconstruct_fixture_volnorm_weights,
+)
 from quantbot.experiment.offline_edge_schema import (
     CostModelAssumptions,
+    FIXTURE_VOLNORM_STAGE_ID,
+    FIXTURE_VOLNORM_STAGE_NAME,
     PLACEHOLDER_SKELETON_NO_OP,
     ReceiptMetadata,
     SKELETON_ONLY,
+    StageMetrics,
     ValidationReceipt,
 )
 
@@ -96,6 +102,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory containing manifest JSON files",
     )
+    parser.add_argument(
+        "--volnorm-bars",
+        required=False,
+        default=None,
+        help=(
+            "Fixture bars CSV for deterministic fixture-only volnorm "
+            "reconstruction (no PnL, no trades, SKELETON_ONLY only)"
+        ),
+    )
     return parser
 
 
@@ -155,6 +170,8 @@ def main() -> None:
         refuse_prod_path(args.funding_dir)
     if args.manifest_dir is not None:
         refuse_prod_path(args.manifest_dir)
+    if args.volnorm_bars is not None:
+        refuse_prod_path(args.volnorm_bars)
 
     # Collect input paths for manifest fingerprinting
     input_dirs: list[Path] = []
@@ -174,6 +191,28 @@ def main() -> None:
         fingerprint = input_manifest_summary["fingerprint"]
     else:
         fingerprint = PLACEHOLDER_SKELETON_NO_OP
+
+    # Fixture-only volnorm reconstruction (PR D).  Deterministic weight rebuild
+    # from tiny fixture bar data only.  This computes NO strategy PnL, generates
+    # NO trades, replays NO funding, and keeps the verdict SKELETON_ONLY.
+    volnorm_fixture_summary: dict | None = None
+    per_stage_metrics: dict[str, StageMetrics] = {}
+    if args.volnorm_bars is not None:
+        volnorm_fixture_summary = reconstruct_fixture_volnorm_weights(
+            Path(args.volnorm_bars)
+        )
+        per_stage_metrics[FIXTURE_VOLNORM_STAGE_ID] = StageMetrics(
+            stage_id=FIXTURE_VOLNORM_STAGE_ID,
+            stage_name=FIXTURE_VOLNORM_STAGE_NAME,
+            status=SKELETON_ONLY,
+            summary=(
+                "fixture-only volnorm reconstruction: "
+                f"weight={volnorm_fixture_summary['inverse_vol_weight']:.6g}, "
+                f"realized_volatility="
+                f"{volnorm_fixture_summary['realized_volatility']:.6g} "
+                "(no PnL, no trades, not full V2)"
+            ),
+        )
 
     # Build skeleton receipt
     receipt_kwargs: dict = ValidationReceipt(
@@ -196,12 +235,14 @@ def main() -> None:
             spread_bps_per_side=1.0,
             funding_cost_placeholder=0.0,
         ),
-        per_stage_metrics={},
+        per_stage_metrics=per_stage_metrics,
         final_verdict=SKELETON_ONLY,
     )
     receipt: ValidationReceipt = dict(receipt_kwargs)  # type: ignore[arg-type]
     if input_manifest_summary is not None:
         receipt["input_manifest_summary"] = input_manifest_summary
+    if volnorm_fixture_summary is not None:
+        receipt["volnorm_fixture_summary"] = volnorm_fixture_summary
 
     # Ensure output directory exists
     output_dir = Path(args.output_dir)
@@ -219,6 +260,14 @@ def main() -> None:
         print(f"Input manifest fingerprint: {fingerprint}")
     else:
         print("Input manifest: PLACEHOLDER_SKELETON_NO_OP (no input dirs)")
+    if volnorm_fixture_summary is not None:
+        print(
+            "Volnorm fixture reconstruction: "
+            f"weight={volnorm_fixture_summary['inverse_vol_weight']:.6g}, "
+            f"realized_volatility="
+            f"{volnorm_fixture_summary['realized_volatility']:.6g} "
+            "(fixture-only, no PnL)"
+        )
     print("Mode: read-only skeleton (no-op)")
 
 

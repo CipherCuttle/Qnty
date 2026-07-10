@@ -520,6 +520,113 @@ class TestInputManifestSummaryInReceipt:
             assert receipt["input_manifest_summary"]["fingerprint"] == receipt["input_manifest_fingerprint"]
 
 
+class TestVolnormFixtureReconstruction:
+    """PR D — CLI --volnorm-bars produces a fixture-only volnorm summary."""
+
+    VOLNORM_BARS = FIXTURE_DIR / "sample_volnorm_bars.csv"
+
+    def test_cli_with_volnorm_bars_emits_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--volnorm-bars",
+                str(self.VOLNORM_BARS),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert "volnorm_fixture_summary" in receipt
+            summary = receipt["volnorm_fixture_summary"]
+            assert summary["volnorm_version"] == "fixture-0.1"
+            assert summary["bar_count"] == 6
+            assert "realized_volatility" in summary
+            assert "inverse_vol_weight" in summary
+
+    def test_cli_volnorm_stage_metric_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--volnorm-bars",
+                str(self.VOLNORM_BARS),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            stages = receipt["per_stage_metrics"]
+            assert "A" in stages
+            assert stages["A"]["stage_name"] == "fixture_volnorm_reconstruction"
+            assert stages["A"]["status"] == "SKELETON_ONLY"
+
+    def test_cli_volnorm_still_skeleton_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--volnorm-bars",
+                str(self.VOLNORM_BARS),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+            assert receipt["final_verdict"] != "EDGE_CANDIDATE"
+
+    def test_cli_volnorm_no_pnl_or_edge_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--volnorm-bars",
+                str(self.VOLNORM_BARS),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            for forbidden in ("pnl", "strategy_performance", "edge_candidate", "sharpe"):
+                assert forbidden not in receipt
+
+    def test_cli_refuses_srv_qnty_volnorm_bars(self) -> None:
+        result = _run_cli(
+            "--read-only",
+            "--output-dir",
+            "/tmp/safe_output",
+            "--volnorm-bars",
+            "/srv/qnty/data/bars/sample.csv",
+        )
+        assert result.returncode == 3
+        assert "Refusing" in result.stdout
+
+    def test_cli_volnorm_summary_deterministic(self) -> None:
+        summaries = []
+        for _ in range(2):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                result = _run_cli(
+                    "--read-only",
+                    "--output-dir",
+                    tmpdir,
+                    "--volnorm-bars",
+                    str(self.VOLNORM_BARS),
+                )
+                assert result.returncode == 0
+                with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                    summaries.append(json.load(f)["volnorm_fixture_summary"])
+        assert summaries[0] == summaries[1]
+
+    def test_cli_without_volnorm_bars_omits_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli("--read-only", "--output-dir", tmpdir)
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert "volnorm_fixture_summary" not in receipt
+
+
 class TestInputManifestFingerprintMatchesDirect:
     """Verify CLI's fingerprint matches a direct call to discover_input_files."""
 
