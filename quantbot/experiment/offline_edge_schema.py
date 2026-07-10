@@ -44,6 +44,17 @@ NO_EDGE: str = "NO_EDGE"
 NEEDS_MORE_DATA: str = "NEEDS_MORE_DATA"
 BLOCKED_BY_DATA_QUALITY: str = "BLOCKED_BY_DATA_QUALITY"
 
+# Real offline validation verdict vocabulary (see
+# docs/status/QNTY_OFFLINE_EDGE_VALIDATION_REAL_VALIDATION_EXECUTION_PLAN.md
+# section 6).  ``OFFLINE_EDGE_CANDIDATE`` is named here for schema/refusal
+# tests only — no PR may emit it until a later, separately implemented and
+# reviewed validator actually proves the gates in that plan's section 7.
+# The receipt-skeleton PR that introduces these constants may only emit
+# BLOCKED_BY_VALIDATION_IMPLEMENTATION.
+OFFLINE_EDGE_CANDIDATE: str = "OFFLINE_EDGE_CANDIDATE"
+BLOCKED_BY_VALIDATION_IMPLEMENTATION: str = "BLOCKED_BY_VALIDATION_IMPLEMENTATION"
+BLOCKED_BY_DATA_QUALITY_REGRESSION: str = "BLOCKED_BY_DATA_QUALITY_REGRESSION"
+
 
 # ── TypedDicts ─────────────────────────────────────────────────────────
 

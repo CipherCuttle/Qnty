@@ -234,3 +234,14 @@ The recommended next code PR, after this docs-only plan, should scope
 This PR records a plan only. `EDGE_UNPROVEN` and `BLOCK_LIVE_INTEGRATION`
 remain active. No validation was run. No PnL was computed. No code was
 changed. No report was promoted.
+
+## 13. Implementation status
+
+The §10 "next implementation slice" (receipt schema, deterministic split
+builder skeleton, cost-case matrix skeleton, `/tmp`-only output guard, CLI
+skeleton) is implemented in
+`quantbot/experiment/offline_edge_real_validation.py`
+(`feat/qnty-real-offline-validation-receipt-skeleton`). That PR only emits
+`BLOCKED_BY_VALIDATION_IMPLEMENTATION`; it does not compute returns, PnL,
+or Sharpe, and does not emit `OFFLINE_EDGE_CANDIDATE`. `EDGE_UNPROVEN` and
+`BLOCK_LIVE_INTEGRATION` remain active.
