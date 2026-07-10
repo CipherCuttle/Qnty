@@ -216,10 +216,14 @@ Expected, already-implemented failure modes you may hit while following §3:
 - **Missing input directory** — the CLI's `--data-quality-preflight` flag
   requires at least one of `--bars-dir` / `--funding-dir` / `--manifest-dir`;
   omitting all three exits 1 with `ERROR: --data-quality-preflight requires
-  at least one of --bars-dir, --funding-dir, or --manifest-dir`. A directory
-  path that does not exist on disk will surface as a per-file/per-directory
-  error in the receipt rather than a hard crash — check the `files` /
-  `error` fields in `data_quality_preflight_summary` for this case.
+  at least one of --bars-dir, --funding-dir, or --manifest-dir`. If one of
+  those flags points at a directory path that does not exist on disk,
+  `offline_edge_data_quality.inspect_input_directory` raises
+  `FileNotFoundError` and the CLI exits nonzero **before** any
+  `validation_receipt.json` is written — the error is not converted into a
+  receipt-level field, and there is no partial or partial-error receipt to
+  inspect for this case. If you hit this, fix the path (or create/provide
+  the intended offline directory) and rerun the command in §3 from scratch.
 - **Missing timestamp column** — surfaces as
   `readiness_flags.has_timestamp_column: false` and/or a non-empty
   `missing_required_columns` list; treat per §5/§6, do not treat as a script
