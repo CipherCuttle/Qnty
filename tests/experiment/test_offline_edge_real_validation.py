@@ -34,6 +34,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_gross_observational_returns,
     materialize_funding_observational_adjustments,
     materialize_funding_to_bars_alignment_diagnostics,
+    materialize_funding_to_bars_temporal_joinability_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -98,6 +99,30 @@ def _write_tiny_funding_csv(tmp_path: Path, filename: str = "funding.csv") -> Pa
         "2026-01-01T12:00:00Z,0.0001,50000.0\n"
         "2026-01-02T12:00:00Z,0.0002,50100.0\n"
     )
+    return path
+
+
+def _write_bars_csv_with_timestamps(
+    dir_path: Path, filename: str, timestamps: list[str]
+) -> Path:
+    """Write a bars CSV with the given ordered ISO timestamps and dummy OHLCV."""
+    path = dir_path / filename
+    lines = ["timestamp,open,high,low,close,volume"]
+    for index, ts in enumerate(timestamps):
+        lines.append(f"{ts},100.0,101.0,99.0,{100.0 + index},1000")
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def _write_funding_csv_with_timestamps(
+    dir_path: Path, filename: str, timestamps: list[str]
+) -> Path:
+    """Write a funding CSV with the given ordered ISO fundingTime values."""
+    path = dir_path / filename
+    lines = ["fundingTime,fundingRate,markPrice"]
+    for ts in timestamps:
+        lines.append(f"{ts},0.0001,50000.0")
+    path.write_text("\n".join(lines) + "\n")
     return path
 
 
@@ -2215,3 +2240,493 @@ class TestCLIWithDirs:
                 if (out_dir / "real_validation_receipt.json").exists():
                     (out_dir / "real_validation_receipt.json").unlink()
                 out_dir.rmdir()
+
+
+# ── Funding-to-bars temporal joinability diagnostics tests ─────────────
+
+
+_T0 = "2025-12-31T00:00:00Z"
+_T1 = "2026-01-01T00:00:00Z"
+_T2 = "2026-01-02T00:00:00Z"
+_T3 = "2026-01-03T00:00:00Z"
+_T4 = "2026-01-04T00:00:00Z"
+_T5 = "2026-01-05T00:00:00Z"
+_T10 = "2026-02-01T00:00:00Z"
+_T11 = "2026-02-02T00:00:00Z"
+
+
+class TestFundingToBarsTemporalJoinabilityDiagnostics:
+    @staticmethod
+    def _inventory(
+        tmp_path: Path,
+        *,
+        bars_timestamps: list[str],
+        funding_timestamps: list[str],
+        bars_filename: str = "BTCUSDT_8h_ohlcv.csv",
+        funding_filename: str = "BTCUSDT_funding.csv",
+    ) -> dict:
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir(exist_ok=True)
+        funding_dir.mkdir(exist_ok=True)
+        _write_bars_csv_with_timestamps(bars_dir, bars_filename, bars_timestamps)
+        _write_funding_csv_with_timestamps(
+            funding_dir, funding_filename, funding_timestamps
+        )
+        return build_real_validation_input_inventory(
+            bars_dir=bars_dir, funding_dir=funding_dir
+        )
+
+    def _build(self, tmp_path, *, split_definitions=None, **kwargs):
+        inventory = self._inventory(tmp_path, **kwargs)
+        return materialize_funding_to_bars_temporal_joinability_diagnostics(
+            inventory=inventory,
+            split_definitions=split_definitions or _two_split_windows(),
+        )
+
+    # 1. Exact timestamp-set match.
+    def test_exact_timestamp_set_match(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T2, _T3],
+        )
+        assert result["symbol_count"] == 1
+        assert result["exact_set_match_symbol_count"] == 1
+        assert result["partial_match_symbol_count"] == 0
+        assert result["no_exact_match_symbol_count"] == 0
+        symbol = result["symbols"][0]
+        assert symbol["symbol"] == "BTCUSDT"
+        assert symbol["exact_match_status"] == "EXACT_TIMESTAMP_SET_MATCH"
+        assert symbol["exact_matched_timestamp_count"] == 3
+        assert symbol["bars_without_funding_timestamp_count"] == 0
+        assert symbol["funding_without_bars_timestamp_count"] == 0
+        assert symbol["overlap_start"] == _T1
+        assert symbol["overlap_end"] == _T3
+        assert result["timestamp_match_policy"] == "EXACT_UTC_TIMESTAMP_ONLY"
+        assert result["funding_application_status"] == "NOT_EXECUTED"
+        assert symbol["funding_application_status"] == "NOT_EXECUTED"
+
+    # 2. Funding has only leading timestamps outside the bars range.
+    def test_funding_leading_timestamps_outside_bars_range(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T0, _T1, _T2, _T3],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["exact_match_status"] == "PARTIAL_TIMESTAMP_SET_MATCH"
+        assert symbol["exact_matched_timestamp_count"] == 3
+        assert symbol["funding_without_bars_timestamp_count"] == 1
+        assert symbol["funding_without_bars_in_overlap_count"] == 0
+        assert symbol["funding_outside_overlap_count"] == 1
+        assert symbol["bars_outside_overlap_count"] == 0
+        assert result["partial_match_symbol_count"] == 1
+
+    # 3. Funding has only trailing timestamps outside the bars range.
+    def test_funding_trailing_timestamps_outside_bars_range(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T2, _T3, _T4],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["exact_match_status"] == "PARTIAL_TIMESTAMP_SET_MATCH"
+        assert symbol["exact_matched_timestamp_count"] == 3
+        assert symbol["funding_without_bars_timestamp_count"] == 1
+        assert symbol["funding_without_bars_in_overlap_count"] == 0
+        assert symbol["funding_outside_overlap_count"] == 1
+        assert symbol["bars_outside_overlap_count"] == 0
+
+    # 4. Bars contain an internal timestamp missing from funding.
+    def test_bars_internal_timestamp_missing_from_funding(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T3],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["exact_match_status"] == "PARTIAL_TIMESTAMP_SET_MATCH"
+        assert symbol["exact_matched_timestamp_count"] == 2
+        assert symbol["bars_without_funding_timestamp_count"] == 1
+        assert symbol["bars_without_funding_in_overlap_count"] == 1
+        assert symbol["bars_outside_overlap_count"] == 0
+
+    # 5. Funding contains an internal timestamp missing from bars.
+    def test_funding_internal_timestamp_missing_from_bars(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T3],
+            funding_timestamps=[_T1, _T2, _T3],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["exact_match_status"] == "PARTIAL_TIMESTAMP_SET_MATCH"
+        assert symbol["exact_matched_timestamp_count"] == 2
+        assert symbol["funding_without_bars_timestamp_count"] == 1
+        assert symbol["funding_without_bars_in_overlap_count"] == 1
+        assert symbol["funding_outside_overlap_count"] == 0
+
+    # 6. Time ranges overlap but timestamps are offset with zero exact matches.
+    def test_overlapping_ranges_offset_timestamps_zero_exact_matches(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T3, _T5],
+            funding_timestamps=[_T2, _T4],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["exact_match_status"] == "NO_EXACT_TIMESTAMP_MATCH"
+        assert symbol["exact_matched_timestamp_count"] == 0
+        assert symbol["overlap_start"] == _T2
+        assert symbol["overlap_end"] == _T4
+        assert symbol["bars_without_funding_in_overlap_count"] == 1
+        assert symbol["bars_outside_overlap_count"] == 2
+        assert symbol["funding_without_bars_in_overlap_count"] == 2
+        assert symbol["funding_outside_overlap_count"] == 0
+        assert result["no_exact_match_symbol_count"] == 1
+
+    # 7. No time-range overlap.
+    def test_no_time_range_overlap(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2],
+            funding_timestamps=[_T10, _T11],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["exact_match_status"] == "NO_EXACT_TIMESTAMP_MATCH"
+        assert symbol["exact_matched_timestamp_count"] == 0
+        assert symbol["overlap_start"] is None
+        assert symbol["overlap_end"] is None
+        assert symbol["bars_outside_overlap_count"] == 2
+        assert symbol["funding_outside_overlap_count"] == 2
+
+    # 8. Both sides empty.
+    def test_both_sides_empty(self, tmp_path):
+        result = self._build(tmp_path, bars_timestamps=[], funding_timestamps=[])
+        symbol = result["symbols"][0]
+        assert symbol["exact_match_status"] == "EMPTY_BOTH"
+        assert symbol["bars_timestamp_count"] == 0
+        assert symbol["funding_timestamp_count"] == 0
+        assert symbol["overlap_start"] is None
+        assert symbol["overlap_end"] is None
+        assert result["exact_set_match_symbol_count"] == 0
+        assert result["partial_match_symbol_count"] == 0
+        assert result["no_exact_match_symbol_count"] == 0
+        assert result["symbol_count"] == 1
+
+    # 9. Duplicate bars timestamp fails closed.
+    def test_duplicate_bars_timestamp_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="Duplicate timestamp"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T1],
+                funding_timestamps=[_T1],
+            )
+
+    # 10. Duplicate funding timestamp fails closed.
+    def test_duplicate_funding_timestamp_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="Duplicate fundingTime"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1],
+                funding_timestamps=[_T1, _T1],
+            )
+
+    # 11. Non-monotonic timestamps fail closed.
+    def test_non_monotonic_timestamps_fail_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="Non-monotonic timestamp"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T2, _T1],
+                funding_timestamps=[_T1],
+            )
+
+    # 12. Malformed timestamps fail closed.
+    def test_malformed_timestamps_fail_closed(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\nnot-a-time,1,1,1,1,1\n"
+        )
+        _write_funding_csv_with_timestamps(
+            funding_dir, "BTCUSDT_funding.csv", [_T1]
+        )
+        with pytest.raises(ValueError, match="Malformed timestamp"):
+            inventory = build_real_validation_input_inventory(
+                bars_dir=bars_dir, funding_dir=funding_dir
+            )
+            materialize_funding_to_bars_temporal_joinability_diagnostics(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    # 13. Missing timestamp/fundingTime header fails closed.
+    @pytest.mark.parametrize("missing_role", ["bars", "funding"])
+    def test_missing_timestamp_header_fails_closed(self, tmp_path, missing_role):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        if missing_role == "bars":
+            (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+                "open,high,low,close,volume\n1,1,1,1,1\n"
+            )
+            expected_match = "Missing timestamp column"
+        else:
+            (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+                "timestamp,open,high,low,close,volume\n" f"{_T1},1,1,1,1,1\n"
+            )
+        if missing_role == "funding":
+            (funding_dir / "BTCUSDT_funding.csv").write_text(
+                "fundingRate,markPrice\n0.0001,50000.0\n"
+            )
+            expected_match = "Missing fundingTime column"
+        else:
+            _write_funding_csv_with_timestamps(
+                funding_dir, "BTCUSDT_funding.csv", [_T1]
+            )
+
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir, funding_dir=funding_dir
+        )
+        with pytest.raises(ValueError, match=expected_match):
+            materialize_funding_to_bars_temporal_joinability_diagnostics(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    # 14. Inventory hash mismatch fails closed.
+    def test_inventory_hash_mismatch_fails_closed(self, tmp_path):
+        inventory = self._inventory(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T2, _T3],
+        )
+        (tmp_path / "bars" / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n" f"{_T1},1,1,1,1,1\n"
+        )
+        with pytest.raises(ValueError, match="Inventoried SHA256 changed"):
+            materialize_funding_to_bars_temporal_joinability_diagnostics(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    # 15. Split train/validation boundary counts use the current policy.
+    def test_split_boundary_counts_use_current_inclusive_exclusive_policy(
+        self, tmp_path
+    ):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T2, _T3],
+            split_definitions=_two_split_windows(),
+        )
+        symbol = result["symbols"][0]
+        splits = {split["split_id"]: split for split in symbol["splits"]}
+        # split_00: train window [T1, T1) is empty; validation [T1, T2) excludes T2.
+        assert splits["split_00"]["train_window"]["bars_timestamp_count"] == 0
+        assert splits["split_00"]["validation_window"]["bars_timestamp_count"] == 1
+        assert (
+            splits["split_00"]["validation_window"]["exact_matched_timestamp_count"]
+            == 1
+        )
+        # split_01: train window [T1, T2) excludes T2; validation [T2, T3] is
+        # final and inclusive of both ends, so it covers T2 and T3.
+        assert splits["split_01"]["train_window"]["bars_timestamp_count"] == 1
+        assert splits["split_01"]["validation_window"]["bars_timestamp_count"] == 2
+        assert (
+            splits["split_01"]["validation_window"]["exact_matched_timestamp_count"]
+            == 2
+        )
+        assert splits["split_01"]["validation_window"]["status"] == (
+            "EXACT_TIMESTAMP_SET_MATCH"
+        )
+
+    # 16. CLI receipt contains the new section for real-style filenames.
+    def test_cli_receipt_contains_temporal_joinability_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+
+        out_dir = Path("/tmp") / f"qnty_cli_joinability_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                    "--funding-dir",
+                    str(funding_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_to_bars_temporal_joinability_diagnostics" in written
+            section = written["funding_to_bars_temporal_joinability_diagnostics"]
+            assert section["calculation_status"] == (
+                "FUNDING_TO_BARS_TEMPORAL_JOINABILITY_DIAGNOSTIC_ONLY"
+            )
+            assert section["timestamp_match_policy"] == "EXACT_UTC_TIMESTAMP_ONLY"
+            assert section["funding_application_status"] == "NOT_EXECUTED"
+            assert section["symbols"][0]["symbol"] == "BTCUSDT"
+            assert written["final_offline_verdict"] == (
+                BLOCKED_BY_VALIDATION_IMPLEMENTATION
+            )
+            assert "EDGE_CANDIDATE" not in json.dumps(written)
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # 17. CLI without funding omits the section.
+    def test_cli_without_funding_omits_temporal_joinability_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+
+        out_dir = Path("/tmp") / f"qnty_cli_joinability_no_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_to_bars_temporal_joinability_diagnostics" not in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # 18. Receipt and safety-key regression tests remain green.
+    def test_safe_keys_and_receipt_guardrails(self, tmp_path):
+        diagnostics = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T2, _T3],
+        )
+        forbidden = {
+            "pnl", "sharpe", "edge", "strategy_performance", "return", "returns",
+            "net_return_value", "cost_adjusted_return", "funding_adjusted_return",
+            "price_change", "trade", "trades", "signal", "signals", "position",
+            "positions", "portfolio", "live_ready", "deploy_ready", "profitable",
+        }
+        assert forbidden.isdisjoint(_all_dict_keys(diagnostics))
+        assert "OFFLINE_EDGE_CANDIDATE" not in json.dumps(diagnostics)
+        assert "EDGE_CANDIDATE" not in json.dumps(diagnostics)
+
+        receipt = _base_receipt(
+            funding_to_bars_temporal_joinability_diagnostics=diagnostics
+        )
+        validate_real_validation_receipt(receipt)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        assert all(
+            value is False for value in receipt["required_outputs_present"].values()
+        )
+        assert all(
+            value is False
+            for value in receipt["forbidden_calculation_status"].values()
+        )
+        assert all(value is True for value in receipt["guardrail_status"].values())
+        serialized = json.dumps(receipt)
+        assert "OFFLINE_EDGE_CANDIDATE" not in serialized
+        assert "EDGE_CANDIDATE" not in serialized
+
+    # 19. split_id=None fails closed rather than coercing to "None".
+    def test_none_split_id_fails_closed(self, tmp_path):
+        splits = _two_split_windows()
+        splits[0]["split_id"] = None
+        with pytest.raises(ValueError, match="Invalid split definition at index 0"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T2, _T3],
+                funding_timestamps=[_T1, _T2, _T3],
+                split_definitions=splits,
+            )
+
+    # 20. Non-string split_id fails closed rather than coercing to str().
+    def test_non_string_split_id_fails_closed(self, tmp_path):
+        splits = _two_split_windows()
+        splits[0]["split_id"] = 123
+        with pytest.raises(ValueError, match="Invalid split definition at index 0"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T2, _T3],
+                funding_timestamps=[_T1, _T2, _T3],
+                split_definitions=splits,
+            )
+
+    # 21. Empty-string split_id fails closed.
+    def test_empty_string_split_id_fails_closed(self, tmp_path):
+        splits = _two_split_windows()
+        splits[0]["split_id"] = ""
+        with pytest.raises(ValueError, match="Invalid split definition at index 0"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T2, _T3],
+                funding_timestamps=[_T1, _T2, _T3],
+                split_definitions=splits,
+            )
+
+    # 22. Non-mapping split definition fails closed instead of leaking a
+    # non-ValueError exception (e.g. AttributeError from .get() on a list).
+    def test_non_mapping_split_definition_fails_closed(self, tmp_path):
+        splits = _two_split_windows()
+        splits[0] = ["not", "a", "mapping"]
+        with pytest.raises(ValueError, match="Invalid split definition at index 0"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T2, _T3],
+                funding_timestamps=[_T1, _T2, _T3],
+                split_definitions=splits,
+            )
+
+    # 23. Duplicate split_id still fails closed.
+    def test_duplicate_split_id_fails_closed(self, tmp_path):
+        splits = _two_split_windows()
+        splits[1]["split_id"] = splits[0]["split_id"]
+        with pytest.raises(ValueError, match="Duplicate split_id at index 1"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T2, _T3],
+                funding_timestamps=[_T1, _T2, _T3],
+                split_definitions=splits,
+            )

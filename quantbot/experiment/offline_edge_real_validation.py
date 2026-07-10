@@ -57,6 +57,7 @@ __all__ = [
     "materialize_cost_case_observational_drag",
     "materialize_funding_observational_adjustments",
     "materialize_funding_to_bars_alignment_diagnostics",
+    "materialize_funding_to_bars_temporal_joinability_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -1566,6 +1567,444 @@ def materialize_funding_to_bars_alignment_diagnostics(
     }
 
 
+# ── Funding-to-bars temporal joinability diagnostics ─────────────────
+
+
+_JOINABILITY_EXACT = "EXACT_TIMESTAMP_SET_MATCH"
+_JOINABILITY_PARTIAL = "PARTIAL_TIMESTAMP_SET_MATCH"
+_JOINABILITY_NONE = "NO_EXACT_TIMESTAMP_MATCH"
+_JOINABILITY_EMPTY_BOTH = "EMPTY_BOTH"
+
+
+def _classify_timestamp_set_match(
+    left: set[datetime], right: set[datetime]
+) -> tuple[int, str]:
+    """Classify exact timestamp-set overlap between *left* and *right*."""
+    if not left and not right:
+        return 0, _JOINABILITY_EMPTY_BOTH
+    matched = len(left & right)
+    if matched == 0:
+        return 0, _JOINABILITY_NONE
+    if left == right:
+        return matched, _JOINABILITY_EXACT
+    return matched, _JOINABILITY_PARTIAL
+
+
+def _load_role_symbol_timestamps(
+    *,
+    role_entry: dict[str, Any],
+    filename_suffix: str,
+    timestamp_column: str,
+    role: str,
+) -> dict[str, dict[str, Any]]:
+    """Re-open inventoried *role* CSV files and extract validated timestamps.
+
+    Only *timestamp_column* is read. Verifies the inventoried SHA256 and row
+    count still match the file on disk, rejects duplicate/non-monotonic/
+    malformed/missing timestamp values, and returns each file's strictly
+    increasing timestamp list keyed by normalized symbol.
+    """
+    role_directory = Path(str(role_entry.get("directory", ""))).resolve()
+    _refuse_if_prod_path(role_directory)
+    if not role_directory.is_dir():
+        raise ValueError(f"Inventoried {role} directory is missing: {role_directory}")
+
+    files = role_entry.get("files")
+    if not isinstance(files, list):
+        raise ValueError(f"{role} files must be a list")
+
+    result: dict[str, dict[str, Any]] = {}
+    for file_entry in files:
+        if not isinstance(file_entry, dict):
+            raise ValueError(f"{role} file entry must be a mapping")
+        filename = file_entry.get("filename")
+        symbol = _symbol_from_filename(filename, filename_suffix, role)
+        if symbol in result:
+            raise ValueError(f"Duplicate {role} symbol: {symbol}")
+        filename = str(filename)
+
+        filename_path = Path(filename)
+        if filename_path.is_absolute() or "/" in filename or ".." in filename:
+            raise ValueError(
+                f"Inventoried filename must be a simple filename: {filename!r}"
+            )
+
+        inventoried_path = role_directory / filename
+        if inventoried_path.parent != role_directory:
+            raise ValueError(
+                f"Inventoried file path is outside role directory: {filename}"
+            )
+        if not inventoried_path.exists():
+            raise ValueError(f"Inventoried file is missing: {inventoried_path}")
+
+        resolved_file = inventoried_path.resolve()
+        _refuse_if_prod_path(resolved_file)
+        if (
+            not _is_under(resolved_file, role_directory)
+            and not inventoried_path.is_symlink()
+        ):
+            raise ValueError(
+                f"Inventoried file resolves outside role directory: {filename}"
+            )
+        if not resolved_file.is_file():
+            raise ValueError(f"Inventoried path is not a file: {resolved_file}")
+
+        inventoried_sha256 = file_entry.get("sha256")
+        reopened_sha256 = hashlib.sha256(resolved_file.read_bytes()).hexdigest()
+        if reopened_sha256 != inventoried_sha256:
+            raise ValueError(
+                f"Inventoried SHA256 changed for {filename}: "
+                f"expected {inventoried_sha256}, found {reopened_sha256}"
+            )
+
+        timestamps: list[datetime] = []
+        seen: set[datetime] = set()
+        previous_timestamp: datetime | None = None
+        total_rows = 0
+        with open(resolved_file, newline="") as csv_file:
+            reader = csv.reader(csv_file)
+            header = next(reader, None)
+            if header is None:
+                raise ValueError(f"Missing CSV header in {filename}")
+            header_lookup = {name.lower(): i for i, name in enumerate(header)}
+            timestamp_index = header_lookup.get(timestamp_column.lower())
+            if timestamp_index is None:
+                raise ValueError(f"Missing {timestamp_column} column in {filename}")
+
+            for row_number, row in enumerate(reader, start=2):
+                total_rows += 1
+                timestamp_value = (
+                    row[timestamp_index].strip()
+                    if timestamp_index < len(row)
+                    else ""
+                )
+                if not timestamp_value:
+                    raise ValueError(
+                        f"Missing {timestamp_column} value in {filename} row "
+                        f"{row_number}"
+                    )
+                try:
+                    timestamp = _parse_timestamp(timestamp_value)
+                except (OverflowError, OSError, ValueError) as exc:
+                    raise ValueError(
+                        f"Malformed {timestamp_column} in {filename} row "
+                        f"{row_number}: {timestamp_value!r}"
+                    ) from exc
+                if timestamp in seen:
+                    raise ValueError(
+                        f"Duplicate {timestamp_column} in {filename} row "
+                        f"{row_number}: {timestamp_value!r}"
+                    )
+                if previous_timestamp is not None and timestamp <= previous_timestamp:
+                    raise ValueError(
+                        f"Non-monotonic {timestamp_column} in {filename} row "
+                        f"{row_number}: {timestamp_value!r}"
+                    )
+                seen.add(timestamp)
+                timestamps.append(timestamp)
+                previous_timestamp = timestamp
+
+        inventoried_rows = file_entry.get("row_count")
+        if inventoried_rows is not None and total_rows != inventoried_rows:
+            raise ValueError(
+                f"Inventoried row count changed for {filename}: "
+                f"expected {inventoried_rows}, found {total_rows}"
+            )
+
+        result[symbol] = {"filename": filename, "timestamps": timestamps}
+
+    return result
+
+
+def _build_split_windows_for_joinability(
+    split_definitions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not split_definitions:
+        raise ValueError("split_definitions must not be empty")
+
+    for index, split in enumerate(split_definitions):
+        if not isinstance(split, dict):
+            raise ValueError(f"Invalid split definition at index {index}")
+
+    windows: list[dict[str, Any]] = []
+    seen_split_ids: set[str] = set()
+    final_validation_index = max(
+        range(len(split_definitions)),
+        key=lambda index: split_definitions[index].get("split_index", index),
+    )
+    for index, split in enumerate(split_definitions):
+        try:
+            split_id = split["split_id"]
+            if not isinstance(split_id, str) or not split_id:
+                raise ValueError(f"Invalid split_id at index {index}")
+            train = split["train_window"]
+            validation = split["validation_window"]
+            window = {
+                "split_id": split_id,
+                "train_start": _parse_timestamp(str(train["start"])),
+                "train_end": _parse_timestamp(str(train["end"])),
+                "validation_start": _parse_timestamp(str(validation["start"])),
+                "validation_end": _parse_timestamp(str(validation["end"])),
+                "include_validation_end": index == final_validation_index,
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid split definition at index {index}") from exc
+        if split_id in seen_split_ids:
+            raise ValueError(f"Duplicate split_id at index {index}")
+        seen_split_ids.add(split_id)
+        windows.append(window)
+    return windows
+
+
+def _joinability_window_summary(
+    bars: set[datetime], funding: set[datetime]
+) -> dict[str, Any]:
+    matched, status = _classify_timestamp_set_match(bars, funding)
+    return {
+        "bars_timestamp_count": len(bars),
+        "funding_timestamp_count": len(funding),
+        "exact_matched_timestamp_count": matched,
+        "bars_unmatched_count": len(bars - funding),
+        "funding_unmatched_count": len(funding - bars),
+        "status": status,
+    }
+
+
+def materialize_funding_to_bars_temporal_joinability_diagnostics(
+    *,
+    inventory: dict[str, Any],
+    split_definitions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Diagnose exact-timestamp joinability between bars and funding files.
+
+    Reads only the ``timestamp`` (bars) and ``fundingTime`` (funding)
+    columns directly from the inventoried CSV files and reports, per
+    normalized symbol and per existing deterministic split window, whether
+    the timestamp sets match exactly, partially overlap, contain no exact
+    matches, or are both empty. Matching is exact UTC-timestamp equality
+    only — no nearest-neighbour matching, forward/backward fill, tolerance
+    windows, interpolation, or assumed offsets.
+
+    This performs no price/rate reads, applies no funding to bars, and
+    computes no strategy, PnL, Sharpe, risk, or portfolio values.
+    """
+    windows = _build_split_windows_for_joinability(split_definitions)
+
+    roles = inventory.get("roles")
+    if not isinstance(roles, list):
+        raise ValueError("inventory.roles must be a list")
+    role_entries: dict[str, dict[str, Any]] = {}
+    for role_entry in roles:
+        if not isinstance(role_entry, dict):
+            raise ValueError("inventory role entry must be a mapping")
+        role = role_entry.get("role")
+        if role not in _ROLE_TIMESTAMP_COLUMNS:
+            raise ValueError(f"Unsupported inventoried role: {role!r}")
+        if role in role_entries:
+            raise ValueError(f"Duplicate inventoried role: {role}")
+        role_entries[role] = role_entry
+
+    if "bars" not in role_entries or "funding" not in role_entries:
+        raise ValueError(
+            "funding-to-bars temporal joinability diagnostics require both "
+            "bars and funding roles in the inventory"
+        )
+
+    bars_by_symbol = _load_role_symbol_timestamps(
+        role_entry=role_entries["bars"],
+        filename_suffix="_8h_ohlcv.csv",
+        timestamp_column="timestamp",
+        role="bars",
+    )
+    funding_by_symbol = _load_role_symbol_timestamps(
+        role_entry=role_entries["funding"],
+        filename_suffix="_funding.csv",
+        timestamp_column="fundingTime",
+        role="funding",
+    )
+
+    bars_symbols = set(bars_by_symbol)
+    funding_symbols = set(funding_by_symbol)
+    if bars_symbols != funding_symbols:
+        missing = sorted(bars_symbols - funding_symbols)
+        extra = sorted(funding_symbols - bars_symbols)
+        raise ValueError(
+            f"Symbol mismatch between bars and funding: missing={missing}, "
+            f"extra={extra}"
+        )
+
+    symbols: list[dict[str, Any]] = []
+    exact_count = 0
+    partial_count = 0
+    none_count = 0
+    for symbol in sorted(bars_symbols):
+        bars_entry = bars_by_symbol[symbol]
+        funding_entry = funding_by_symbol[symbol]
+        bars_timestamps: list[datetime] = bars_entry["timestamps"]
+        funding_timestamps: list[datetime] = funding_entry["timestamps"]
+        bars_set = set(bars_timestamps)
+        funding_set = set(funding_timestamps)
+
+        bars_first = bars_timestamps[0] if bars_timestamps else None
+        bars_last = bars_timestamps[-1] if bars_timestamps else None
+        funding_first = funding_timestamps[0] if funding_timestamps else None
+        funding_last = funding_timestamps[-1] if funding_timestamps else None
+
+        overlap_start: datetime | None = None
+        overlap_end: datetime | None = None
+        if bars_first is not None and funding_first is not None:
+            candidate_start = max(bars_first, funding_first)
+            candidate_end = min(bars_last, funding_last)
+            if candidate_start <= candidate_end:
+                overlap_start, overlap_end = candidate_start, candidate_end
+
+        bars_without_funding = bars_set - funding_set
+        funding_without_bars = funding_set - bars_set
+
+        if overlap_start is not None and overlap_end is not None:
+            bars_without_funding_in_overlap = sum(
+                1
+                for ts in bars_without_funding
+                if overlap_start <= ts <= overlap_end
+            )
+            funding_without_bars_in_overlap = sum(
+                1
+                for ts in funding_without_bars
+                if overlap_start <= ts <= overlap_end
+            )
+            bars_outside_overlap = sum(
+                1 for ts in bars_timestamps if ts < overlap_start or ts > overlap_end
+            )
+            funding_outside_overlap = sum(
+                1
+                for ts in funding_timestamps
+                if ts < overlap_start or ts > overlap_end
+            )
+        else:
+            bars_without_funding_in_overlap = 0
+            funding_without_bars_in_overlap = 0
+            bars_outside_overlap = len(bars_timestamps)
+            funding_outside_overlap = len(funding_timestamps)
+
+        matched_count, status = _classify_timestamp_set_match(bars_set, funding_set)
+        if status == _JOINABILITY_EXACT:
+            exact_count += 1
+        elif status == _JOINABILITY_PARTIAL:
+            partial_count += 1
+        elif status == _JOINABILITY_NONE:
+            none_count += 1
+
+        split_diagnostics: list[dict[str, Any]] = []
+        for window in windows:
+            train_bars = {
+                ts
+                for ts in bars_set
+                if _timestamp_in_window(
+                    ts, start=window["train_start"], end=window["train_end"]
+                )
+            }
+            train_funding = {
+                ts
+                for ts in funding_set
+                if _timestamp_in_window(
+                    ts, start=window["train_start"], end=window["train_end"]
+                )
+            }
+            validation_bars = {
+                ts
+                for ts in bars_set
+                if _timestamp_in_window(
+                    ts,
+                    start=window["validation_start"],
+                    end=window["validation_end"],
+                    include_end=window["include_validation_end"],
+                )
+            }
+            validation_funding = {
+                ts
+                for ts in funding_set
+                if _timestamp_in_window(
+                    ts,
+                    start=window["validation_start"],
+                    end=window["validation_end"],
+                    include_end=window["include_validation_end"],
+                )
+            }
+            split_diagnostics.append(
+                {
+                    "split_id": window["split_id"],
+                    "train_window": _joinability_window_summary(
+                        train_bars, train_funding
+                    ),
+                    "validation_window": _joinability_window_summary(
+                        validation_bars, validation_funding
+                    ),
+                }
+            )
+
+        symbols.append(
+            {
+                "symbol": symbol,
+                "bars_file": bars_entry["filename"],
+                "funding_file": funding_entry["filename"],
+                "bars_timestamp_count": len(bars_timestamps),
+                "funding_timestamp_count": len(funding_timestamps),
+                "bars_first_timestamp": (
+                    _format_timestamp(bars_first) if bars_first is not None else None
+                ),
+                "bars_last_timestamp": (
+                    _format_timestamp(bars_last) if bars_last is not None else None
+                ),
+                "funding_first_timestamp": (
+                    _format_timestamp(funding_first)
+                    if funding_first is not None
+                    else None
+                ),
+                "funding_last_timestamp": (
+                    _format_timestamp(funding_last)
+                    if funding_last is not None
+                    else None
+                ),
+                "overlap_start": (
+                    _format_timestamp(overlap_start)
+                    if overlap_start is not None
+                    else None
+                ),
+                "overlap_end": (
+                    _format_timestamp(overlap_end) if overlap_end is not None else None
+                ),
+                "exact_matched_timestamp_count": matched_count,
+                "bars_without_funding_timestamp_count": len(bars_without_funding),
+                "funding_without_bars_timestamp_count": len(funding_without_bars),
+                "bars_without_funding_in_overlap_count": (
+                    bars_without_funding_in_overlap
+                ),
+                "funding_without_bars_in_overlap_count": (
+                    funding_without_bars_in_overlap
+                ),
+                "bars_outside_overlap_count": bars_outside_overlap,
+                "funding_outside_overlap_count": funding_outside_overlap,
+                "exact_match_status": status,
+                "funding_application_status": "NOT_EXECUTED",
+                "calculation_status": (
+                    "FUNDING_TO_BARS_TEMPORAL_JOINABILITY_DIAGNOSTIC_ONLY"
+                ),
+                "splits": split_diagnostics,
+            }
+        )
+
+    return {
+        "calculation_status": "FUNDING_TO_BARS_TEMPORAL_JOINABILITY_DIAGNOSTIC_ONLY",
+        "timestamp_match_policy": "EXACT_UTC_TIMESTAMP_ONLY",
+        "funding_application_status": "NOT_EXECUTED",
+        "symbol_count": len(symbols),
+        "exact_set_match_symbol_count": exact_count,
+        "partial_match_symbol_count": partial_count,
+        "no_exact_match_symbol_count": none_count,
+        "symbols": symbols,
+    }
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -1633,6 +2072,7 @@ def build_real_validation_receipt(
     cost_case_observational_drag: dict | None = None,
     funding_observational_adjustments: dict | None = None,
     funding_to_bars_alignment_diagnostics: dict | None = None,
+    funding_to_bars_temporal_joinability_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -1707,6 +2147,10 @@ def build_real_validation_receipt(
     if funding_to_bars_alignment_diagnostics is not None:
         receipt["funding_to_bars_alignment_diagnostics"] = (
             funding_to_bars_alignment_diagnostics
+        )
+    if funding_to_bars_temporal_joinability_diagnostics is not None:
+        receipt["funding_to_bars_temporal_joinability_diagnostics"] = (
+            funding_to_bars_temporal_joinability_diagnostics
         )
 
     return receipt
@@ -1972,6 +2416,14 @@ def main(argv: list[str] | None = None) -> int:
                 if funding_dir is not None
                 else None
             )
+            funding_to_bars_temporal_joinability_diagnostics = (
+                materialize_funding_to_bars_temporal_joinability_diagnostics(
+                    inventory=inventory,
+                    split_definitions=split_definitions,
+                )
+                if funding_dir is not None
+                else None
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -1989,6 +2441,9 @@ def main(argv: list[str] | None = None) -> int:
             funding_observational_adjustments=funding_observational_adjustments,
             funding_to_bars_alignment_diagnostics=(
                 funding_to_bars_alignment_diagnostics
+            ),
+            funding_to_bars_temporal_joinability_diagnostics=(
+                funding_to_bars_temporal_joinability_diagnostics
             ),
         )
     else:
