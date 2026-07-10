@@ -1214,3 +1214,169 @@ class TestDataQualityPreflight:
             forbidden = {"pnl", "sharpe", "edge", "strategy_performance"}
             found = [k for k in forbidden if k in receipt]
             assert not found, f"Found forbidden top-level keys: {found}"
+
+
+class TestDataQualitySchemaProfiles:
+    """PR I — CLI --bars-dir / --funding-dir / --manifest-dir use distinct
+    schema-aware data-quality profiles instead of one generic required-column
+    set, so real Binance funding CSVs are not wrongly judged against the
+    bars/OHLCV column requirements."""
+
+    def _bars_only_dir(self, tmpdir: str) -> str:
+        bars_dir = os.path.join(tmpdir, "bars_only")
+        os.makedirs(bars_dir)
+        shutil.copy(
+            FIXTURE_DIR / "data_quality_clean.csv",
+            os.path.join(bars_dir, "data_quality_clean.csv"),
+        )
+        return bars_dir
+
+    def _funding_only_dir(self, tmpdir: str) -> str:
+        funding_dir = os.path.join(tmpdir, "funding_only")
+        os.makedirs(funding_dir)
+        shutil.copy(
+            FIXTURE_DIR / "data_quality_funding_clean.csv",
+            os.path.join(funding_dir, "data_quality_funding_clean.csv"),
+        )
+        return funding_dir
+
+    def test_cli_uses_bars_and_funding_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bars_dir = self._bars_only_dir(tmpdir)
+            funding_dir = self._funding_only_dir(tmpdir)
+            output_dir = os.path.join(tmpdir, "out")
+            result = _run_cli(
+                "--read-only",
+                "--output-dir", output_dir,
+                "--bars-dir", bars_dir,
+                "--funding-dir", funding_dir,
+                "--data-quality-preflight",
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            with open(os.path.join(output_dir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            summary = receipt["data_quality_preflight_summary"]
+            assert summary["roles"]["bars"]["profile"] == "bars"
+            assert summary["roles"]["funding"]["profile"] == "funding"
+            # Funding coverage must not fail for missing close/volume.
+            assert summary["missing_required_columns_by_role"]["funding"] == []
+            assert summary["readiness_flags"]["by_role"]["funding"][
+                "has_timestamp_column"
+            ] is True
+
+    def test_cli_funding_dir_null_mark_price_does_not_fail_readiness(self) -> None:
+        """Optional markPrice nulls must not fail funding readiness in the
+        CLI receipt — required-column-only null semantics (repair)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            funding_dir = os.path.join(tmpdir, "funding_null_mark_price")
+            os.makedirs(funding_dir)
+            shutil.copy(
+                FIXTURE_DIR / "data_quality_funding_null_mark_price.csv",
+                os.path.join(funding_dir, "data_quality_funding_null_mark_price.csv"),
+            )
+            output_dir = os.path.join(tmpdir, "out")
+            result = _run_cli(
+                "--read-only",
+                "--output-dir", output_dir,
+                "--funding-dir", funding_dir,
+                "--data-quality-preflight",
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            with open(os.path.join(output_dir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            summary = receipt["data_quality_preflight_summary"]
+            assert summary["has_null_values"] is False
+            assert summary["readiness_flags"]["no_null_required_values"] is True
+            assert summary["readiness_flags"]["by_role"]["funding"][
+                "no_null_required_values"
+            ] is True
+            # Final verdict and forbidden-key guardrails still hold.
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+            assert receipt["final_verdict"] != "EDGE_CANDIDATE"
+            for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
+                assert forbidden not in receipt
+            assert "EDGE_CANDIDATE" not in json.dumps(receipt)
+
+    def test_cli_funding_dir_missing_funding_time_flagged_not_bars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            funding_dir = os.path.join(tmpdir, "funding_bad")
+            os.makedirs(funding_dir)
+            with open(os.path.join(funding_dir, "no_funding_time.csv"), "w") as f:
+                f.write("symbol,fundingRate,markPrice\nBTCUSDT,0.0001,45000.0\n")
+            output_dir = os.path.join(tmpdir, "out")
+            result = _run_cli(
+                "--read-only",
+                "--output-dir", output_dir,
+                "--funding-dir", funding_dir,
+                "--data-quality-preflight",
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            with open(os.path.join(output_dir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            summary = receipt["data_quality_preflight_summary"]
+            assert "fundingTime" in summary["missing_required_columns_by_role"]["funding"]
+            assert summary["readiness_flags"]["by_role"]["funding"][
+                "has_timestamp_column"
+            ] is False
+
+    def test_cli_receipt_with_funding_schema_has_no_forbidden_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bars_dir = self._bars_only_dir(tmpdir)
+            funding_dir = self._funding_only_dir(tmpdir)
+            output_dir = os.path.join(tmpdir, "out")
+            result = _run_cli(
+                "--read-only",
+                "--output-dir", output_dir,
+                "--bars-dir", bars_dir,
+                "--funding-dir", funding_dir,
+                "--data-quality-preflight",
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            with open(os.path.join(output_dir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
+                assert forbidden not in receipt
+            assert "EDGE_CANDIDATE" not in json.dumps(receipt)
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+
+    def test_cli_manifest_dir_uses_manifest_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_dir = os.path.join(tmpdir, "manifest_only")
+            os.makedirs(manifest_dir)
+            with open(os.path.join(manifest_dir, "sample_manifest.json"), "w") as f:
+                f.write('{"bars": "a.csv"}')
+            output_dir = os.path.join(tmpdir, "out")
+            result = _run_cli(
+                "--read-only",
+                "--output-dir", output_dir,
+                "--manifest-dir", manifest_dir,
+                "--data-quality-preflight",
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            with open(os.path.join(output_dir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            summary = receipt["data_quality_preflight_summary"]
+            assert summary["roles"]["manifest"]["profile"] == "manifest"
+            # Manifest profile requires no OHLCV columns at all.
+            assert summary["missing_required_columns_by_role"]["manifest"] == []
+            manifest_entry = summary["roles"]["manifest"]["files"][0]
+            assert manifest_entry["kind"] == "manifest_json"
+            assert manifest_entry["is_valid_json"] is True
+
+    def test_cli_final_verdict_still_skeleton_only_with_schema_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bars_dir = self._bars_only_dir(tmpdir)
+            funding_dir = self._funding_only_dir(tmpdir)
+            output_dir = os.path.join(tmpdir, "out")
+            result = _run_cli(
+                "--read-only",
+                "--output-dir", output_dir,
+                "--bars-dir", bars_dir,
+                "--funding-dir", funding_dir,
+                "--data-quality-preflight",
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            with open(os.path.join(output_dir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+            assert receipt["final_verdict"] != "EDGE_CANDIDATE"

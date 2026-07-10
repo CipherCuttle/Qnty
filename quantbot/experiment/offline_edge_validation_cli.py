@@ -42,7 +42,9 @@ from quantbot.experiment.offline_edge_receipt import (
     write_receipt_json,
 )
 
-from quantbot.experiment.offline_edge_data_quality import build_data_quality_preflight
+from quantbot.experiment.offline_edge_data_quality import (
+    build_data_quality_preflight_for_roles,
+)
 from quantbot.experiment.offline_edge_schema import (
     DATA_QUALITY_STAGE_ID,
     DATA_QUALITY_STAGE_NAME,
@@ -256,17 +258,14 @@ def main() -> None:
     else:
         fingerprint = PLACEHOLDER_SKELETON_NO_OP
 
-    # --- Data quality preflight ---
+    # --- Data quality preflight (schema-aware per role) ---
     data_quality_preflight_summary = None
     if args.data_quality_preflight:
-        dq_paths: list[Path] = []
-        if args.bars_dir:
-            dq_paths.append(Path(args.bars_dir))
-        if args.funding_dir:
-            dq_paths.append(Path(args.funding_dir))
-        if args.manifest_dir:
-            dq_paths.append(Path(args.manifest_dir))
-        data_quality_preflight_summary = build_data_quality_preflight(dq_paths)
+        data_quality_preflight_summary = build_data_quality_preflight_for_roles(
+            bars_dir=Path(args.bars_dir) if args.bars_dir else None,
+            funding_dir=Path(args.funding_dir) if args.funding_dir else None,
+            manifest_dir=Path(args.manifest_dir) if args.manifest_dir else None,
+        )
 
     # Fixture-only volnorm reconstruction (PR D).  Deterministic weight rebuild
     # from tiny fixture bar data only.  This computes NO strategy PnL, generates

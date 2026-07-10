@@ -130,3 +130,28 @@ compute strategy PnL, generate trades, call the paper engine, replay real
 funding, run a full historical walk-forward, create Lane B, or emit
 `EDGE_CANDIDATE`. The CLI verdict remains `SKELETON_ONLY`. `EDGE_UNPROVEN` /
 `BLOCK_LIVE_INTEGRATION` remain in force; long-only / 1x is the only assumed lane.
+
+## PR I — Data-Quality Schema Profile Fixtures (Funding)
+
+Added in PR I, alongside the existing `data_quality_*.csv` bars-shaped
+fixtures from PR G:
+
+| File | Purpose |
+|------|---------|
+| [`data_quality_funding_clean.csv`](data_quality_funding_clean.csv) | Clean Binance funding-rate CSV (`symbol,fundingTime,fundingRate,markPrice`), 5 rows, monotonic |
+| [`data_quality_funding_duplicate_timestamp.csv`](data_quality_funding_duplicate_timestamp.csv) | Same schema with a duplicate `fundingTime` value |
+| [`data_quality_funding_non_monotonic.csv`](data_quality_funding_non_monotonic.csv) | Same schema with an out-of-order `fundingTime` value |
+| [`data_quality_funding_null_funding_rate.csv`](data_quality_funding_null_funding_rate.csv) | Same schema with a null `fundingRate` cell |
+| [`data_quality_funding_missing_funding_time.csv`](data_quality_funding_missing_funding_time.csv) | Missing the `fundingTime` column entirely |
+
+These are consumed by:
+- [`offline_edge_data_quality.py`](../../../quantbot/experiment/offline_edge_data_quality.py) — `SCHEMA_PROFILES["funding"]` validates against `symbol`/`fundingTime`/`fundingRate` (not `timestamp`/`close`/`volume`), and `build_data_quality_preflight_for_roles` keeps bars/funding/manifest requirements from leaking across roles
+- [`test_offline_edge_data_quality.py`](../../../tests/experiment/test_offline_edge_data_quality.py) — unit tests for the funding/manifest schema profiles and role-aware readiness
+- [`test_offline_edge_validation_cli.py`](../../../tests/experiment/test_offline_edge_validation_cli.py) — CLI tests exercising `--bars-dir`/`--funding-dir`/`--manifest-dir` with the correct profile per role
+
+**Scope note:** PR I only makes the existing read-only data-quality preflight
+schema-aware. It does **not** compute strategy PnL, does **not** call the
+paper engine, does **not** run walk-forward, does **not** create Lane B, and
+does **not** emit `EDGE_CANDIDATE`. The CLI verdict remains `SKELETON_ONLY`.
+`EDGE_UNPROVEN` / `BLOCK_LIVE_INTEGRATION` remain in force; long-only / 1x is
+the only assumed lane.
