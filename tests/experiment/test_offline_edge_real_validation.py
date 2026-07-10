@@ -29,6 +29,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     build_deterministic_split_definitions,
     build_real_validation_input_inventory,
     build_real_validation_receipt,
+    materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
     write_real_validation_receipt,
@@ -758,10 +759,237 @@ class TestSplitMaterialization:
             assert {"return", "returns", "pnl", "sharpe"}.isdisjoint(split)
 
 
+# ── Row materialization tests ─────────────────────────────────────
+
+
+def _two_split_windows() -> list[dict]:
+    return [
+        {
+            "split_id": "split_00",
+            "split_index": 0,
+            "train_window": {
+                "start": "2026-01-01T00:00:00Z",
+                "end": "2026-01-01T00:00:00Z",
+            },
+            "validation_window": {
+                "start": "2026-01-01T00:00:00Z",
+                "end": "2026-01-02T00:00:00Z",
+            },
+            "calculation_status": "NOT_EXECUTED",
+        },
+        {
+            "split_id": "split_01",
+            "split_index": 1,
+            "train_window": {
+                "start": "2026-01-01T00:00:00Z",
+                "end": "2026-01-02T00:00:00Z",
+            },
+            "validation_window": {
+                "start": "2026-01-02T00:00:00Z",
+                "end": "2026-01-03T00:00:00Z",
+            },
+            "calculation_status": "NOT_EXECUTED",
+        },
+    ]
+
+
+def _all_dict_keys(value: object) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(value, dict):
+        keys.update(value)
+        for nested in value.values():
+            keys.update(_all_dict_keys(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            keys.update(_all_dict_keys(nested))
+    return keys
+
+
+class TestRowMaterialization:
+    def test_assigns_timestamp_rows_deterministically(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+
+        first = materialize_input_rows_for_splits(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+        second = materialize_input_rows_for_splits(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+
+        assert first == second
+        file_result = first["roles"][0]["files"][0]
+        assert file_result["total_rows"] == 3
+        assert file_result["assigned_rows"] == 3
+        assert file_result["unassigned_rows"] == 0
+        assert file_result["calculation_status"] == "NOT_EXECUTED"
+
+    def test_validation_boundaries_are_start_inclusive_end_exclusive(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+
+        result = materialize_input_rows_for_splits(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+        counts = result["roles"][0]["files"][0]["per_split_counts"]
+
+        assert counts == [
+            {"split_id": "split_00", "train_rows": 0, "validation_rows": 1},
+            {"split_id": "split_01", "train_rows": 1, "validation_rows": 2},
+        ]
+
+    def test_includes_train_validation_counts_per_role_and_file(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+        _write_tiny_funding_csv(funding_dir)
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir,
+            funding_dir=funding_dir,
+        )
+
+        result = materialize_input_rows_for_splits(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+
+        assert {role["role"] for role in result["roles"]} == {"bars", "funding"}
+        for role in result["roles"]:
+            assert len(role["per_split_counts"]) == 2
+            assert len(role["files"][0]["per_split_counts"]) == 2
+            assert {"train_rows", "validation_rows"}.issubset(
+                role["per_split_counts"][0]
+            )
+
+    def test_outside_and_empty_timestamps_are_unassigned(self, tmp_path):
+        (tmp_path / "bars.csv").write_text(
+            "timestamp,close\n"
+            "2025-12-31T00:00:00Z,99\n"
+            ",100\n"
+            "2026-01-02T00:00:00Z,101\n"
+            "2026-01-04T00:00:00Z,102\n"
+        )
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+
+        result = materialize_input_rows_for_splits(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+        file_result = result["roles"][0]["files"][0]
+
+        assert file_result["total_rows"] == 4
+        assert file_result["assigned_rows"] == 1
+        assert file_result["unassigned_rows"] == 3
+        assert result["timestamp_policy"]["empty_timestamp"] == "UNASSIGNED"
+        assert result["timestamp_policy"]["malformed_timestamp"] == "FAIL_CLOSED"
+
+    def test_non_timestamp_values_are_not_interpreted(self, tmp_path):
+        (tmp_path / "bars.csv").write_text(
+            "timestamp,open,close\n"
+            "2026-01-01T00:00:00Z,not-a-number,not-a-timestamp\n"
+        )
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+
+        result = materialize_input_rows_for_splits(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+
+        assert result["roles"][0]["files"][0]["assigned_rows"] == 1
+
+    def test_missing_inventoried_file_fails_closed(self, tmp_path):
+        csv_path = _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        csv_path.unlink()
+
+        with pytest.raises(ValueError, match="Inventoried file is missing"):
+            materialize_input_rows_for_splits(
+                inventory=inventory,
+                split_definitions=_two_split_windows(),
+            )
+
+    def test_symlinked_csv_resolving_to_prod_is_refused(
+        self, tmp_path, monkeypatch
+    ):
+        role_dir = tmp_path / "bars"
+        fake_prod = tmp_path / "fake_prod"
+        role_dir.mkdir()
+        fake_prod.mkdir()
+        inventoried_csv = _write_tiny_bars_csv(role_dir)
+        inventory = build_real_validation_input_inventory(bars_dir=role_dir)
+        inventoried_csv.unlink()
+        prod_csv = _write_tiny_bars_csv(fake_prod, "prod.csv")
+        inventoried_csv.symlink_to(prod_csv)
+        monkeypatch.setattr(real_validation, "PROD_BASE", fake_prod)
+
+        with pytest.raises(ValueError, match="Refusing path under prod base"):
+            materialize_input_rows_for_splits(
+                inventory=inventory,
+                split_definitions=_two_split_windows(),
+            )
+
+    def test_metadata_contains_no_forbidden_calculation_keys(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        result = materialize_input_rows_for_splits(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+
+        forbidden = {
+            "price",
+            "price_change",
+            "return",
+            "returns",
+            "pnl",
+            "sharpe",
+            "edge",
+            "trade",
+            "trades",
+            "signal",
+            "signals",
+            "position",
+            "positions",
+        }
+        assert forbidden.isdisjoint(_all_dict_keys(result))
+
+
 # ── New: Receipt with inventory tests ───────────────────────────────────
 
 
 class TestReceiptWithInventory:
+    def test_receipt_with_row_materialization_validates(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        splits = _two_split_windows()
+        row_materialization = materialize_input_rows_for_splits(
+            inventory=inventory,
+            split_definitions=splits,
+        )
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_receipt_sha256="b" * 64,
+            code_commit_sha="c" * 40,
+            split_definitions=splits,
+            cost_cases=build_cost_case_matrix(),
+            row_materialization=row_materialization,
+        )
+
+        validate_real_validation_receipt(receipt)
+        assert receipt["row_materialization"] == row_materialization
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        assert all(value is False for value in receipt["required_outputs_present"].values())
+        assert all(
+            value is False
+            for value in receipt["forbidden_calculation_status"].values()
+        )
+        assert all(value is True for value in receipt["guardrail_status"].values())
+
     def test_receipt_with_input_inventory_validates(self, tmp_path):
         _write_tiny_bars_csv(tmp_path)
         inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
@@ -926,6 +1154,28 @@ class TestForbiddenKeysNested:
         # Should not raise.
         validate_real_validation_receipt(receipt)
 
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "price_change",
+            "trade",
+            "trades",
+            "signal",
+            "signals",
+            "position",
+            "positions",
+        ],
+    )
+    def test_new_exact_forbidden_keys_rejected_at_any_depth(self, key):
+        receipt = _base_receipt()
+        receipt["metadata"] = [{"nested": {key: "forbidden"}}]
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_edge_unproven_safe_key_is_not_substring_rejected(self):
+        receipt = _base_receipt()
+        validate_real_validation_receipt(receipt)
+
 
 # ── New: CLI with dirs tests ────────────────────────────────────────────
 
@@ -1001,6 +1251,9 @@ class TestCLIWithDirs:
                 written = json.load(f)
             assert written["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
             assert "input_inventory" in written
+            assert "row_materialization" in written
+            materialized_roles = written["row_materialization"]["roles"]
+            assert materialized_roles[0]["files"][0]["total_rows"] == 3
         finally:
             if receipt_path.exists():
                 receipt_path.unlink()
@@ -1126,6 +1379,7 @@ class TestCLIWithDirs:
                 written = json.load(f)
             assert written["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
             assert "input_inventory" in written
+            assert "row_materialization" in written
             assert all(
                 value is False
                 for value in written["forbidden_calculation_status"].values()
@@ -1138,6 +1392,10 @@ class TestCLIWithDirs:
             roles = written["input_inventory"]["roles"]
             role_names = {r["role"] for r in roles}
             assert role_names == {"bars", "funding"}
+            materialized_role_names = {
+                r["role"] for r in written["row_materialization"]["roles"]
+            }
+            assert materialized_role_names == {"bars", "funding"}
         finally:
             if receipt_path.exists():
                 receipt_path.unlink()

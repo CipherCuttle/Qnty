@@ -49,6 +49,7 @@ __all__ = [
     "write_real_validation_receipt",
     "build_real_validation_input_inventory",
     "materialize_split_definitions_from_inventory",
+    "materialize_input_rows_for_splits",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -82,6 +83,13 @@ FORBIDDEN_CALCULATION_KEYS = frozenset(
         "returns",
         "gross_return_value",
         "net_return_value",
+        "price_change",
+        "trade",
+        "trades",
+        "signal",
+        "signals",
+        "position",
+        "positions",
     }
 )
 
@@ -506,6 +514,218 @@ def materialize_split_definitions_from_inventory(
     return splits
 
 
+# ── Row assignment metadata ──────────────────────────────────────────
+
+
+_ROLE_TIMESTAMP_COLUMNS = {
+    "bars": "timestamp",
+    "funding": "fundingTime",
+}
+
+
+def _timestamp_in_window(
+    timestamp: datetime,
+    *,
+    start: datetime,
+    end: datetime,
+    include_end: bool = False,
+) -> bool:
+    """Return whether *timestamp* is in a deterministic split window."""
+    if include_end:
+        return start <= timestamp <= end
+    return start <= timestamp < end
+
+
+def materialize_input_rows_for_splits(
+    *,
+    inventory: dict,
+    split_definitions: list[dict],
+) -> dict:
+    """Count inventoried timestamp rows assigned to existing split windows.
+
+    Only the role-specific timestamp column is accessed. Empty timestamp cells
+    and rows outside every window are counted as unassigned; malformed
+    timestamps fail closed, matching inventory construction. Windows are
+    start-inclusive and end-exclusive, except the final validation window,
+    whose end is inclusive so the inventoried global maximum is covered.
+
+    The result contains coverage metadata only. It performs no calculations
+    and does not retain timestamps or any non-timestamp CSV values.
+    """
+    if not split_definitions:
+        raise ValueError("split_definitions must not be empty")
+
+    windows: list[dict[str, Any]] = []
+    final_validation_index = max(
+        range(len(split_definitions)),
+        key=lambda index: split_definitions[index].get("split_index", index),
+    )
+    for index, split in enumerate(split_definitions):
+        try:
+            train = split["train_window"]
+            validation = split["validation_window"]
+            windows.append(
+                {
+                    "split_id": str(split["split_id"]),
+                    "train_start": _parse_timestamp(str(train["start"])),
+                    "train_end": _parse_timestamp(str(train["end"])),
+                    "validation_start": _parse_timestamp(str(validation["start"])),
+                    "validation_end": _parse_timestamp(str(validation["end"])),
+                    "include_validation_end": index == final_validation_index,
+                }
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid split definition at index {index}") from exc
+
+    role_results: list[dict[str, Any]] = []
+    for role_entry in inventory.get("roles", []):
+        role = role_entry.get("role")
+        timestamp_column = _ROLE_TIMESTAMP_COLUMNS.get(role)
+        if timestamp_column is None:
+            raise ValueError(f"Unsupported inventoried role: {role!r}")
+
+        role_directory = Path(str(role_entry.get("directory", ""))).resolve()
+        _refuse_if_prod_path(role_directory)
+        if not role_directory.is_dir():
+            raise ValueError(f"Inventoried role directory is missing: {role_directory}")
+
+        role_split_counts = {
+            window["split_id"]: {"train_rows": 0, "validation_rows": 0}
+            for window in windows
+        }
+        file_results: list[dict[str, Any]] = []
+        role_total_rows = 0
+        role_assigned_rows = 0
+
+        for file_entry in role_entry.get("files", []):
+            filename = file_entry.get("filename")
+            if not isinstance(filename, str) or not filename:
+                raise ValueError(f"Invalid inventoried filename for role {role!r}")
+
+            resolved_file = (role_directory / filename).resolve()
+            _refuse_if_prod_path(resolved_file)
+            if not _is_under(resolved_file, role_directory):
+                raise ValueError(
+                    f"Inventoried file resolves outside role directory: {filename}"
+                )
+            if not resolved_file.exists():
+                raise ValueError(f"Inventoried file is missing: {resolved_file}")
+            if not resolved_file.is_file():
+                raise ValueError(f"Inventoried path is not a file: {resolved_file}")
+
+            per_split_counts = {
+                window["split_id"]: {"train_rows": 0, "validation_rows": 0}
+                for window in windows
+            }
+            total_rows = 0
+            assigned_rows = 0
+
+            with open(resolved_file, newline="") as csv_file:
+                reader = csv.reader(csv_file)
+                header = next(reader, None)
+                timestamp_index: int | None = None
+                if header is not None:
+                    header_lookup = {name.lower(): i for i, name in enumerate(header)}
+                    timestamp_index = header_lookup.get(timestamp_column.lower())
+
+                for row_number, row in enumerate(reader, start=2):
+                    total_rows += 1
+                    timestamp_value = (
+                        row[timestamp_index].strip()
+                        if timestamp_index is not None and timestamp_index < len(row)
+                        else ""
+                    )
+                    if not timestamp_value:
+                        continue
+                    try:
+                        timestamp = _parse_timestamp(timestamp_value)
+                    except (OverflowError, OSError, ValueError) as exc:
+                        raise ValueError(
+                            f"Malformed timestamp in {filename} row {row_number}, "
+                            f"column {timestamp_column}: {timestamp_value!r}"
+                        ) from exc
+
+                    row_was_assigned = False
+                    for window in windows:
+                        split_counts = per_split_counts[window["split_id"]]
+                        if _timestamp_in_window(
+                            timestamp,
+                            start=window["train_start"],
+                            end=window["train_end"],
+                        ):
+                            split_counts["train_rows"] += 1
+                            row_was_assigned = True
+                        if _timestamp_in_window(
+                            timestamp,
+                            start=window["validation_start"],
+                            end=window["validation_end"],
+                            include_end=window["include_validation_end"],
+                        ):
+                            split_counts["validation_rows"] += 1
+                            row_was_assigned = True
+                    if row_was_assigned:
+                        assigned_rows += 1
+
+            inventoried_rows = file_entry.get("row_count")
+            if inventoried_rows is not None and total_rows != inventoried_rows:
+                raise ValueError(
+                    f"Inventoried row count changed for {filename}: "
+                    f"expected {inventoried_rows}, found {total_rows}"
+                )
+
+            split_counts_list = []
+            for window in windows:
+                split_id = window["split_id"]
+                counts = per_split_counts[split_id]
+                split_counts_list.append({"split_id": split_id, **counts})
+                role_split_counts[split_id]["train_rows"] += counts["train_rows"]
+                role_split_counts[split_id]["validation_rows"] += counts[
+                    "validation_rows"
+                ]
+
+            file_results.append(
+                {
+                    "role": role,
+                    "filename": filename,
+                    "timestamp_column": timestamp_column,
+                    "total_rows": total_rows,
+                    "assigned_rows": assigned_rows,
+                    "unassigned_rows": total_rows - assigned_rows,
+                    "per_split_counts": split_counts_list,
+                    "calculation_status": "NOT_EXECUTED",
+                }
+            )
+            role_total_rows += total_rows
+            role_assigned_rows += assigned_rows
+
+        role_results.append(
+            {
+                "role": role,
+                "total_rows": role_total_rows,
+                "assigned_rows": role_assigned_rows,
+                "unassigned_rows": role_total_rows - role_assigned_rows,
+                "files": file_results,
+                "per_split_counts": [
+                    {"split_id": window["split_id"], **role_split_counts[window["split_id"]]}
+                    for window in windows
+                ],
+                "calculation_status": "NOT_EXECUTED",
+            }
+        )
+
+    return {
+        "metadata_only": True,
+        "timestamp_policy": {
+            "empty_timestamp": "UNASSIGNED",
+            "malformed_timestamp": "FAIL_CLOSED",
+            "window_start": "INCLUSIVE",
+            "window_end": "EXCLUSIVE_EXCEPT_FINAL_VALIDATION_INCLUSIVE",
+        },
+        "roles": role_results,
+        "calculation_status": "NOT_EXECUTED",
+    }
+
+
 # ── Cost-case matrix skeleton ────────────────────────────────────────────
 
 
@@ -570,6 +790,7 @@ def build_real_validation_receipt(
     output_status: str = BLOCKED_BY_VALIDATION_IMPLEMENTATION,
     rationale: str | None = None,
     input_inventory: dict[str, Any] | None = None,
+    row_materialization: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -633,6 +854,8 @@ def build_real_validation_receipt(
 
     if input_inventory is not None:
         receipt["input_inventory"] = input_inventory
+    if row_materialization is not None:
+        receipt["row_materialization"] = row_materialization
 
     return receipt
 
@@ -681,7 +904,9 @@ def _assert_no_forbidden_calculation_keys(value: Any, path: str = "$") -> None:
 
     Forbidden patterns (exact dict key match):
     ``pnl``, ``sharpe``, ``edge``, ``strategy_performance``,
-    ``return``, ``returns``, ``gross_return_value``, ``net_return_value``.
+    ``return``, ``returns``, ``gross_return_value``, ``net_return_value``,
+    ``price_change``, ``trade``, ``trades``, ``signal``, ``signals``,
+    ``position``, and ``positions``.
 
     Raises ``ValueError`` if any forbidden key is found at any nesting level.
     """
@@ -710,7 +935,9 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
 
     Also recursively scans for forbidden calculation keys at any nesting
     level (``pnl``, ``sharpe``, ``edge``, ``strategy_performance``,
-    ``return``, ``returns``, ``gross_return_value``, ``net_return_value``).
+    ``return``, ``returns``, ``gross_return_value``, ``net_return_value``,
+    ``price_change``, ``trade``, ``trades``, ``signal``, ``signals``,
+    ``position``, and ``positions``).
     """
     missing = _REQUIRED_TOP_LEVEL_KEYS - set(receipt.keys())
     if missing:
@@ -855,14 +1082,17 @@ def main(argv: list[str] | None = None) -> int:
                 bars_dir=bars_dir,
                 funding_dir=funding_dir,
             )
+            split_definitions = materialize_split_definitions_from_inventory(
+                inventory=inventory,
+                split_count=args.split_count,
+            )
+            row_materialization = materialize_input_rows_for_splits(
+                inventory=inventory,
+                split_definitions=split_definitions,
+            )
         except ValueError as exc:
-            print(f"FATAL: inventory build failed: {exc}")
+            print(f"FATAL: metadata materialization failed: {exc}")
             return 4
-
-        split_definitions = materialize_split_definitions_from_inventory(
-            inventory=inventory,
-            split_count=args.split_count,
-        )
 
         receipt = build_real_validation_receipt(
             input_manifest_fingerprint=args.input_manifest_fingerprint,
@@ -871,6 +1101,7 @@ def main(argv: list[str] | None = None) -> int:
             split_definitions=split_definitions,
             cost_cases=cost_cases,
             input_inventory=inventory,
+            row_materialization=row_materialization,
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
