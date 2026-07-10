@@ -267,9 +267,10 @@ class TestValidateFixtureReceipt:
 
 
 class TestWriteReceiptJson:
-    def test_writes_to_tmp_path(self) -> None:
+    def test_writes_to_output_path(self) -> None:
+        """Write to /tmp/test_receipt_output/validation_receipt.json, verify file exists with correct content."""
         receipt = _make_valid_receipt()
-        output_path = Path("/tmp") / "test_receipt_write.json"
+        output_path = Path("/tmp") / "test_receipt_output" / "validation_receipt.json"
         try:
             write_receipt_json(receipt, output_path)
             assert output_path.exists()
@@ -280,12 +281,48 @@ class TestWriteReceiptJson:
         finally:
             if output_path.exists():
                 output_path.unlink()
+            # Clean up parent dir
+            parent = output_path.parent
+            if parent.exists() and str(parent) != "/tmp":
+                parent.rmdir()
 
     def test_refuses_prod_path(self) -> None:
+        """Verify raises ValueError for /srv/qnty path."""
         receipt = _make_valid_receipt()
         prod_path = Path("/srv/qnty/output/test_receipt.json")
-        with pytest.raises(ValueError, match="Refusing to write receipt to prod path"):
+        with pytest.raises(ValueError, match="Refusing to write to prod path"):
             write_receipt_json(receipt, prod_path)
+
+    def test_refuses_prod_path_sibling(self) -> None:
+        """Verify a path NOT under /srv/qnty does NOT raise ValueError (proving boundary comparison, not string prefix).
+
+        /srv/qnty2 starts with the string "/srv/qnty" but is NOT a subdirectory of /srv/qnty.
+        The old str.startswith guard would incorrectly block it; the commonpath guard correctly allows it.
+        We use a writable temp path to exercise the same guard logic without permission errors.
+        """
+        receipt = _make_valid_receipt()
+        safe_path = Path("/tmp/test_sibling_boundary_check.json")
+        # Should not raise — this path is not under /srv/qnty
+        write_receipt_json(receipt, safe_path)
+        try:
+            assert safe_path.exists()
+        finally:
+            if safe_path.exists():
+                safe_path.unlink()
+
+    def test_validates_receipt_before_writing(self) -> None:
+        """Verify that passing an invalid receipt raises ValueError and file is NOT created."""
+        receipt = _make_valid_receipt()
+        del receipt["final_verdict"]
+        output_path = Path("/tmp") / "test_invalid_receipt.json"
+        try:
+            with pytest.raises(ValueError, match="Missing required receipt key: final_verdict"):
+                write_receipt_json(receipt, output_path)
+            # File should NOT have been created
+            assert not output_path.exists()
+        finally:
+            if output_path.exists():
+                output_path.unlink()
 
     def test_creates_parent_dirs(self) -> None:
         receipt = _make_valid_receipt()

@@ -772,6 +772,7 @@ class TestFullFixtureReceiptFlag:
     WALKFORWARD_BARS = FIXTURE_DIR / "sample_walkforward_bars.csv"
 
     def test_full_fixture_receipt_writes_full_receipt(self) -> None:
+        """Full receipt has all 10 top-level keys and guardrail booleans."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = _run_cli(
                 "--read-only",
@@ -781,47 +782,42 @@ class TestFullFixtureReceiptFlag:
                 str(self.VOLNORM_BARS),
                 "--walkforward-bars",
                 str(self.WALKFORWARD_BARS),
+                "--bars-dir",
+                str(FIXTURE_DIR),
                 "--full-fixture-receipt",
             )
             assert result.returncode == 0
-            # Normal output still written
-            assert os.path.exists(os.path.join(tmpdir, "validation_receipt.json"))
-            # Full receipt written to /tmp
-            full_path = "/tmp/validation_receipt.json"
-            assert os.path.exists(full_path)
-            try:
-                with open(full_path) as f:
-                    receipt = json.load(f)
-                # All 10 top-level keys present
-                expected_keys = {
-                    "validation_receipt",
-                    "input_manifest_fingerprint",
-                    "input_manifest_summary",
-                    "cost_model_assumptions",
-                    "per_stage_metrics",
-                    "volnorm_fixture_summary",
-                    "walkforward_fixture_summary",
-                    "guardrail_status",
-                    "final_verdict",
-                    "final_verdict_rationale",
-                }
-                assert set(receipt.keys()) == expected_keys
-                # Guardrail booleans
-                gs = receipt["guardrail_status"]
-                assert gs["edge_unproven"] is True
-                assert gs["block_live_integration"] is True
-                assert gs["clean_net_of_carry_is_not_edge"] is True
-                assert gs["long_only_1x_only"] is True
-                assert gs["fixture_only"] is True
-                # Verdict
-                assert receipt["final_verdict"] == "SKELETON_ONLY"
-                assert receipt["final_verdict"] != "EDGE_CANDIDATE"
-                # No forbidden keys
-                for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
-                    assert forbidden not in receipt
-            finally:
-                if os.path.exists(full_path):
-                    os.unlink(full_path)
+            output_path = os.path.join(tmpdir, "validation_receipt.json")
+            assert os.path.exists(output_path)
+            with open(output_path) as f:
+                receipt = json.load(f)
+            # All 10 top-level keys present
+            expected_keys = {
+                "validation_receipt",
+                "input_manifest_fingerprint",
+                "input_manifest_summary",
+                "cost_model_assumptions",
+                "per_stage_metrics",
+                "volnorm_fixture_summary",
+                "walkforward_fixture_summary",
+                "guardrail_status",
+                "final_verdict",
+                "final_verdict_rationale",
+            }
+            assert set(receipt.keys()) == expected_keys
+            # Guardrail booleans
+            gs = receipt["guardrail_status"]
+            assert gs["edge_unproven"] is True
+            assert gs["block_live_integration"] is True
+            assert gs["clean_net_of_carry_is_not_edge"] is True
+            assert gs["long_only_1x_only"] is True
+            assert gs["fixture_only"] is True
+            # Verdict
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+            assert receipt["final_verdict"] != "EDGE_CANDIDATE"
+            # No forbidden keys
+            for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
+                assert forbidden not in receipt
 
     def test_full_fixture_receipt_refuses_missing_volnorm_bars(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -849,6 +845,104 @@ class TestFullFixtureReceiptFlag:
             assert result.returncode == 1
             assert "--walkforward-bars" in result.stderr
 
+    def test_full_fixture_receipt_refuses_without_input_dirs(self) -> None:
+        """--full-fixture-receipt requires at least one of --bars-dir, --funding-dir, --manifest-dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--volnorm-bars",
+                str(self.VOLNORM_BARS),
+                "--walkforward-bars",
+                str(self.WALKFORWARD_BARS),
+                "--full-fixture-receipt",
+            )
+            assert result.returncode == 1
+            assert "at least one of --bars-dir, --funding-dir, --manifest-dir" in result.stderr
+
+    def test_full_fixture_receipt_succeeds_with_input_dirs(self) -> None:
+        """--full-fixture-receipt succeeds with --bars-dir pointing to golden fixtures."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--volnorm-bars",
+                str(self.VOLNORM_BARS),
+                "--walkforward-bars",
+                str(self.WALKFORWARD_BARS),
+                "--bars-dir",
+                str(FIXTURE_DIR),
+                "--full-fixture-receipt",
+            )
+            assert result.returncode == 0
+            assert "Full fixture receipt written to" in result.stdout
+
+    def test_full_fixture_receipt_output_path(self) -> None:
+        """Full receipt writes to <--output-dir>/validation_receipt.json, not /tmp/."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--volnorm-bars",
+                str(self.VOLNORM_BARS),
+                "--walkforward-bars",
+                str(self.WALKFORWARD_BARS),
+                "--bars-dir",
+                str(FIXTURE_DIR),
+                "--full-fixture-receipt",
+            )
+            assert result.returncode == 0
+            output_path = os.path.join(tmpdir, "validation_receipt.json")
+            assert os.path.exists(output_path)
+            # Should NOT exist at the old hardcoded path
+            assert not os.path.exists("/tmp/validation_receipt.json")
+
+    def test_full_fixture_receipt_has_non_null_input_manifest_summary(self) -> None:
+        """Full receipt has non-null input_manifest_summary and non-placeholder fingerprint."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--volnorm-bars",
+                str(self.VOLNORM_BARS),
+                "--walkforward-bars",
+                str(self.WALKFORWARD_BARS),
+                "--bars-dir",
+                str(FIXTURE_DIR),
+                "--full-fixture-receipt",
+            )
+            assert result.returncode == 0
+            output_path = os.path.join(tmpdir, "validation_receipt.json")
+            with open(output_path) as f:
+                receipt = json.load(f)
+            assert receipt["input_manifest_summary"] is not None
+            assert receipt["input_manifest_fingerprint"] != "PLACEHOLDER_SKELETON_NO_OP"
+
+    def test_full_fixture_receipt_single_output(self) -> None:
+        """Only one validation_receipt.json — at the expected output path, not /tmp/."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--volnorm-bars",
+                str(self.VOLNORM_BARS),
+                "--walkforward-bars",
+                str(self.WALKFORWARD_BARS),
+                "--bars-dir",
+                str(FIXTURE_DIR),
+                "--full-fixture-receipt",
+            )
+            assert result.returncode == 0
+            output_path = os.path.join(tmpdir, "validation_receipt.json")
+            assert os.path.exists(output_path)
+            # No receipt leaked to the old hardcoded path
+            assert not os.path.exists("/tmp/validation_receipt.json")
+
     def test_full_fixture_receipt_refuses_prod_path(self) -> None:
         result = _run_cli(
             "--read-only",
@@ -863,7 +957,25 @@ class TestFullFixtureReceiptFlag:
         assert result.returncode == 3
         assert "Refusing" in result.stdout
 
+    def test_full_fixture_receipt_refuses_prod_path_on_input_dirs(self) -> None:
+        """--bars-dir pointing under /srv/qnty with --full-fixture-receipt exits 3."""
+        result = _run_cli(
+            "--read-only",
+            "--output-dir",
+            "/tmp/safe_output",
+            "--volnorm-bars",
+            str(self.VOLNORM_BARS),
+            "--walkforward-bars",
+            str(self.WALKFORWARD_BARS),
+            "--bars-dir",
+            "/srv/qnty/data/bars",
+            "--full-fixture-receipt",
+        )
+        assert result.returncode == 3
+        assert "Refusing" in result.stdout
+
     def test_full_fixture_receipt_deterministic(self) -> None:
+        """Full receipt is deterministic (excluding timestamp) across invocations."""
         receipts = []
         for _ in range(2):
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -875,23 +987,21 @@ class TestFullFixtureReceiptFlag:
                     str(self.VOLNORM_BARS),
                     "--walkforward-bars",
                     str(self.WALKFORWARD_BARS),
+                    "--bars-dir",
+                    str(FIXTURE_DIR),
                     "--full-fixture-receipt",
                 )
                 assert result.returncode == 0
-                full_path = "/tmp/validation_receipt.json"
-                assert os.path.exists(full_path)
-                try:
-                    with open(full_path) as f:
-                        receipts.append(json.load(f))
-                finally:
-                    if os.path.exists(full_path):
-                        os.unlink(full_path)
+                output_path = os.path.join(tmpdir, "validation_receipt.json")
+                assert os.path.exists(output_path)
+                with open(output_path) as f:
+                    receipts.append(json.load(f))
         # Compare excluding timestamp
         for r in receipts:
             r["validation_receipt"].pop("timestamp_utc")
         assert receipts[0] == receipts[1]
 
-    def test_cleanup(self) -> None:
+    def test_full_fixture_receipt_cleanup(self) -> None:
         """Clean up any leftover /tmp/validation_receipt.json from other tests."""
         full_path = "/tmp/validation_receipt.json"
         if os.path.exists(full_path):

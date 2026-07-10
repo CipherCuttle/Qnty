@@ -8,6 +8,7 @@ validation receipt.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -166,7 +167,9 @@ def validate_fixture_receipt(receipt: dict) -> None:
 
 
 def write_receipt_json(receipt: dict, output_path: Path) -> None:
-    """Write a receipt dict to a JSON file.
+    """Write receipt dict to a JSON file at output_path.
+
+    Validates receipt structure before writing. Refuses prod paths.
 
     Parameters
     ----------
@@ -178,14 +181,24 @@ def write_receipt_json(receipt: dict, output_path: Path) -> None:
     Raises
     ------
     ValueError
-        If *output_path* is under ``/srv/qnty`` (prod path guard).
+        If the receipt fails validation or *output_path* is under ``/srv/qnty``.
     """
-    resolved = output_path.resolve()
-    if str(resolved).startswith("/srv/qnty"):
-        raise ValueError(
-            f"Refusing to write receipt to prod path: {resolved}"
-        )
+    validate_fixture_receipt(receipt)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump(receipt, f, indent=2, sort_keys=False)
+    resolved = output_path.resolve()
+
+    # Robust prod-path guard: use commonpath boundary comparison
+    # (same pattern as CLI's _is_under_dir)
+    PROD_BASE = Path("/srv/qnty").resolve()
+    try:
+        common = os.path.commonpath([str(resolved), str(PROD_BASE)])
+    except ValueError:
+        # commonpath raises ValueError if paths are on different drives;
+        # treat as not matching (safe default)
+        common = ""
+    if common == str(PROD_BASE):
+        raise ValueError(f"Refusing to write to prod path: {output_path}")
+
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    with open(resolved, "w") as f:
+        json.dump(receipt, f, indent=2)
