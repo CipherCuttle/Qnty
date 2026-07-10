@@ -2,6 +2,9 @@
 
 Status: docs-only runbook. No code in this PR. Not executed as part of this PR.
 
+For a recorded example capture result, see
+[QNTY_OFFLINE_EDGE_VALIDATION_REAL_DATA_PREFLIGHT_READY_RECEIPT.md](QNTY_OFFLINE_EDGE_VALIDATION_REAL_DATA_PREFLIGHT_READY_RECEIPT.md).
+
 ## 1. Purpose
 
 This is a **manual, read-only runbook** for a human (or an explicitly instructed
