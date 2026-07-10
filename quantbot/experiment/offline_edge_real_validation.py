@@ -53,6 +53,7 @@ __all__ = [
     "materialize_split_definitions_from_inventory",
     "materialize_input_rows_for_splits",
     "materialize_gross_observational_returns",
+    "materialize_cost_case_observational_drag",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -991,6 +992,106 @@ def materialize_gross_observational_returns(
 # ── Cost-case matrix skeleton ────────────────────────────────────────────
 
 
+def _cost_drag_summary(summary: dict, drag_fraction: float) -> dict[str, Any]:
+    """Describe an existing gross summary after subtracting an assumption."""
+    count = summary.get("observation_count")
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        raise ValueError("gross observation_count must be a non-negative integer")
+
+    def adjusted(source_key: str) -> float | None:
+        value = summary.get(source_key)
+        if value is None:
+            return None
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError(f"gross {source_key} must be numeric or null")
+        result = float(value) - drag_fraction
+        if not math.isfinite(result):
+            raise ValueError(f"gross {source_key} must be finite")
+        return result
+
+    return {
+        "gross_observation_count": count,
+        "gross_minus_drag_observation_mean": adjusted("mean_gross_return"),
+        "gross_minus_drag_observation_min": adjusted("min_gross_return"),
+        "gross_minus_drag_observation_max": adjusted("max_gross_return"),
+    }
+
+
+def materialize_cost_case_observational_drag(
+    *, gross_observational_returns: dict, cost_cases: list[dict]
+) -> dict:
+    """Apply descriptive round-trip cost assumptions to gross observations.
+
+    This consumes only the already-materialized gross receipt section and does
+    no I/O. Each per-side assumption is doubled to describe a two-sided drag
+    for one close-to-close observation.
+    """
+    files = gross_observational_returns.get("files")
+    if not isinstance(files, list):
+        raise ValueError("gross_observational_returns.files must be a list")
+
+    cases: list[dict[str, Any]] = []
+    for case in cost_cases:
+        case_name = case.get("cost_case")
+        if not isinstance(case_name, str) or not case_name:
+            raise ValueError("cost case name must be a non-empty string")
+        components: list[float] = []
+        for key in (
+            "commission_bps_per_side",
+            "slippage_bps_per_side",
+            "spread_bps_per_side",
+        ):
+            value = case.get(key)
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(value)
+                or value < 0.0
+            ):
+                raise ValueError(f"cost case {case_name!r} has invalid {key}")
+            components.append(float(value))
+        drag_bps = 2.0 * math.fsum(components)
+        drag_fraction = drag_bps / 10_000.0
+
+        file_summaries: list[dict[str, Any]] = []
+        for file_summary in files:
+            windows = file_summary.get("per_split_windows")
+            if not isinstance(windows, list):
+                raise ValueError("gross per_split_windows must be a list")
+            split_summaries = [
+                {
+                    "split_id": window.get("split_id"),
+                    "train_window": _cost_drag_summary(
+                        window.get("train_window", {}), drag_fraction
+                    ),
+                    "validation_window": _cost_drag_summary(
+                        window.get("validation_window", {}), drag_fraction
+                    ),
+                }
+                for window in windows
+            ]
+            file_summaries.append(
+                {
+                    "filename": file_summary.get("filename"),
+                    **_cost_drag_summary(file_summary, drag_fraction),
+                    "per_split_windows": split_summaries,
+                }
+            )
+        cases.append(
+            {
+                "cost_case": case_name,
+                "assumed_drag_bps_per_observation": drag_bps,
+                "files": file_summaries,
+                "calculation_status": "DESCRIPTIVE_OBSERVATIONAL_DRAG_ONLY",
+            }
+        )
+
+    return {
+        "cost_cases": cases,
+        "calculation_status": "DESCRIPTIVE_OBSERVATIONAL_DRAG_ONLY",
+    }
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -1055,6 +1156,7 @@ def build_real_validation_receipt(
     input_inventory: dict[str, Any] | None = None,
     row_materialization: dict | None = None,
     gross_observational_returns: dict | None = None,
+    cost_case_observational_drag: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -1122,6 +1224,8 @@ def build_real_validation_receipt(
         receipt["row_materialization"] = row_materialization
     if gross_observational_returns is not None:
         receipt["gross_observational_returns"] = gross_observational_returns
+    if cost_case_observational_drag is not None:
+        receipt["cost_case_observational_drag"] = cost_case_observational_drag
 
     return receipt
 
@@ -1365,6 +1469,10 @@ def main(argv: list[str] | None = None) -> int:
                 inventory=inventory,
                 split_definitions=split_definitions,
             )
+            cost_case_observational_drag = materialize_cost_case_observational_drag(
+                gross_observational_returns=gross_observational_returns,
+                cost_cases=cost_cases,
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -1378,6 +1486,7 @@ def main(argv: list[str] | None = None) -> int:
             input_inventory=inventory,
             row_materialization=row_materialization,
             gross_observational_returns=gross_observational_returns,
+            cost_case_observational_drag=cost_case_observational_drag,
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
