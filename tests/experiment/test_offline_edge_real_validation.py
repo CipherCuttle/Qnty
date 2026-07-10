@@ -29,6 +29,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     build_deterministic_split_definitions,
     build_real_validation_input_inventory,
     build_real_validation_receipt,
+    materialize_gross_observational_returns,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -1014,10 +1015,192 @@ class TestRowMaterialization:
         assert forbidden.isdisjoint(_all_dict_keys(result))
 
 
+# ── Gross observational return tests ───────────────────────────────────
+
+
+class TestGrossObservationalReturns:
+    def test_calculates_simple_close_to_close_summary(self, tmp_path):
+        (tmp_path / "bars.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,bad,bad,bad,100,bad\n"
+            "2026-01-02T00:00:00Z,bad,bad,bad,110,bad\n"
+            "2026-01-03T00:00:00Z,bad,bad,bad,99,bad\n"
+            "2026-01-04T00:00:00Z,bad,bad,bad,99,bad\n"
+        )
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+
+        result = materialize_gross_observational_returns(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+
+        summary = result["files"][0]
+        assert summary["observation_count"] == 3
+        assert summary["positive_count"] == 1
+        assert summary["negative_count"] == 1
+        assert summary["zero_count"] == 1
+        assert summary["min_gross_return"] == pytest.approx(-0.1)
+        assert summary["max_gross_return"] == pytest.approx(0.1)
+        assert summary["mean_gross_return"] == pytest.approx(0.0)
+        assert result["calculation_status"] == "GROSS_OBSERVATIONAL_RETURNS_ONLY"
+
+    def test_only_bars_role_processed_and_funding_file_not_reopened(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+        funding_path = _write_tiny_funding_csv(funding_dir)
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir,
+            funding_dir=funding_dir,
+        )
+        funding_path.write_text("this change must not be read\n")
+
+        result = materialize_gross_observational_returns(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+
+        assert {file_result["role"] for file_result in result["files"]} == {"bars"}
+        assert result["ignored_roles"] == ["funding"]
+        assert result["funding_adjusted_status"] == "NOT_EXECUTED"
+
+    def test_non_monotonic_timestamps_fail_closed(self, tmp_path):
+        (tmp_path / "bars.csv").write_text(
+            "timestamp,close\n"
+            "2026-01-02T00:00:00Z,101\n"
+            "2026-01-01T00:00:00Z,100\n"
+        )
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+
+        with pytest.raises(ValueError, match="Non-monotonic timestamp"):
+            materialize_gross_observational_returns(
+                inventory=inventory,
+                split_definitions=_two_split_windows(),
+            )
+
+    def test_missing_close_column_fails_closed(self, tmp_path):
+        (tmp_path / "bars.csv").write_text(
+            "timestamp,open\n2026-01-01T00:00:00Z,100\n"
+        )
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+
+        with pytest.raises(ValueError, match="Missing close column"):
+            materialize_gross_observational_returns(
+                inventory=inventory,
+                split_definitions=_two_split_windows(),
+            )
+
+    @pytest.mark.parametrize("close_value", ["not-a-number", "", "nan", "inf"])
+    def test_malformed_close_value_fails_closed(self, tmp_path, close_value):
+        (tmp_path / "bars.csv").write_text(
+            "timestamp,close\n"
+            f"2026-01-01T00:00:00Z,{close_value}\n"
+        )
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+
+        with pytest.raises(ValueError, match="Malformed close"):
+            materialize_gross_observational_returns(
+                inventory=inventory,
+                split_definitions=_two_split_windows(),
+            )
+
+    def test_sha_mismatch_after_inventory_fails_closed(self, tmp_path):
+        bars_path = _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        bars_path.write_text("timestamp,close\n2026-01-01T00:00:00Z,1\n")
+
+        with pytest.raises(ValueError, match="Inventoried SHA256 changed"):
+            materialize_gross_observational_returns(
+                inventory=inventory,
+                split_definitions=_two_split_windows(),
+            )
+
+    def test_per_split_window_observation_counts_are_deterministic(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+
+        first = materialize_gross_observational_returns(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+        second = materialize_gross_observational_returns(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+
+        assert first == second
+        windows = first["files"][0]["per_split_windows"]
+        assert [
+            (
+                window["train_window"]["observation_count"],
+                window["validation_window"]["observation_count"],
+            )
+            for window in windows
+        ] == [(0, 0), (0, 2)]
+
+    def test_contains_no_strategy_or_execution_keys(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        result = materialize_gross_observational_returns(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+
+        forbidden = {
+            "pnl",
+            "sharpe",
+            "edge",
+            "strategy_performance",
+            "net_return_value",
+            "cost_adjusted_return",
+            "funding_adjusted_return",
+            "trade",
+            "trades",
+            "signal",
+            "signals",
+            "position",
+            "positions",
+            "portfolio",
+            "live_ready",
+            "deploy_ready",
+            "profitable",
+        }
+        assert forbidden.isdisjoint(_all_dict_keys(result))
+
+
 # ── New: Receipt with inventory tests ───────────────────────────────────
 
 
 class TestReceiptWithInventory:
+    def test_receipt_with_gross_observational_returns_validates(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        splits = _two_split_windows()
+        gross_observations = materialize_gross_observational_returns(
+            inventory=inventory,
+            split_definitions=splits,
+        )
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_receipt_sha256="b" * 64,
+            code_commit_sha="c" * 40,
+            split_definitions=splits,
+            cost_cases=build_cost_case_matrix(),
+            gross_observational_returns=gross_observations,
+        )
+
+        validate_real_validation_receipt(receipt)
+        assert receipt["gross_observational_returns"] == gross_observations
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        assert all(value is False for value in receipt["required_outputs_present"].values())
+        assert all(
+            value is False
+            for value in receipt["forbidden_calculation_status"].values()
+        )
+        assert all(value is True for value in receipt["guardrail_status"].values())
+
     def test_receipt_with_row_materialization_validates(self, tmp_path):
         _write_tiny_bars_csv(tmp_path)
         inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
@@ -1167,6 +1350,18 @@ class TestForbiddenKeysNested:
         with pytest.raises(ValueError, match="Forbidden calculation key"):
             validate_real_validation_receipt(receipt)
 
+    def test_gross_observational_return_rejected_outside_allowed_section(self):
+        receipt = self._receipt_with_nested_key("gross_observational_return", 0.01)
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_gross_observational_return_allowed_inside_allowed_section(self):
+        receipt = _base_receipt()
+        receipt["gross_observational_returns"] = {
+            "observations": [{"gross_observational_return": 0.01}]
+        }
+        validate_real_validation_receipt(receipt)
+
     def test_nested_pnl_rejected(self):
         receipt = self._receipt_with_nested_key("pnl", 1000.0)
         with pytest.raises(ValueError, match="Forbidden calculation key"):
@@ -1213,12 +1408,18 @@ class TestForbiddenKeysNested:
         "key",
         [
             "price_change",
+            "cost_adjusted_return",
+            "funding_adjusted_return",
             "trade",
             "trades",
             "signal",
             "signals",
             "position",
             "positions",
+            "portfolio",
+            "live_ready",
+            "deploy_ready",
+            "profitable",
         ],
     )
     def test_new_exact_forbidden_keys_rejected_at_any_depth(self, key):
@@ -1307,8 +1508,14 @@ class TestCLIWithDirs:
             assert written["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
             assert "input_inventory" in written
             assert "row_materialization" in written
+            assert "gross_observational_returns" in written
             materialized_roles = written["row_materialization"]["roles"]
             assert materialized_roles[0]["files"][0]["total_rows"] == 3
+            gross = written["gross_observational_returns"]
+            assert gross["files"][0]["observation_count"] == 2
+            assert gross["funding_adjusted_status"] == "NOT_EXECUTED"
+            assert "EDGE_CANDIDATE" not in result.stdout
+            assert "EDGE_CANDIDATE" not in json.dumps(written)
         finally:
             if receipt_path.exists():
                 receipt_path.unlink()
