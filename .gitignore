@@ -45,3 +45,6 @@ tmp_rfb_evidence_sprint.py
 # Local AI / tooling scratch
 .roo/
 .secondbrain/
+
+# Planning artifacts (architect mode; local-only; never committed)
+plans/

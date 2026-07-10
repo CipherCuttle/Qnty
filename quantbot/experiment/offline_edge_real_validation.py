@@ -61,6 +61,7 @@ __all__ = [
     "materialize_funding_to_bars_alignment_diagnostics",
     "materialize_funding_to_bars_temporal_joinability_diagnostics",
     "materialize_funding_to_bars_timestamp_convention_diagnostics",
+    "materialize_funding_to_bars_timestamp_canonicalization_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -2301,6 +2302,194 @@ def _nearest_delta_histogram(
     }
 
 
+# ── Funding-to-bars timestamp canonicalization helpers ─────────────────
+
+
+def _canonicalize_timestamp_floor(ts: datetime) -> str:
+    """Truncate sub-second to get ``YYYY-MM-DDTHH:MM:SS`` UTC from a datetime."""
+    return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _canonicalize_timestamp_ceil(ts: datetime) -> str:
+    """If sub-second > 0, round up to next whole second in UTC from a datetime."""
+    if ts.microsecond > 0:
+        ts = ts + timedelta(seconds=1)
+    return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _canonicalize_timestamp_round_half_away_from_zero(ts: datetime) -> str:
+    """Round to nearest second with .5 rounding away from zero from a datetime."""
+    if ts.microsecond >= 500_000:
+        ts = ts + timedelta(seconds=1)
+    return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _detect_canonicalized_collisions(
+    canonicalized: list[str],
+) -> dict[str, Any]:
+    """Find buckets with >= 2 raw timestamps mapping to same canonical timestamp.
+
+    Returns dict with ``collision_count``, ``max_bucket_size``,
+    ``collision_examples`` (capped at 5, deterministically sorted).
+    """
+    counts: dict[str, int] = {}
+    for canon in canonicalized:
+        counts[canon] = counts.get(canon, 0) + 1
+    collisions = {canon: cnt for canon, cnt in counts.items() if cnt >= 2}
+    collision_count = len(collisions)
+    max_bucket_size = max(collisions.values()) if collisions else 0
+    sorted_buckets = sorted(collisions.items(), key=lambda item: (-item[1], item[0]))
+    examples = [
+        {"canonical_timestamp": canon, "collision_size": cnt}
+        for canon, cnt in sorted_buckets[:5]
+    ]
+    return {
+        "collision_count": collision_count,
+        "max_bucket_size": max_bucket_size,
+        "collision_examples": examples,
+    }
+
+
+def _detect_ambiguous_nearest_bars(
+    raw_funding_ts: list[datetime],
+    bar_ts: list[datetime],
+    canonicalized: list[str],
+) -> int:
+    """Count raw funding timestamps equidistant to two bar timestamps.
+
+    Only funding timestamps that map to the same canonical timestamp
+    are counted, since the diagnostic concerns canonicalization ambiguity.
+    """
+    if not raw_funding_ts or not bar_ts or not canonicalized:
+        return 0
+    bar_sorted: list[datetime] = sorted(bar_ts)
+    canonicalized_set = set(canonicalized)
+    ambiguous_count = 0
+    for canon in canonicalized_set:
+        canon_dt = _parse_timestamp(canon)
+        idx = bisect.bisect_left(bar_sorted, canon_dt)
+        left_delta = None
+        if idx > 0:
+            left_delta = abs(
+                _timedelta_to_microseconds(canon_dt - bar_sorted[idx - 1])
+            )
+        right_delta = None
+        if idx < len(bar_sorted):
+            right_delta = abs(
+                _timedelta_to_microseconds(bar_sorted[idx] - canon_dt)
+            )
+        if left_delta is not None and right_delta is not None and left_delta == right_delta:
+            ambiguous_count += 1
+    return ambiguous_count
+
+
+def _compute_subsecond_jitter_stats(
+    funding_timestamps: list[datetime],
+) -> dict[str, Any]:
+    """Detect if any sub-second component exists, count, max abs microseconds."""
+    count = 0
+    max_abs = 0
+    for ts in funding_timestamps:
+        us = ts.microsecond
+        if us != 0:
+            count += 1
+            max_abs = max(max_abs, us)
+    return {
+        "has_subsecond_funding_jitter": count > 0,
+        "funding_subsecond_timestamp_count": count,
+        "max_abs_subsecond_jitter_microseconds": max_abs,
+    }
+
+
+def _compute_history_range_status(
+    bars_ts: list[datetime],
+    funding_ts: list[datetime],
+) -> str:
+    """Compare the time ranges of bars and funding timestamp sets.
+
+    Returns one of: MATCHING_RANGES, BARS_END_BEFORE_FUNDING,
+    FUNDING_END_BEFORE_BARS, DISJOINT_RANGES, EMPTY_RANGE.
+    """
+    if not bars_ts and not funding_ts:
+        return "EMPTY_RANGE"
+    if not bars_ts or not funding_ts:
+        return "EMPTY_RANGE"
+    bars_first = min(bars_ts)
+    bars_last = max(bars_ts)
+    funding_first = min(funding_ts)
+    funding_last = max(funding_ts)
+    if bars_first == funding_first and bars_last == funding_last:
+        return "MATCHING_RANGES"
+    if bars_last < funding_first or funding_last < bars_first:
+        return "DISJOINT_RANGES"
+    if bars_last < funding_last:
+        return "BARS_END_BEFORE_FUNDING"
+    if funding_last < bars_last:
+        return "FUNDING_END_BEFORE_BARS"
+    return "MATCHING_RANGES"
+
+
+def _select_best_policy(policy_results: list[dict]) -> dict[str, Any]:
+    """Deterministic policy selection: fewest collisions wins.
+
+    Tie-breaking: floor > round > ceil, then smallest unique canonical count.
+    Returns winner dict, tie_count, tied_policy_names.
+    """
+    policy_order = {"floor_to_second": 0, "round_half_away_from_zero": 1, "ceil_to_second": 2}
+    min_collisions = min(
+        p["funding_timestamp_collision_count"] for p in policy_results
+    )
+    tied = [p for p in policy_results if p["funding_timestamp_collision_count"] == min_collisions]
+    if len(tied) == 1:
+        winner = tied[0]
+        return {
+            "best_policy_by_exact_matched_count": winner["policy_name"],
+            "best_policy_by_bars_match_ratio": winner["policy_name"],
+            "best_policy_by_funding_match_ratio": winner["policy_name"],
+            "tie_count": 1,
+            "tied_policy_names": [winner["policy_name"]],
+        }
+    # Tie-break by match ratio.
+    max_bars_ratio = max(p["bars_match_ratio_after_canonicalization"] for p in tied)
+    tied2 = [
+        p for p in tied
+        if p["bars_match_ratio_after_canonicalization"] == max_bars_ratio
+    ]
+    if len(tied2) == 1:
+        winner = tied2[0]
+        return {
+            "best_policy_by_exact_matched_count": winner["policy_name"],
+            "best_policy_by_bars_match_ratio": winner["policy_name"],
+            "best_policy_by_funding_match_ratio": winner["policy_name"],
+            "tie_count": len(tied),
+            "tied_policy_names": [p["policy_name"] for p in tied],
+        }
+    # Further tie-break by funding match ratio.
+    max_funding_ratio = max(p["funding_match_ratio_after_canonicalization"] for p in tied2)
+    tied3 = [
+        p for p in tied2
+        if p["funding_match_ratio_after_canonicalization"] == max_funding_ratio
+    ]
+    if len(tied3) == 1:
+        winner = tied3[0]
+        return {
+            "best_policy_by_exact_matched_count": winner["policy_name"],
+            "best_policy_by_bars_match_ratio": winner["policy_name"],
+            "best_policy_by_funding_match_ratio": winner["policy_name"],
+            "tie_count": len(tied),
+            "tied_policy_names": [p["policy_name"] for p in tied],
+        }
+    # Final tie-break: deterministic policy order.
+    winner = min(tied3, key=lambda p: policy_order[p["policy_name"]])
+    return {
+        "best_policy_by_exact_matched_count": winner["policy_name"],
+        "best_policy_by_bars_match_ratio": winner["policy_name"],
+        "best_policy_by_funding_match_ratio": winner["policy_name"],
+        "tie_count": len(tied),
+        "tied_policy_names": [p["policy_name"] for p in tied],
+    }
+
+
 def materialize_funding_to_bars_timestamp_convention_diagnostics(
     *,
     inventory: dict[str, Any],
@@ -2524,6 +2713,338 @@ def materialize_funding_to_bars_timestamp_convention_diagnostics(
     }
 
 
+# ── Funding-to-bars timestamp canonicalization diagnostics ─────────────
+
+
+_CANONICALIZATION_POLICIES: tuple[tuple[str, Any], ...] = (
+    ("floor_to_second", _canonicalize_timestamp_floor),
+    ("round_half_away_from_zero", _canonicalize_timestamp_round_half_away_from_zero),
+    ("ceil_to_second", _canonicalize_timestamp_ceil),
+)
+
+
+def _validate_canonicalization_policy(policy_name: str) -> None:
+    """Fail closed if *policy_name* is not a known canonicalization policy."""
+    known = {p[0] for p in _CANONICALIZATION_POLICIES}
+    if policy_name not in known:
+        raise ValueError(
+            f"Invalid canonicalization policy: {policy_name!r}. "
+            f"Known: {sorted(known)}"
+        )
+
+
+def _canonicalization_delta_histogram(
+    raw_timestamps: list[datetime],
+    canonicalized: list[str],
+) -> dict[str, int]:
+    """Compute histogram of absolute delta microseconds between raw and canonical.
+
+    Returns dict mapping ``"<delta_us>"`` (as string) to count, deterministically
+    ordered by ascending delta.
+    """
+    deltas: dict[int, int] = {}
+    for raw_dt, canon_str in zip(raw_timestamps, canonicalized):
+        canon_dt = _parse_timestamp(canon_str)
+        delta_us = abs(_timedelta_to_microseconds(raw_dt - canon_dt))
+        deltas[delta_us] = deltas.get(delta_us, 0) + 1
+    return {str(k): deltas[k] for k in sorted(deltas)}
+
+
+def _canonicalization_status(
+    canonicalized_set: set[str],
+    bars_set: set[str],
+) -> str:
+    """Classify the relationship between canonicalized funding and bars timestamp sets."""
+    if not canonicalized_set and not bars_set:
+        return "EMPTY_BOTH"
+    matched = len(canonicalized_set & bars_set)
+    if matched == 0:
+        return "NO_MATCH"
+    if canonicalized_set == bars_set:
+        return "EXACT_CANONICAL_TIMESTAMP_SET_MATCH"
+    return "PARTIAL"
+
+
+def _per_policy_canonicalization_diagnostics(
+    *,
+    policy_name: str,
+    policy_fn: Any,
+    raw_funding_ts: list[datetime],
+    bars_ts: list[datetime],
+    bars_ts_strs: list[str],
+) -> dict[str, Any]:
+    """Compute canonicalization diagnostics for a single policy."""
+    canonicalized_strs: list[str] = [policy_fn(ts) for ts in raw_funding_ts]
+    canonicalized_set: set[str] = set(canonicalized_strs)
+    bars_set: set[str] = set(bars_ts_strs)
+
+    collision = _detect_canonicalized_collisions(canonicalized_strs)
+    status = _canonicalization_status(canonicalized_set, bars_set)
+    exact_matched = len(canonicalized_set & bars_set)
+    bars_without = len(bars_set - canonicalized_set)
+    funding_without = len(canonicalized_set - bars_set)
+    bars_ratio = _safe_ratio(exact_matched, len(bars_set))
+    funding_ratio = _safe_ratio(exact_matched, len(canonicalized_set))
+    ambiguous = _detect_ambiguous_nearest_bars(
+        raw_funding_ts, bars_ts, canonicalized_strs
+    )
+    delta_hist = _canonicalization_delta_histogram(raw_funding_ts, canonicalized_strs)
+    max_abs_delta = max((int(k) for k in delta_hist), default=0)
+
+    return {
+        "policy_name": policy_name,
+        "canonicalized_funding_timestamp_count": len(canonicalized_set),
+        "bars_timestamp_count": len(bars_set),
+        "exact_matched_after_canonicalization_count": exact_matched,
+        "bars_without_canonicalized_funding_count": bars_without,
+        "canonicalized_funding_without_bars_count": funding_without,
+        "bars_match_ratio_after_canonicalization": bars_ratio,
+        "funding_match_ratio_after_canonicalization": funding_ratio,
+        "canonicalization_status": status,
+        "funding_timestamp_collision_count": collision["collision_count"],
+        "max_collision_bucket_size": collision["max_bucket_size"],
+        "collision_examples": collision["collision_examples"],
+        "ambiguous_nearest_bar_count": ambiguous,
+        "max_abs_canonicalization_delta_microseconds": max_abs_delta,
+        "canonicalization_delta_microseconds_histogram": delta_hist,
+    }
+
+
+def materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
+    *,
+    inventory: dict[str, Any],
+    split_definitions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Diagnose timestamp canonicalization between funding and bars timestamps.
+
+    For each symbol, applies three canonicalization policies (floor, round,
+    ceil) to funding timestamps and compares the resulting whole-second UTC
+    sets against bars timestamps. Reports collisions, ambiguous nearest bars,
+    subsecond jitter, history range status, and per-split diagnostics.
+
+    This performs no price/rate reads, applies no funding to bars, and
+    computes no strategy, PnL, Sharpe, risk, or portfolio values.
+    """
+    windows = _build_split_windows_for_joinability(split_definitions)
+
+    roles = inventory.get("roles")
+    if not isinstance(roles, list):
+        raise ValueError("inventory.roles must be a list")
+    role_entries: dict[str, dict[str, Any]] = {}
+    for role_entry in roles:
+        if not isinstance(role_entry, dict):
+            raise ValueError("inventory role entry must be a mapping")
+        role = role_entry.get("role")
+        if role not in _ROLE_TIMESTAMP_COLUMNS:
+            raise ValueError(f"Unsupported inventoried role: {role!r}")
+        if role in role_entries:
+            raise ValueError(f"Duplicate inventoried role: {role}")
+        role_entries[role] = role_entry
+
+    if "bars" not in role_entries or "funding" not in role_entries:
+        raise ValueError(
+            "funding-to-bars timestamp canonicalization diagnostics require both "
+            "bars and funding roles in the inventory"
+        )
+
+    bars_by_symbol = _load_role_symbol_timestamps(
+        role_entry=role_entries["bars"],
+        filename_suffix="_8h_ohlcv.csv",
+        timestamp_column="timestamp",
+        role="bars",
+    )
+    funding_by_symbol = _load_role_symbol_timestamps(
+        role_entry=role_entries["funding"],
+        filename_suffix="_funding.csv",
+        timestamp_column="fundingTime",
+        role="funding",
+    )
+
+    bars_symbols = set(bars_by_symbol)
+    funding_symbols = set(funding_by_symbol)
+    if bars_symbols != funding_symbols:
+        missing = sorted(bars_symbols - funding_symbols)
+        extra = sorted(funding_symbols - bars_symbols)
+        raise ValueError(
+            f"Symbol mismatch between bars and funding: missing={missing}, "
+            f"extra={extra}"
+        )
+
+    symbols: list[dict[str, Any]] = []
+    for symbol in sorted(bars_symbols):
+        bars_entry = bars_by_symbol[symbol]
+        funding_entry = funding_by_symbol[symbol]
+        bars_timestamps: list[datetime] = bars_entry["timestamps"]
+        funding_timestamps: list[datetime] = funding_entry["timestamps"]
+
+        bars_ts_strs: list[str] = [_format_timestamp(ts) for ts in bars_timestamps]
+        funding_ts_strs: list[str] = [
+            _format_timestamp(ts) for ts in funding_timestamps
+        ]
+
+        # Per-policy diagnostics.
+        policy_results: list[dict[str, Any]] = []
+        for policy_name, policy_fn in _CANONICALIZATION_POLICIES:
+            policy_result = _per_policy_canonicalization_diagnostics(
+                policy_name=policy_name,
+                policy_fn=policy_fn,
+                raw_funding_ts=funding_timestamps,
+                bars_ts=bars_timestamps,
+                bars_ts_strs=bars_ts_strs,
+            )
+            policy_results.append(policy_result)
+
+        # Best policy selection.
+        best_policy = _select_best_policy(policy_results)
+
+        # Structural flags.
+        history_range = _compute_history_range_status(
+            bars_timestamps, funding_timestamps
+        )
+        jitter = _compute_subsecond_jitter_stats(funding_timestamps)
+
+        bars_set = set(bars_ts_strs)
+        canonicalized_sets = {
+            p["policy_name"]: set(
+                _canonicalize_timestamp_floor(ts) if p["policy_name"] == "floor_to_second"
+                else _canonicalize_timestamp_ceil(ts) if p["policy_name"] == "ceil_to_second"
+                else _canonicalize_timestamp_round_half_away_from_zero(ts)
+                for ts in funding_timestamps
+            )
+            for p in policy_results
+        }
+        # Use floor as reference for outside-range counts.
+        floor_canonicalized = set(
+            _canonicalize_timestamp_floor(ts) for ts in funding_timestamps
+        )
+        bars_first = bars_timestamps[0] if bars_timestamps else None
+        bars_last = bars_timestamps[-1] if bars_timestamps else None
+        funding_first = funding_timestamps[0] if funding_timestamps else None
+        funding_last = funding_timestamps[-1] if funding_timestamps else None
+
+        extra_funding_outside = 0
+        if bars_first is not None and bars_last is not None:
+            for ts_str in floor_canonicalized:
+                ts_dt = _parse_timestamp(ts_str)
+                if ts_dt < bars_first or ts_dt > bars_last:
+                    extra_funding_outside += 1
+
+        extra_bars_outside = 0
+        if funding_first is not None and funding_last is not None:
+            for ts_str in bars_ts_strs:
+                ts_dt = _parse_timestamp(ts_str)
+                if ts_dt < funding_first or ts_dt > funding_last:
+                    extra_bars_outside += 1
+
+        # Per-split diagnostics.
+        per_split_diagnostics: dict[str, dict[str, Any]] = {}
+        for window in windows:
+            split_id = window["split_id"]
+            train_bars = {
+                ts
+                for ts in bars_timestamps
+                if _timestamp_in_window(
+                    ts, start=window["train_start"], end=window["train_end"]
+                )
+            }
+            train_funding = {
+                ts
+                for ts in funding_timestamps
+                if _timestamp_in_window(
+                    ts, start=window["train_start"], end=window["train_end"]
+                )
+            }
+            validation_bars = {
+                ts
+                for ts in bars_timestamps
+                if _timestamp_in_window(
+                    ts,
+                    start=window["validation_start"],
+                    end=window["validation_end"],
+                    include_end=window["include_validation_end"],
+                )
+            }
+            validation_funding = {
+                ts
+                for ts in funding_timestamps
+                if _timestamp_in_window(
+                    ts,
+                    start=window["validation_start"],
+                    end=window["validation_end"],
+                    include_end=window["include_validation_end"],
+                )
+            }
+
+            train_bars_strs = [_format_timestamp(ts) for ts in sorted(train_bars)]
+            val_bars_strs = [_format_timestamp(ts) for ts in sorted(validation_bars)]
+
+            train_policy_results: list[dict[str, Any]] = []
+            for policy_name, policy_fn in _CANONICALIZATION_POLICIES:
+                train_policy_results.append(
+                    _per_policy_canonicalization_diagnostics(
+                        policy_name=policy_name,
+                        policy_fn=policy_fn,
+                        raw_funding_ts=sorted(train_funding),
+                        bars_ts=sorted(train_bars),
+                        bars_ts_strs=train_bars_strs,
+                    )
+                )
+
+            val_policy_results: list[dict[str, Any]] = []
+            for policy_name, policy_fn in _CANONICALIZATION_POLICIES:
+                val_policy_results.append(
+                    _per_policy_canonicalization_diagnostics(
+                        policy_name=policy_name,
+                        policy_fn=policy_fn,
+                        raw_funding_ts=sorted(validation_funding),
+                        bars_ts=sorted(validation_bars),
+                        bars_ts_strs=val_bars_strs,
+                    )
+                )
+
+            per_split_diagnostics[split_id] = {
+                "train": train_policy_results,
+                "validation": val_policy_results,
+            }
+
+        symbols.append(
+            {
+                "symbol": symbol,
+                "bars_file": bars_entry["filename"],
+                "funding_file": funding_entry["filename"],
+                "canonicalization_policies": policy_results,
+                "best_policy_summary": best_policy,
+                "structural_flags": {
+                    "history_range_status": history_range,
+                    "extra_funding_timestamps_outside_bars_range_count": (
+                        extra_funding_outside
+                    ),
+                    "bars_timestamps_outside_funding_range_count": extra_bars_outside,
+                    "has_subsecond_funding_jitter": jitter["has_subsecond_funding_jitter"],
+                    "funding_subsecond_timestamp_count": jitter[
+                        "funding_subsecond_timestamp_count"
+                    ],
+                    "max_abs_subsecond_jitter_microseconds": jitter[
+                        "max_abs_subsecond_jitter_microseconds"
+                    ],
+                },
+                "per_split_diagnostics": per_split_diagnostics,
+                "calculation_status": (
+                    "FUNDING_TO_BARS_TIMESTAMP_CANONICALIZATION_DIAGNOSTIC_ONLY"
+                ),
+                "funding_application_status": "NOT_EXECUTED",
+            }
+        )
+
+    return {
+        "calculation_status": "FUNDING_TO_BARS_TIMESTAMP_CANONICALIZATION_DIAGNOSTIC_ONLY",
+        "canonicalization_policy": "DIAGNOSTIC_WHOLE_SECOND_UTC_ONLY",
+        "funding_application_status": "NOT_EXECUTED",
+        "symbol_count": len(symbols),
+        "symbols": symbols,
+    }
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -2593,6 +3114,7 @@ def build_real_validation_receipt(
     funding_to_bars_alignment_diagnostics: dict | None = None,
     funding_to_bars_temporal_joinability_diagnostics: dict | None = None,
     funding_to_bars_timestamp_convention_diagnostics: dict | None = None,
+    funding_to_bars_timestamp_canonicalization_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -2675,6 +3197,10 @@ def build_real_validation_receipt(
     if funding_to_bars_timestamp_convention_diagnostics is not None:
         receipt["funding_to_bars_timestamp_convention_diagnostics"] = (
             funding_to_bars_timestamp_convention_diagnostics
+        )
+    if funding_to_bars_timestamp_canonicalization_diagnostics is not None:
+        receipt["funding_to_bars_timestamp_canonicalization_diagnostics"] = (
+            funding_to_bars_timestamp_canonicalization_diagnostics
         )
 
     return receipt
@@ -2956,6 +3482,14 @@ def main(argv: list[str] | None = None) -> int:
                 if funding_dir is not None
                 else None
             )
+            funding_to_bars_timestamp_canonicalization_diagnostics = (
+                materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
+                    inventory=inventory,
+                    split_definitions=split_definitions,
+                )
+                if funding_dir is not None
+                else None
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -2979,6 +3513,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             funding_to_bars_timestamp_convention_diagnostics=(
                 funding_to_bars_timestamp_convention_diagnostics
+            ),
+            funding_to_bars_timestamp_canonicalization_diagnostics=(
+                funding_to_bars_timestamp_canonicalization_diagnostics
             ),
         )
     else:
