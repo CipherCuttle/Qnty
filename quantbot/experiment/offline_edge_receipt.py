@@ -45,6 +45,7 @@ def build_fixture_validation_receipt(
     per_stage_metrics: list[dict] | None = None,
     volnorm_fixture_summary: dict | None = None,
     walkforward_fixture_summary: dict | None = None,
+    data_quality_preflight_summary: dict | None = None,
     final_verdict: str = SKELETON_ONLY,
     final_verdict_rationale: str | None = None,
 ) -> dict[str, Any]:
@@ -64,6 +65,8 @@ def build_fixture_validation_receipt(
         Optional volnorm fixture reconstruction summary.
     walkforward_fixture_summary : dict or None
         Optional walkforward fixture replay summary.
+    data_quality_preflight_summary : dict or None
+        Optional data-quality preflight check summary.
     final_verdict : str
         Verdict string (SKELETON_ONLY or INCONCLUSIVE).
     final_verdict_rationale : str or None
@@ -109,6 +112,9 @@ def build_fixture_validation_receipt(
         "final_verdict_rationale": final_verdict_rationale,
     }
 
+    if data_quality_preflight_summary is not None:
+        receipt["data_quality_preflight_summary"] = data_quality_preflight_summary
+
     return receipt
 
 
@@ -125,22 +131,24 @@ def validate_fixture_receipt(receipt: dict) -> None:
     ValueError
         If any required key is missing or has an invalid value.
     """
-    required_keys = [
-        "validation_receipt",
-        "input_manifest_fingerprint",
-        "input_manifest_summary",
-        "cost_model_assumptions",
-        "per_stage_metrics",
-        "volnorm_fixture_summary",
-        "walkforward_fixture_summary",
-        "guardrail_status",
-        "final_verdict",
+    required_keys = {
+        "validation_receipt", "input_manifest_fingerprint", "input_manifest_summary",
+        "cost_model_assumptions", "per_stage_metrics", "volnorm_fixture_summary",
+        "walkforward_fixture_summary", "guardrail_status", "final_verdict",
         "final_verdict_rationale",
-    ]
+    }
+    optional_keys = {"data_quality_preflight_summary"}
 
-    for key in required_keys:
-        if key not in receipt:
-            raise ValueError(f"Missing required receipt key: {key}")
+    # Check that all required keys are present
+    missing = required_keys - set(receipt.keys())
+    if missing:
+        raise ValueError(f"Missing required keys: {missing}")
+
+    # Check that no unexpected keys are present (allow optional ones)
+    allowed_keys = required_keys | optional_keys
+    extra = set(receipt.keys()) - allowed_keys
+    if extra:
+        raise ValueError(f"Unexpected keys: {extra}")
 
     guardrail_keys = [
         "edge_unproven",
