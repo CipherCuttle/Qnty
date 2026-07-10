@@ -21,10 +21,15 @@ from quantbot.experiment.offline_edge_cost_model import COST_MODEL_VERSION
 from quantbot.experiment.offline_edge_volnorm import (
     reconstruct_fixture_volnorm_weights,
 )
+from quantbot.experiment.offline_edge_walkforward import (
+    run_fixture_walkforward,
+)
 from quantbot.experiment.offline_edge_schema import (
     CostModelAssumptions,
     FIXTURE_VOLNORM_STAGE_ID,
     FIXTURE_VOLNORM_STAGE_NAME,
+    FIXTURE_WALKFORWARD_STAGE_ID,
+    FIXTURE_WALKFORWARD_STAGE_NAME,
     PLACEHOLDER_SKELETON_NO_OP,
     ReceiptMetadata,
     SKELETON_ONLY,
@@ -111,6 +116,16 @@ def build_parser() -> argparse.ArgumentParser:
             "reconstruction (no PnL, no trades, SKELETON_ONLY only)"
         ),
     )
+    parser.add_argument(
+        "--walkforward-bars",
+        required=False,
+        default=None,
+        help=(
+            "Fixture bars CSV for deterministic fixture-only walk-forward "
+            "replay scaffolding (no PnL, no trades, no real funding replay, "
+            "SKELETON_ONLY only)"
+        ),
+    )
     return parser
 
 
@@ -172,6 +187,8 @@ def main() -> None:
         refuse_prod_path(args.manifest_dir)
     if args.volnorm_bars is not None:
         refuse_prod_path(args.volnorm_bars)
+    if args.walkforward_bars is not None:
+        refuse_prod_path(args.walkforward_bars)
 
     # Collect input paths for manifest fingerprinting
     input_dirs: list[Path] = []
@@ -214,6 +231,29 @@ def main() -> None:
             ),
         )
 
+    # Fixture-only walk-forward replay (PR E).  Deterministic tiny fixture splits
+    # over fixture bars; reconstructs a fixture volnorm weight per split, applies
+    # fixture cost assumptions, and emits a toy replay summary.  This computes NO
+    # strategy PnL, generates NO trades, replays NO real funding, creates NO Lane
+    # B, and keeps the verdict SKELETON_ONLY.
+    walkforward_fixture_summary: dict | None = None
+    if args.walkforward_bars is not None:
+        walkforward_fixture_summary = run_fixture_walkforward(
+            Path(args.walkforward_bars)
+        )
+        per_stage_metrics[FIXTURE_WALKFORWARD_STAGE_ID] = StageMetrics(
+            stage_id=FIXTURE_WALKFORWARD_STAGE_ID,
+            stage_name=FIXTURE_WALKFORWARD_STAGE_NAME,
+            status=SKELETON_ONLY,
+            summary=(
+                "fixture-only walk-forward replay: "
+                f"split_count={walkforward_fixture_summary['split_count']}, "
+                "fixture_counterfactual_return_total="
+                f"{walkforward_fixture_summary['fixture_counterfactual_return_total']:.6g} "
+                "(no PnL, no trades, no real funding replay, not full walk-forward)"
+            ),
+        )
+
     # Build skeleton receipt
     receipt_kwargs: dict = ValidationReceipt(
         validation_receipt=ReceiptMetadata(
@@ -243,6 +283,8 @@ def main() -> None:
         receipt["input_manifest_summary"] = input_manifest_summary
     if volnorm_fixture_summary is not None:
         receipt["volnorm_fixture_summary"] = volnorm_fixture_summary
+    if walkforward_fixture_summary is not None:
+        receipt["walkforward_fixture_summary"] = walkforward_fixture_summary
 
     # Ensure output directory exists
     output_dir = Path(args.output_dir)
@@ -267,6 +309,14 @@ def main() -> None:
             f"realized_volatility="
             f"{volnorm_fixture_summary['realized_volatility']:.6g} "
             "(fixture-only, no PnL)"
+        )
+    if walkforward_fixture_summary is not None:
+        print(
+            "Walk-forward fixture replay: "
+            f"split_count={walkforward_fixture_summary['split_count']}, "
+            "fixture_counterfactual_return_total="
+            f"{walkforward_fixture_summary['fixture_counterfactual_return_total']:.6g} "
+            "(fixture-only, no PnL, no real funding replay)"
         )
     print("Mode: read-only skeleton (no-op)")
 

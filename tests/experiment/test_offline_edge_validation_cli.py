@@ -627,6 +627,113 @@ class TestVolnormFixtureReconstruction:
             assert "volnorm_fixture_summary" not in receipt
 
 
+class TestWalkforwardFixtureReplay:
+    """PR E — CLI --walkforward-bars produces a fixture-only walk-forward summary."""
+
+    WALKFORWARD_BARS = FIXTURE_DIR / "sample_walkforward_bars.csv"
+
+    def test_cli_with_walkforward_bars_emits_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--walkforward-bars",
+                str(self.WALKFORWARD_BARS),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert "walkforward_fixture_summary" in receipt
+            summary = receipt["walkforward_fixture_summary"]
+            assert summary["walkforward_version"] == "fixture-0.1"
+            assert summary["split_count"] >= 2
+            assert "fixture_counterfactual_return_total" in summary
+
+    def test_cli_walkforward_stage_b_metric_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--walkforward-bars",
+                str(self.WALKFORWARD_BARS),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            stages = receipt["per_stage_metrics"]
+            assert "B" in stages
+            assert stages["B"]["stage_name"] == "fixture_walkforward_replay"
+            assert stages["B"]["status"] == "SKELETON_ONLY"
+
+    def test_cli_walkforward_still_skeleton_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--walkforward-bars",
+                str(self.WALKFORWARD_BARS),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+            assert receipt["final_verdict"] != "EDGE_CANDIDATE"
+
+    def test_cli_walkforward_no_pnl_or_edge_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli(
+                "--read-only",
+                "--output-dir",
+                tmpdir,
+                "--walkforward-bars",
+                str(self.WALKFORWARD_BARS),
+            )
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            for forbidden in ("pnl", "strategy_performance", "edge_candidate", "sharpe", "edge"):
+                assert forbidden not in receipt
+
+    def test_cli_refuses_srv_qnty_walkforward_bars(self) -> None:
+        result = _run_cli(
+            "--read-only",
+            "--output-dir",
+            "/tmp/safe_output",
+            "--walkforward-bars",
+            "/srv/qnty/data/bars/sample.csv",
+        )
+        assert result.returncode == 3
+        assert "Refusing" in result.stdout
+
+    def test_cli_walkforward_summary_deterministic(self) -> None:
+        summaries = []
+        for _ in range(2):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                result = _run_cli(
+                    "--read-only",
+                    "--output-dir",
+                    tmpdir,
+                    "--walkforward-bars",
+                    str(self.WALKFORWARD_BARS),
+                )
+                assert result.returncode == 0
+                with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                    summaries.append(json.load(f)["walkforward_fixture_summary"])
+        assert summaries[0] == summaries[1]
+
+    def test_cli_without_walkforward_bars_omits_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _run_cli("--read-only", "--output-dir", tmpdir)
+            assert result.returncode == 0
+            with open(os.path.join(tmpdir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            assert "walkforward_fixture_summary" not in receipt
+            assert "B" not in receipt["per_stage_metrics"]
+
+
 class TestInputManifestFingerprintMatchesDirect:
     """Verify CLI's fingerprint matches a direct call to discover_input_files."""
 

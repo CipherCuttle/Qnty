@@ -7,6 +7,10 @@ import pytest
 from quantbot.experiment.offline_edge_schema import (
     ReceiptMetadata,
     CostModelAssumptions,
+    FIXTURE_VOLNORM_STAGE_ID,
+    FIXTURE_VOLNORM_STAGE_NAME,
+    FIXTURE_WALKFORWARD_STAGE_ID,
+    FIXTURE_WALKFORWARD_STAGE_NAME,
     PLACEHOLDER_SKELETON_NO_OP,
     StageMetrics,
     ValidationReceipt,
@@ -18,6 +22,17 @@ from quantbot.experiment.offline_edge_schema import (
     BLOCKED_BY_DATA_QUALITY,
     validate_skeleton_verdict,
 )
+
+
+class TestFixtureStageConstants:
+    def test_volnorm_stage_identity(self):
+        assert FIXTURE_VOLNORM_STAGE_ID == "A"
+        assert FIXTURE_VOLNORM_STAGE_NAME == "fixture_volnorm_reconstruction"
+
+    def test_walkforward_stage_identity(self):
+        # PR E — fixture-only walk-forward replay stage.
+        assert FIXTURE_WALKFORWARD_STAGE_ID == "B"
+        assert FIXTURE_WALKFORWARD_STAGE_NAME == "fixture_walkforward_replay"
 
 
 class TestSchemaConstants:

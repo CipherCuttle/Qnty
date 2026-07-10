@@ -1,0 +1,15 @@
+{
+  "description": "Golden expected output of run_fixture_walkforward over sample_walkforward_bars.csv with default params (train_size=3, test_size=1, vol_lookback_bars=90, vol_floor=1e-6, heat_cap=1.0). Fixture-only walk-forward replay scaffolding; the per-split numbers are labelled fixture_counterfactual_return and are NOT pnl, NOT strategy_performance, NOT sharpe, and NOT an edge claim. EDGE_UNPROVEN / BLOCK_LIVE_INTEGRATION remain.",
+  "walkforward_version": "fixture-0.1",
+  "bar_count": 8,
+  "train_size": 3,
+  "test_size": 1,
+  "split_count": 5,
+  "vol_lookback_bars": 90,
+  "vol_floor": 1e-06,
+  "heat_cap": 1.0,
+  "cost_model_version": "1.0",
+  "round_trip_cost_fraction": 0.0022,
+  "fixture_counterfactual_return_total": 0.01867396347283224,
+  "fixture_counterfactual_return_mean": 0.003734792694566448
+}
