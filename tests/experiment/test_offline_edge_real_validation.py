@@ -33,6 +33,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_cost_case_observational_drag,
     materialize_gross_observational_returns,
     materialize_funding_observational_adjustments,
+    materialize_funding_to_bars_alignment_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -560,8 +561,8 @@ class TestBuildRealValidationInputInventory:
         funding_dir = tmp_path / "funding"
         bars_dir.mkdir()
         funding_dir.mkdir()
-        _write_tiny_bars_csv(bars_dir)
-        _write_tiny_funding_csv(funding_dir)
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_funding.csv")
 
         inventory = build_real_validation_input_inventory(
             bars_dir=bars_dir,
@@ -1345,6 +1346,141 @@ class TestFundingObservationalAdjustments:
         assert "EDGE_CANDIDATE" not in serialized
 
 
+# ── Funding-to-bars alignment diagnostics tests ─────────────────────────
+
+
+class TestFundingToBarsAlignmentDiagnostics:
+    @staticmethod
+    def _sections(*, rate=-0.02, unassigned=0):
+        rows = {"roles": [
+            {"role": "bars", "files": [{
+                "filename": "BTCUSDT_8h_ohlcv.csv", "total_rows": 3,
+                "unassigned_rows": unassigned, "per_split_counts": [{
+                    "split_id": "split_0", "train_rows": 2, "validation_rows": 1,
+                }],
+            }]},
+            {"role": "funding", "files": [{
+                "filename": "BTCUSDT_funding.csv", "total_rows": 2,
+                "unassigned_rows": unassigned, "per_split_counts": [{
+                    "split_id": "split_0", "train_rows": 1, "validation_rows": 1,
+                }],
+            }]},
+        ]}
+        gross = {"files": [{
+            "filename": "BTCUSDT_8h_ohlcv.csv", "observation_count": 2,
+            "per_split_windows": [{
+                "split_id": "split_0",
+                "train_window": {"observation_count": 1},
+                "validation_window": {"observation_count": 1},
+            }],
+        }]}
+        funding = {"files": [{
+            "filename": "BTCUSDT_funding.csv", "observation_count": 2,
+            "min_funding_rate": rate, "max_funding_rate": 0.0002,
+            "per_split_windows": [{
+                "split_id": "split_0",
+                "train_window": {"observation_count": 1},
+                "validation_window": {"observation_count": 1},
+            }],
+        }]}
+        return rows, gross, funding
+
+    def _build(self, **kwargs):
+        rows, gross, funding = self._sections(**kwargs)
+        return materialize_funding_to_bars_alignment_diagnostics(
+            row_materialization=rows,
+            gross_observational_returns=gross,
+            funding_observational_adjustments=funding,
+        )
+
+    def test_pairing_complete_coverage_and_split_counts(self):
+        result = self._build()
+        assert result["symbol_count"] == result["complete_symbol_count"] == 1
+        assert result["diagnostic_symbol_count"] == 0
+        symbol = result["symbols"][0]
+        assert (symbol["symbol"], symbol["bars_file"], symbol["funding_file"]) == (
+            "BTCUSDT", "BTCUSDT_8h_ohlcv.csv", "BTCUSDT_funding.csv"
+        )
+        assert symbol["coverage_status"] == "COMPLETE"
+        assert (
+            symbol["bars_total_rows"], symbol["funding_total_rows"],
+            symbol["gross_observation_count"], symbol["funding_observation_count"],
+        ) == (3, 2, 2, 2)
+        assert symbol["splits"][0] == {
+            "split_id": "split_0", "bars_train_rows": 2,
+            "bars_validation_rows": 1, "funding_train_rows": 1,
+            "funding_validation_rows": 1, "gross_train_observations": 1,
+            "gross_validation_observations": 1,
+            "funding_train_observations": 1,
+            "funding_validation_observations": 1,
+        }
+
+    def test_unassigned_rows_are_diagnostic_only(self):
+        result = self._build(unassigned=1)
+        assert result["complete_symbol_count"] == 0
+        assert result["diagnostic_symbol_count"] == 1
+        assert result["symbols"][0]["coverage_status"] == "DIAGNOSTIC_ONLY"
+
+    def test_missing_funding_file_fails_closed(self):
+        rows, gross, funding = self._sections()
+        rows["roles"][1]["files"] = []
+        with pytest.raises(ValueError, match="Symbol mismatch"):
+            materialize_funding_to_bars_alignment_diagnostics(
+                row_materialization=rows,
+                gross_observational_returns=gross,
+                funding_observational_adjustments=funding,
+            )
+
+    @pytest.mark.parametrize("role_index", [0, 1])
+    def test_duplicate_bars_or_funding_symbol_fails_closed(self, role_index):
+        rows, gross, funding = self._sections()
+        rows["roles"][role_index]["files"].append(
+            rows["roles"][role_index]["files"][0].copy()
+        )
+        with pytest.raises(ValueError, match="Duplicate"):
+            materialize_funding_to_bars_alignment_diagnostics(
+                row_materialization=rows,
+                gross_observational_returns=gross,
+                funding_observational_adjustments=funding,
+            )
+
+    def test_outlier_threshold_and_no_outlier(self):
+        flagged = self._build()
+        assert flagged["outlier_symbol_count"] == 1
+        assert flagged["symbols"][0]["funding_rate_outlier_present"] is True
+        assert flagged["symbols"][0]["funding_rate_outlier_reason"] == (
+            "ABS_RATE_EXCEEDS_THRESHOLD"
+        )
+        clean = self._build(rate=-0.009)
+        assert clean["outlier_symbol_count"] == 0
+        assert clean["symbols"][0]["funding_rate_outlier_reason"] == "NONE"
+
+    def test_consumes_sections_without_opening_files(self, monkeypatch):
+        def refuse_open(*args, **kwargs):
+            raise AssertionError("alignment helper must not open files")
+        monkeypatch.setattr("builtins.open", refuse_open)
+        assert self._build()["symbol_count"] == 1
+
+    def test_safe_keys_and_receipt_guardrails(self):
+        diagnostics = self._build()
+        forbidden = {
+            "pnl", "sharpe", "edge", "strategy_performance", "return", "returns",
+            "net_return_value", "cost_adjusted_return", "funding_adjusted_return",
+            "trade", "trades", "signal", "signals", "position", "positions",
+            "portfolio", "live_ready", "deploy_ready", "profitable",
+        }
+        assert forbidden.isdisjoint(_all_dict_keys(diagnostics))
+        receipt = _base_receipt(
+            funding_to_bars_alignment_diagnostics=diagnostics
+        )
+        validate_real_validation_receipt(receipt)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        assert all(value is False for value in receipt["required_outputs_present"].values())
+        assert all(value is False for value in receipt["forbidden_calculation_status"].values())
+        assert all(value is True for value in receipt["guardrail_status"].values())
+        assert "EDGE_CANDIDATE" not in json.dumps(receipt)
+
+
 # ── New: Receipt with inventory tests ───────────────────────────────────
 
 
@@ -1730,8 +1866,8 @@ class TestCLIWithDirs:
         funding_dir = tmp_path / "funding"
         bars_dir.mkdir()
         funding_dir.mkdir()
-        _write_tiny_bars_csv(bars_dir)
-        _write_tiny_funding_csv(funding_dir)
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_funding.csv")
 
         out_dir = Path("/tmp") / f"qnty_cli_dirs_bars_test_{uuid.uuid4().hex}"
         receipt_path = out_dir / "real_validation_receipt.json"
@@ -1769,6 +1905,7 @@ class TestCLIWithDirs:
             assert "gross_observational_returns" in written
             assert "cost_case_observational_drag" in written
             assert "funding_observational_adjustments" in written
+            assert "funding_to_bars_alignment_diagnostics" in written
             materialized_roles = written["row_materialization"]["roles"]
             assert materialized_roles[0]["files"][0]["total_rows"] == 3
             gross = written["gross_observational_returns"]
@@ -1785,6 +1922,11 @@ class TestCLIWithDirs:
             assert funding["processed_role"] == "funding"
             assert funding["files"][0]["observation_count"] == 2
             assert funding["bars_adjusted_status"] == "NOT_EXECUTED"
+            alignment = written["funding_to_bars_alignment_diagnostics"]
+            assert alignment["calculation_status"] == (
+                "FUNDING_TO_BARS_ALIGNMENT_DIAGNOSTIC_ONLY"
+            )
+            assert alignment["symbols"][0]["symbol"] == "BTCUSDT"
             assert all(value is False for value in written["required_outputs_present"].values())
             assert all(value is False for value in written["forbidden_calculation_status"].values())
             assert "EDGE_CANDIDATE" not in result.stdout
@@ -1880,8 +2022,8 @@ class TestCLIWithDirs:
         funding_dir = tmp_path / "funding"
         bars_dir.mkdir()
         funding_dir.mkdir()
-        _write_tiny_bars_csv(bars_dir)
-        _write_tiny_numeric_funding_csv(funding_dir)
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_numeric_funding_csv(funding_dir, "BTCUSDT_funding.csv")
 
         out_dir = Path("/tmp") / f"qnty_cli_dirs_both_{uuid.uuid4().hex}"
         receipt_path = out_dir / "real_validation_receipt.json"
@@ -1948,8 +2090,8 @@ class TestCLIWithDirs:
         funding_source = _write_tiny_numeric_funding_csv(
             external_dir, "funding_source.csv"
         )
-        (bars_dir / "bars.csv").symlink_to(bars_source)
-        (funding_dir / "funding.csv").symlink_to(funding_source)
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").symlink_to(bars_source)
+        (funding_dir / "BTCUSDT_funding.csv").symlink_to(funding_source)
 
         out_dir = Path("/tmp") / f"qnty_cli_dirs_symlinks_{uuid.uuid4().hex}"
         receipt_path = out_dir / "real_validation_receipt.json"

@@ -55,6 +55,7 @@ __all__ = [
     "materialize_gross_observational_returns",
     "materialize_cost_case_observational_drag",
     "materialize_funding_observational_adjustments",
+    "materialize_funding_to_bars_alignment_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -1306,6 +1307,250 @@ def materialize_funding_observational_adjustments(
     }
 
 
+# ── Funding-to-bars alignment diagnostics ────────────────────────────
+
+
+def _symbol_from_filename(filename: Any, suffix: str, role: str) -> str:
+    if not isinstance(filename, str) or not filename.endswith(suffix):
+        raise ValueError(
+            f"Invalid {role} filename {filename!r}; expected suffix {suffix!r}"
+        )
+    symbol = filename[: -len(suffix)]
+    if not symbol:
+        raise ValueError(f"Empty symbol in {role} filename {filename!r}")
+    return symbol
+
+
+def _files_by_symbol(files: Any, suffix: str, role: str) -> dict[str, dict]:
+    if not isinstance(files, list):
+        raise ValueError(f"{role} files must be a list")
+    indexed: dict[str, dict] = {}
+    for entry in files:
+        if not isinstance(entry, dict):
+            raise ValueError(f"{role} file entry must be a mapping")
+        symbol = _symbol_from_filename(entry.get("filename"), suffix, role)
+        if symbol in indexed:
+            raise ValueError(f"Duplicate {role} symbol: {symbol}")
+        indexed[symbol] = entry
+    return indexed
+
+
+def _non_negative_count(value: Any, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return value
+
+
+def materialize_funding_to_bars_alignment_diagnostics(
+    *,
+    row_materialization: dict,
+    gross_observational_returns: dict,
+    funding_observational_adjustments: dict,
+    outlier_threshold_abs_rate: float = 0.01,
+) -> dict:
+    """Pair existing bars/funding receipt summaries for diagnostics only.
+
+    This helper performs no I/O and derives no adjusted values. It only joins
+    already-materialized row, observation, split, and funding-rate metadata.
+    """
+    if (
+        not isinstance(outlier_threshold_abs_rate, (int, float))
+        or isinstance(outlier_threshold_abs_rate, bool)
+        or not math.isfinite(outlier_threshold_abs_rate)
+        or outlier_threshold_abs_rate < 0.0
+    ):
+        raise ValueError("outlier_threshold_abs_rate must be finite and non-negative")
+    threshold = float(outlier_threshold_abs_rate)
+
+    roles = row_materialization.get("roles")
+    if not isinstance(roles, list):
+        raise ValueError("row_materialization.roles must be a list")
+    role_files: dict[str, Any] = {}
+    for role in roles:
+        if not isinstance(role, dict) or role.get("role") not in {"bars", "funding"}:
+            continue
+        role_name = str(role["role"])
+        if role_name in role_files:
+            raise ValueError(f"Duplicate row materialization role: {role_name}")
+        role_files[role_name] = role.get("files")
+
+    bars_rows = _files_by_symbol(
+        role_files.get("bars"), "_8h_ohlcv.csv", "bars row materialization"
+    )
+    funding_rows = _files_by_symbol(
+        role_files.get("funding"), "_funding.csv", "funding row materialization"
+    )
+    gross_files = _files_by_symbol(
+        gross_observational_returns.get("files"),
+        "_8h_ohlcv.csv",
+        "gross observation",
+    )
+    funding_files = _files_by_symbol(
+        funding_observational_adjustments.get("files"),
+        "_funding.csv",
+        "funding observation",
+    )
+
+    expected = set(bars_rows)
+    for label, indexed in (
+        ("funding row materialization", funding_rows),
+        ("gross observation", gross_files),
+        ("funding observation", funding_files),
+    ):
+        missing = sorted(expected - set(indexed))
+        extra = sorted(set(indexed) - expected)
+        if missing or extra:
+            raise ValueError(
+                f"Symbol mismatch for {label}: missing={missing}, extra={extra}"
+            )
+
+    symbols: list[dict[str, Any]] = []
+    for symbol in sorted(expected):
+        bars_row = bars_rows[symbol]
+        funding_row = funding_rows[symbol]
+        gross = gross_files[symbol]
+        funding = funding_files[symbol]
+        bars_unassigned = _non_negative_count(
+            bars_row.get("unassigned_rows"), "bars_unassigned_rows"
+        )
+        funding_unassigned = _non_negative_count(
+            funding_row.get("unassigned_rows"), "funding_unassigned_rows"
+        )
+
+        def split_index(entry: dict, field: str) -> dict[str, dict]:
+            windows = entry.get(field)
+            if not isinstance(windows, list):
+                raise ValueError(f"{field} must be a list for {symbol}")
+            result: dict[str, dict] = {}
+            for window in windows:
+                split_id = window.get("split_id") if isinstance(window, dict) else None
+                if not isinstance(split_id, str) or not split_id or split_id in result:
+                    raise ValueError(f"Invalid or duplicate split_id for {symbol}")
+                result[split_id] = window
+            return result
+
+        bars_splits = split_index(bars_row, "per_split_counts")
+        funding_row_splits = split_index(funding_row, "per_split_counts")
+        gross_splits = split_index(gross, "per_split_windows")
+        funding_splits = split_index(funding, "per_split_windows")
+        if not (
+            set(bars_splits)
+            == set(funding_row_splits)
+            == set(gross_splits)
+            == set(funding_splits)
+        ):
+            raise ValueError(f"Split mismatch for symbol {symbol}")
+
+        split_diagnostics = []
+        for split_id in bars_splits:
+            bars_counts = bars_splits[split_id]
+            funding_counts = funding_row_splits[split_id]
+            gross_windows = gross_splits[split_id]
+            funding_windows = funding_splits[split_id]
+            split_diagnostics.append(
+                {
+                    "split_id": split_id,
+                    "bars_train_rows": _non_negative_count(
+                        bars_counts.get("train_rows"), "bars_train_rows"
+                    ),
+                    "bars_validation_rows": _non_negative_count(
+                        bars_counts.get("validation_rows"), "bars_validation_rows"
+                    ),
+                    "funding_train_rows": _non_negative_count(
+                        funding_counts.get("train_rows"), "funding_train_rows"
+                    ),
+                    "funding_validation_rows": _non_negative_count(
+                        funding_counts.get("validation_rows"),
+                        "funding_validation_rows",
+                    ),
+                    "gross_train_observations": _non_negative_count(
+                        gross_windows.get("train_window", {}).get("observation_count"),
+                        "gross_train_observations",
+                    ),
+                    "gross_validation_observations": _non_negative_count(
+                        gross_windows.get("validation_window", {}).get(
+                            "observation_count"
+                        ),
+                        "gross_validation_observations",
+                    ),
+                    "funding_train_observations": _non_negative_count(
+                        funding_windows.get("train_window", {}).get(
+                            "observation_count"
+                        ),
+                        "funding_train_observations",
+                    ),
+                    "funding_validation_observations": _non_negative_count(
+                        funding_windows.get("validation_window", {}).get(
+                            "observation_count"
+                        ),
+                        "funding_validation_observations",
+                    ),
+                }
+            )
+
+        minimum = funding.get("min_funding_rate")
+        maximum = funding.get("max_funding_rate")
+        for name, value in (("min_funding_rate", minimum), ("max_funding_rate", maximum)):
+            if value is not None and (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(value)
+            ):
+                raise ValueError(f"{name} must be finite or null for {symbol}")
+        outlier_present = any(
+            value is not None and abs(float(value)) > threshold
+            for value in (minimum, maximum)
+        )
+        symbols.append(
+            {
+                "symbol": symbol,
+                "bars_file": bars_row["filename"],
+                "funding_file": funding_row["filename"],
+                "bars_total_rows": _non_negative_count(
+                    bars_row.get("total_rows"), "bars_total_rows"
+                ),
+                "funding_total_rows": _non_negative_count(
+                    funding_row.get("total_rows"), "funding_total_rows"
+                ),
+                "gross_observation_count": _non_negative_count(
+                    gross.get("observation_count"), "gross_observation_count"
+                ),
+                "funding_observation_count": _non_negative_count(
+                    funding.get("observation_count"), "funding_observation_count"
+                ),
+                "bars_unassigned_rows": bars_unassigned,
+                "funding_unassigned_rows": funding_unassigned,
+                "coverage_status": (
+                    "COMPLETE"
+                    if bars_unassigned == 0 and funding_unassigned == 0
+                    else "DIAGNOSTIC_ONLY"
+                ),
+                "min_funding_rate": minimum,
+                "max_funding_rate": maximum,
+                "outlier_threshold_abs_rate": threshold,
+                "funding_rate_outlier_present": outlier_present,
+                "funding_rate_outlier_reason": (
+                    "ABS_RATE_EXCEEDS_THRESHOLD" if outlier_present else "NONE"
+                ),
+                "splits": split_diagnostics,
+                "calculation_status": "FUNDING_TO_BARS_ALIGNMENT_DIAGNOSTIC_ONLY",
+            }
+        )
+
+    complete_count = sum(item["coverage_status"] == "COMPLETE" for item in symbols)
+    return {
+        "calculation_status": "FUNDING_TO_BARS_ALIGNMENT_DIAGNOSTIC_ONLY",
+        "symbol_count": len(symbols),
+        "complete_symbol_count": complete_count,
+        "diagnostic_symbol_count": len(symbols) - complete_count,
+        "outlier_symbol_count": sum(
+            item["funding_rate_outlier_present"] for item in symbols
+        ),
+        "outlier_threshold_abs_rate": threshold,
+        "symbols": symbols,
+    }
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -1372,6 +1617,7 @@ def build_real_validation_receipt(
     gross_observational_returns: dict | None = None,
     cost_case_observational_drag: dict | None = None,
     funding_observational_adjustments: dict | None = None,
+    funding_to_bars_alignment_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -1443,6 +1689,10 @@ def build_real_validation_receipt(
         receipt["cost_case_observational_drag"] = cost_case_observational_drag
     if funding_observational_adjustments is not None:
         receipt["funding_observational_adjustments"] = funding_observational_adjustments
+    if funding_to_bars_alignment_diagnostics is not None:
+        receipt["funding_to_bars_alignment_diagnostics"] = (
+            funding_to_bars_alignment_diagnostics
+        )
 
     return receipt
 
@@ -1696,6 +1946,17 @@ def main(argv: list[str] | None = None) -> int:
                     split_definitions=split_definitions,
                 )
             )
+            funding_to_bars_alignment_diagnostics = (
+                materialize_funding_to_bars_alignment_diagnostics(
+                    row_materialization=row_materialization,
+                    gross_observational_returns=gross_observational_returns,
+                    funding_observational_adjustments=(
+                        funding_observational_adjustments
+                    ),
+                )
+                if funding_dir is not None
+                else None
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -1711,6 +1972,9 @@ def main(argv: list[str] | None = None) -> int:
             gross_observational_returns=gross_observational_returns,
             cost_case_observational_drag=cost_case_observational_drag,
             funding_observational_adjustments=funding_observational_adjustments,
+            funding_to_bars_alignment_diagnostics=(
+                funding_to_bars_alignment_diagnostics
+            ),
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
