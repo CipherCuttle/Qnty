@@ -602,16 +602,39 @@ def materialize_input_rows_for_splits(
             if not isinstance(filename, str) or not filename:
                 raise ValueError(f"Invalid inventoried filename for role {role!r}")
 
-            resolved_file = (role_directory / filename).resolve()
+            filename_path = Path(filename)
+            if filename_path.is_absolute() or "/" in filename or ".." in filename:
+                raise ValueError(
+                    f"Inventoried filename must be a simple filename: {filename!r}"
+                )
+
+            inventoried_path = role_directory / filename
+            if inventoried_path.parent != role_directory:
+                raise ValueError(
+                    f"Inventoried file path is outside role directory: {filename}"
+                )
+            if not inventoried_path.exists():
+                raise ValueError(f"Inventoried file is missing: {inventoried_path}")
+
+            resolved_file = inventoried_path.resolve()
             _refuse_if_prod_path(resolved_file)
-            if not _is_under(resolved_file, role_directory):
+            if (
+                not _is_under(resolved_file, role_directory)
+                and not inventoried_path.is_symlink()
+            ):
                 raise ValueError(
                     f"Inventoried file resolves outside role directory: {filename}"
                 )
-            if not resolved_file.exists():
-                raise ValueError(f"Inventoried file is missing: {resolved_file}")
             if not resolved_file.is_file():
                 raise ValueError(f"Inventoried path is not a file: {resolved_file}")
+
+            inventoried_sha256 = file_entry.get("sha256")
+            reopened_sha256 = hashlib.sha256(resolved_file.read_bytes()).hexdigest()
+            if reopened_sha256 != inventoried_sha256:
+                raise ValueError(
+                    f"Inventoried SHA256 changed for {filename}: "
+                    f"expected {inventoried_sha256}, found {reopened_sha256}"
+                )
 
             per_split_counts = {
                 window["split_id"]: {"train_rows": 0, "validation_rows": 0}
