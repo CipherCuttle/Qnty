@@ -36,6 +36,11 @@ from quantbot.experiment.offline_edge_schema import (
     StageMetrics,
     ValidationReceipt,
 )
+from quantbot.experiment.offline_edge_receipt import (
+    build_fixture_validation_receipt,
+    validate_fixture_receipt,
+    write_receipt_json,
+)
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
@@ -124,6 +129,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Fixture bars CSV for deterministic fixture-only walk-forward "
             "replay scaffolding (no PnL, no trades, no real funding replay, "
             "SKELETON_ONLY only)"
+        ),
+    )
+    parser.add_argument(
+        "--full-fixture-receipt",
+        action="store_true",
+        help=(
+            "Assemble and write the full fixture-only validation receipt to "
+            "/tmp/validation_receipt.json (requires --volnorm-bars and "
+            "--walkforward-bars)"
         ),
     )
     return parser
@@ -319,6 +333,35 @@ def main() -> None:
             "(fixture-only, no PnL, no real funding replay)"
         )
     print("Mode: read-only skeleton (no-op)")
+
+    # PR F — full fixture-only validation receipt
+    if args.full_fixture_receipt:
+        missing = []
+        if not args.volnorm_bars:
+            missing.append("--volnorm-bars")
+        if not args.walkforward_bars:
+            missing.append("--walkforward-bars")
+        if missing:
+            print(f"Error: --full-fixture-receipt requires: {', '.join(missing)}", file=sys.stderr)
+            sys.exit(1)
+
+        full_receipt = build_fixture_validation_receipt(
+            input_manifest_fingerprint=receipt.get("input_manifest_fingerprint", "placeholder"),
+            input_manifest_summary=receipt.get("input_manifest_summary"),
+            cost_model_assumptions=receipt.get("cost_model_assumptions"),
+            per_stage_metrics=receipt.get("per_stage_metrics", []),
+            volnorm_fixture_summary=receipt.get("volnorm_fixture_summary"),
+            walkforward_fixture_summary=receipt.get("walkforward_fixture_summary"),
+            final_verdict=receipt["final_verdict"],
+            final_verdict_rationale=(
+                "SKELETON_ONLY: fixture-only validation complete. "
+                "No edge claim made. No live integration. No strategy PnL."
+            ),
+        )
+        validate_fixture_receipt(full_receipt)
+        output_path = Path("/tmp") / "validation_receipt.json"
+        write_receipt_json(full_receipt, output_path)
+        print(f"Full fixture receipt written to {output_path}")
 
 
 if __name__ == "__main__":
