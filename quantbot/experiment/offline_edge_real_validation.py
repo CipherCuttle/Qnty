@@ -25,6 +25,7 @@ no pandas, numpy, engine, exchange, ccxt, sqlite, or paper imports.
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import hashlib
 import json
@@ -32,6 +33,7 @@ import math
 import os
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -58,6 +60,7 @@ __all__ = [
     "materialize_funding_observational_adjustments",
     "materialize_funding_to_bars_alignment_diagnostics",
     "materialize_funding_to_bars_temporal_joinability_diagnostics",
+    "materialize_funding_to_bars_timestamp_convention_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -2005,6 +2008,461 @@ def materialize_funding_to_bars_temporal_joinability_diagnostics(
     }
 
 
+# ── Funding-to-bars timestamp convention / offset diagnostics ───────────
+
+
+_SHIFTED_EXACT = "EXACT_SHIFTED_TIMESTAMP_SET_MATCH"
+_SHIFTED_PARTIAL = "PARTIAL_SHIFTED_TIMESTAMP_SET_MATCH"
+_SHIFTED_NONE = "NO_SHIFTED_TIMESTAMP_MATCH"
+_SHIFTED_EMPTY_BOTH = "EMPTY_BOTH"
+
+_SHIFT_DIRECTION_LABEL = "BARS_SHIFTED_BEFORE_COMPARISON_TO_FUNDING"
+
+_EIGHT_HOURS_SECONDS = 8 * 3600
+
+_NEAREST_DELTA_HISTOGRAM_CAP = 200
+
+_DEFAULT_CANDIDATE_OFFSETS: tuple[tuple[str, int], ...] = (
+    ("-24h", -86400),
+    ("-16h", -57600),
+    ("-12h", -43200),
+    ("-8h", -28800),
+    ("-4h", -14400),
+    ("-1h", -3600),
+    ("0h", 0),
+    ("+1h", 3600),
+    ("+4h", 14400),
+    ("+8h", 28800),
+    ("+12h", 43200),
+    ("+16h", 57600),
+    ("+24h", 86400),
+)
+
+
+def _validate_candidate_offsets(candidate_offsets: Any) -> list[tuple[str, int]]:
+    """Validate a candidate-offset definition, failing closed on malformed input."""
+    if not isinstance(candidate_offsets, (list, tuple)) or not candidate_offsets:
+        raise ValueError("candidate_offsets must be a non-empty list")
+
+    seen_labels: set[str] = set()
+    seen_seconds: set[int] = set()
+    validated: list[tuple[str, int]] = []
+    for entry in candidate_offsets:
+        if (
+            not isinstance(entry, (tuple, list))
+            or len(entry) != 2
+        ):
+            raise ValueError(f"Invalid candidate offset definition: {entry!r}")
+        label, seconds = entry
+        if not isinstance(label, str) or not label:
+            raise ValueError(f"Invalid candidate offset label: {label!r}")
+        if not isinstance(seconds, int) or isinstance(seconds, bool):
+            raise ValueError(f"Invalid candidate offset seconds: {seconds!r}")
+        if label in seen_labels:
+            raise ValueError(f"Duplicate candidate offset label: {label}")
+        if seconds in seen_seconds:
+            raise ValueError(f"Duplicate candidate offset seconds: {seconds}")
+        seen_labels.add(label)
+        seen_seconds.add(seconds)
+        validated.append((label, seconds))
+
+    if 0 not in seen_seconds:
+        raise ValueError("candidate_offsets must include a 0-second baseline offset")
+
+    return validated
+
+
+def _safe_ratio(numerator: int, denominator: int) -> float:
+    if denominator == 0:
+        return 0.0
+    ratio = numerator / denominator
+    if not math.isfinite(ratio):
+        raise ValueError(f"Non-finite match ratio computed: {numerator}/{denominator}")
+    return ratio
+
+
+def _classify_shifted_set_match(shifted: set[datetime], funding: set[datetime]) -> str:
+    if not shifted and not funding:
+        return _SHIFTED_EMPTY_BOTH
+    matched = len(shifted & funding)
+    if matched == 0:
+        return _SHIFTED_NONE
+    if shifted == funding:
+        return _SHIFTED_EXACT
+    return _SHIFTED_PARTIAL
+
+
+def _offset_matched_counts(
+    bars_set: set[datetime],
+    funding_set: set[datetime],
+    candidate_offsets: list[tuple[str, int]],
+) -> list[dict[str, Any]]:
+    """Compare *bars_set* shifted by each candidate offset against *funding_set*.
+
+    Bars timestamps are shifted before comparison to funding; this performs
+    no application of funding to bars and computes no financial values.
+    """
+    results: list[dict[str, Any]] = []
+    for label, seconds in candidate_offsets:
+        shifted = {ts + timedelta(seconds=seconds) for ts in bars_set}
+        matched = len(shifted & funding_set)
+        results.append(
+            {
+                "offset_label": label,
+                "offset_seconds": seconds,
+                "shift_direction": _SHIFT_DIRECTION_LABEL,
+                "matched_timestamp_count": matched,
+                "bars_unmatched_after_shift_count": len(shifted - funding_set),
+                "funding_unmatched_after_shift_count": len(funding_set - shifted),
+                "match_ratio_of_bars": _safe_ratio(matched, len(bars_set)),
+                "match_ratio_of_funding": _safe_ratio(matched, len(funding_set)),
+                "exact_shifted_set_status": _classify_shifted_set_match(
+                    shifted, funding_set
+                ),
+            }
+        )
+    return results
+
+
+def _select_best_offset(
+    offset_results: list[dict[str, Any]], key_field: str
+) -> dict[str, Any]:
+    """Pick the best offset by *key_field*, deterministic on ties.
+
+    Ties are broken by candidate-list order (the first tied candidate in
+    the deterministic candidate order wins); ``tie_count`` and
+    ``tied_offset_labels`` record every tied candidate.
+    """
+    best_value = max(entry[key_field] for entry in offset_results)
+    tied = [entry for entry in offset_results if entry[key_field] == best_value]
+    winner = tied[0]
+    return {
+        "offset_label": winner["offset_label"],
+        "offset_seconds": winner["offset_seconds"],
+        key_field: best_value,
+        "tie_count": len(tied),
+        "tied_offset_labels": [entry["offset_label"] for entry in tied],
+    }
+
+
+def _split_offset_window_summary(
+    bars_window: set[datetime],
+    funding_window: set[datetime],
+    candidate_offsets: list[tuple[str, int]],
+) -> dict[str, Any]:
+    offset_results = _offset_matched_counts(
+        bars_window, funding_window, candidate_offsets
+    )
+    zero_entry = next(
+        entry for entry in offset_results if entry["offset_seconds"] == 0
+    )
+    best = _select_best_offset(offset_results, "matched_timestamp_count")
+    best_entry = next(
+        entry for entry in offset_results if entry["offset_label"] == best["offset_label"]
+    )
+    return {
+        "best_offset_by_matched_count": best,
+        "matched_count_at_0h": zero_entry["matched_timestamp_count"],
+        "matched_count_at_best_offset": best_entry["matched_timestamp_count"],
+        "bars_count": len(bars_window),
+        "funding_count": len(funding_window),
+        "status_at_0h": zero_entry["exact_shifted_set_status"],
+        "status_at_best_offset": best_entry["exact_shifted_set_status"],
+    }
+
+
+def _mode_step_seconds(timestamps: list[datetime]) -> tuple[int | None, int]:
+    """Return ``(mode_step_seconds, non_mode_step_count)`` for consecutive diffs.
+
+    Ties in the step-count mode are broken deterministically by preferring
+    the smallest step value. Fewer than two timestamps yields
+    ``(None, 0)``.
+    """
+    if len(timestamps) < 2:
+        return None, 0
+    steps = [
+        int((timestamps[i] - timestamps[i - 1]).total_seconds())
+        for i in range(1, len(timestamps))
+    ]
+    counts = Counter(steps)
+    max_count = max(counts.values())
+    mode_step = min(step for step, count in counts.items() if count == max_count)
+    non_mode_count = sum(1 for step in steps if step != mode_step)
+    return mode_step, non_mode_count
+
+
+def _residue_mod_8h_counts(timestamps: list[datetime]) -> list[dict[str, Any]]:
+    """Histogram of timestamp-seconds modulo 8h, deterministically ordered."""
+    counts: dict[int, int] = {}
+    for ts in timestamps:
+        residue = int(ts.timestamp()) % _EIGHT_HOURS_SECONDS
+        counts[residue] = counts.get(residue, 0) + 1
+    result: list[dict[str, Any]] = []
+    for residue in sorted(counts):
+        hours, remainder = divmod(residue, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        result.append(
+            {
+                "residue_seconds": residue,
+                "residue_label": f"{hours:02d}:{minutes:02d}:{seconds:02d}",
+                "count": counts[residue],
+            }
+        )
+    return result
+
+
+def _nearest_funding_delta_seconds(
+    bar_ts: datetime, funding_sorted: list[datetime]
+) -> int:
+    """Signed seconds from *bar_ts* to its nearest funding timestamp.
+
+    Diagnostic only: this is never used to join or apply funding, only to
+    record the observed nearest-neighbour delta distribution.
+    """
+    idx = bisect.bisect_left(funding_sorted, bar_ts)
+    candidates: list[datetime] = []
+    if idx < len(funding_sorted):
+        candidates.append(funding_sorted[idx])
+    if idx > 0:
+        candidates.append(funding_sorted[idx - 1])
+    best = min(
+        candidates,
+        key=lambda ft: (abs((ft - bar_ts).total_seconds()), (ft - bar_ts).total_seconds()),
+    )
+    return int((best - bar_ts).total_seconds())
+
+
+def _nearest_delta_histogram(
+    unmatched_bars_sorted: list[datetime], funding_sorted: list[datetime]
+) -> tuple[list[dict[str, Any]], int | None, int]:
+    """Diagnostic nearest-delta histogram for 0h-unmatched bars timestamps.
+
+    Never used to join or apply funding. Deterministically truncated to
+    ``_NEAREST_DELTA_HISTOGRAM_CAP`` entries, ordered by descending count
+    then ascending delta.
+    """
+    if not unmatched_bars_sorted or not funding_sorted:
+        return [], None, 0
+    counts: dict[int, int] = {}
+    for bar_ts in unmatched_bars_sorted:
+        delta = _nearest_funding_delta_seconds(bar_ts, funding_sorted)
+        counts[delta] = counts.get(delta, 0) + 1
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    truncated = ordered[:_NEAREST_DELTA_HISTOGRAM_CAP]
+    histogram = [
+        {"delta_seconds": delta, "count": count} for delta, count in truncated
+    ]
+    most_common = ordered[0][0]
+    return histogram, most_common, len(unmatched_bars_sorted)
+
+
+def materialize_funding_to_bars_timestamp_convention_diagnostics(
+    *,
+    inventory: dict[str, Any],
+    split_definitions: list[dict[str, Any]],
+    candidate_offsets: Any = None,
+) -> dict[str, Any]:
+    """Diagnose why exact-UTC bars/funding timestamp sets only partially match.
+
+    For each symbol, compares bars timestamps shifted by a fixed set of
+    candidate offsets against funding timestamps, emits bars/funding
+    cadence (mode step, residue-mod-8h) evidence, and records a diagnostic
+    nearest-delta histogram for timestamps unmatched at 0h. This performs
+    no price/rate reads, applies no funding to bars, and computes no
+    strategy, PnL, Sharpe, risk, or portfolio values. Nearest-neighbour
+    deltas are recorded for diagnosis only and are never used to join.
+    """
+    validated_offsets = _validate_candidate_offsets(
+        candidate_offsets if candidate_offsets is not None else _DEFAULT_CANDIDATE_OFFSETS
+    )
+
+    windows = _build_split_windows_for_joinability(split_definitions)
+
+    roles = inventory.get("roles")
+    if not isinstance(roles, list):
+        raise ValueError("inventory.roles must be a list")
+    role_entries: dict[str, dict[str, Any]] = {}
+    for role_entry in roles:
+        if not isinstance(role_entry, dict):
+            raise ValueError("inventory role entry must be a mapping")
+        role = role_entry.get("role")
+        if role not in _ROLE_TIMESTAMP_COLUMNS:
+            raise ValueError(f"Unsupported inventoried role: {role!r}")
+        if role in role_entries:
+            raise ValueError(f"Duplicate inventoried role: {role}")
+        role_entries[role] = role_entry
+
+    if "bars" not in role_entries or "funding" not in role_entries:
+        raise ValueError(
+            "funding-to-bars timestamp convention diagnostics require both "
+            "bars and funding roles in the inventory"
+        )
+
+    bars_by_symbol = _load_role_symbol_timestamps(
+        role_entry=role_entries["bars"],
+        filename_suffix="_8h_ohlcv.csv",
+        timestamp_column="timestamp",
+        role="bars",
+    )
+    funding_by_symbol = _load_role_symbol_timestamps(
+        role_entry=role_entries["funding"],
+        filename_suffix="_funding.csv",
+        timestamp_column="fundingTime",
+        role="funding",
+    )
+
+    bars_symbols = set(bars_by_symbol)
+    funding_symbols = set(funding_by_symbol)
+    if bars_symbols != funding_symbols:
+        missing = sorted(bars_symbols - funding_symbols)
+        extra = sorted(funding_symbols - bars_symbols)
+        raise ValueError(
+            f"Symbol mismatch between bars and funding: missing={missing}, "
+            f"extra={extra}"
+        )
+
+    symbols: list[dict[str, Any]] = []
+    for symbol in sorted(bars_symbols):
+        bars_entry = bars_by_symbol[symbol]
+        funding_entry = funding_by_symbol[symbol]
+        bars_timestamps: list[datetime] = bars_entry["timestamps"]
+        funding_timestamps: list[datetime] = funding_entry["timestamps"]
+        bars_set = set(bars_timestamps)
+        funding_set = set(funding_timestamps)
+
+        offset_results = _offset_matched_counts(bars_set, funding_set, validated_offsets)
+
+        bars_first = bars_timestamps[0] if bars_timestamps else None
+        bars_last = bars_timestamps[-1] if bars_timestamps else None
+        funding_first = funding_timestamps[0] if funding_timestamps else None
+        funding_last = funding_timestamps[-1] if funding_timestamps else None
+
+        bars_mode_step, bars_non_mode_count = _mode_step_seconds(bars_timestamps)
+        funding_mode_step, funding_non_mode_count = _mode_step_seconds(
+            funding_timestamps
+        )
+
+        bars_residue = _residue_mod_8h_counts(bars_timestamps)
+        funding_residue = _residue_mod_8h_counts(funding_timestamps)
+
+        unmatched_bars_sorted = sorted(bars_set - funding_set)
+        histogram, most_common_delta, sample_size = _nearest_delta_histogram(
+            unmatched_bars_sorted, funding_timestamps
+        )
+
+        split_diagnostics: list[dict[str, Any]] = []
+        for window in windows:
+            train_bars = {
+                ts
+                for ts in bars_set
+                if _timestamp_in_window(
+                    ts, start=window["train_start"], end=window["train_end"]
+                )
+            }
+            train_funding = {
+                ts
+                for ts in funding_set
+                if _timestamp_in_window(
+                    ts, start=window["train_start"], end=window["train_end"]
+                )
+            }
+            validation_bars = {
+                ts
+                for ts in bars_set
+                if _timestamp_in_window(
+                    ts,
+                    start=window["validation_start"],
+                    end=window["validation_end"],
+                    include_end=window["include_validation_end"],
+                )
+            }
+            validation_funding = {
+                ts
+                for ts in funding_set
+                if _timestamp_in_window(
+                    ts,
+                    start=window["validation_start"],
+                    end=window["validation_end"],
+                    include_end=window["include_validation_end"],
+                )
+            }
+            split_diagnostics.append(
+                {
+                    "split_id": window["split_id"],
+                    "train_window": _split_offset_window_summary(
+                        train_bars, train_funding, validated_offsets
+                    ),
+                    "validation_window": _split_offset_window_summary(
+                        validation_bars, validation_funding, validated_offsets
+                    ),
+                }
+            )
+
+        symbols.append(
+            {
+                "symbol": symbol,
+                "bars_file": bars_entry["filename"],
+                "funding_file": funding_entry["filename"],
+                "offsets": offset_results,
+                "best_offset_by_matched_count": _select_best_offset(
+                    offset_results, "matched_timestamp_count"
+                ),
+                "best_offset_by_bars_match_ratio": _select_best_offset(
+                    offset_results, "match_ratio_of_bars"
+                ),
+                "best_offset_by_funding_match_ratio": _select_best_offset(
+                    offset_results, "match_ratio_of_funding"
+                ),
+                "bars_timestamp_count": len(bars_timestamps),
+                "bars_first_timestamp": (
+                    _format_timestamp(bars_first) if bars_first is not None else None
+                ),
+                "bars_last_timestamp": (
+                    _format_timestamp(bars_last) if bars_last is not None else None
+                ),
+                "bars_mode_step_seconds": bars_mode_step,
+                "bars_non_mode_step_count": bars_non_mode_count,
+                "bars_residue_mod_8h_counts": bars_residue,
+                "funding_timestamp_count": len(funding_timestamps),
+                "funding_first_timestamp": (
+                    _format_timestamp(funding_first)
+                    if funding_first is not None
+                    else None
+                ),
+                "funding_last_timestamp": (
+                    _format_timestamp(funding_last)
+                    if funding_last is not None
+                    else None
+                ),
+                "funding_mode_step_seconds": funding_mode_step,
+                "funding_non_mode_step_count": funding_non_mode_count,
+                "funding_residue_mod_8h_counts": funding_residue,
+                "nearest_funding_delta_seconds_histogram": histogram,
+                "most_common_nearest_funding_delta_seconds": most_common_delta,
+                "nearest_delta_sample_size": sample_size,
+                "splits": split_diagnostics,
+                "calculation_status": (
+                    "FUNDING_TO_BARS_TIMESTAMP_CONVENTION_DIAGNOSTIC_ONLY"
+                ),
+                "funding_application_status": "NOT_EXECUTED",
+            }
+        )
+
+    return {
+        "calculation_status": "FUNDING_TO_BARS_TIMESTAMP_CONVENTION_DIAGNOSTIC_ONLY",
+        "timestamp_match_policy": (
+            "DIAGNOSTIC_EXACT_AND_SHIFTED_UTC_TIMESTAMP_SETS_ONLY"
+        ),
+        "funding_application_status": "NOT_EXECUTED",
+        "symbol_count": len(symbols),
+        "candidate_offsets": [
+            {"offset_label": label, "offset_seconds": seconds}
+            for label, seconds in validated_offsets
+        ],
+        "symbols": symbols,
+    }
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -2073,6 +2531,7 @@ def build_real_validation_receipt(
     funding_observational_adjustments: dict | None = None,
     funding_to_bars_alignment_diagnostics: dict | None = None,
     funding_to_bars_temporal_joinability_diagnostics: dict | None = None,
+    funding_to_bars_timestamp_convention_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -2151,6 +2610,10 @@ def build_real_validation_receipt(
     if funding_to_bars_temporal_joinability_diagnostics is not None:
         receipt["funding_to_bars_temporal_joinability_diagnostics"] = (
             funding_to_bars_temporal_joinability_diagnostics
+        )
+    if funding_to_bars_timestamp_convention_diagnostics is not None:
+        receipt["funding_to_bars_timestamp_convention_diagnostics"] = (
+            funding_to_bars_timestamp_convention_diagnostics
         )
 
     return receipt
@@ -2424,6 +2887,14 @@ def main(argv: list[str] | None = None) -> int:
                 if funding_dir is not None
                 else None
             )
+            funding_to_bars_timestamp_convention_diagnostics = (
+                materialize_funding_to_bars_timestamp_convention_diagnostics(
+                    inventory=inventory,
+                    split_definitions=split_definitions,
+                )
+                if funding_dir is not None
+                else None
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -2444,6 +2915,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             funding_to_bars_temporal_joinability_diagnostics=(
                 funding_to_bars_temporal_joinability_diagnostics
+            ),
+            funding_to_bars_timestamp_convention_diagnostics=(
+                funding_to_bars_timestamp_convention_diagnostics
             ),
         )
     else:
