@@ -36,6 +36,11 @@ from quantbot.experiment.offline_edge_schema import (
     StageMetrics,
     ValidationReceipt,
 )
+from quantbot.experiment.offline_edge_receipt import (
+    build_fixture_validation_receipt,
+    validate_fixture_receipt,
+    write_receipt_json,
+)
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
@@ -126,6 +131,15 @@ def build_parser() -> argparse.ArgumentParser:
             "SKELETON_ONLY only)"
         ),
     )
+    parser.add_argument(
+        "--full-fixture-receipt",
+        action="store_true",
+        help=(
+            "Assemble and write the full fixture-only validation receipt "
+            "(requires --volnorm-bars, --walkforward-bars, and at least one of "
+            "--bars-dir, --funding-dir, --manifest-dir)"
+        ),
+    )
     return parser
 
 
@@ -173,31 +187,45 @@ def refuse_prod_path(path_str: str, output_path: bool = False) -> None:
 
 
 def main() -> None:
-    """Parse args, guard prod paths, write skeleton receipt, exit 0."""
+    """Parse args, guard prod paths, write skeleton or full receipt, exit 0."""
     parser = build_parser()
     args = parser.parse_args()
 
-    # Guard production paths
+    if not args.read_only:
+        print("Error: --read-only is required", file=sys.stderr)
+        sys.exit(1)
+
     refuse_prod_path(args.output_dir, output_path=True)
-    if args.bars_dir is not None:
-        refuse_prod_path(args.bars_dir)
-    if args.funding_dir is not None:
-        refuse_prod_path(args.funding_dir)
-    if args.manifest_dir is not None:
-        refuse_prod_path(args.manifest_dir)
-    if args.volnorm_bars is not None:
-        refuse_prod_path(args.volnorm_bars)
-    if args.walkforward_bars is not None:
-        refuse_prod_path(args.walkforward_bars)
+
+    # Guard fixture paths
+    for path_str in [
+        args.bars_dir,
+        args.funding_dir,
+        args.manifest_dir,
+        args.volnorm_bars,
+        args.walkforward_bars,
+    ]:
+        if path_str:
+            refuse_prod_path(path_str)
+
+    # Check full-fixture-receipt requirements
+    if args.full_fixture_receipt:
+        missing = []
+        if not args.volnorm_bars:
+            missing.append("--volnorm-bars")
+        if not args.walkforward_bars:
+            missing.append("--walkforward-bars")
+        if not args.bars_dir and not args.funding_dir and not args.manifest_dir:
+            missing.append("at least one of --bars-dir, --funding-dir, --manifest-dir")
+        if missing:
+            print(f"Error: --full-fixture-receipt requires: {', '.join(missing)}", file=sys.stderr)
+            sys.exit(1)
 
     # Collect input paths for manifest fingerprinting
     input_dirs: list[Path] = []
-    if args.bars_dir is not None:
-        input_dirs.append(Path(args.bars_dir))
-    if args.funding_dir is not None:
-        input_dirs.append(Path(args.funding_dir))
-    if args.manifest_dir is not None:
-        input_dirs.append(Path(args.manifest_dir))
+    for path_str in [args.bars_dir, args.funding_dir, args.manifest_dir]:
+        if path_str:
+            input_dirs.append(Path(path_str))
 
     # Compute fingerprint if any input directories are provided
     has_input = len(input_dirs) > 0
@@ -213,22 +241,9 @@ def main() -> None:
     # from tiny fixture bar data only.  This computes NO strategy PnL, generates
     # NO trades, replays NO funding, and keeps the verdict SKELETON_ONLY.
     volnorm_fixture_summary: dict | None = None
-    per_stage_metrics: dict[str, StageMetrics] = {}
     if args.volnorm_bars is not None:
         volnorm_fixture_summary = reconstruct_fixture_volnorm_weights(
             Path(args.volnorm_bars)
-        )
-        per_stage_metrics[FIXTURE_VOLNORM_STAGE_ID] = StageMetrics(
-            stage_id=FIXTURE_VOLNORM_STAGE_ID,
-            stage_name=FIXTURE_VOLNORM_STAGE_NAME,
-            status=SKELETON_ONLY,
-            summary=(
-                "fixture-only volnorm reconstruction: "
-                f"weight={volnorm_fixture_summary['inverse_vol_weight']:.6g}, "
-                f"realized_volatility="
-                f"{volnorm_fixture_summary['realized_volatility']:.6g} "
-                "(no PnL, no trades, not full V2)"
-            ),
         )
 
     # Fixture-only walk-forward replay (PR E).  Deterministic tiny fixture splits
@@ -241,84 +256,146 @@ def main() -> None:
         walkforward_fixture_summary = run_fixture_walkforward(
             Path(args.walkforward_bars)
         )
-        per_stage_metrics[FIXTURE_WALKFORWARD_STAGE_ID] = StageMetrics(
-            stage_id=FIXTURE_WALKFORWARD_STAGE_ID,
-            stage_name=FIXTURE_WALKFORWARD_STAGE_NAME,
-            status=SKELETON_ONLY,
-            summary=(
-                "fixture-only walk-forward replay: "
+
+    if args.full_fixture_receipt:
+        # Build per-stage metrics as list (for build_fixture_validation_receipt)
+        per_stage_metrics: list[dict] = []
+        if volnorm_fixture_summary is not None:
+            per_stage_metrics.append(dict(
+                stage_id=FIXTURE_VOLNORM_STAGE_ID,
+                stage_name=FIXTURE_VOLNORM_STAGE_NAME,
+                status=SKELETON_ONLY,
+                summary="fixture volnorm reconstruction (skeleton)",
+            ))
+        if walkforward_fixture_summary is not None:
+            per_stage_metrics.append(dict(
+                stage_id=FIXTURE_WALKFORWARD_STAGE_ID,
+                stage_name=FIXTURE_WALKFORWARD_STAGE_NAME,
+                status=SKELETON_ONLY,
+                summary="fixture walkforward replay (skeleton)",
+            ))
+
+        # Build and write the full fixture receipt as the single output
+        full_receipt = build_fixture_validation_receipt(
+            input_manifest_fingerprint=fingerprint,
+            input_manifest_summary=input_manifest_summary,
+            cost_model_assumptions=dict(
+                cost_model_version=COST_MODEL_VERSION,
+                slippage_bps_per_side=5.0,
+                commission_bps_per_side=5.0,
+                spread_bps_per_side=1.0,
+                funding_cost_placeholder=0.0,
+                heat_cap=1.0,
+                vol_lookback_bars=90,
+                vol_floor=1e-6,
+            ),
+            per_stage_metrics=per_stage_metrics,
+            volnorm_fixture_summary=volnorm_fixture_summary,
+            walkforward_fixture_summary=walkforward_fixture_summary,
+            final_verdict=SKELETON_ONLY,
+            final_verdict_rationale=(
+                "SKELETON_ONLY: fixture-only validation complete. "
+                "No edge claim made. No live integration. No strategy PnL."
+            ),
+        )
+        validate_fixture_receipt(full_receipt)
+        output_path = Path(args.output_dir).resolve() / "validation_receipt.json"
+        write_receipt_json(full_receipt, output_path)
+        print(f"Full fixture receipt written to {output_path}")
+    else:
+        # Build skeleton receipt (existing behavior)
+        per_stage_metrics: dict[str, StageMetrics] = {}
+        if volnorm_fixture_summary is not None:
+            per_stage_metrics[FIXTURE_VOLNORM_STAGE_ID] = StageMetrics(
+                stage_id=FIXTURE_VOLNORM_STAGE_ID,
+                stage_name=FIXTURE_VOLNORM_STAGE_NAME,
+                status=SKELETON_ONLY,
+                summary=(
+                    "fixture-only volnorm reconstruction: "
+                    f"weight={volnorm_fixture_summary['inverse_vol_weight']:.6g}, "
+                    f"realized_volatility="
+                    f"{volnorm_fixture_summary['realized_volatility']:.6g} "
+                    "(no PnL, no trades, not full V2)"
+                ),
+            )
+        if walkforward_fixture_summary is not None:
+            per_stage_metrics[FIXTURE_WALKFORWARD_STAGE_ID] = StageMetrics(
+                stage_id=FIXTURE_WALKFORWARD_STAGE_ID,
+                stage_name=FIXTURE_WALKFORWARD_STAGE_NAME,
+                status=SKELETON_ONLY,
+                summary=(
+                    "fixture-only walk-forward replay: "
+                    f"split_count={walkforward_fixture_summary['split_count']}, "
+                    "fixture_counterfactual_return_total="
+                    f"{walkforward_fixture_summary['fixture_counterfactual_return_total']:.6g} "
+                    "(no PnL, no trades, no real funding replay, not full walk-forward)"
+                ),
+            )
+
+        receipt_kwargs: dict = ValidationReceipt(
+            validation_receipt=ReceiptMetadata(
+                tool_name="offline_edge_validation",
+                tool_version="0.1.0",
+                timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                pipeline_description="skeleton",
+            ),
+            input_manifest_fingerprint=fingerprint,
+            cost_model_assumptions=CostModelAssumptions(
+                slippage_bps_per_side=5.0,
+                commission_bps_per_side=5.0,
+                heat_cap=1.0,
+                vol_lookback_bars=90,
+                vol_floor=1e-6,
+                # PR C — fixture-only cost-model placeholders. These are assumptions
+                # only: the CLI does NOT apply them to any trade or compute PnL.
+                cost_model_version=COST_MODEL_VERSION,
+                spread_bps_per_side=1.0,
+                funding_cost_placeholder=0.0,
+            ),
+            per_stage_metrics=per_stage_metrics,
+            final_verdict=SKELETON_ONLY,
+        )
+        receipt: ValidationReceipt = dict(receipt_kwargs)  # type: ignore[arg-type]
+        if input_manifest_summary is not None:
+            receipt["input_manifest_summary"] = input_manifest_summary
+        if volnorm_fixture_summary is not None:
+            receipt["volnorm_fixture_summary"] = volnorm_fixture_summary
+        if walkforward_fixture_summary is not None:
+            receipt["walkforward_fixture_summary"] = walkforward_fixture_summary
+
+        # Ensure output directory exists
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write receipt
+        receipt_path = output_dir / "validation_receipt.json"
+        with open(receipt_path, "w") as f:
+            json.dump(receipt, f, indent=2)
+
+        # Summary to stdout
+        print(f"Validation receipt written to {receipt_path}")
+        print(f"Final verdict: {receipt['final_verdict']}")
+        if has_input:
+            print(f"Input manifest fingerprint: {fingerprint}")
+        else:
+            print("Input manifest: PLACEHOLDER_SKELETON_NO_OP (no input dirs)")
+        if volnorm_fixture_summary is not None:
+            print(
+                "Volnorm fixture reconstruction: "
+                f"weight={volnorm_fixture_summary['inverse_vol_weight']:.6g}, "
+                f"realized_volatility="
+                f"{volnorm_fixture_summary['realized_volatility']:.6g} "
+                "(fixture-only, no PnL)"
+            )
+        if walkforward_fixture_summary is not None:
+            print(
+                "Walk-forward fixture replay: "
                 f"split_count={walkforward_fixture_summary['split_count']}, "
                 "fixture_counterfactual_return_total="
                 f"{walkforward_fixture_summary['fixture_counterfactual_return_total']:.6g} "
-                "(no PnL, no trades, no real funding replay, not full walk-forward)"
-            ),
-        )
-
-    # Build skeleton receipt
-    receipt_kwargs: dict = ValidationReceipt(
-        validation_receipt=ReceiptMetadata(
-            tool_name="offline_edge_validation",
-            tool_version="0.1.0",
-            timestamp_utc=datetime.now(timezone.utc).isoformat(),
-            pipeline_description="skeleton",
-        ),
-        input_manifest_fingerprint=fingerprint,
-        cost_model_assumptions=CostModelAssumptions(
-            slippage_bps_per_side=5.0,
-            commission_bps_per_side=5.0,
-            heat_cap=1.0,
-            vol_lookback_bars=90,
-            vol_floor=1e-6,
-            # PR C — fixture-only cost-model placeholders. These are assumptions
-            # only: the CLI does NOT apply them to any trade or compute PnL.
-            cost_model_version=COST_MODEL_VERSION,
-            spread_bps_per_side=1.0,
-            funding_cost_placeholder=0.0,
-        ),
-        per_stage_metrics=per_stage_metrics,
-        final_verdict=SKELETON_ONLY,
-    )
-    receipt: ValidationReceipt = dict(receipt_kwargs)  # type: ignore[arg-type]
-    if input_manifest_summary is not None:
-        receipt["input_manifest_summary"] = input_manifest_summary
-    if volnorm_fixture_summary is not None:
-        receipt["volnorm_fixture_summary"] = volnorm_fixture_summary
-    if walkforward_fixture_summary is not None:
-        receipt["walkforward_fixture_summary"] = walkforward_fixture_summary
-
-    # Ensure output directory exists
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Write receipt
-    receipt_path = output_dir / "validation_receipt.json"
-    with open(receipt_path, "w") as f:
-        json.dump(receipt, f, indent=2)
-
-    # Summary to stdout
-    print(f"Validation receipt written to {receipt_path}")
-    print(f"Final verdict: {receipt['final_verdict']}")
-    if has_input:
-        print(f"Input manifest fingerprint: {fingerprint}")
-    else:
-        print("Input manifest: PLACEHOLDER_SKELETON_NO_OP (no input dirs)")
-    if volnorm_fixture_summary is not None:
-        print(
-            "Volnorm fixture reconstruction: "
-            f"weight={volnorm_fixture_summary['inverse_vol_weight']:.6g}, "
-            f"realized_volatility="
-            f"{volnorm_fixture_summary['realized_volatility']:.6g} "
-            "(fixture-only, no PnL)"
-        )
-    if walkforward_fixture_summary is not None:
-        print(
-            "Walk-forward fixture replay: "
-            f"split_count={walkforward_fixture_summary['split_count']}, "
-            "fixture_counterfactual_return_total="
-            f"{walkforward_fixture_summary['fixture_counterfactual_return_total']:.6g} "
-            "(fixture-only, no PnL, no real funding replay)"
-        )
-    print("Mode: read-only skeleton (no-op)")
+                "(fixture-only, no PnL, no real funding replay)"
+            )
+        print("Mode: read-only skeleton (no-op)")
 
 
 if __name__ == "__main__":
