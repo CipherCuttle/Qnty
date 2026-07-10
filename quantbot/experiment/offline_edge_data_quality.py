@@ -62,6 +62,14 @@ def inspect_csv_file(path: Path, profile: str = "bars") -> dict[str, Any]:
     required columns and timestamp column (see :data:`SCHEMA_PROFILES`).
     Defaults to the ``"bars"`` profile for backward compatibility.
 
+    ``has_null_values`` (and therefore the ``no_null_required_values``
+    readiness flag) reflects nulls in *required* columns only — a null in an
+    optional column (e.g. funding's ``markPrice``) never fails readiness.
+    Nulls are still tracked per-column for visibility via ``null_columns``
+    (all columns with a null cell), ``null_required_columns`` (the subset
+    that are required), and ``optional_null_columns`` (the subset that are
+    not).
+
     Never raises for malformed CSV content; catches ``csv.Error`` and
     stores the message in the ``error`` key. Raises ``ValueError`` for an
     unknown *profile* (fail closed on caller error).
@@ -88,6 +96,9 @@ def inspect_csv_file(path: Path, profile: str = "bars") -> dict[str, Any]:
         "has_duplicate_timestamps": False,
         "has_non_monotonic_timestamps": False,
         "has_null_values": False,
+        "null_columns": [],
+        "null_required_columns": [],
+        "optional_null_columns": [],
         "min_timestamp": None,
         "max_timestamp": None,
         "error": None,
@@ -113,16 +124,20 @@ def inspect_csv_file(path: Path, profile: str = "bars") -> dict[str, Any]:
                 return result
 
             timestamps: list[str] = []
-            has_nulls = False
+            null_columns: set[str] = set()
 
             for row in rows:
-                # Null check across all cells — stop early once found
-                if not has_nulls:
-                    for val in row.values():
-                        cleaned = val.strip().lower() if val else val
-                        if val == "" or cleaned in ("nan", "null", "none", "na"):
-                            has_nulls = True
-                            break
+                # Track which columns have a null/empty cell anywhere in the
+                # file. Every column is checked (for visibility), but only
+                # nulls in *required* columns feed readiness (has_null_values
+                # / no_null_required_values) — an optional column such as
+                # funding's markPrice must not block readiness.
+                for col, val in row.items():
+                    if col is None:
+                        continue
+                    cleaned = val.strip().lower() if val else val
+                    if val == "" or cleaned in ("nan", "null", "none", "na"):
+                        null_columns.add(col)
 
                 # Collect timestamps if the profile's timestamp column exists
                 if has_ts_col:
@@ -130,7 +145,12 @@ def inspect_csv_file(path: Path, profile: str = "bars") -> dict[str, Any]:
                     if ts is not None and ts.strip():
                         timestamps.append(ts)
 
-            result["has_null_values"] = has_nulls
+            null_required_columns = sorted(null_columns & required_columns)
+            optional_null_columns = sorted(null_columns - required_columns)
+            result["null_columns"] = sorted(null_columns)
+            result["null_required_columns"] = null_required_columns
+            result["optional_null_columns"] = optional_null_columns
+            result["has_null_values"] = bool(null_required_columns)
 
             if timestamps and has_ts_col:
                 result["has_duplicate_timestamps"] = len(timestamps) != len(
@@ -156,9 +176,13 @@ def inspect_csv_file(path: Path, profile: str = "bars") -> dict[str, Any]:
 def _inspect_manifest_json_file(path: Path) -> dict[str, Any]:
     """Light, stdlib-only structural check for a manifest JSON file.
 
-    Never raises; malformed JSON is reported via the ``error`` key.
+    Refuses paths resolving under the production boundary (``/srv/qnty``),
+    same as :func:`inspect_csv_file` — protects against a manifest directory
+    entry (direct call or symlink) resolving into a prod path. Otherwise
+    never raises; malformed JSON is reported via the ``error`` key.
     Does not require any OHLCV/funding columns — manifest files are not CSVs.
     """
+    _refuse_prod_path(path)
     result: dict[str, Any] = {
         "path": str(path),
         "kind": "manifest_json",

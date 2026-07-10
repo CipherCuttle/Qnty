@@ -1264,6 +1264,39 @@ class TestDataQualitySchemaProfiles:
                 "has_timestamp_column"
             ] is True
 
+    def test_cli_funding_dir_null_mark_price_does_not_fail_readiness(self) -> None:
+        """Optional markPrice nulls must not fail funding readiness in the
+        CLI receipt — required-column-only null semantics (repair)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            funding_dir = os.path.join(tmpdir, "funding_null_mark_price")
+            os.makedirs(funding_dir)
+            shutil.copy(
+                FIXTURE_DIR / "data_quality_funding_null_mark_price.csv",
+                os.path.join(funding_dir, "data_quality_funding_null_mark_price.csv"),
+            )
+            output_dir = os.path.join(tmpdir, "out")
+            result = _run_cli(
+                "--read-only",
+                "--output-dir", output_dir,
+                "--funding-dir", funding_dir,
+                "--data-quality-preflight",
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            with open(os.path.join(output_dir, "validation_receipt.json")) as f:
+                receipt = json.load(f)
+            summary = receipt["data_quality_preflight_summary"]
+            assert summary["has_null_values"] is False
+            assert summary["readiness_flags"]["no_null_required_values"] is True
+            assert summary["readiness_flags"]["by_role"]["funding"][
+                "no_null_required_values"
+            ] is True
+            # Final verdict and forbidden-key guardrails still hold.
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+            assert receipt["final_verdict"] != "EDGE_CANDIDATE"
+            for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
+                assert forbidden not in receipt
+            assert "EDGE_CANDIDATE" not in json.dumps(receipt)
+
     def test_cli_funding_dir_missing_funding_time_flagged_not_bars(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             funding_dir = os.path.join(tmpdir, "funding_bad")

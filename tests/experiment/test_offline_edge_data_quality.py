@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import csv
+import os
 from pathlib import Path
 
 import pytest
@@ -263,6 +264,18 @@ class TestBarsProfile:
         assert "close" in result["missing_required_columns"]
         assert "volume" in result["missing_required_columns"]
 
+    def test_bars_profile_null_close_still_fails_required_null_readiness(
+        self,
+    ) -> None:
+        """close is required for bars — a null cell there must still fail
+        has_null_values / no_null_required_values (no behavior regression)."""
+        result = inspect_csv_file(
+            FIXTURE_DIR / "data_quality_null_values.csv", profile="bars"
+        )
+        assert result["has_null_values"] is True
+        assert "close" in result["null_required_columns"]
+        assert "volume" in result["null_required_columns"]
+
 
 class TestFundingProfile:
     """The "funding" profile validates Binance funding-rate CSV shape."""
@@ -312,6 +325,22 @@ class TestFundingProfile:
         )
         assert result["has_null_values"] is True
         assert result["missing_required_columns"] == []
+        assert "fundingRate" in result["null_required_columns"]
+        assert result["optional_null_columns"] == []
+
+    def test_funding_optional_mark_price_null_does_not_fail_readiness(self) -> None:
+        """markPrice is optional for the funding profile — a null cell there
+        must not set has_null_values / fail no_null_required_values, but
+        should still be visible via optional_null_columns / null_columns."""
+        result = inspect_csv_file(
+            FIXTURE_DIR / "data_quality_funding_null_mark_price.csv",
+            profile="funding",
+        )
+        assert result["has_null_values"] is False
+        assert result["null_required_columns"] == []
+        assert "markPrice" in result["optional_null_columns"]
+        assert "markPrice" in result["null_columns"]
+        assert "markPrice" not in result["required_columns"]
 
     def test_funding_missing_funding_time_detected(self) -> None:
         result = inspect_csv_file(
@@ -358,6 +387,42 @@ class TestManifestProfile:
         assert json_entry["kind"] == "manifest_json"
         assert json_entry["is_valid_json"] is False
         assert json_entry["error"] is not None
+
+    def test_manifest_json_helper_refuses_srv_qnty_path_directly(self) -> None:
+        """_inspect_manifest_json_file must fail closed on a prod path, same
+        as inspect_csv_file, even when called directly (not through
+        inspect_input_directory)."""
+        from quantbot.experiment.offline_edge_data_quality import (
+            _inspect_manifest_json_file,
+        )
+
+        with pytest.raises(ValueError, match="production boundary"):
+            _inspect_manifest_json_file(Path("/srv/qnty/manifest.json"))
+
+    def test_manifest_directory_refuses_symlink_into_prod_boundary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A manifest directory entry that is a symlink resolving under the
+        production boundary must be refused via _inspect_manifest_json_file's
+        _refuse_prod_path call, not silently inspected. Uses a monkeypatched
+        PROD_BASE (rather than a broken symlink into the real /srv/qnty,
+        which would be filtered out by entry.is_file() before ever reaching
+        the guard) so the symlink target genuinely exists on disk."""
+        import quantbot.experiment.offline_edge_data_quality as dq_module
+
+        fake_prod = tmp_path / "fake_prod"
+        fake_prod.mkdir()
+        real_manifest = fake_prod / "manifest.json"
+        real_manifest.write_text('{"a": 1}')
+        monkeypatch.setattr(dq_module, "PROD_BASE", fake_prod)
+
+        manifest_dir = tmp_path / "manifest_dir"
+        manifest_dir.mkdir()
+        symlink_path = manifest_dir / "prod_link.json"
+        os.symlink(real_manifest, symlink_path)
+
+        with pytest.raises(ValueError, match="production boundary"):
+            inspect_input_directory(manifest_dir, profile="manifest")
 
 
 class TestRoleAwarePreflight:
