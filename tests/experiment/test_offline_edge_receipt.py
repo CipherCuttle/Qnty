@@ -20,6 +20,8 @@ from quantbot.experiment.offline_edge_receipt import (
     validate_fixture_receipt,
     write_receipt_json,
 )
+from quantbot.experiment.offline_edge_data_quality import build_data_quality_preflight
+
 from quantbot.experiment.offline_edge_schema import (
     EDGE_CANDIDATE,
     INCONCLUSIVE,
@@ -245,7 +247,7 @@ class TestValidateFixtureReceipt:
     def test_missing_key_raises_value_error(self) -> None:
         receipt = _make_valid_receipt()
         del receipt["final_verdict"]
-        with pytest.raises(ValueError, match="Missing required receipt key: final_verdict"):
+        with pytest.raises(ValueError, match="Missing required keys:.*final_verdict"):
             validate_fixture_receipt(receipt)
 
     def test_missing_guardrail_key_raises_value_error(self) -> None:
@@ -316,7 +318,7 @@ class TestWriteReceiptJson:
         del receipt["final_verdict"]
         output_path = Path("/tmp") / "test_invalid_receipt.json"
         try:
-            with pytest.raises(ValueError, match="Missing required receipt key: final_verdict"):
+            with pytest.raises(ValueError, match="Missing required keys:.*final_verdict"):
                 write_receipt_json(receipt, output_path)
             # File should NOT have been created
             assert not output_path.exists()
@@ -358,6 +360,76 @@ class TestWriteReceiptJson:
         finally:
             if output_path.exists():
                 output_path.unlink()
+
+
+# ---------------------------------------------------------------------------
+# TestDataQualityPreflightSummaryInReceipt
+# ---------------------------------------------------------------------------
+
+
+class TestDataQualityPreflightSummaryInReceipt:
+    """Tests for optional data_quality_preflight_summary key in receipt."""
+
+    def test_optional_key_accepted(self) -> None:
+        """Receipt with data_quality_preflight_summary should validate OK."""
+        receipt = build_fixture_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_preflight_summary={
+                "version": "0.1.0",
+                "readiness_flags": {"data_quality_preflight_only": True},
+            },
+        )
+        # validate_fixture_receipt should not raise
+        validate_fixture_receipt(receipt)
+        assert "data_quality_preflight_summary" in receipt
+
+    def test_optional_key_not_required(self) -> None:
+        """Receipt without data_quality_preflight_summary should still validate OK."""
+        receipt = build_fixture_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+        )
+        # validate_fixture_receipt should not raise
+        validate_fixture_receipt(receipt)
+        assert "data_quality_preflight_summary" not in receipt
+
+    def test_unexpected_key_rejected(self) -> None:
+        """Receipt with an unexpected key should raise ValueError."""
+        receipt = build_fixture_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+        )
+        receipt["totally_unexpected_key"] = "should_not_be_here"
+        with pytest.raises(ValueError, match="Unexpected keys"):
+            validate_fixture_receipt(receipt)
+
+    def test_build_with_data_quality_preflight_summary(self) -> None:
+        """build_fixture_validation_receipt should accept data_quality_preflight_summary."""
+        receipt = build_fixture_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_preflight_summary={
+                "data_quality_version": "0.1.0",
+                "file_count": 5,
+                "csv_file_count": 5,
+                "total_row_count": 100,
+                "readiness_flags": {
+                    "has_any_rows": True,
+                    "has_timestamp_column": True,
+                    "timestamps_monotonic": True,
+                    "no_duplicate_timestamps": True,
+                    "no_null_required_values": True,
+                    "data_quality_preflight_only": True,
+                },
+            },
+        )
+        assert "data_quality_preflight_summary" in receipt
+        assert receipt["data_quality_preflight_summary"]["data_quality_version"] == "0.1.0"
+        assert receipt["data_quality_preflight_summary"]["readiness_flags"]["data_quality_preflight_only"] is True
+
+    def test_build_without_optional_key(self) -> None:
+        """build_fixture_validation_receipt without data_quality_preflight_summary should work."""
+        receipt = build_fixture_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+        )
+        assert "data_quality_preflight_summary" not in receipt
 
 
 # ---------------------------------------------------------------------------

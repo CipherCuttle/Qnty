@@ -30,6 +30,14 @@ FIXTURE_VOLNORM_STAGE_NAME: str = "fixture_volnorm_reconstruction"
 FIXTURE_WALKFORWARD_STAGE_ID: str = "B"
 FIXTURE_WALKFORWARD_STAGE_NAME: str = "fixture_walkforward_replay"
 
+# Data-quality preflight stage identity.  Runs before the actual walkforward to
+# validate that supplied data meets minimum quality thresholds (coverage, gaps,
+# outliers).  Returns a summary dict, not a TypedDict — so no schema version bump.
+DATA_QUALITY_STAGE_ID: str = "C"
+DATA_QUALITY_STAGE_NAME: str = "data_quality_preflight"
+
+DATA_QUALITY_PREFLIGHT_VERSION: str = "0.1.0"
+
 # Forbidden future verdicts — named here for refusal tests only
 EDGE_CANDIDATE: str = "EDGE_CANDIDATE"
 NO_EDGE: str = "NO_EDGE"

@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import pathlib
 
 import pytest
 
@@ -1045,3 +1046,171 @@ class TestFullFixtureReceiptFlag:
         if os.path.exists(full_path):
             os.unlink(full_path)
         assert not os.path.exists(full_path)
+
+
+class TestDataQualityPreflight:
+    """CLI integration tests for --data-quality-preflight flag."""
+
+    def test_emits_summary_when_flag_provided(self):
+        """--data-quality-preflight with --bars-dir should emit data_quality_preflight_summary."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [sys.executable, "-m", "quantbot.experiment.offline_edge_validation_cli",
+                 "--read-only", "--output-dir", tmpdir, "--bars-dir", str(FIXTURE_DIR),
+                 "--data-quality-preflight"],
+                capture_output=True, text=True
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+            receipt_path = pathlib.Path(tmpdir) / "validation_receipt.json"
+            assert receipt_path.exists(), "Receipt not written"
+
+            receipt = json.loads(receipt_path.read_text())
+            assert "data_quality_preflight_summary" in receipt, (
+                f"Missing data_quality_preflight_summary in receipt keys: {list(receipt.keys())}"
+            )
+            summary = receipt["data_quality_preflight_summary"]
+            assert "data_quality_version" in summary
+            assert "readiness_flags" in summary
+            assert summary["readiness_flags"]["data_quality_preflight_only"] is True
+
+    def test_refuses_without_input_dirs(self):
+        """--data-quality-preflight without --bars-dir/--funding-dir/--manifest-dir should fail."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [sys.executable, "-m", "quantbot.experiment.offline_edge_validation_cli",
+                 "--read-only", "--output-dir", tmpdir, "--data-quality-preflight"],
+                capture_output=True, text=True
+            )
+            assert result.returncode == 1, (
+                f"Expected exit code 1, got {result.returncode}: {result.stderr}"
+            )
+
+    def test_final_verdict_remains_skeleton_only(self):
+        """Even with --data-quality-preflight, final_verdict must be SKELETON_ONLY."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [sys.executable, "-m", "quantbot.experiment.offline_edge_validation_cli",
+                 "--read-only", "--output-dir", tmpdir, "--bars-dir", str(FIXTURE_DIR),
+                 "--data-quality-preflight"],
+                capture_output=True, text=True
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+            receipt = json.loads((pathlib.Path(tmpdir) / "validation_receipt.json").read_text())
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+
+    def test_no_forbidden_top_level_keys(self):
+        """Receipt must not contain pnl, sharpe, edge, or strategy_performance at top level."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [sys.executable, "-m", "quantbot.experiment.offline_edge_validation_cli",
+                 "--read-only", "--output-dir", tmpdir, "--bars-dir", str(FIXTURE_DIR),
+                 "--data-quality-preflight"],
+                capture_output=True, text=True
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+            receipt = json.loads((pathlib.Path(tmpdir) / "validation_receipt.json").read_text())
+            forbidden = {"pnl", "sharpe", "edge", "strategy_performance"}
+            found = [k for k in forbidden if k in receipt]
+            assert not found, f"Found forbidden top-level keys: {found}"
+
+    def test_stage_c_present(self):
+        """Stage C (data_quality_preflight) should be in per_stage_metrics."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [sys.executable, "-m", "quantbot.experiment.offline_edge_validation_cli",
+                 "--read-only", "--output-dir", tmpdir, "--bars-dir", str(FIXTURE_DIR),
+                 "--data-quality-preflight"],
+                capture_output=True, text=True
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+            receipt = json.loads((pathlib.Path(tmpdir) / "validation_receipt.json").read_text())
+            per_stage = receipt["per_stage_metrics"]
+            assert "C" in per_stage, f"Stage C not found in stages: {list(per_stage.keys())}"
+            assert per_stage["C"]["stage_name"] == "data_quality_preflight"
+
+    def test_works_with_funding_dir(self):
+        """--data-quality-preflight should work with --funding-dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [sys.executable, "-m", "quantbot.experiment.offline_edge_validation_cli",
+                 "--read-only", "--output-dir", tmpdir, "--funding-dir", str(FIXTURE_DIR),
+                 "--data-quality-preflight"],
+                capture_output=True, text=True
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+            receipt = json.loads((pathlib.Path(tmpdir) / "validation_receipt.json").read_text())
+            assert "data_quality_preflight_summary" in receipt
+
+    def test_works_with_manifest_dir(self):
+        """--data-quality-preflight should work with --manifest-dir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [sys.executable, "-m", "quantbot.experiment.offline_edge_validation_cli",
+                 "--read-only", "--output-dir", tmpdir, "--manifest-dir", str(FIXTURE_DIR),
+                 "--data-quality-preflight"],
+                capture_output=True, text=True
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+            receipt = json.loads((pathlib.Path(tmpdir) / "validation_receipt.json").read_text())
+            assert "data_quality_preflight_summary" in receipt
+
+    def test_deterministic_output(self):
+        """Running twice with same inputs should produce identical receipt (except timestamp)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            def _run():
+                result = subprocess.run(
+                    [sys.executable, "-m", "quantbot.experiment.offline_edge_validation_cli",
+                     "--read-only", "--output-dir", tmpdir, "--bars-dir", str(FIXTURE_DIR),
+                     "--data-quality-preflight"],
+                    capture_output=True, text=True
+                )
+                assert result.returncode == 0, f"CLI failed: {result.stderr}"
+                return json.loads((pathlib.Path(tmpdir) / "validation_receipt.json").read_text())
+
+            receipt1 = _run()
+            receipt2 = _run()
+
+            # Compare everything except timestamp-dependent fields
+            for key in receipt1:
+                if key in ("validation_receipt",):
+                    continue  # skip metadata which has timestamp
+                assert receipt1[key] == receipt2[key], f"Mismatch in key: {key}"
+
+    def test_full_fixture_receipt_with_data_quality(self):
+        """--full-fixture-receipt with --data-quality-preflight should include summary."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bars_csv = str(FIXTURE_DIR / "sample_volnorm_bars.csv")
+            wf_bars_csv = str(FIXTURE_DIR / "sample_walkforward_bars.csv")
+            result = subprocess.run(
+                [sys.executable, "-m", "quantbot.experiment.offline_edge_validation_cli",
+                 "--read-only", "--output-dir", tmpdir,
+                 "--bars-dir", str(FIXTURE_DIR),
+                 "--data-quality-preflight",
+                 "--volnorm-bars", bars_csv,
+                 "--walkforward-bars", wf_bars_csv,
+                 "--full-fixture-receipt"],
+                capture_output=True, text=True
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+            receipt = json.loads((pathlib.Path(tmpdir) / "validation_receipt.json").read_text())
+            assert "data_quality_preflight_summary" in receipt, (
+                f"Missing data_quality_preflight_summary in full receipt keys: {list(receipt.keys())}"
+            )
+            # Also verify existing required keys are still present
+            for key in ["validation_receipt", "input_manifest_fingerprint", "input_manifest_summary",
+                        "cost_model_assumptions", "per_stage_metrics", "volnorm_fixture_summary",
+                        "walkforward_fixture_summary", "guardrail_status", "final_verdict",
+                        "final_verdict_rationale"]:
+                assert key in receipt, f"Missing required key: {key}"
+
+            # Verify no forbidden keys
+            forbidden = {"pnl", "sharpe", "edge", "strategy_performance"}
+            found = [k for k in forbidden if k in receipt]
+            assert not found, f"Found forbidden top-level keys: {found}"

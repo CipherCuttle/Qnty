@@ -42,6 +42,13 @@ from quantbot.experiment.offline_edge_receipt import (
     write_receipt_json,
 )
 
+from quantbot.experiment.offline_edge_data_quality import build_data_quality_preflight
+from quantbot.experiment.offline_edge_schema import (
+    DATA_QUALITY_STAGE_ID,
+    DATA_QUALITY_STAGE_NAME,
+    SKELETON_ONLY,
+)
+
 # ── Constants ─────────────────────────────────────────────────────────────
 
 PROD_PATH_PREFIX = "/srv/qnty"
@@ -140,6 +147,12 @@ def build_parser() -> argparse.ArgumentParser:
             "--bars-dir, --funding-dir, --manifest-dir)"
         ),
     )
+    parser.add_argument(
+        "--data-quality-preflight",
+        action="store_true",
+        default=False,
+        help="Run read-only data quality preflight on input directories before other stages",
+    )
     return parser
 
 
@@ -221,6 +234,12 @@ def main() -> None:
             print(f"Error: --full-fixture-receipt requires: {', '.join(missing)}", file=sys.stderr)
             sys.exit(1)
 
+    # Check data-quality-preflight requirements
+    if args.data_quality_preflight:
+        if not (args.bars_dir or args.funding_dir or args.manifest_dir):
+            print("ERROR: --data-quality-preflight requires at least one of --bars-dir, --funding-dir, or --manifest-dir")
+            sys.exit(1)
+
     # Collect input paths for manifest fingerprinting
     input_dirs: list[Path] = []
     for path_str in [args.bars_dir, args.funding_dir, args.manifest_dir]:
@@ -236,6 +255,18 @@ def main() -> None:
         fingerprint = input_manifest_summary["fingerprint"]
     else:
         fingerprint = PLACEHOLDER_SKELETON_NO_OP
+
+    # --- Data quality preflight ---
+    data_quality_preflight_summary = None
+    if args.data_quality_preflight:
+        dq_paths: list[Path] = []
+        if args.bars_dir:
+            dq_paths.append(Path(args.bars_dir))
+        if args.funding_dir:
+            dq_paths.append(Path(args.funding_dir))
+        if args.manifest_dir:
+            dq_paths.append(Path(args.manifest_dir))
+        data_quality_preflight_summary = build_data_quality_preflight(dq_paths)
 
     # Fixture-only volnorm reconstruction (PR D).  Deterministic weight rebuild
     # from tiny fixture bar data only.  This computes NO strategy PnL, generates
@@ -274,6 +305,13 @@ def main() -> None:
                 status=SKELETON_ONLY,
                 summary="fixture walkforward replay (skeleton)",
             ))
+        if args.data_quality_preflight:
+            per_stage_metrics.append(dict(
+                stage_id=DATA_QUALITY_STAGE_ID,
+                stage_name=DATA_QUALITY_STAGE_NAME,
+                status=SKELETON_ONLY,
+                summary="Data quality preflight metrics collected (read-only)",
+            ))
 
         # Build and write the full fixture receipt as the single output
         full_receipt = build_fixture_validation_receipt(
@@ -292,6 +330,7 @@ def main() -> None:
             per_stage_metrics=per_stage_metrics,
             volnorm_fixture_summary=volnorm_fixture_summary,
             walkforward_fixture_summary=walkforward_fixture_summary,
+            data_quality_preflight_summary=data_quality_preflight_summary,
             final_verdict=SKELETON_ONLY,
             final_verdict_rationale=(
                 "SKELETON_ONLY: fixture-only validation complete. "
@@ -331,6 +370,13 @@ def main() -> None:
                     "(no PnL, no trades, no real funding replay, not full walk-forward)"
                 ),
             )
+        if args.data_quality_preflight:
+            per_stage_metrics[DATA_QUALITY_STAGE_ID] = {
+                "stage_id": DATA_QUALITY_STAGE_ID,
+                "stage_name": DATA_QUALITY_STAGE_NAME,
+                "status": SKELETON_ONLY,
+                "summary": "Data quality preflight metrics collected (read-only)",
+            }
 
         receipt_kwargs: dict = ValidationReceipt(
             validation_receipt=ReceiptMetadata(
@@ -362,6 +408,8 @@ def main() -> None:
             receipt["volnorm_fixture_summary"] = volnorm_fixture_summary
         if walkforward_fixture_summary is not None:
             receipt["walkforward_fixture_summary"] = walkforward_fixture_summary
+        if data_quality_preflight_summary is not None:
+            receipt["data_quality_preflight_summary"] = data_quality_preflight_summary
 
         # Ensure output directory exists
         output_dir = Path(args.output_dir)
