@@ -3,10 +3,11 @@
 Scope boundary (do not violate) — see
 docs/status/QNTY_OFFLINE_EDGE_VALIDATION_REAL_VALIDATION_EXECUTION_PLAN.md:
 
-This module builds the *schema and skeleton* for the first real offline
-validation receipt. It does **not**:
+This module builds the *schema and first descriptive calculation scaffold*
+for the real offline validation receipt. It only computes close-to-close gross
+observational metadata. It does **not**:
 
-- compute returns (gross or net)
+- compute strategy, net, cost-adjusted, or funding-adjusted returns
 - compute PnL
 - compute Sharpe or any risk-adjusted metric
 - run the paper engine
@@ -27,6 +28,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
 import sys
 from datetime import datetime, timezone, timedelta
@@ -50,6 +52,7 @@ __all__ = [
     "build_real_validation_input_inventory",
     "materialize_split_definitions_from_inventory",
     "materialize_input_rows_for_splits",
+    "materialize_gross_observational_returns",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -81,8 +84,11 @@ FORBIDDEN_CALCULATION_KEYS = frozenset(
         "strategy_performance",
         "return",
         "returns",
+        "gross_observational_return",
         "gross_return_value",
         "net_return_value",
+        "cost_adjusted_return",
+        "funding_adjusted_return",
         "price_change",
         "trade",
         "trades",
@@ -90,6 +96,10 @@ FORBIDDEN_CALCULATION_KEYS = frozenset(
         "signals",
         "position",
         "positions",
+        "portfolio",
+        "live_ready",
+        "deploy_ready",
+        "profitable",
     }
 )
 
@@ -749,6 +759,235 @@ def materialize_input_rows_for_splits(
     }
 
 
+# ── Gross observational return metadata ────────────────────────────────
+
+
+def _gross_return_summary(values: list[float]) -> dict[str, Any]:
+    """Summarize close-to-close observations without strategy semantics."""
+    return {
+        "observation_count": len(values),
+        "positive_count": sum(value > 0.0 for value in values),
+        "negative_count": sum(value < 0.0 for value in values),
+        "zero_count": sum(value == 0.0 for value in values),
+        "min_gross_return": min(values) if values else None,
+        "max_gross_return": max(values) if values else None,
+        "mean_gross_return": math.fsum(values) / len(values) if values else None,
+    }
+
+
+def materialize_gross_observational_returns(
+    *,
+    inventory: dict,
+    split_definitions: list[dict],
+) -> dict:
+    """Materialize bars-only close-to-close descriptive return metadata.
+
+    Each observation is ``(close_t / close_t_minus_1) - 1`` and is assigned to
+    train/validation windows by the current row timestamp. Files must retain
+    their inventoried SHA256, timestamps must be strictly increasing, and only
+    the timestamp and close columns are accessed. Funding inventory entries are
+    recorded as ignored and are never opened.
+    """
+    if not split_definitions:
+        raise ValueError("split_definitions must not be empty")
+
+    windows: list[dict[str, Any]] = []
+    final_validation_index = max(
+        range(len(split_definitions)),
+        key=lambda index: split_definitions[index].get("split_index", index),
+    )
+    for index, split in enumerate(split_definitions):
+        try:
+            train = split["train_window"]
+            validation = split["validation_window"]
+            windows.append(
+                {
+                    "split_id": str(split["split_id"]),
+                    "train_start": _parse_timestamp(str(train["start"])),
+                    "train_end": _parse_timestamp(str(train["end"])),
+                    "validation_start": _parse_timestamp(str(validation["start"])),
+                    "validation_end": _parse_timestamp(str(validation["end"])),
+                    "include_validation_end": index == final_validation_index,
+                }
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid split definition at index {index}") from exc
+
+    file_results: list[dict[str, Any]] = []
+    ignored_roles: list[str] = []
+    for role_entry in inventory.get("roles", []):
+        role = role_entry.get("role")
+        if role != "bars":
+            ignored_roles.append(str(role))
+            continue
+
+        role_directory = Path(str(role_entry.get("directory", ""))).resolve()
+        _refuse_if_prod_path(role_directory)
+        if not role_directory.is_dir():
+            raise ValueError(f"Inventoried bars directory is missing: {role_directory}")
+
+        for file_entry in role_entry.get("files", []):
+            filename = file_entry.get("filename")
+            if not isinstance(filename, str) or not filename:
+                raise ValueError("Invalid inventoried filename for role 'bars'")
+            filename_path = Path(filename)
+            if filename_path.is_absolute() or "/" in filename or ".." in filename:
+                raise ValueError(
+                    f"Inventoried filename must be a simple filename: {filename!r}"
+                )
+
+            inventoried_path = role_directory / filename
+            if inventoried_path.parent != role_directory:
+                raise ValueError(
+                    f"Inventoried file path is outside role directory: {filename}"
+                )
+            if not inventoried_path.exists():
+                raise ValueError(f"Inventoried file is missing: {inventoried_path}")
+
+            resolved_file = inventoried_path.resolve()
+            _refuse_if_prod_path(resolved_file)
+            if (
+                not _is_under(resolved_file, role_directory)
+                and not inventoried_path.is_symlink()
+            ):
+                raise ValueError(
+                    f"Inventoried file resolves outside role directory: {filename}"
+                )
+            if not resolved_file.is_file():
+                raise ValueError(f"Inventoried path is not a file: {resolved_file}")
+
+            inventoried_sha256 = file_entry.get("sha256")
+            reopened_sha256 = hashlib.sha256(resolved_file.read_bytes()).hexdigest()
+            if reopened_sha256 != inventoried_sha256:
+                raise ValueError(
+                    f"Inventoried SHA256 changed for {filename}: "
+                    f"expected {inventoried_sha256}, found {reopened_sha256}"
+                )
+
+            observations: list[tuple[datetime, float]] = []
+            previous_timestamp: datetime | None = None
+            previous_close: float | None = None
+            total_rows = 0
+            with open(resolved_file, newline="") as csv_file:
+                reader = csv.reader(csv_file)
+                header = next(reader, None)
+                if header is None:
+                    raise ValueError(f"Missing CSV header in {filename}")
+                header_lookup = {name.lower(): i for i, name in enumerate(header)}
+                timestamp_index = header_lookup.get("timestamp")
+                close_index = header_lookup.get("close")
+                if timestamp_index is None:
+                    raise ValueError(f"Missing timestamp column in {filename}")
+                if close_index is None:
+                    raise ValueError(f"Missing close column in {filename}")
+
+                for row_number, row in enumerate(reader, start=2):
+                    total_rows += 1
+                    timestamp_value = (
+                        row[timestamp_index].strip()
+                        if timestamp_index < len(row)
+                        else ""
+                    )
+                    close_value = (
+                        row[close_index].strip() if close_index < len(row) else ""
+                    )
+                    try:
+                        timestamp = _parse_timestamp(timestamp_value)
+                    except (OverflowError, OSError, ValueError) as exc:
+                        raise ValueError(
+                            f"Malformed timestamp in {filename} row {row_number}: "
+                            f"{timestamp_value!r}"
+                        ) from exc
+                    try:
+                        close = float(close_value)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"Malformed close in {filename} row {row_number}: "
+                            f"{close_value!r}"
+                        ) from exc
+                    if not math.isfinite(close):
+                        raise ValueError(
+                            f"Malformed close in {filename} row {row_number}: "
+                            f"{close_value!r}"
+                        )
+                    if previous_timestamp is not None and timestamp <= previous_timestamp:
+                        raise ValueError(
+                            f"Non-monotonic timestamp in {filename} row {row_number}: "
+                            f"{timestamp_value!r}"
+                        )
+                    if previous_close is not None:
+                        if previous_close == 0.0:
+                            raise ValueError(
+                                f"Zero prior close in {filename} row {row_number}"
+                            )
+                        gross_return = (close / previous_close) - 1.0
+                        if not math.isfinite(gross_return):
+                            raise ValueError(
+                                f"Non-finite gross observation in {filename} row "
+                                f"{row_number}"
+                            )
+                        observations.append((timestamp, gross_return))
+                    previous_timestamp = timestamp
+                    previous_close = close
+
+            inventoried_rows = file_entry.get("row_count")
+            if inventoried_rows is not None and total_rows != inventoried_rows:
+                raise ValueError(
+                    f"Inventoried row count changed for {filename}: "
+                    f"expected {inventoried_rows}, found {total_rows}"
+                )
+
+            per_split_windows: list[dict[str, Any]] = []
+            for window in windows:
+                train_values = [
+                    value
+                    for timestamp, value in observations
+                    if _timestamp_in_window(
+                        timestamp,
+                        start=window["train_start"],
+                        end=window["train_end"],
+                    )
+                ]
+                validation_values = [
+                    value
+                    for timestamp, value in observations
+                    if _timestamp_in_window(
+                        timestamp,
+                        start=window["validation_start"],
+                        end=window["validation_end"],
+                        include_end=window["include_validation_end"],
+                    )
+                ]
+                per_split_windows.append(
+                    {
+                        "split_id": window["split_id"],
+                        "train_window": _gross_return_summary(train_values),
+                        "validation_window": _gross_return_summary(validation_values),
+                        "calculation_status": "GROSS_OBSERVATIONAL_RETURNS_ONLY",
+                    }
+                )
+
+            file_results.append(
+                {
+                    "role": "bars",
+                    "filename": filename,
+                    "timestamp_column": "timestamp",
+                    "close_column": "close",
+                    **_gross_return_summary([value for _, value in observations]),
+                    "per_split_windows": per_split_windows,
+                    "calculation_status": "GROSS_OBSERVATIONAL_RETURNS_ONLY",
+                }
+            )
+
+    return {
+        "processed_role": "bars",
+        "ignored_roles": ignored_roles,
+        "files": file_results,
+        "funding_adjusted_status": "NOT_EXECUTED",
+        "calculation_status": "GROSS_OBSERVATIONAL_RETURNS_ONLY",
+    }
+
+
 # ── Cost-case matrix skeleton ────────────────────────────────────────────
 
 
@@ -797,8 +1036,9 @@ def _default_rationale(output_status: str) -> str:
     if output_status == BLOCKED_BY_VALIDATION_IMPLEMENTATION:
         return (
             "BLOCKED_BY_VALIDATION_IMPLEMENTATION: this is a schema/skeleton-only "
-            "receipt. No returns, PnL, Sharpe, or paper-engine calculation has been "
-            "implemented yet. No edge/profit/live-readiness claim is made."
+            "receipt. Gross observational close-to-close metadata may be present, "
+            "but no strategy returns, PnL, Sharpe, or paper-engine calculation has "
+            "been implemented. No edge/profit/live-readiness claim is made."
         )
     return f"{output_status}: skeleton receipt, no calculation implemented."
 
@@ -814,11 +1054,12 @@ def build_real_validation_receipt(
     rationale: str | None = None,
     input_inventory: dict[str, Any] | None = None,
     row_materialization: dict | None = None,
+    gross_observational_returns: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
-    This is a pure function: it performs no I/O, computes no returns/PnL/
-    Sharpe, and does not run any engine. ``output_status`` defaults to and
+    This is a pure function: it performs no I/O, computes no PnL/Sharpe, and
+    does not run any engine. ``output_status`` defaults to and
     (in this PR) must remain ``BLOCKED_BY_VALIDATION_IMPLEMENTATION`` —
     ``OFFLINE_EDGE_CANDIDATE`` is rejected by ``validate_real_validation_receipt``
     at this phase.
@@ -879,6 +1120,8 @@ def build_real_validation_receipt(
         receipt["input_inventory"] = input_inventory
     if row_materialization is not None:
         receipt["row_materialization"] = row_materialization
+    if gross_observational_returns is not None:
+        receipt["gross_observational_returns"] = gross_observational_returns
 
     return receipt
 
@@ -929,13 +1172,18 @@ def _assert_no_forbidden_calculation_keys(value: Any, path: str = "$") -> None:
     ``pnl``, ``sharpe``, ``edge``, ``strategy_performance``,
     ``return``, ``returns``, ``gross_return_value``, ``net_return_value``,
     ``price_change``, ``trade``, ``trades``, ``signal``, ``signals``,
-    ``position``, and ``positions``.
+    ``position``, ``positions``, ``portfolio``, ``live_ready``,
+    ``deploy_ready``, and ``profitable``.
 
     Raises ``ValueError`` if any forbidden key is found at any nesting level.
     """
     if isinstance(value, dict):
         for key, v in value.items():
-            if key in FORBIDDEN_CALCULATION_KEYS:
+            gross_observation_key_allowed = (
+                key == "gross_observational_return"
+                and path.startswith("$.gross_observational_returns")
+            )
+            if key in FORBIDDEN_CALCULATION_KEYS and not gross_observation_key_allowed:
                 raise ValueError(
                     f"Forbidden calculation key found at {path}.{key!r}"
                 )
@@ -1113,8 +1361,12 @@ def main(argv: list[str] | None = None) -> int:
                 inventory=inventory,
                 split_definitions=split_definitions,
             )
+            gross_observational_returns = materialize_gross_observational_returns(
+                inventory=inventory,
+                split_definitions=split_definitions,
+            )
         except ValueError as exc:
-            print(f"FATAL: metadata materialization failed: {exc}")
+            print(f"FATAL: offline materialization failed: {exc}")
             return 4
 
         receipt = build_real_validation_receipt(
@@ -1125,6 +1377,7 @@ def main(argv: list[str] | None = None) -> int:
             cost_cases=cost_cases,
             input_inventory=inventory,
             row_materialization=row_materialization,
+            gross_observational_returns=gross_observational_returns,
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
