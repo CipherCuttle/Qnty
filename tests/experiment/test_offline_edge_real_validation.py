@@ -2669,3 +2669,64 @@ class TestFundingToBarsTemporalJoinabilityDiagnostics:
         serialized = json.dumps(receipt)
         assert "OFFLINE_EDGE_CANDIDATE" not in serialized
         assert "EDGE_CANDIDATE" not in serialized
+
+    # 19. split_id=None fails closed rather than coercing to "None".
+    def test_none_split_id_fails_closed(self, tmp_path):
+        splits = _two_split_windows()
+        splits[0]["split_id"] = None
+        with pytest.raises(ValueError, match="Invalid split definition at index 0"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T2, _T3],
+                funding_timestamps=[_T1, _T2, _T3],
+                split_definitions=splits,
+            )
+
+    # 20. Non-string split_id fails closed rather than coercing to str().
+    def test_non_string_split_id_fails_closed(self, tmp_path):
+        splits = _two_split_windows()
+        splits[0]["split_id"] = 123
+        with pytest.raises(ValueError, match="Invalid split definition at index 0"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T2, _T3],
+                funding_timestamps=[_T1, _T2, _T3],
+                split_definitions=splits,
+            )
+
+    # 21. Empty-string split_id fails closed.
+    def test_empty_string_split_id_fails_closed(self, tmp_path):
+        splits = _two_split_windows()
+        splits[0]["split_id"] = ""
+        with pytest.raises(ValueError, match="Invalid split definition at index 0"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T2, _T3],
+                funding_timestamps=[_T1, _T2, _T3],
+                split_definitions=splits,
+            )
+
+    # 22. Non-mapping split definition fails closed instead of leaking a
+    # non-ValueError exception (e.g. AttributeError from .get() on a list).
+    def test_non_mapping_split_definition_fails_closed(self, tmp_path):
+        splits = _two_split_windows()
+        splits[0] = ["not", "a", "mapping"]
+        with pytest.raises(ValueError, match="Invalid split definition at index 0"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T2, _T3],
+                funding_timestamps=[_T1, _T2, _T3],
+                split_definitions=splits,
+            )
+
+    # 23. Duplicate split_id still fails closed.
+    def test_duplicate_split_id_fails_closed(self, tmp_path):
+        splits = _two_split_windows()
+        splits[1]["split_id"] = splits[0]["split_id"]
+        with pytest.raises(ValueError, match="Duplicate split_id at index 1"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1, _T2, _T3],
+                funding_timestamps=[_T1, _T2, _T3],
+                split_definitions=splits,
+            )

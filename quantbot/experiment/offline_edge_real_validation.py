@@ -1722,6 +1722,10 @@ def _build_split_windows_for_joinability(
     if not split_definitions:
         raise ValueError("split_definitions must not be empty")
 
+    for index, split in enumerate(split_definitions):
+        if not isinstance(split, dict):
+            raise ValueError(f"Invalid split definition at index {index}")
+
     windows: list[dict[str, Any]] = []
     seen_split_ids: set[str] = set()
     final_validation_index = max(
@@ -1730,7 +1734,9 @@ def _build_split_windows_for_joinability(
     )
     for index, split in enumerate(split_definitions):
         try:
-            split_id = str(split["split_id"])
+            split_id = split["split_id"]
+            if not isinstance(split_id, str) or not split_id:
+                raise ValueError(f"Invalid split_id at index {index}")
             train = split["train_window"]
             validation = split["validation_window"]
             window = {
@@ -1743,8 +1749,8 @@ def _build_split_windows_for_joinability(
             }
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"Invalid split definition at index {index}") from exc
-        if not split_id or split_id in seen_split_ids:
-            raise ValueError(f"Duplicate or missing split_id at index {index}")
+        if split_id in seen_split_ids:
+            raise ValueError(f"Duplicate split_id at index {index}")
         seen_split_ids.add(split_id)
         windows.append(window)
     return windows
