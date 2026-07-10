@@ -140,7 +140,15 @@ None of these are legitimate outputs of a data-quality preflight.
 `EDGE_UNPROVEN` and `BLOCK_LIVE_INTEGRATION` remain the standing
 project-wide guardrails regardless of this receipt's advisory verdict.
 
-## 12. Verification performed for this PR
+## 12. Forward pointer
+
+The execution plan for the future first real offline validation run that
+may consume this ready data is recorded in
+[QNTY_OFFLINE_EDGE_VALIDATION_REAL_VALIDATION_EXECUTION_PLAN.md](QNTY_OFFLINE_EDGE_VALIDATION_REAL_VALIDATION_EXECUTION_PLAN.md).
+That plan does not execute validation and does not change this receipt's
+verdict.
+
+## 13. Verification performed for this PR
 
 - `git diff --check` — no whitespace errors.
 - `git diff --name-only origin/main...HEAD` — docs-only change confirmed.
