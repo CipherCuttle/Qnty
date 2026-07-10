@@ -4,6 +4,11 @@ Receipt-skeleton PR: verifies the schema, split-builder skeleton, cost-case
 matrix skeleton, validation refusals, and /tmp-only writer for the first
 real offline validation receipt. This PR does not compute returns, PnL,
 Sharpe, or run any engine — every test here confirms that stays true.
+
+Extended in feat/qnty-real-validation-input-inventory-splits: tests for
+input inventory building, timestamp metadata scanning, split materialization
+from inventory, forbidden nested keys, receipt with inventory, and CLI with
+directory arguments.
 """
 
 from __future__ import annotations
@@ -17,10 +22,14 @@ from pathlib import Path
 
 import pytest
 
+import quantbot.experiment.offline_edge_real_validation as real_validation
 from quantbot.experiment.offline_edge_real_validation import (
+    _parse_timestamp,
     build_cost_case_matrix,
     build_deterministic_split_definitions,
+    build_real_validation_input_inventory,
     build_real_validation_receipt,
+    materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
     write_real_validation_receipt,
 )
@@ -60,6 +69,45 @@ def _base_receipt(**overrides):
     )
     kwargs.update(overrides)
     return build_real_validation_receipt(**kwargs)
+
+
+def _write_tiny_bars_csv(tmp_path: Path, filename: str = "bars.csv") -> Path:
+    """Write a tiny bars CSV with timestamp column and return its path."""
+    path = tmp_path / filename
+    path.write_text(
+        "timestamp,open,high,low,close,volume\n"
+        "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+        "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+        "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+    )
+    return path
+
+
+def _write_tiny_funding_csv(tmp_path: Path, filename: str = "funding.csv") -> Path:
+    """Write a tiny funding CSV with fundingTime column and return its path."""
+    path = tmp_path / filename
+    path.write_text(
+        "fundingTime,fundingRate,markPrice\n"
+        "2026-01-01T12:00:00Z,0.0001,50000.0\n"
+        "2026-01-02T12:00:00Z,0.0002,50100.0\n"
+    )
+    return path
+
+
+def _write_tiny_numeric_funding_csv(
+    tmp_path: Path, filename: str = "funding.csv"
+) -> Path:
+    """Write a tiny Binance-style funding CSV using epoch milliseconds."""
+    path = tmp_path / filename
+    path.write_text(
+        "fundingTime,fundingRate,markPrice\n"
+        "1625097600000,0.0001,50000.0\n"
+        "1625184000000,0.0002,50100.0\n"
+    )
+    return path
+
+
+# ── Existing receipt builder tests ──────────────────────────────────────
 
 
 class TestReceiptBuilder:
@@ -103,6 +151,9 @@ class TestReceiptBuilder:
         receipt = _base_receipt()
         for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
             assert forbidden not in receipt
+
+
+# ── Existing validation tests ───────────────────────────────────────────
 
 
 class TestValidation:
@@ -179,6 +230,9 @@ class TestValidation:
         validate_real_validation_receipt(receipt)
 
 
+# ── Existing split builder tests ────────────────────────────────────────
+
+
 class TestSplitBuilder:
     def test_split_builder_deterministic(self):
         a = build_deterministic_split_definitions(
@@ -219,6 +273,9 @@ class TestSplitBuilder:
             )
 
 
+# ── Existing cost-case matrix tests ─────────────────────────────────────
+
+
 class TestCostCaseMatrix:
     def test_has_low_base_high(self):
         cases = build_cost_case_matrix()
@@ -235,6 +292,9 @@ class TestCostCaseMatrix:
     def test_all_cases_not_executed(self):
         for case in build_cost_case_matrix():
             assert case["calculation_status"] == "NOT_EXECUTED"
+
+
+# ── Existing writer tests ───────────────────────────────────────────────
 
 
 class TestWriter:
@@ -269,6 +329,9 @@ class TestWriter:
                 out_dir.rmdir()
 
 
+# ── Existing forbidden imports tests ────────────────────────────────────
+
+
 class TestForbiddenImports:
     def test_no_forbidden_imports_via_ast(self):
         module_path = (
@@ -292,6 +355,9 @@ class TestForbiddenImports:
             assert top not in FORBIDDEN_IMPORT_MODULES, f"forbidden import: {name}"
             for prefix in FORBIDDEN_IMPORT_PREFIXES:
                 assert not name.startswith(prefix), f"forbidden import: {name}"
+
+
+# ── Existing CLI tests ──────────────────────────────────────────────────
 
 
 class TestCLI:
@@ -361,6 +427,9 @@ class TestCLI:
         assert result.returncode != 0
 
 
+# ── Existing nested prod path tests ─────────────────────────────────────
+
+
 class TestValidateRealValidationReceiptNestedProdPaths:
     """Recursive production-path scanning for validate_real_validation_receipt.
 
@@ -414,3 +483,693 @@ class TestValidateRealValidationReceiptNestedProdPaths:
         receipt = _base_receipt()
         with pytest.raises(ValueError):
             write_real_validation_receipt(receipt, Path("/srv/qnty/output/receipt.json"))
+
+
+# ── New: Input inventory tests ──────────────────────────────────────────
+
+
+class TestBuildRealValidationInputInventory:
+    def test_refuses_srv_qnty_bars_dir(self):
+        with pytest.raises(ValueError, match="Refusing path under prod base"):
+            build_real_validation_input_inventory(
+                bars_dir=Path("/srv/qnty/data"),
+            )
+
+    def test_refuses_missing_bars_dir(self, tmp_path):
+        missing = tmp_path / "does_not_exist"
+        with pytest.raises(ValueError, match="does not exist"):
+            build_real_validation_input_inventory(
+                bars_dir=missing,
+            )
+
+    def test_refuses_symlinked_csv_resolving_under_prod_base(
+        self, tmp_path, monkeypatch
+    ):
+        fake_prod = tmp_path / "fake_prod"
+        safe_bars = tmp_path / "safe_bars"
+        fake_prod.mkdir()
+        safe_bars.mkdir()
+        prod_csv = _write_tiny_bars_csv(fake_prod, "prod_bars.csv")
+        (safe_bars / "linked.csv").symlink_to(prod_csv)
+        monkeypatch.setattr(real_validation, "PROD_BASE", fake_prod)
+
+        with pytest.raises(ValueError, match="Refusing path under prod base"):
+            build_real_validation_input_inventory(bars_dir=safe_bars)
+
+    def test_lists_only_csvs(self, tmp_path):
+        # Create a CSV file and a non-CSV file.
+        (tmp_path / "bars.csv").write_text("timestamp,val\n2026-01-01T00:00:00Z,1.0\n")
+        (tmp_path / "notes.txt").write_text("not a csv\n")
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        roles = inventory["roles"]
+        assert len(roles) == 1
+        bars_role = roles[0]
+        assert bars_role["role"] == "bars"
+        assert bars_role["csv_file_count"] == 1
+        assert bars_role["filenames"] == ["bars.csv"]
+
+    def test_computes_per_file_sha256(self, tmp_path):
+        csv_path = _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        bars_role = inventory["roles"][0]
+        assert len(bars_role["files"]) == 1
+        file_entry = bars_role["files"][0]
+        assert file_entry["filename"] == csv_path.name
+        assert isinstance(file_entry["sha256"], str)
+        assert len(file_entry["sha256"]) == 64
+
+    def test_aggregate_fingerprint_deterministic(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path, "bars_a.csv")
+        _write_tiny_bars_csv(tmp_path, "bars_b.csv")
+        inv_a = build_real_validation_input_inventory(bars_dir=tmp_path)
+        inv_b = build_real_validation_input_inventory(bars_dir=tmp_path)
+        fp_a = inv_a["roles"][0]["aggregate_role_fingerprint"]
+        fp_b = inv_b["roles"][0]["aggregate_role_fingerprint"]
+        assert fp_a == fp_b
+        assert isinstance(fp_a, str)
+        assert len(fp_a) == 64
+
+    def test_includes_funding_role_when_provided(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+        _write_tiny_funding_csv(funding_dir)
+
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir,
+            funding_dir=funding_dir,
+        )
+        roles = inventory["roles"]
+        assert len(roles) == 2
+        role_names = {r["role"] for r in roles}
+        assert role_names == {"bars", "funding"}
+
+    def test_funding_directory_size_and_fingerprint(self, tmp_path):
+        funding_dir = tmp_path / "funding"
+        funding_dir.mkdir()
+        _write_tiny_funding_csv(funding_dir)
+
+        inventory = build_real_validation_input_inventory(
+            bars_dir=funding_dir,
+            funding_dir=None,
+        )
+        # Creating bars dir with funding CSV to test size tracking
+        bars_role = inventory["roles"][0]
+        assert bars_role["total_size_bytes"] > 0
+        assert bars_role["csv_file_count"] == 1
+
+
+# ── New: Timestamp metadata tests ───────────────────────────────────────
+
+
+class TestTimestampParser:
+    def test_epoch_milliseconds_are_parsed_as_utc(self):
+        parsed = _parse_timestamp("1625097600000")
+        assert parsed.isoformat() == "2021-07-01T00:00:00+00:00"
+
+    def test_naive_iso_is_deterministically_parsed_as_utc(self):
+        parsed = _parse_timestamp("2026-04-22T16:00:00")
+        assert parsed.isoformat() == "2026-04-22T16:00:00+00:00"
+
+    def test_z_iso_is_parsed_as_utc(self):
+        parsed = _parse_timestamp("2026-04-22T16:00:00Z")
+        assert parsed.isoformat() == "2026-04-22T16:00:00+00:00"
+
+
+class TestTimestampMetadata:
+    def test_bars_timestamp_metadata_from_tiny_fixture_csv(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        file_entry = inventory["roles"][0]["files"][0]
+        assert file_entry["has_timestamp_column"] is True
+        assert file_entry["row_count"] == 3  # 3 data rows
+        assert file_entry["min_timestamp"] == "2026-01-01T00:00:00Z"
+        assert file_entry["max_timestamp"] == "2026-01-03T00:00:00Z"
+
+    def test_funding_timestamp_metadata_using_funding_time(self, tmp_path):
+        _write_tiny_funding_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(
+            bars_dir=tmp_path,
+            funding_dir=tmp_path,
+        )
+        # bars_role is first, funding_role is second.
+        funding_role = inventory["roles"][1] if len(inventory["roles"]) > 1 else inventory["roles"][0]
+        # If funding_dir equals bars_dir, we need to find the funding role.
+        funding_role = [r for r in inventory["roles"] if r["role"] == "funding"][0]
+        file_entry = funding_role["files"][0]
+        assert file_entry["has_timestamp_column"] is True
+        assert file_entry["row_count"] == 2  # 2 data rows
+        assert file_entry["min_timestamp"] == "2026-01-01T12:00:00Z"
+        assert file_entry["max_timestamp"] == "2026-01-02T12:00:00Z"
+
+    def test_numeric_funding_time_builds_canonical_inventory(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+        _write_tiny_numeric_funding_csv(funding_dir)
+
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir,
+            funding_dir=funding_dir,
+        )
+        funding_role = [
+            role for role in inventory["roles"] if role["role"] == "funding"
+        ][0]
+        file_entry = funding_role["files"][0]
+        assert file_entry["row_count"] == 2
+        assert file_entry["min_timestamp"] == "2021-07-01T00:00:00Z"
+        assert file_entry["max_timestamp"] == "2021-07-02T00:00:00Z"
+
+    def test_row_count_includes_empty_timestamp_cells(self, tmp_path):
+        (tmp_path / "bars.csv").write_text(
+            "timestamp,close\n"
+            "2026-01-01T00:00:00Z,100\n"
+            ",101\n"
+            "2026-01-03T00:00:00Z,102\n"
+        )
+
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        file_entry = inventory["roles"][0]["files"][0]
+        assert file_entry["row_count"] == 3
+        assert file_entry["min_timestamp"] == "2026-01-01T00:00:00Z"
+        assert file_entry["max_timestamp"] == "2026-01-03T00:00:00Z"
+
+    def test_malformed_timestamp_fails_closed(self, tmp_path):
+        (tmp_path / "bars.csv").write_text(
+            "timestamp,close\nnot-a-timestamp,100\n"
+        )
+
+        with pytest.raises(ValueError, match="Malformed timestamp.*row 2"):
+            build_real_validation_input_inventory(bars_dir=tmp_path)
+
+    def test_missing_timestamp_column_reported(self, tmp_path):
+        csv_path = tmp_path / "no_ts.csv"
+        csv_path.write_text("price,volume\n100.0,1000\n101.0,1200\n")
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        file_entry = inventory["roles"][0]["files"][0]
+        assert file_entry["has_timestamp_column"] is False
+        assert file_entry["min_timestamp"] is None
+        assert file_entry["max_timestamp"] is None
+        # Row count should still be tracked.
+        assert file_entry["row_count"] == 2
+
+
+# ── New: Split materialization tests ────────────────────────────────────
+
+
+class TestSplitMaterialization:
+    def test_materialized_splits_deterministic(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        a = materialize_split_definitions_from_inventory(inventory=inventory, split_count=3)
+        b = materialize_split_definitions_from_inventory(inventory=inventory, split_count=3)
+        assert a == b
+        assert len(a) == 3
+
+    def test_split_count_less_than_one_rejected(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        with pytest.raises(ValueError):
+            materialize_split_definitions_from_inventory(inventory=inventory, split_count=0)
+
+    def test_split_materialization_includes_file_counts_no_returns(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        splits = materialize_split_definitions_from_inventory(inventory=inventory, split_count=2)
+        for split in splits:
+            assert "bars_file_count" in split
+            assert "funding_file_count" in split
+            # No returns/PnL fields.
+            assert "return" not in split
+            assert "returns" not in split
+            assert "pnl" not in split
+            assert "sharpe" not in split
+            # Must have split_id, split_index, split_count.
+            assert split["split_id"].startswith("split_")
+            assert isinstance(split["split_index"], int)
+            assert split["split_count"] == 2
+            # Must have train_window and validation_window.
+            assert "train_window" in split
+            assert "validation_window" in split
+            # calculation_status must be NOT_EXECUTED.
+            assert split["calculation_status"] == "NOT_EXECUTED"
+
+    def test_split_windows_cover_full_range(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        splits = materialize_split_definitions_from_inventory(inventory=inventory, split_count=3)
+        # First split's train_window start should be global min.
+        assert splits[0]["train_window"]["start"] == "2026-01-01T00:00:00Z"
+        # Last split's validation_window end should be global max.
+        assert splits[-1]["validation_window"]["end"] == "2026-01-03T00:00:00Z"
+
+    def test_split_calculation_status_not_executed(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        splits = materialize_split_definitions_from_inventory(inventory=inventory, split_count=3)
+        for split in splits:
+            assert split["calculation_status"] == "NOT_EXECUTED"
+
+    def test_mixed_iso_bars_and_epoch_ms_funding_materialize(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+        _write_tiny_numeric_funding_csv(funding_dir)
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir,
+            funding_dir=funding_dir,
+        )
+
+        splits = materialize_split_definitions_from_inventory(
+            inventory=inventory,
+            split_count=3,
+        )
+
+        assert len(splits) == 3
+        assert splits[-1]["validation_window"]["end"] == "2026-01-03T00:00:00Z"
+        for split in splits:
+            assert split["calculation_status"] == "NOT_EXECUTED"
+            assert {"return", "returns", "pnl", "sharpe"}.isdisjoint(split)
+
+
+# ── New: Receipt with inventory tests ───────────────────────────────────
+
+
+class TestReceiptWithInventory:
+    def test_receipt_with_input_inventory_validates(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        splits = build_deterministic_split_definitions(
+            global_min_timestamp="2026-01-01T00:00:00Z",
+            global_max_timestamp="2026-02-01T00:00:00Z",
+        )
+        costs = build_cost_case_matrix()
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_receipt_sha256="b" * 64,
+            code_commit_sha="c" * 40,
+            split_definitions=splits,
+            cost_cases=costs,
+            input_inventory=inventory,
+        )
+        # Should validate without error.
+        validate_real_validation_receipt(receipt)
+        # Should have input_inventory key.
+        assert "input_inventory" in receipt
+
+    def test_receipt_still_has_blocked_verdict(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        splits = build_deterministic_split_definitions(
+            global_min_timestamp="2026-01-01T00:00:00Z",
+            global_max_timestamp="2026-02-01T00:00:00Z",
+        )
+        costs = build_cost_case_matrix()
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_receipt_sha256="b" * 64,
+            code_commit_sha="c" * 40,
+            split_definitions=splits,
+            cost_cases=costs,
+            input_inventory=inventory,
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_receipt_still_forbidden_calc_false(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        splits = build_deterministic_split_definitions(
+            global_min_timestamp="2026-01-01T00:00:00Z",
+            global_max_timestamp="2026-02-01T00:00:00Z",
+        )
+        costs = build_cost_case_matrix()
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_receipt_sha256="b" * 64,
+            code_commit_sha="c" * 40,
+            split_definitions=splits,
+            cost_cases=costs,
+            input_inventory=inventory,
+        )
+        for key, value in receipt["forbidden_calculation_status"].items():
+            assert value is False, f"{key} must be False"
+
+    def test_receipt_still_required_outputs_false(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        splits = build_deterministic_split_definitions(
+            global_min_timestamp="2026-01-01T00:00:00Z",
+            global_max_timestamp="2026-02-01T00:00:00Z",
+        )
+        costs = build_cost_case_matrix()
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_receipt_sha256="b" * 64,
+            code_commit_sha="c" * 40,
+            split_definitions=splits,
+            cost_cases=costs,
+            input_inventory=inventory,
+        )
+        for value in receipt["required_outputs_present"].values():
+            assert value is False
+
+    def test_receipt_with_inventory_drives_split_definitions(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        splits = build_deterministic_split_definitions(
+            global_min_timestamp="2026-01-01T00:00:00Z",
+            global_max_timestamp="2026-02-01T00:00:00Z",
+        )
+        costs = build_cost_case_matrix()
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_receipt_sha256="b" * 64,
+            code_commit_sha="c" * 40,
+            split_definitions=splits,
+            cost_cases=costs,
+            input_inventory=inventory,
+        )
+        # Split definitions should be materialized from inventory, not from the passed splits.
+        mat_splits = receipt["split_definitions"]
+        # Materialized splits have bars_file_count; placeholder splits don't.
+        for s in mat_splits:
+            assert "bars_file_count" in s
+
+
+# ── New: Forbidden keys nested tests ────────────────────────────────────
+
+
+class TestForbiddenKeysNested:
+    def _receipt_with_nested_key(self, key: str, value: object = "anything"):
+        """Build a receipt with a forbidden key nested inside a custom section."""
+        receipt = _base_receipt()
+        receipt["custom_section"] = {key: value}
+        return receipt
+
+    def test_top_level_return_rejected(self):
+        receipt = _base_receipt()
+        receipt["return"] = 0.05
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_top_level_returns_rejected(self):
+        receipt = _base_receipt()
+        receipt["returns"] = [0.01, 0.02]
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_nested_pnl_rejected(self):
+        receipt = self._receipt_with_nested_key("pnl", 1000.0)
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_nested_sharpe_rejected(self):
+        receipt = self._receipt_with_nested_key("sharpe", 1.5)
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_nested_edge_rejected(self):
+        receipt = self._receipt_with_nested_key("edge", "positive")
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_nested_gross_return_value_rejected(self):
+        receipt = self._receipt_with_nested_key("gross_return_value", 0.10)
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_nested_net_return_value_rejected(self):
+        receipt = self._receipt_with_nested_key("net_return_value", 0.08)
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_nested_in_list_of_dicts_rejected(self):
+        receipt = _base_receipt()
+        receipt["results"] = [{"split_id": "s0"}, {"pnl": 500}]
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_deeply_nested_strategy_performance_rejected(self):
+        receipt = _base_receipt()
+        receipt["analysis"] = {"metrics": {"strategy_performance": {"total_return": 0.05}}}
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_normal_receipt_not_rejected(self):
+        receipt = _base_receipt()
+        # Should not raise.
+        validate_real_validation_receipt(receipt)
+
+
+# ── New: CLI with dirs tests ────────────────────────────────────────────
+
+
+class TestCLIWithDirs:
+    def test_cli_without_dirs_still_works(self):
+        out_dir = Path("/tmp") / f"qnty_cli_dirs_test_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--global-min-timestamp",
+                    "2026-01-01T00:00:00Z",
+                    "--global-max-timestamp",
+                    "2026-02-01T00:00:00Z",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+            assert receipt_path.exists()
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    def test_cli_with_bars_funding_dirs_writes_receipt(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+
+        out_dir = Path("/tmp") / f"qnty_cli_dirs_bars_test_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            assert receipt_path.exists()
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert written["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+            assert "input_inventory" in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    def test_cli_with_dirs_still_has_forbidden_calc_false(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+
+        out_dir = Path("/tmp") / f"qnty_cli_dirs_forbidden_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            for key, value in written["forbidden_calculation_status"].items():
+                assert value is False, f"{key} must be False"
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    def test_cli_with_dirs_still_has_required_outputs_false(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+
+        out_dir = Path("/tmp") / f"qnty_cli_dirs_outputs_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            for value in written["required_outputs_present"].values():
+                assert value is False
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    def test_cli_with_bars_and_funding_dirs(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+        _write_tiny_numeric_funding_csv(funding_dir)
+
+        out_dir = Path("/tmp") / f"qnty_cli_dirs_both_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                    "--funding-dir",
+                    str(funding_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert written["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+            assert "input_inventory" in written
+            assert all(
+                value is False
+                for value in written["forbidden_calculation_status"].values()
+            )
+            assert all(
+                value is False for value in written["required_outputs_present"].values()
+            )
+            assert OFFLINE_EDGE_CANDIDATE not in result.stdout
+            assert OFFLINE_EDGE_CANDIDATE not in json.dumps(written)
+            roles = written["input_inventory"]["roles"]
+            role_names = {r["role"] for r in roles}
+            assert role_names == {"bars", "funding"}
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    def test_cli_missing_timestamp_bounds_without_dirs_rejected(self):
+        """When --bars-dir is not provided, --global-min/--global-max are required."""
+        out_dir = Path("/tmp") / f"qnty_cli_missing_ts_{uuid.uuid4().hex}"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode != 0
+        finally:
+            if out_dir.exists():
+                if (out_dir / "real_validation_receipt.json").exists():
+                    (out_dir / "real_validation_receipt.json").unlink()
+                out_dir.rmdir()

@@ -24,11 +24,12 @@ no pandas, numpy, engine, exchange, ccxt, sqlite, or paper imports.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,8 @@ __all__ = [
     "build_cost_case_matrix",
     "validate_real_validation_receipt",
     "write_real_validation_receipt",
+    "build_real_validation_input_inventory",
+    "materialize_split_definitions_from_inventory",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -67,6 +70,20 @@ _SKELETON_ALLOWED_VERDICTS = frozenset({BLOCKED_BY_VALIDATION_IMPLEMENTATION})
 
 # Top-level keys that must never appear on a receipt from this module.
 FORBIDDEN_TOP_LEVEL_KEYS = frozenset({"pnl", "sharpe", "edge", "strategy_performance"})
+
+# Keys that must never appear at any nesting level in a receipt.
+FORBIDDEN_CALCULATION_KEYS = frozenset(
+    {
+        "pnl",
+        "sharpe",
+        "edge",
+        "strategy_performance",
+        "return",
+        "returns",
+        "gross_return_value",
+        "net_return_value",
+    }
+)
 
 PROD_BASE = Path("/srv/qnty")
 TMP_BASE = Path("/tmp")
@@ -139,6 +156,201 @@ def _assert_no_prod_paths_in_receipt(value: Any, path: str = "$") -> None:
             _assert_no_prod_paths_in_receipt(v, path + "[" + str(i) + "]")
 
 
+# ── Timestamp helpers ───────────────────────────────────────────────────
+
+
+def _parse_timestamp(ts: str) -> datetime:
+    """Parse an ISO-8601 or Unix epoch timestamp as a UTC datetime.
+
+    Digit-only values are treated as epoch milliseconds when they contain
+    at least 13 digits (or exceed a 10-digit epoch-seconds range), otherwise
+    as epoch seconds. Naive ISO timestamps are deterministically interpreted
+    as UTC.
+    """
+    value = ts.strip()
+    if value.isdigit():
+        epoch_value = int(value)
+        if len(value) >= 13 or epoch_value > 10_000_000_000:
+            epoch_value /= 1000
+        return datetime.fromtimestamp(epoch_value, tz=timezone.utc)
+
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _format_timestamp(dt: datetime) -> str:
+    """Format a datetime as ISO-8601 UTC string ending in 'Z'."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ── Input inventory ─────────────────────────────────────────────────────
+
+
+def _build_role_inventory(
+    role: str,
+    directory: Path,
+    timestamp_column: str,
+) -> dict[str, Any]:
+    """Build the inventory dict for a single role (bars or funding).
+
+    *role* is ``"bars"`` or ``"funding"``.
+    *directory* is the resolved ``Path`` containing CSV files.
+    *timestamp_column* is the column name to scan for metadata
+    (``"timestamp"`` for bars, ``"fundingTime"`` for funding).
+
+    Returns a dict with keys:
+    - role, directory, csv_file_count, filenames, total_size_bytes, files,
+      aggregate_role_fingerprint
+    - each file entry has: filename, size_bytes, sha256
+    - each file entry also has: row_count, min_timestamp, max_timestamp,
+      has_timestamp_column
+
+    No price columns are parsed. No returns/PnL/Sharpe are computed.
+    """
+    csv_paths: list[Path] = []
+    filenames: list[str] = []
+    files: list[dict[str, Any]] = []
+    total_size_bytes: int = 0
+    sha256_digests: list[str] = []
+
+    for csv_path in sorted(directory.glob("*.csv")):
+        resolved_csv = csv_path.resolve()
+        _refuse_if_prod_path(resolved_csv)
+        if not resolved_csv.is_file():
+            continue
+
+        csv_paths.append(csv_path)
+        filename = csv_path.name
+        filenames.append(filename)
+        size_bytes = resolved_csv.stat().st_size
+        total_size_bytes += size_bytes
+
+        # SHA256 of file content.
+        sha256_hex = hashlib.sha256(resolved_csv.read_bytes()).hexdigest()
+        sha256_digests.append(sha256_hex)
+
+        # Timestamp metadata (CSV header scan, timestamp column only).
+        row_count: int = 0
+        min_timestamp_dt: datetime | None = None
+        max_timestamp_dt: datetime | None = None
+        has_timestamp_column: bool = False
+
+        with open(resolved_csv, newline="") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames is None:
+                # Empty file — no columns at all.
+                pass
+            else:
+                # Case-insensitive column lookup.
+                col_lower_map = {h.lower(): h for h in reader.fieldnames}
+                target_lower = timestamp_column.lower()
+                actual_col = col_lower_map.get(target_lower)
+
+                if actual_col is not None:
+                    has_timestamp_column = True
+                    for row_number, row in enumerate(reader, start=2):
+                        row_count += 1
+                        ts_val = row.get(actual_col)
+                        if ts_val is not None and ts_val.strip():
+                            ts_val = ts_val.strip()
+                            try:
+                                parsed_ts = _parse_timestamp(ts_val)
+                            except (OverflowError, OSError, ValueError) as exc:
+                                raise ValueError(
+                                    f"Malformed timestamp in {filename} row "
+                                    f"{row_number}, column {actual_col}: {ts_val!r}"
+                                ) from exc
+                            if min_timestamp_dt is None or parsed_ts < min_timestamp_dt:
+                                min_timestamp_dt = parsed_ts
+                            if max_timestamp_dt is None or parsed_ts > max_timestamp_dt:
+                                max_timestamp_dt = parsed_ts
+                else:
+                    # Column not found — still count rows but no timestamp info.
+                    for _ in reader:
+                        row_count += 1
+
+        file_entry: dict[str, Any] = {
+            "filename": filename,
+            "size_bytes": size_bytes,
+            "sha256": sha256_hex,
+            "row_count": row_count,
+            "min_timestamp": (
+                _format_timestamp(min_timestamp_dt)
+                if min_timestamp_dt is not None
+                else None
+            ),
+            "max_timestamp": (
+                _format_timestamp(max_timestamp_dt)
+                if max_timestamp_dt is not None
+                else None
+            ),
+            "has_timestamp_column": has_timestamp_column,
+        }
+        files.append(file_entry)
+
+    # Aggregate fingerprint: SHA256 of sorted concatenation of per-file digests.
+    sorted_digests = sorted(sha256_digests)
+    concatenated = "".join(sorted_digests).encode("utf-8")
+    aggregate_fingerprint = hashlib.sha256(concatenated).hexdigest()
+
+    return {
+        "role": role,
+        "directory": str(directory),
+        "csv_file_count": len(csv_paths),
+        "filenames": filenames,
+        "total_size_bytes": total_size_bytes,
+        "files": files,
+        "aggregate_role_fingerprint": aggregate_fingerprint,
+    }
+
+
+def build_real_validation_input_inventory(
+    *,
+    bars_dir: Path,
+    funding_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Build an input inventory from real CSV data directories.
+
+    Enumerates CSV files in *bars_dir* (and optionally *funding_dir*),
+    records file metadata (size, SHA256), timestamp metadata (min/max per
+    file), and computes an aggregate role fingerprint.
+
+    Refuses paths under ``/srv/qnty`` and nonexistent directories.
+
+    No returns/PnL/Sharpe are computed. No price columns are parsed.
+    """
+    # Guard checks.
+    bars_resolved = bars_dir.resolve()
+    _refuse_if_prod_path(bars_resolved)
+    if not bars_resolved.is_dir():
+        raise ValueError(f"bars_dir does not exist: {bars_resolved}")
+
+    funding_resolved: Path | None = None
+    if funding_dir is not None:
+        funding_resolved = funding_dir.resolve()
+        _refuse_if_prod_path(funding_resolved)
+        if not funding_resolved.is_dir():
+            raise ValueError(f"funding_dir does not exist: {funding_resolved}")
+
+    roles: list[dict[str, Any]] = [
+        _build_role_inventory("bars", bars_resolved, "timestamp"),
+    ]
+    if funding_resolved is not None:
+        roles.append(
+            _build_role_inventory("funding", funding_resolved, "fundingTime")
+        )
+
+    return {
+        "roles": roles,
+    }
+
+
 # ── Split builder skeleton ──────────────────────────────────────────────
 
 
@@ -177,6 +389,120 @@ def build_deterministic_split_definitions(
                 "calculation_status": "NOT_EXECUTED",
             }
         )
+    return splits
+
+
+def _derive_global_timestamp_bounds(
+    inventory: dict[str, Any],
+) -> tuple[str, str, int, int]:
+    """Derive global min/max timestamp and file counts from inventory.
+
+    Returns ``(global_min_str, global_max_str, bars_file_count,
+    funding_file_count)``.
+
+    Raises ``ValueError`` if no timestamp data is available.
+    """
+    global_min: datetime | None = None
+    global_max: datetime | None = None
+    bars_file_count: int = 0
+    funding_file_count: int = 0
+
+    roles = inventory.get("roles", [])
+    for role_entry in roles:
+        role = role_entry.get("role", "")
+        files = role_entry.get("files", [])
+        if role == "bars":
+            bars_file_count = len(files)
+        elif role == "funding":
+            funding_file_count = len(files)
+
+        for file_entry in files:
+            fmin = file_entry.get("min_timestamp")
+            fmax = file_entry.get("max_timestamp")
+            if fmin is not None:
+                parsed_min = _parse_timestamp(fmin)
+                if global_min is None or parsed_min < global_min:
+                    global_min = parsed_min
+            if fmax is not None:
+                parsed_max = _parse_timestamp(fmax)
+                if global_max is None or parsed_max > global_max:
+                    global_max = parsed_max
+
+    if global_min is None or global_max is None:
+        raise ValueError(
+            "Cannot derive global timestamp bounds from inventory: "
+            "no timestamp data available"
+        )
+
+    return (
+        _format_timestamp(global_min),
+        _format_timestamp(global_max),
+        bars_file_count,
+        funding_file_count,
+    )
+
+
+def materialize_split_definitions_from_inventory(
+    *,
+    inventory: dict[str, Any],
+    split_count: int = 3,
+) -> list[dict[str, Any]]:
+    """Derive deterministic split definitions from an input inventory.
+
+    Extracts global min/max timestamps from the inventory's per-file
+    timestamp metadata, partitions the time range into equal segments,
+    and creates expanding-window split definitions.
+
+    Each split i gets:
+    - a validation window covering one segment
+    - a training window covering everything before the validation window
+
+    No returns/PnL/Sharpe fields are included.
+    """
+    if split_count < 1:
+        raise ValueError(f"split_count must be >= 1, got {split_count}")
+
+    global_min_str, global_max_str, bars_file_count, funding_file_count = (
+        _derive_global_timestamp_bounds(inventory)
+    )
+
+    global_min_dt = _parse_timestamp(global_min_str)
+    global_max_dt = _parse_timestamp(global_max_str)
+    total_seconds = (global_max_dt - global_min_dt).total_seconds()
+    segment_duration = total_seconds / split_count
+
+    # Build segment boundaries.
+    boundaries: list[str] = []
+    for i in range(split_count + 1):
+        boundary_dt = global_min_dt + timedelta(seconds=i * segment_duration)
+        boundaries.append(_format_timestamp(boundary_dt))
+
+    splits: list[dict[str, Any]] = []
+    for i in range(split_count):
+        train_start = boundaries[0]
+        train_end = boundaries[i]  # up to start of validation segment
+        val_start = boundaries[i]
+        val_end = boundaries[i + 1]
+
+        splits.append(
+            {
+                "split_id": f"split_{i:02d}",
+                "split_index": i,
+                "split_count": split_count,
+                "train_window": {
+                    "start": train_start,
+                    "end": train_end,
+                },
+                "validation_window": {
+                    "start": val_start,
+                    "end": val_end,
+                },
+                "calculation_status": "NOT_EXECUTED",
+                "bars_file_count": bars_file_count,
+                "funding_file_count": funding_file_count,
+            }
+        )
+
     return splits
 
 
@@ -243,6 +569,7 @@ def build_real_validation_receipt(
     cost_cases: list[dict[str, Any]],
     output_status: str = BLOCKED_BY_VALIDATION_IMPLEMENTATION,
     rationale: str | None = None,
+    input_inventory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -251,9 +578,22 @@ def build_real_validation_receipt(
     (in this PR) must remain ``BLOCKED_BY_VALIDATION_IMPLEMENTATION`` —
     ``OFFLINE_EDGE_CANDIDATE`` is rejected by ``validate_real_validation_receipt``
     at this phase.
+
+    If *input_inventory* is provided, it is included in the receipt under
+    the ``input_inventory`` key, and *split_definitions* is overridden with
+    definitions derived from the inventory via
+    ``materialize_split_definitions_from_inventory``.
     """
     if rationale is None:
         rationale = _default_rationale(output_status)
+
+    # If input_inventory is provided, derive split_definitions from it.
+    effective_split_definitions = split_definitions
+    if input_inventory is not None:
+        effective_split_definitions = materialize_split_definitions_from_inventory(
+            inventory=input_inventory,
+            split_count=len(split_definitions) if split_definitions else 3,
+        )
 
     receipt: dict[str, Any] = {
         "validation_receipt": {
@@ -264,7 +604,7 @@ def build_real_validation_receipt(
         "input_manifest_fingerprint": input_manifest_fingerprint,
         "data_quality_receipt_sha256": data_quality_receipt_sha256,
         "code_commit_sha": code_commit_sha,
-        "split_definitions": split_definitions,
+        "split_definitions": effective_split_definitions,
         "cost_cases": cost_cases,
         "required_outputs_present": {
             "gross_return": False,
@@ -290,6 +630,10 @@ def build_real_validation_receipt(
         "final_offline_verdict": output_status,
         "final_offline_verdict_rationale": rationale,
     }
+
+    if input_inventory is not None:
+        receipt["input_inventory"] = input_inventory
+
     return receipt
 
 
@@ -332,6 +676,27 @@ _REQUIRED_FORBIDDEN_CALC_KEYS = frozenset(
 )
 
 
+def _assert_no_forbidden_calculation_keys(value: Any, path: str = "$") -> None:
+    """Recursively scan *value* for any key matching a forbidden calculation pattern.
+
+    Forbidden patterns (exact dict key match):
+    ``pnl``, ``sharpe``, ``edge``, ``strategy_performance``,
+    ``return``, ``returns``, ``gross_return_value``, ``net_return_value``.
+
+    Raises ``ValueError`` if any forbidden key is found at any nesting level.
+    """
+    if isinstance(value, dict):
+        for key, v in value.items():
+            if key in FORBIDDEN_CALCULATION_KEYS:
+                raise ValueError(
+                    f"Forbidden calculation key found at {path}.{key!r}"
+                )
+            _assert_no_forbidden_calculation_keys(v, path + "." + key)
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            _assert_no_forbidden_calculation_keys(v, path + "[" + str(i) + "]")
+
+
 def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
     """Validate a real-validation receipt dict.
 
@@ -342,6 +707,10 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
     a missing/false ``guardrail_status`` entry, a missing/true
     ``forbidden_calculation_status`` entry, or an ``output_path`` that is
     not under ``/tmp`` or that resolves under ``/srv/qnty``.
+
+    Also recursively scans for forbidden calculation keys at any nesting
+    level (``pnl``, ``sharpe``, ``edge``, ``strategy_performance``,
+    ``return``, ``returns``, ``gross_return_value``, ``net_return_value``).
     """
     missing = _REQUIRED_TOP_LEVEL_KEYS - set(receipt.keys())
     if missing:
@@ -394,6 +763,9 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
 
     _assert_no_prod_paths_in_receipt(receipt)
 
+    # Recursive scan for forbidden calculation keys at any nesting level.
+    _assert_no_forbidden_calculation_keys(receipt)
+
 
 # ── Output writer ─────────────────────────────────────────────────────────
 
@@ -433,9 +805,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-manifest-fingerprint", required=True)
     parser.add_argument("--data-quality-receipt-sha256", required=True)
     parser.add_argument("--code-commit-sha", required=True)
-    parser.add_argument("--global-min-timestamp", required=True)
-    parser.add_argument("--global-max-timestamp", required=True)
+    parser.add_argument(
+        "--global-min-timestamp",
+        default=None,
+        help="Required if --bars-dir is not provided.",
+    )
+    parser.add_argument(
+        "--global-max-timestamp",
+        default=None,
+        help="Required if --bars-dir is not provided.",
+    )
     parser.add_argument("--split-count", type=int, default=3)
+    parser.add_argument(
+        "--bars-dir",
+        default=None,
+        type=str,
+        help="Path to bars CSV directory. Alternative to --global-min/--global-max.",
+    )
+    parser.add_argument(
+        "--funding-dir",
+        default=None,
+        type=str,
+        help="Optional path to funding CSV directory (used with --bars-dir).",
+    )
     return parser
 
 
@@ -451,20 +843,57 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FATAL: {exc}")
         return 3
 
-    split_definitions = build_deterministic_split_definitions(
-        global_min_timestamp=args.global_min_timestamp,
-        global_max_timestamp=args.global_max_timestamp,
-        split_count=args.split_count,
-    )
     cost_cases = build_cost_case_matrix()
 
-    receipt = build_real_validation_receipt(
-        input_manifest_fingerprint=args.input_manifest_fingerprint,
-        data_quality_receipt_sha256=args.data_quality_receipt_sha256,
-        code_commit_sha=args.code_commit_sha,
-        split_definitions=split_definitions,
-        cost_cases=cost_cases,
-    )
+    if args.bars_dir is not None:
+        # Inventory-based path: derive everything from real data directories.
+        bars_dir = Path(args.bars_dir)
+        funding_dir = Path(args.funding_dir) if args.funding_dir else None
+
+        try:
+            inventory = build_real_validation_input_inventory(
+                bars_dir=bars_dir,
+                funding_dir=funding_dir,
+            )
+        except ValueError as exc:
+            print(f"FATAL: inventory build failed: {exc}")
+            return 4
+
+        split_definitions = materialize_split_definitions_from_inventory(
+            inventory=inventory,
+            split_count=args.split_count,
+        )
+
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint=args.input_manifest_fingerprint,
+            data_quality_receipt_sha256=args.data_quality_receipt_sha256,
+            code_commit_sha=args.code_commit_sha,
+            split_definitions=split_definitions,
+            cost_cases=cost_cases,
+            input_inventory=inventory,
+        )
+    else:
+        # Legacy path: use CLI-provided timestamp bounds.
+        if args.global_min_timestamp is None or args.global_max_timestamp is None:
+            print(
+                "FATAL: --global-min-timestamp and --global-max-timestamp are "
+                "required when --bars-dir is not provided."
+            )
+            return 5
+
+        split_definitions = build_deterministic_split_definitions(
+            global_min_timestamp=args.global_min_timestamp,
+            global_max_timestamp=args.global_max_timestamp,
+            split_count=args.split_count,
+        )
+
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint=args.input_manifest_fingerprint,
+            data_quality_receipt_sha256=args.data_quality_receipt_sha256,
+            code_commit_sha=args.code_commit_sha,
+            split_definitions=split_definitions,
+            cost_cases=cost_cases,
+        )
 
     output_path = output_dir / "real_validation_receipt.json"
     digest = write_real_validation_receipt(receipt, output_path)
