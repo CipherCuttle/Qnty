@@ -2211,49 +2211,94 @@ def _residue_mod_8h_counts(timestamps: list[datetime]) -> list[dict[str, Any]]:
     return result
 
 
-def _nearest_funding_delta_seconds(
+def _timedelta_to_microseconds(delta: timedelta) -> int:
+    """Exact signed microseconds represented by *delta*.
+
+    Uses ``timedelta``'s exact integer day/second/microsecond components
+    instead of a float ``total_seconds()`` multiplication, so no
+    sub-second precision is lost or rounded away.
+    """
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+
+def _nearest_funding_delta_microseconds(
     bar_ts: datetime, funding_sorted: list[datetime]
 ) -> int:
-    """Signed seconds from *bar_ts* to its nearest funding timestamp.
+    """Signed microseconds from *bar_ts* to its nearest funding timestamp.
 
     Diagnostic only: this is never used to join or apply funding, only to
-    record the observed nearest-neighbour delta distribution.
+    record the observed nearest-neighbour delta distribution. Ties in
+    absolute distance are broken toward the smaller (more negative) signed
+    delta, matching the prior seconds-based tie-break policy.
     """
     idx = bisect.bisect_left(funding_sorted, bar_ts)
-    candidates: list[datetime] = []
+    candidate_deltas: list[int] = []
     if idx < len(funding_sorted):
-        candidates.append(funding_sorted[idx])
+        candidate_deltas.append(
+            _timedelta_to_microseconds(funding_sorted[idx] - bar_ts)
+        )
     if idx > 0:
-        candidates.append(funding_sorted[idx - 1])
-    best = min(
-        candidates,
-        key=lambda ft: (abs((ft - bar_ts).total_seconds()), (ft - bar_ts).total_seconds()),
-    )
-    return int((best - bar_ts).total_seconds())
+        candidate_deltas.append(
+            _timedelta_to_microseconds(funding_sorted[idx - 1] - bar_ts)
+        )
+    return min(candidate_deltas, key=lambda us: (abs(us), us))
 
 
 def _nearest_delta_histogram(
     unmatched_bars_sorted: list[datetime], funding_sorted: list[datetime]
-) -> tuple[list[dict[str, Any]], int | None, int]:
+) -> dict[str, Any]:
     """Diagnostic nearest-delta histogram for 0h-unmatched bars timestamps.
 
-    Never used to join or apply funding. Deterministically truncated to
+    Never used to join or apply funding. Deltas are signed integer
+    microseconds computed with no sub-second truncation (see
+    ``_timedelta_to_microseconds``). Deterministically truncated to
     ``_NEAREST_DELTA_HISTOGRAM_CAP`` entries, ordered by descending count
-    then ascending delta.
+    then ascending ``delta_microseconds``.
     """
     if not unmatched_bars_sorted or not funding_sorted:
-        return [], None, 0
+        return {
+            "histogram": [],
+            "most_common_delta_microseconds": None,
+            "most_common_delta_seconds": None,
+            "sample_size": 0,
+            "zero_microseconds_count": 0,
+            "subsecond_nonzero_count": 0,
+            "max_abs_microseconds": 0,
+        }
+
     counts: dict[int, int] = {}
+    zero_microseconds_count = 0
+    subsecond_nonzero_count = 0
+    max_abs_microseconds = 0
     for bar_ts in unmatched_bars_sorted:
-        delta = _nearest_funding_delta_seconds(bar_ts, funding_sorted)
-        counts[delta] = counts.get(delta, 0) + 1
+        delta_us = _nearest_funding_delta_microseconds(bar_ts, funding_sorted)
+        counts[delta_us] = counts.get(delta_us, 0) + 1
+        if delta_us == 0:
+            zero_microseconds_count += 1
+        elif abs(delta_us) < 1_000_000:
+            subsecond_nonzero_count += 1
+        max_abs_microseconds = max(max_abs_microseconds, abs(delta_us))
+
     ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     truncated = ordered[:_NEAREST_DELTA_HISTOGRAM_CAP]
     histogram = [
-        {"delta_seconds": delta, "count": count} for delta, count in truncated
+        {
+            "delta_microseconds": delta_us,
+            "delta_seconds": delta_us / 1_000_000,
+            "count": count,
+        }
+        for delta_us, count in truncated
     ]
-    most_common = ordered[0][0]
-    return histogram, most_common, len(unmatched_bars_sorted)
+    most_common_us = ordered[0][0]
+    return {
+        "histogram": histogram,
+        "most_common_delta_microseconds": most_common_us,
+        "most_common_delta_seconds": most_common_us / 1_000_000,
+        "sample_size": len(unmatched_bars_sorted),
+        "zero_microseconds_count": zero_microseconds_count,
+        "subsecond_nonzero_count": subsecond_nonzero_count,
+        "max_abs_microseconds": max_abs_microseconds,
+    }
 
 
 def materialize_funding_to_bars_timestamp_convention_diagnostics(
@@ -2346,7 +2391,7 @@ def materialize_funding_to_bars_timestamp_convention_diagnostics(
         funding_residue = _residue_mod_8h_counts(funding_timestamps)
 
         unmatched_bars_sorted = sorted(bars_set - funding_set)
-        histogram, most_common_delta, sample_size = _nearest_delta_histogram(
+        nearest_delta = _nearest_delta_histogram(
             unmatched_bars_sorted, funding_timestamps
         )
 
@@ -2437,9 +2482,25 @@ def materialize_funding_to_bars_timestamp_convention_diagnostics(
                 "funding_mode_step_seconds": funding_mode_step,
                 "funding_non_mode_step_count": funding_non_mode_count,
                 "funding_residue_mod_8h_counts": funding_residue,
-                "nearest_funding_delta_seconds_histogram": histogram,
-                "most_common_nearest_funding_delta_seconds": most_common_delta,
-                "nearest_delta_sample_size": sample_size,
+                "nearest_funding_delta_seconds_histogram": nearest_delta["histogram"],
+                "most_common_nearest_funding_delta_microseconds": (
+                    nearest_delta["most_common_delta_microseconds"]
+                ),
+                "most_common_nearest_funding_delta_seconds": (
+                    nearest_delta["most_common_delta_seconds"]
+                ),
+                "nearest_delta_sample_size": nearest_delta["sample_size"],
+                "nearest_delta_zero_microseconds_count": (
+                    nearest_delta["zero_microseconds_count"]
+                ),
+                "nearest_delta_subsecond_nonzero_count": (
+                    nearest_delta["subsecond_nonzero_count"]
+                ),
+                "nearest_delta_max_abs_microseconds": (
+                    nearest_delta["max_abs_microseconds"]
+                ),
+                "nearest_delta_precision": "SIGNED_MICROSECONDS",
+                "nearest_delta_truncation_policy": "NO_TRUNCATION",
                 "splits": split_diagnostics,
                 "calculation_status": (
                     "FUNDING_TO_BARS_TIMESTAMP_CONVENTION_DIAGNOSTIC_ONLY"

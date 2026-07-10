@@ -2908,8 +2908,14 @@ class TestFundingToBarsTimestampConventionDiagnostics:
             o["exact_shifted_set_status"] == "EMPTY_BOTH" for o in symbol["offsets"]
         )
         assert symbol["nearest_funding_delta_seconds_histogram"] == []
+        assert symbol["most_common_nearest_funding_delta_microseconds"] is None
         assert symbol["most_common_nearest_funding_delta_seconds"] is None
         assert symbol["nearest_delta_sample_size"] == 0
+        assert symbol["nearest_delta_zero_microseconds_count"] == 0
+        assert symbol["nearest_delta_subsecond_nonzero_count"] == 0
+        assert symbol["nearest_delta_max_abs_microseconds"] == 0
+        assert symbol["nearest_delta_precision"] == "SIGNED_MICROSECONDS"
+        assert symbol["nearest_delta_truncation_policy"] == "NO_TRUNCATION"
         assert symbol["bars_mode_step_seconds"] is None
         assert symbol["bars_non_mode_step_count"] == 0
         assert symbol["bars_residue_mod_8h_counts"] == []
@@ -2963,12 +2969,117 @@ class TestFundingToBarsTimestampConventionDiagnostics:
         )
         symbol = result["symbols"][0]
         assert symbol["nearest_funding_delta_seconds_histogram"] == [
-            {"delta_seconds": 7200, "count": 2}
+            {"delta_microseconds": 7_200_000_000, "delta_seconds": 7200.0, "count": 2}
         ]
-        assert symbol["most_common_nearest_funding_delta_seconds"] == 7200
+        assert symbol["most_common_nearest_funding_delta_microseconds"] == 7_200_000_000
+        assert symbol["most_common_nearest_funding_delta_seconds"] == 7200.0
         assert symbol["nearest_delta_sample_size"] == 2
+        assert symbol["nearest_delta_zero_microseconds_count"] == 0
+        assert symbol["nearest_delta_subsecond_nonzero_count"] == 0
+        assert symbol["nearest_delta_max_abs_microseconds"] == 7_200_000_000
+        assert symbol["nearest_delta_precision"] == "SIGNED_MICROSECONDS"
+        assert symbol["nearest_delta_truncation_policy"] == "NO_TRUNCATION"
         assert "funding_adjusted_bars" not in symbol
         assert "joined_rows" not in symbol
+
+    # 11a. Sub-second positive jitter is preserved, not truncated to 0.
+    def test_subsecond_positive_jitter_not_truncated_to_zero(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z"],
+            funding_timestamps=["2026-01-01T00:00:00.004000Z"],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["nearest_funding_delta_seconds_histogram"] == [
+            {"delta_microseconds": 4000, "delta_seconds": 0.004, "count": 1}
+        ]
+        assert symbol["nearest_funding_delta_seconds_histogram"][0]["delta_seconds"] != 0
+        assert symbol["most_common_nearest_funding_delta_microseconds"] == 4000
+        assert symbol["most_common_nearest_funding_delta_seconds"] == 0.004
+        assert symbol["nearest_delta_zero_microseconds_count"] == 0
+        assert symbol["nearest_delta_subsecond_nonzero_count"] == 1
+        assert symbol["nearest_delta_max_abs_microseconds"] == 4000
+
+    # 11b. Sub-second negative jitter preserves sign and magnitude.
+    def test_subsecond_negative_jitter_preserves_sign(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z"],
+            funding_timestamps=["2025-12-31T23:59:59.996000Z"],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["nearest_funding_delta_seconds_histogram"] == [
+            {"delta_microseconds": -4000, "delta_seconds": -0.004, "count": 1}
+        ]
+        assert symbol["most_common_nearest_funding_delta_microseconds"] == -4000
+        assert symbol["most_common_nearest_funding_delta_seconds"] == -0.004
+        assert symbol["nearest_delta_zero_microseconds_count"] == 0
+        assert symbol["nearest_delta_subsecond_nonzero_count"] == 1
+        assert symbol["nearest_delta_max_abs_microseconds"] == 4000
+
+    # 11c. Sub-second jitter never inflates the zero-microsecond counter on
+    # the public diagnostic path (exact matches are excluded from the
+    # unmatched set entirely, so only a direct helper call can construct a
+    # genuine zero-microsecond nearest delta; see the direct unit test below
+    # for that positive case).
+    def test_subsecond_jitter_does_not_increment_zero_counter(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2],
+            funding_timestamps=[
+                "2026-01-01T00:00:00.001000Z",
+                "2026-01-02T00:00:00.500000Z",
+            ],
+        )
+        symbol = result["symbols"][0]
+        assert symbol["nearest_delta_zero_microseconds_count"] == 0
+        assert symbol["nearest_delta_subsecond_nonzero_count"] == 2
+
+    # 11d. Direct unit coverage of zero-vs-subsecond-nonzero counting and the
+    # max-abs-microseconds tracker, bypassing the exact-set-match exclusion
+    # that makes a true zero-delta unreachable via the public diagnostic path.
+    def test_nearest_delta_histogram_zero_and_subsecond_counts_direct(self):
+        from datetime import datetime, timezone
+
+        bar_exact = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        bar_jitter = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        funding_sorted = [
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+            datetime(2026, 1, 2, 0, 0, 0, 4000, tzinfo=timezone.utc),
+        ]
+        result = real_validation._nearest_delta_histogram(
+            [bar_exact, bar_jitter], funding_sorted
+        )
+        assert result["zero_microseconds_count"] == 1
+        assert result["subsecond_nonzero_count"] == 1
+        assert result["max_abs_microseconds"] == 4000
+        assert {"delta_microseconds": 0, "delta_seconds": 0.0, "count": 1} in (
+            result["histogram"]
+        )
+        assert {"delta_microseconds": 4000, "delta_seconds": 0.004, "count": 1} in (
+            result["histogram"]
+        )
+
+    # 11e. Histogram ordering stays deterministic: descending count, then
+    # ascending delta_microseconds among ties.
+    def test_histogram_ordering_deterministic(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_B1, _B2, _B3, _B4],
+            funding_timestamps=[
+                "2026-01-01T00:00:00.002000Z",
+                "2026-01-02T00:00:00.002000Z",
+                "2026-01-03T00:00:00.001000Z",
+                "2026-01-03T23:59:59.999000Z",
+            ],
+        )
+        symbol = result["symbols"][0]
+        histogram = symbol["nearest_funding_delta_seconds_histogram"]
+        assert histogram == [
+            {"delta_microseconds": 2000, "delta_seconds": 0.002, "count": 2},
+            {"delta_microseconds": -1000, "delta_seconds": -0.001, "count": 1},
+            {"delta_microseconds": 1000, "delta_seconds": 0.001, "count": 1},
+        ]
 
     # 12. Per-split best-offset diagnostics use existing split boundary policy.
     def test_per_split_best_offset_uses_existing_boundary_policy(self, tmp_path):
@@ -3167,8 +3278,18 @@ class TestFundingToBarsTimestampConventionDiagnostics:
                 "DIAGNOSTIC_EXACT_AND_SHIFTED_UTC_TIMESTAMP_SETS_ONLY"
             )
             assert section["funding_application_status"] == "NOT_EXECUTED"
-            assert section["symbols"][0]["symbol"] == "BTCUSDT"
+            cli_symbol = section["symbols"][0]
+            assert cli_symbol["symbol"] == "BTCUSDT"
             assert len(section["candidate_offsets"]) == 13
+            # Repaired precision fields are present on every symbol.
+            assert cli_symbol["nearest_delta_precision"] == "SIGNED_MICROSECONDS"
+            assert cli_symbol["nearest_delta_truncation_policy"] == "NO_TRUNCATION"
+            assert "most_common_nearest_funding_delta_microseconds" in cli_symbol
+            assert "nearest_delta_zero_microseconds_count" in cli_symbol
+            assert "nearest_delta_subsecond_nonzero_count" in cli_symbol
+            assert "nearest_delta_max_abs_microseconds" in cli_symbol
+            for entry in cli_symbol["nearest_funding_delta_seconds_histogram"]:
+                assert set(entry) == {"delta_microseconds", "delta_seconds", "count"}
             # Existing sections are preserved alongside the new one.
             assert "funding_to_bars_alignment_diagnostics" in written
             assert "funding_to_bars_temporal_joinability_diagnostics" in written
