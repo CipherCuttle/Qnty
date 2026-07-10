@@ -9,6 +9,7 @@ import hashlib
 import importlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1000,6 +1001,43 @@ class TestFullFixtureReceiptFlag:
         for r in receipts:
             r["validation_receipt"].pop("timestamp_utc")
         assert receipts[0] == receipts[1]
+
+    def test_full_fixture_receipt_cost_model_fields(self) -> None:
+        """Full fixture receipt cost_model_assumptions includes all PR C fields."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "cost_fields_test"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            result = _run_cli(
+                "--read-only",
+                "--output-dir", str(output_dir),
+                "--bars-dir", str(FIXTURE_DIR),
+                "--volnorm-bars", str(FIXTURE_DIR / "sample_volnorm_bars.csv"),
+                "--walkforward-bars", str(FIXTURE_DIR / "sample_walkforward_bars.csv"),
+                "--full-fixture-receipt",
+            )
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            receipt_path = output_dir / "validation_receipt.json"
+            assert receipt_path.exists()
+            with open(receipt_path) as f:
+                receipt = json.loads(f.read())
+            cost = receipt.get("cost_model_assumptions", {})
+            assert cost.get("spread_bps_per_side") == 1.0, f"Expected spread_bps_per_side=1.0, got {cost.get('spread_bps_per_side')}"
+            assert cost.get("funding_cost_placeholder") == 0.0, f"Expected funding_cost_placeholder=0.0, got {cost.get('funding_cost_placeholder')}"
+            assert cost.get("cost_model_version") is not None
+            assert cost.get("slippage_bps_per_side") is not None
+            assert cost.get("commission_bps_per_side") is not None
+            assert cost.get("heat_cap") is not None
+            assert cost.get("vol_lookback_bars") is not None
+            assert cost.get("vol_floor") is not None
+            # Verify no regression
+            assert receipt["final_verdict"] == "SKELETON_ONLY"
+            assert "EDGE_CANDIDATE" not in str(receipt)
+            assert "pnl" not in receipt
+            assert "sharpe" not in receipt
+            assert "edge" not in receipt
+            assert "strategy_performance" not in receipt
+            # Cleanup
+            shutil.rmtree(output_dir)
 
     def test_full_fixture_receipt_cleanup(self) -> None:
         """Clean up any leftover /tmp/validation_receipt.json from other tests."""
