@@ -27,6 +27,28 @@ import csv
 import math
 from pathlib import Path
 
+# Prod data root.  PR D is fixture-only and MUST NOT read prod data, so the
+# helpers below fail closed on any path that resolves under this root.
+PROD_BASE = Path("/srv/qnty")
+
+
+def _refuse_prod_path(path: Path) -> None:
+    """Raise ValueError if *path* resolves under the prod root ``/srv/qnty``.
+
+    Uses path-boundary comparison on resolved parts (not a string prefix) so
+    traversal (``/tmp/../../srv/qnty/...``) and sibling names (``/srv/qnty2``)
+    are handled correctly.  Called before any file open to keep PR D fixture-only.
+    """
+    resolved = Path(path).resolve()
+    prod = PROD_BASE.resolve()
+    try:
+        common = Path(*resolved.parts[: len(prod.parts)])
+    except ValueError:
+        return
+    if common == prod:
+        raise ValueError(f"Path resolves under prod path {PROD_BASE}: {path}")
+
+
 # Version of the fixture-only reconstruction shape.  Distinct from the real V2
 # package version on purpose — this is a mirror, not full V2.
 FIXTURE_VOLNORM_VERSION: str = "fixture-0.1"
@@ -58,6 +80,7 @@ def parse_fixture_bars(path: Path) -> list[dict]:
         a null/invalid ``close`` value.
     """
     path = Path(path)
+    _refuse_prod_path(path)
     if not path.exists():
         raise FileNotFoundError(f"Fixture bars file does not exist: {path}")
 
@@ -214,6 +237,7 @@ def reconstruct_fixture_volnorm_weights(
     if vol_lookback_bars < 1:
         raise ValueError(f"vol_lookback_bars must be >= 1, got {vol_lookback_bars}")
 
+    _refuse_prod_path(Path(path))
     bars = parse_fixture_bars(path)
     closes = [bar["close"] for bar in bars]
     returns = calculate_simple_returns(closes)

@@ -96,6 +96,39 @@ class TestParseFixtureBars:
             parse_fixture_bars(p)
 
 
+# ── Prod-path refusal (fail closed; PR D is fixture-only) ──────────────────
+
+
+class TestProdPathRefusal:
+    def test_parse_fixture_bars_rejects_prod_path(self) -> None:
+        with pytest.raises(ValueError, match="prod path"):
+            parse_fixture_bars(Path("/srv/qnty/bars/sample.csv"))
+
+    def test_reconstruct_rejects_prod_path(self) -> None:
+        with pytest.raises(ValueError, match="prod path"):
+            reconstruct_fixture_volnorm_weights(Path("/srv/qnty/bars/sample.csv"))
+
+    def test_traversal_prod_path_rejected(self) -> None:
+        # Resolves under /srv/qnty despite the traversal prefix.
+        with pytest.raises(ValueError, match="prod path"):
+            parse_fixture_bars(Path("/tmp/../../srv/qnty/bars/sample.csv"))
+
+    def test_prod_base_itself_rejected(self) -> None:
+        with pytest.raises(ValueError, match="prod path"):
+            parse_fixture_bars(Path("/srv/qnty"))
+
+    def test_sibling_prefix_not_rejected(self, tmp_path: Path) -> None:
+        # /srv/qnty2 must NOT be treated as under /srv/qnty (boundary, not prefix).
+        # Use a real fixture path check via a would-be sibling; guard should pass
+        # so we fall through to the normal FileNotFoundError.
+        with pytest.raises(FileNotFoundError):
+            parse_fixture_bars(Path("/srv/qnty2/bars/sample.csv"))
+
+    def test_normal_fixture_path_still_works(self) -> None:
+        bars = parse_fixture_bars(VOLNORM_BARS)
+        assert len(bars) == 6
+
+
 # ── Simple returns ─────────────────────────────────────────────────────────
 
 
