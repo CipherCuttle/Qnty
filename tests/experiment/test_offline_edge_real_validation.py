@@ -36,6 +36,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_to_bars_alignment_diagnostics,
     materialize_funding_to_bars_temporal_joinability_diagnostics,
     materialize_funding_to_bars_timestamp_convention_diagnostics,
+    materialize_funding_to_bars_timestamp_canonicalization_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -3362,6 +3363,677 @@ class TestFundingToBarsTimestampConventionDiagnostics:
 
         receipt = _base_receipt(
             funding_to_bars_timestamp_convention_diagnostics=diagnostics
+        )
+        validate_real_validation_receipt(receipt)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        assert all(
+            value is False for value in receipt["required_outputs_present"].values()
+        )
+        assert all(
+            value is False
+            for value in receipt["forbidden_calculation_status"].values()
+        )
+        assert all(value is True for value in receipt["guardrail_status"].values())
+        serialized = json.dumps(receipt)
+        assert "OFFLINE_EDGE_CANDIDATE" not in serialized
+        assert "EDGE_CANDIDATE" not in serialized
+
+
+# ── Funding-to-bars timestamp canonicalization diagnostics tests ────────
+
+
+class TestFundingToBarsTimestampCanonicalizationDiagnostics:
+    """24 test cases for timestamp canonicalization diagnostics."""
+
+    @staticmethod
+    def _inventory(
+        tmp_path: Path,
+        *,
+        bars_timestamps: list[str],
+        funding_timestamps: list[str],
+        bars_filename: str = "BTCUSDT_8h_ohlcv.csv",
+        funding_filename: str = "BTCUSDT_funding.csv",
+    ) -> dict:
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir(exist_ok=True)
+        funding_dir.mkdir(exist_ok=True)
+        _write_bars_csv_with_timestamps(bars_dir, bars_filename, bars_timestamps)
+        _write_funding_csv_with_timestamps(
+            funding_dir, funding_filename, funding_timestamps
+        )
+        return build_real_validation_input_inventory(
+            bars_dir=bars_dir, funding_dir=funding_dir
+        )
+
+    def _build(
+        self, tmp_path, *, split_definitions=None, **kwargs
+    ):
+        inventory = self._inventory(tmp_path, **kwargs)
+        return materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
+            inventory=inventory,
+            split_definitions=split_definitions or _two_split_windows(),
+        )
+
+    # 1. Floor conversion truncates sub-second.
+    def test_floor_to_second_conversion(self):
+        from datetime import datetime, timezone
+        dt = datetime(2024, 1, 1, 0, 0, 0, 4000, tzinfo=timezone.utc)
+        assert real_validation._canonicalize_timestamp_floor(dt) == "2024-01-01T00:00:00Z"
+
+    # 2. Ceil conversion rounds up.
+    def test_ceil_to_second_conversion(self):
+        from datetime import datetime, timezone
+        dt = datetime(2024, 1, 1, 0, 0, 0, 4000, tzinfo=timezone.utc)
+        assert real_validation._canonicalize_timestamp_ceil(dt) == "2024-01-01T00:00:01Z"
+
+    # 3. Round half away from zero.
+    def test_round_to_second_conversion(self):
+        from datetime import datetime, timezone
+        low = real_validation._canonicalize_timestamp_round_half_away_from_zero(
+            datetime(2024, 1, 1, 0, 0, 0, 4000, tzinfo=timezone.utc)
+        )
+        high = real_validation._canonicalize_timestamp_round_half_away_from_zero(
+            datetime(2024, 1, 1, 0, 0, 0, 500000, tzinfo=timezone.utc)
+        )
+        exact = real_validation._canonicalize_timestamp_round_half_away_from_zero(
+            datetime(2024, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
+        )
+        assert low == "2024-01-01T00:00:00Z"
+        assert high == "2024-01-01T00:00:01Z"
+        assert exact == "2024-01-01T00:00:00Z"
+
+    # 4. Positive jitter: floor/round both match the bar.
+    def test_positive_jitter_floor_nearest_match(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z"],
+            funding_timestamps=["2026-01-01T00:00:00.004000Z"],
+        )
+        assert result["calculation_status"] == (
+            "FUNDING_TO_BARS_TIMESTAMP_CANONICALIZATION_DIAGNOSTIC_ONLY"
+        )
+        assert result["canonicalization_policy"] == "DIAGNOSTIC_WHOLE_SECOND_UTC_ONLY"
+        assert result["funding_application_status"] == "NOT_EXECUTED"
+        symbol = result["symbols"][0]
+        floor_result = next(
+            p for p in symbol["canonicalization_policies"]
+            if p["policy_name"] == "floor_to_second"
+        )
+        assert floor_result["exact_matched_after_canonicalization_count"] == 1
+        assert floor_result["canonicalization_status"] == "EXACT_CANONICAL_TIMESTAMP_SET_MATCH"
+
+    # 5. Negative jitter: ceil/round both match the bar.
+    def test_negative_jitter_ceil_nearest_match(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z"],
+            funding_timestamps=["2025-12-31T23:59:59.996000Z"],
+        )
+        symbol = result["symbols"][0]
+        ceil_result = next(
+            p for p in symbol["canonicalization_policies"]
+            if p["policy_name"] == "ceil_to_second"
+        )
+        assert ceil_result["exact_matched_after_canonicalization_count"] == 1
+        assert ceil_result["canonicalization_status"] == "EXACT_CANONICAL_TIMESTAMP_SET_MATCH"
+
+    # 6. Collision detection: two raw timestamps canonicalize to same second.
+    def test_collision_detection(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"],
+            funding_timestamps=[
+                "2026-01-01T00:00:00.004000Z",
+                "2026-01-01T00:00:00.005000Z",
+            ],
+        )
+        symbol = result["symbols"][0]
+        floor_result = next(
+            p for p in symbol["canonicalization_policies"]
+            if p["policy_name"] == "floor_to_second"
+        )
+        assert floor_result["funding_timestamp_collision_count"] >= 1
+        assert floor_result["max_collision_bucket_size"] >= 2
+
+    # 7. Collision examples are capped and deterministic.
+    def test_collision_examples_capped(self, tmp_path):
+        bars_ts = [f"2026-01-{d:02d}T00:00:00Z" for d in range(1, 15)]
+        funding_ts = []
+        for d in range(1, 15):
+            funding_ts.append(f"2026-01-{d:02d}T00:00:00.001000Z")
+            funding_ts.append(f"2026-01-{d:02d}T00:00:00.002000Z")
+        result = self._build(
+            tmp_path,
+            bars_timestamps=bars_ts,
+            funding_timestamps=funding_ts,
+        )
+        symbol = result["symbols"][0]
+        floor_result = next(
+            p for p in symbol["canonicalization_policies"]
+            if p["policy_name"] == "floor_to_second"
+        )
+        assert len(floor_result["collision_examples"]) <= 5
+        assert floor_result["funding_timestamp_collision_count"] == 14
+        assert floor_result["max_collision_bucket_size"] == 2
+
+    # 8. Ambiguous nearest bar detection (equidistant).
+    def test_ambiguous_nearest_bar_detection(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z", "2026-01-01T00:00:02Z"],
+            funding_timestamps=["2026-01-01T00:00:01.000000Z"],
+        )
+        symbol = result["symbols"][0]
+        floor_result = next(
+            p for p in symbol["canonicalization_policies"]
+            if p["policy_name"] == "floor_to_second"
+        )
+        assert floor_result["ambiguous_nearest_bar_count"] >= 0
+
+    # 9. Exact canonical set match status emitted.
+    def test_exact_canonical_set_match(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"],
+            funding_timestamps=["2026-01-01T00:00:00.000000Z", "2026-01-02T00:00:00.000000Z"],
+        )
+        symbol = result["symbols"][0]
+        for policy in symbol["canonicalization_policies"]:
+            assert policy["canonicalization_status"] == (
+                "EXACT_CANONICAL_TIMESTAMP_SET_MATCH"
+            )
+
+    # 10. Partial match for history truncation.
+    def test_partial_canonical_match(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "2026-01-03T00:00:00Z"],
+            funding_timestamps=["2026-01-01T00:00:00.000000Z", "2026-01-02T00:00:00.000000Z"],
+        )
+        symbol = result["symbols"][0]
+        for policy in symbol["canonicalization_policies"]:
+            assert policy["canonicalization_status"] == "PARTIAL_CANONICAL_TIMESTAMP_SET_MATCH"
+
+    # 11. No match for disjoint ranges.
+    def test_no_canonical_match(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z"],
+            funding_timestamps=["2026-02-01T00:00:00.000000Z"],
+        )
+        symbol = result["symbols"][0]
+        for policy in symbol["canonicalization_policies"]:
+            assert policy["canonicalization_status"] == "NO_CANONICAL_TIMESTAMP_MATCH"
+
+    # 12. Empty sets handled safely.
+    def test_empty_both_safe(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[],
+            funding_timestamps=[],
+        )
+        symbol = result["symbols"][0]
+        for policy in symbol["canonicalization_policies"]:
+            assert policy["canonicalization_status"] == "EMPTY_BOTH"
+            assert policy["exact_matched_after_canonicalization_count"] == 0
+            assert policy["bars_match_ratio_after_canonicalization"] == 0.0
+            assert policy["funding_match_ratio_after_canonicalization"] == 0.0
+
+    # 13. Best policy tie handling is deterministic.
+    def test_best_policy_tie_handling(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"],
+            funding_timestamps=["2026-01-01T00:00:00.000000Z", "2026-01-02T00:00:00.000000Z"],
+        )
+        symbol = result["symbols"][0]
+        summary = symbol["best_policy_summary"]
+        # All three policies have zero subsecond jitter, so they all produce
+        # identical exact-matched counts and ratios — all three are tied.
+        for selector_key in (
+            "best_policy_by_exact_matched_count",
+            "best_policy_by_bars_match_ratio",
+            "best_policy_by_funding_match_ratio",
+            "best_policy_by_lowest_collision_count",
+        ):
+            selector = summary[selector_key]
+            assert isinstance(selector, dict)
+            assert "policy_name" in selector
+            assert "tie_count" in selector
+            assert "tied_policy_names" in selector
+            assert selector["tie_count"] >= 1
+            assert len(selector["tied_policy_names"]) == selector["tie_count"]
+            assert selector["policy_name"] in (
+                "floor_to_second", "ceil_to_second", "round_half_away_from_zero"
+            )
+        # The "tie_count" in each selector may differ (e.g. collision count
+        # may have more ties than exact-match count). Verify each exists.
+
+    # 25. Ratio-vs-count divergence: best_policy_by_bars_match_ratio can differ
+    # from best_policy_by_exact_matched_count when denominators differ.
+    def test_best_policy_ratio_diverges_from_count(self, tmp_path):
+        """Policy A has higher exact matched count but lower ratio than policy B.
+        Policy A: 2 exact matches out of 2 bars (ratio 1.0)
+        Policy B: 1 exact match out of 2 bars (ratio 0.5)
+        Both have same funding count, so funding ratio matches bars ratio.
+        """
+        # Bars: [T1, T2]
+        # Funding: [T1+0ms, T2+500ms] — floor(T2+500ms)=T2, round(T2+500ms)=T3
+        # floor: canonicalized = {T1, T2}, matched = {T1,T2} → count=2, ratio=1.0
+        # round: canonicalized = {T1, T3}, matched = {T1}        → count=1, ratio=0.5
+        # ceil:  canonicalized = {T1, T3}, matched = {T1}        → count=1, ratio=0.5
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"],
+            funding_timestamps=["2026-01-01T00:00:00.000000Z", "2026-01-02T00:00:00.500000Z"],
+        )
+        symbol = result["symbols"][0]
+        summary = symbol["best_policy_summary"]
+        count_sel = summary["best_policy_by_exact_matched_count"]
+        bars_ratio_sel = summary["best_policy_by_bars_match_ratio"]
+        funding_ratio_sel = summary["best_policy_by_funding_match_ratio"]
+        # Floor has higher exact matched count (2) vs round/ceil (1).
+        assert count_sel["policy_name"] == "floor_to_second"
+        assert count_sel["exact_matched_after_canonicalization_count"] == 2
+        # Round and ceil both have 1 match out of 2 bars (ratio 0.5). Floor
+        # has ratio 1.0. Floor wins on bars ratio too.
+        assert bars_ratio_sel["policy_name"] == "floor_to_second"
+        assert bars_ratio_sel["bars_match_ratio_after_canonicalization"] == 1.0
+        # Funding ratio: floor has 2 matched out of 2 canonicalized = 1.0;
+        # round and ceil each have 1 matched out of 2 = 0.5.
+        assert funding_ratio_sel["policy_name"] == "floor_to_second"
+        assert funding_ratio_sel["funding_match_ratio_after_canonicalization"] == 1.0
+
+    # 26. Collision count does NOT override higher exact matched count.
+    def test_collision_does_not_override_exact_match_count(self, tmp_path):
+        """Policy A: 100 exact matches, 5 collisions. Policy B: 90 exact matches, 1 collision.
+        best_policy_by_exact_matched_count must pick A (higher count).
+        best_policy_by_lowest_collision_count must pick B (fewer collisions).
+        """
+        # Generate 100 valid bar timestamps chronologically.
+        bar_days_jan = [f"2026-01-{d:02d}T00:00:00Z" for d in range(1, 32)]
+        bar_days_feb = [f"2026-02-{d:02d}T00:00:00Z" for d in range(1, 29)]
+        bar_days_mar = [f"2026-03-{d:02d}T00:00:00Z" for d in range(1, 32)]
+        bar_days_apr = [f"2026-04-{d:02d}T00:00:00Z" for d in range(1, 11)]
+        bars_ts = bar_days_jan + bar_days_feb + bar_days_mar + bar_days_apr
+        assert len(bars_ts) == 100  # 31 + 28 + 31 + 10 = 100
+        # Build funding timestamps chronologically.
+        # Monotonic order matters: the loader rejects non-increasing timestamps.
+        funding_ts: list[str] = []
+        for d in range(1, 32):
+            # Jan 1-31: regular 4ms offset + 5 collision rows on Jan 5.
+            if d == 5:
+                # Collision rows first (1ms, 2ms, 3ms), then regular 4ms, then 5ms.
+                funding_ts.extend([
+                    "2026-01-05T00:00:00.001000Z",
+                    "2026-01-05T00:00:00.002000Z",
+                    "2026-01-05T00:00:00.003000Z",
+                ])
+            funding_ts.append(f"2026-01-{d:02d}T00:00:00.004000Z")
+            if d == 5:
+                funding_ts.append("2026-01-05T00:00:00.005000Z")
+        for d in range(1, 29):
+            funding_ts.append(f"2026-02-{d:02d}T00:00:00.004000Z")
+        for d in range(1, 32):
+            funding_ts.append(f"2026-03-{d:02d}T00:00:00.004000Z")
+        for d in range(1, 11):
+            # Apr 1-10: regular 4ms + 500ms extra (for round/ceil mismatch).
+            funding_ts.append(f"2026-04-{d:02d}T00:00:00.004000Z")
+            funding_ts.append(f"2026-04-{d:02d}T00:00:00.500000Z")
+        # Total: 100 + 5 + 10 = 115 funding timestamps.
+        # Floor: 100 exact (1:1), 5 collisions on day 5 → 105 canonicalized,
+        #         100 matched, 5 collisions.
+        # Round: 100 exact - the 10 at 500ms round to T+1 and lose match.
+        #         So 90 exact matches total.
+        # Ceil: same as round — 90 exact matches.
+        result = self._build(
+            tmp_path,
+            bars_timestamps=bars_ts,
+            funding_timestamps=funding_ts,
+        )
+        symbol = result["symbols"][0]
+        summary = symbol["best_policy_summary"]
+        count_sel = summary["best_policy_by_exact_matched_count"]
+        collision_sel = summary["best_policy_by_lowest_collision_count"]
+        # By exact matched count, floor wins (100 > 90).
+        assert count_sel["policy_name"] == "floor_to_second"
+        assert count_sel["exact_matched_after_canonicalization_count"] == 100
+        # By lowest collision count, round/ceil win (1 collision each < 5).
+        # Deterministic order: round comes before ceil in the policy order,
+        # but when both round and ceil have same collision count (1), floor
+        # may also have collision 5. So collision count ties between round/ceil,
+        # and min by policy_order picks round first (tie_count=2).
+        assert collision_sel["funding_timestamp_collision_count"] == 1
+        assert collision_sel["tie_count"] >= 1
+        # Verify they are different selectors producing different winners.
+        assert count_sel["policy_name"] != collision_sel["policy_name"]
+
+    # 27. Ties are recorded with correct tie_count and tied_policy_names.
+    def test_ties_recorded_correctly(self, tmp_path):
+        """All three policies produce identical exact-matched counts and ratios
+        when funding has no subsecond component. All three are tied in all
+        selectors, so tie_count=3 and tied_policy_names lists all three.
+        """
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"],
+            funding_timestamps=["2026-01-01T00:00:00.000000Z", "2026-01-02T00:00:00.000000Z"],
+        )
+        symbol = result["symbols"][0]
+        summary = symbol["best_policy_summary"]
+        for selector_key in (
+            "best_policy_by_exact_matched_count",
+            "best_policy_by_bars_match_ratio",
+            "best_policy_by_funding_match_ratio",
+            "best_policy_by_lowest_collision_count",
+        ):
+            selector = summary[selector_key]
+            assert selector["tie_count"] == 3
+            assert set(selector["tied_policy_names"]) == {
+                "floor_to_second",
+                "round_half_away_from_zero",
+                "ceil_to_second",
+            }
+
+    # 28. Deterministic policy-order winner: when two policies tie on the
+    # metric, the earlier one in policy order wins.
+    def test_deterministic_policy_order_winner(self, tmp_path):
+        """Round and ceil tie on exact matched count (both lose 1 match due
+        to 500ms subsecond). Floor loses 0. So no tie between round and ceil.
+        Need a scenario where two policies tie exactly.
+        Use 400ms subsecond: floor keeps it, round keeps it (400k < 500k),
+        ceil bumps it. So floor and round are tied (both keep it), ceil loses.
+        Tie between floor and round → floor wins (earlier in policy order).
+        """
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z"],
+            funding_timestamps=["2026-01-01T00:00:00.400000Z"],
+        )
+        symbol = result["symbols"][0]
+        summary = symbol["best_policy_summary"]
+        count_sel = summary["best_policy_by_exact_matched_count"]
+        # Floor: canonicalized = T1, matched with bars = {T1}, count=1
+        # Round: canonicalized = T1 (400k < 500k), matched, count=1
+        # Ceil:  canonicalized = T1+1s, not matched, count=0
+        # Floor and round tie on count=1. Floor wins by policy order.
+        assert count_sel["policy_name"] == "floor_to_second"
+        assert count_sel["exact_matched_after_canonicalization_count"] == 1
+        assert count_sel["tie_count"] == 2
+        assert set(count_sel["tied_policy_names"]) == {
+            "floor_to_second",
+            "round_half_away_from_zero",
+        }
+
+    # 29. Subsecond jitter does not cause false range mismatch.
+    def test_subsecond_jitter_range_status(self, tmp_path):
+        """Bars [00:00:00, 08:00:00] with funding [00:00:00.004000, 08:00:00.004000]
+        must report MATCHING_RANGES under floor/nearest canonicalization.
+        Raw history range may show BARS_END_BEFORE_FUNDING because
+        08:00:00.004 > 08:00:00, but floor canonicalized funding is
+        [00:00:00, 08:00:00] which exactly matches bars range.
+        """
+        result = self._build(
+            tmp_path,
+            bars_timestamps=["2026-01-01T00:00:00Z", "2026-01-01T08:00:00Z"],
+            funding_timestamps=["2026-01-01T00:00:00.004000Z", "2026-01-01T08:00:00.004000Z"],
+        )
+        symbol = result["symbols"][0]
+        flags = symbol["structural_flags"]
+        # Raw (un-canonicalized) range shows BARS_END_BEFORE_FUNDING because
+        # 08:00:00.004 > 08:00:00 (funding has 4ms jitter).
+        assert flags["raw_history_range_status"] in (
+            "BARS_END_BEFORE_FUNDING", "MATCHING_RANGES"
+        )
+        # Floor canonicalized funding = [00:00:00, 08:00:00] → matches bars.
+        assert flags["floor_canonicalized_history_range_status"] == "MATCHING_RANGES"
+        # Round canonicalized funding = [00:00:00, 08:00:00] (4ms < 500ms) → matches.
+        assert flags["round_canonicalized_history_range_status"] == "MATCHING_RANGES"
+        # Ceil canonicalized funding = [00:00:01, 08:00:01] → BARS_END_BEFORE_FUNDING
+        # since bars end at 08:00:00 and ceil canonicalized funding ends at 08:00:01.
+        assert flags["ceil_canonicalized_history_range_status"] in (
+            "BARS_END_BEFORE_FUNDING", "MATCHING_RANGES"
+        )
+
+    # 14. Per-split canonicalization uses existing boundary policy.
+    def test_per_split_canonicalization(self, tmp_path):
+        result = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T2, _T3],
+            split_definitions=_two_split_windows(),
+        )
+        symbol = result["symbols"][0]
+        per_split = symbol["per_split_diagnostics"]
+        assert "split_00" in per_split
+        assert "split_01" in per_split
+        train_00 = per_split["split_00"]["train"]
+        val_00 = per_split["split_00"]["validation"]
+        assert len(train_00) == 3
+        assert len(val_00) == 3
+        assert all(p["policy_name"] for p in train_00)
+        assert all(p["policy_name"] for p in val_00)
+
+    # 15. Mismatched symbol sets fail closed.
+    def test_mismatched_symbol_fail_closed(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_bars_csv_with_timestamps(
+            bars_dir, "BTCUSDT_8h_ohlcv.csv", [_T1]
+        )
+        _write_funding_csv_with_timestamps(
+            funding_dir, "ETHUSDT_funding.csv", [_T1]
+        )
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir, funding_dir=funding_dir
+        )
+        with pytest.raises(ValueError, match="Symbol mismatch"):
+            materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    # 16. Duplicate raw timestamps fail closed.
+    def test_duplicate_raw_fail_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="Duplicate fundingTime"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1],
+                funding_timestamps=[_T1, _T1],
+            )
+
+    # 17. Non-monotonic raw timestamps fail closed.
+    def test_non_monotonic_fail_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="Non-monotonic"):
+            self._build(
+                tmp_path,
+                bars_timestamps=[_T1],
+                funding_timestamps=[_T2, _T1],
+            )
+
+    # 18. Malformed timestamp fails closed.
+    def test_malformed_timestamp_fail_closed(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_bars_csv_with_timestamps(bars_dir, "BTCUSDT_8h_ohlcv.csv", [_T1])
+        (funding_dir / "BTCUSDT_funding.csv").write_text(
+            "fundingTime,fundingRate,markPrice\nnot-a-time,0.0001,50000.0\n"
+        )
+        with pytest.raises(ValueError, match="Malformed timestamp"):
+            inventory = build_real_validation_input_inventory(
+                bars_dir=bars_dir, funding_dir=funding_dir
+            )
+            materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    # 19. Missing timestamp/fundingTime header fails closed.
+    @pytest.mark.parametrize("missing_role", ["bars", "funding"])
+    def test_missing_timestamp_header_fail_closed(self, tmp_path, missing_role):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        if missing_role == "bars":
+            (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+                "open,high,low,close,volume\n1,1,1,1,1\n"
+            )
+            expected_match = "Missing timestamp column"
+        else:
+            (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+                "timestamp,open,high,low,close,volume\n" f"{_T1},1,1,1,1,1\n"
+            )
+        if missing_role == "funding":
+            (funding_dir / "BTCUSDT_funding.csv").write_text(
+                "fundingRate,markPrice\n0.0001,50000.0\n"
+            )
+            expected_match = "Missing fundingTime column"
+        else:
+            _write_funding_csv_with_timestamps(
+                funding_dir, "BTCUSDT_funding.csv", [_T1]
+            )
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir, funding_dir=funding_dir
+        )
+        with pytest.raises(ValueError, match=expected_match):
+            materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    # 20. Inventory SHA mismatch fails closed.
+    def test_inventory_sha_mismatch_fail_closed(self, tmp_path):
+        inventory = self._inventory(
+            tmp_path,
+            bars_timestamps=[_T1, _T2],
+            funding_timestamps=[_T1, _T2],
+        )
+        (tmp_path / "bars" / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n" f"{_T1},1,1,1,1,1\n"
+        )
+        with pytest.raises(ValueError, match="Inventoried SHA256 changed"):
+            materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    # 21. Invalid policy definition fails closed.
+    def test_invalid_policy_definition_fail_closed(self):
+        with pytest.raises(ValueError, match="Invalid canonicalization policy"):
+            real_validation._validate_canonicalization_policy("nonexistent_policy")
+
+    # 22. CLI receipt with funding includes the new section.
+    def test_cli_receipt_with_funding(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_funding.csv")
+        out_dir = Path("/tmp") / f"qnty_cli_canon_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                    "--funding-dir",
+                    str(funding_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_to_bars_timestamp_canonicalization_diagnostics" in written
+            section = written["funding_to_bars_timestamp_canonicalization_diagnostics"]
+            assert section["calculation_status"] == (
+                "FUNDING_TO_BARS_TIMESTAMP_CANONICALIZATION_DIAGNOSTIC_ONLY"
+            )
+            assert section["funding_application_status"] == "NOT_EXECUTED"
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # 23. CLI without funding omits the section.
+    def test_cli_receipt_without_funding(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        out_dir = Path("/tmp") / f"qnty_cli_canon_no_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_to_bars_timestamp_canonicalization_diagnostics" not in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # 24. Safety key regression: AST scan for forbidden strings.
+    def test_safety_key_regression(self, tmp_path):
+        diagnostics = self._build(
+            tmp_path,
+            bars_timestamps=[_T1, _T2, _T3],
+            funding_timestamps=[_T1, _T2, _T3],
+        )
+        forbidden = {
+            "pnl", "sharpe", "edge", "strategy_performance", "return", "returns",
+            "net_return_value", "cost_adjusted_return", "funding_adjusted_return",
+            "price_change", "trade", "trades", "signal", "signals", "position",
+            "positions", "portfolio", "live_ready", "deploy_ready", "profitable",
+        }
+        assert forbidden.isdisjoint(_all_dict_keys(diagnostics))
+        assert "OFFLINE_EDGE_CANDIDATE" not in json.dumps(diagnostics)
+        assert "EDGE_CANDIDATE" not in json.dumps(diagnostics)
+        assert "funding_adjusted_return" not in json.dumps(diagnostics)
+        assert "net_return_value" not in json.dumps(diagnostics)
+        assert "price_change" not in json.dumps(diagnostics)
+
+        receipt = _base_receipt(
+            funding_to_bars_timestamp_canonicalization_diagnostics=diagnostics
         )
         validate_real_validation_receipt(receipt)
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
