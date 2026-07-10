@@ -23,6 +23,13 @@ PLACEHOLDER_SKELETON_NO_OP: str = "PLACEHOLDER_SKELETON_NO_OP"
 FIXTURE_VOLNORM_STAGE_ID: str = "A"
 FIXTURE_VOLNORM_STAGE_NAME: str = "fixture_volnorm_reconstruction"
 
+# PR E — fixture-only walk-forward / counterfactual replay stage identity.  Like
+# stage A this is a SKELETON_ONLY stage: it splits fixture bars, reconstructs a
+# fixture volnorm weight per split, applies fixture cost assumptions, and emits a
+# toy replay summary.  It does NOT compute strategy PnL or emit an edge verdict.
+FIXTURE_WALKFORWARD_STAGE_ID: str = "B"
+FIXTURE_WALKFORWARD_STAGE_NAME: str = "fixture_walkforward_replay"
+
 # Forbidden future verdicts — named here for refusal tests only
 EDGE_CANDIDATE: str = "EDGE_CANDIDATE"
 NO_EDGE: str = "NO_EDGE"

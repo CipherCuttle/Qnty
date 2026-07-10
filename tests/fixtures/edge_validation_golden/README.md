@@ -104,3 +104,29 @@ does **not** compute strategy performance / PnL, generate trades, call the paper
 engine, replay real funding, run walk-forward, create Lane B, or emit
 `EDGE_CANDIDATE`. The CLI verdict remains `SKELETON_ONLY`. `EDGE_UNPROVEN` /
 `BLOCK_LIVE_INTEGRATION` remain in force; long-only / 1x is the only assumed lane.
+
+## PR E — Walk-Forward Replay Fixtures
+
+Added in PR E:
+
+| File | Purpose |
+|------|---------|
+| [`sample_walkforward_bars.csv`](sample_walkforward_bars.csv) | Deterministic OHLCV bars (8 rows, monotonic timestamps) — enough for 5 tiny train/test splits at `train_size=3, test_size=1` |
+| [`expected_walkforward_summary.json`](expected_walkforward_summary.json) | Golden expected top-level output of `run_fixture_walkforward` over the above bars with default params |
+
+These fixtures are consumed by:
+- [`offline_edge_walkforward.py`](../../../quantbot/experiment/offline_edge_walkforward.py) — stdlib-only helpers that split fixture bars, reconstruct a fixture volnorm weight per split, apply fixture cost assumptions, and emit a toy replay summary
+- [`test_offline_edge_walkforward.py`](../../../tests/experiment/test_offline_edge_walkforward.py) — unit tests for the split/replay helpers
+- [`test_offline_edge_validation_cli.py`](../../../tests/experiment/test_offline_edge_validation_cli.py) — CLI test exercising `--walkforward-bars` (emits stage-B metric)
+
+**Scope note:** PR E is a *fixture-only mirror* of the walk-forward concept in
+[`walkforward.py`](../../../quantbot/experiment/walkforward.py) /
+[`walkforward_runner.py`](../../../quantbot/experiment/walkforward_runner.py). It
+is **not** the real runner: those modules are intentionally not imported because
+they drag strategy/loader/gate/engine dependencies. Per-split numbers are
+labelled `fixture_counterfactual_return` and are **not** `pnl`, **not**
+`strategy_performance`, **not** `sharpe`, and **not** `edge`. It does **not**
+compute strategy PnL, generate trades, call the paper engine, replay real
+funding, run a full historical walk-forward, create Lane B, or emit
+`EDGE_CANDIDATE`. The CLI verdict remains `SKELETON_ONLY`. `EDGE_UNPROVEN` /
+`BLOCK_LIVE_INTEGRATION` remain in force; long-only / 1x is the only assumed lane.
