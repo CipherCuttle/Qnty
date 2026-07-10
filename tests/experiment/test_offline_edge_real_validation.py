@@ -1351,7 +1351,7 @@ class TestFundingObservationalAdjustments:
 
 class TestFundingToBarsAlignmentDiagnostics:
     @staticmethod
-    def _sections(*, rate=-0.02, unassigned=0):
+    def _sections(*, rate=-0.02, unassigned=0, funding_filename="BTCUSDT_funding.csv"):
         rows = {"roles": [
             {"role": "bars", "files": [{
                 "filename": "BTCUSDT_8h_ohlcv.csv", "total_rows": 3,
@@ -1360,7 +1360,7 @@ class TestFundingToBarsAlignmentDiagnostics:
                 }],
             }]},
             {"role": "funding", "files": [{
-                "filename": "BTCUSDT_funding.csv", "total_rows": 2,
+                "filename": funding_filename, "total_rows": 2,
                 "unassigned_rows": unassigned, "per_split_counts": [{
                     "split_id": "split_0", "train_rows": 1, "validation_rows": 1,
                 }],
@@ -1375,7 +1375,7 @@ class TestFundingToBarsAlignmentDiagnostics:
             }],
         }]}
         funding = {"files": [{
-            "filename": "BTCUSDT_funding.csv", "observation_count": 2,
+            "filename": funding_filename, "observation_count": 2,
             "min_funding_rate": rate, "max_funding_rate": 0.0002,
             "per_split_windows": [{
                 "split_id": "split_0",
@@ -1414,6 +1414,52 @@ class TestFundingToBarsAlignmentDiagnostics:
             "funding_train_observations": 1,
             "funding_validation_observations": 1,
         }
+
+    @pytest.mark.parametrize(
+        "funding_filename",
+        ["BTCUSDT_8h_funding.csv", "BTCUSDT_funding.csv"],
+    )
+    def test_real_and_legacy_funding_filenames_pair_with_bars(
+        self, funding_filename
+    ):
+        rows, gross, funding = self._sections(
+            funding_filename=funding_filename
+        )
+        result = materialize_funding_to_bars_alignment_diagnostics(
+            row_materialization=rows,
+            gross_observational_returns=gross,
+            funding_observational_adjustments=funding,
+        )
+        assert result["symbols"][0]["symbol"] == "BTCUSDT"
+        assert result["symbols"][0]["funding_file"] == funding_filename
+
+    def test_duplicate_normalized_funding_symbols_fail_closed(self):
+        rows, gross, funding = self._sections()
+        duplicate = rows["roles"][1]["files"][0].copy()
+        duplicate["filename"] = "BTCUSDT_8h_funding.csv"
+        rows["roles"][1]["files"].append(duplicate)
+        with pytest.raises(
+            ValueError, match="Duplicate funding row materialization symbol: BTCUSDT"
+        ):
+            materialize_funding_to_bars_alignment_diagnostics(
+                row_materialization=rows,
+                gross_observational_returns=gross,
+                funding_observational_adjustments=funding,
+            )
+
+    @pytest.mark.parametrize(
+        "funding_filename", ["BTCUSDT_8h_bad.csv", "BTCUSDT_ohlcv.csv"]
+    )
+    def test_malformed_funding_filename_fails_closed(self, funding_filename):
+        rows, gross, funding = self._sections(
+            funding_filename=funding_filename
+        )
+        with pytest.raises(ValueError, match="Invalid funding row materialization filename"):
+            materialize_funding_to_bars_alignment_diagnostics(
+                row_materialization=rows,
+                gross_observational_returns=gross,
+                funding_observational_adjustments=funding,
+            )
 
     def test_unassigned_rows_are_diagnostic_only(self):
         result = self._build(unassigned=1)
@@ -1867,7 +1913,7 @@ class TestCLIWithDirs:
         bars_dir.mkdir()
         funding_dir.mkdir()
         _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
-        _write_tiny_funding_csv(funding_dir, "BTCUSDT_funding.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
 
         out_dir = Path("/tmp") / f"qnty_cli_dirs_bars_test_{uuid.uuid4().hex}"
         receipt_path = out_dir / "real_validation_receipt.json"
@@ -2023,7 +2069,7 @@ class TestCLIWithDirs:
         bars_dir.mkdir()
         funding_dir.mkdir()
         _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
-        _write_tiny_numeric_funding_csv(funding_dir, "BTCUSDT_funding.csv")
+        _write_tiny_numeric_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
 
         out_dir = Path("/tmp") / f"qnty_cli_dirs_both_{uuid.uuid4().hex}"
         receipt_path = out_dir / "real_validation_receipt.json"
@@ -2091,7 +2137,7 @@ class TestCLIWithDirs:
             external_dir, "funding_source.csv"
         )
         (bars_dir / "BTCUSDT_8h_ohlcv.csv").symlink_to(bars_source)
-        (funding_dir / "BTCUSDT_funding.csv").symlink_to(funding_source)
+        (funding_dir / "BTCUSDT_8h_funding.csv").symlink_to(funding_source)
 
         out_dir = Path("/tmp") / f"qnty_cli_dirs_symlinks_{uuid.uuid4().hex}"
         receipt_path = out_dir / "real_validation_receipt.json"
