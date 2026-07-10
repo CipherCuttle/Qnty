@@ -54,6 +54,7 @@ __all__ = [
     "materialize_input_rows_for_splits",
     "materialize_gross_observational_returns",
     "materialize_cost_case_observational_drag",
+    "materialize_funding_observational_adjustments",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -1092,6 +1093,219 @@ def materialize_cost_case_observational_drag(
     }
 
 
+# ── Funding observational adjustment metadata ─────────────────────────
+
+
+def _funding_rate_summary(values: list[float]) -> dict[str, Any]:
+    """Summarize observed funding rates without strategy semantics."""
+    return {
+        "observation_count": len(values),
+        "positive_count": sum(value > 0.0 for value in values),
+        "negative_count": sum(value < 0.0 for value in values),
+        "zero_count": sum(value == 0.0 for value in values),
+        "min_funding_rate": min(values) if values else None,
+        "max_funding_rate": max(values) if values else None,
+        "mean_funding_rate": math.fsum(values) / len(values) if values else None,
+    }
+
+
+def materialize_funding_observational_adjustments(
+    *, inventory: dict, split_definitions: list[dict]
+) -> dict:
+    """Materialize funding-only descriptive metadata by split window.
+
+    Only ``fundingTime`` and ``fundingRate`` are accessed. Inventoried files
+    must retain their SHA256, timestamps must be strictly increasing, and bars
+    inventory entries are recorded as ignored and never opened. This does not
+    adjust bars or calculate strategy or portfolio results.
+    """
+    if not split_definitions:
+        raise ValueError("split_definitions must not be empty")
+
+    windows: list[dict[str, Any]] = []
+    final_validation_index = max(
+        range(len(split_definitions)),
+        key=lambda index: split_definitions[index].get("split_index", index),
+    )
+    for index, split in enumerate(split_definitions):
+        try:
+            train = split["train_window"]
+            validation = split["validation_window"]
+            windows.append(
+                {
+                    "split_id": str(split["split_id"]),
+                    "train_start": _parse_timestamp(str(train["start"])),
+                    "train_end": _parse_timestamp(str(train["end"])),
+                    "validation_start": _parse_timestamp(str(validation["start"])),
+                    "validation_end": _parse_timestamp(str(validation["end"])),
+                    "include_validation_end": index == final_validation_index,
+                }
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid split definition at index {index}") from exc
+
+    file_results: list[dict[str, Any]] = []
+    ignored_roles: list[str] = []
+    for role_entry in inventory.get("roles", []):
+        role = role_entry.get("role")
+        if role != "funding":
+            ignored_roles.append(str(role))
+            continue
+
+        role_directory = Path(str(role_entry.get("directory", ""))).resolve()
+        _refuse_if_prod_path(role_directory)
+        if not role_directory.is_dir():
+            raise ValueError(
+                f"Inventoried funding directory is missing: {role_directory}"
+            )
+
+        for file_entry in role_entry.get("files", []):
+            filename = file_entry.get("filename")
+            if not isinstance(filename, str) or not filename:
+                raise ValueError("Invalid inventoried filename for role 'funding'")
+            filename_path = Path(filename)
+            if filename_path.is_absolute() or "/" in filename or ".." in filename:
+                raise ValueError(
+                    f"Inventoried filename must be a simple filename: {filename!r}"
+                )
+
+            inventoried_path = role_directory / filename
+            if inventoried_path.parent != role_directory:
+                raise ValueError(
+                    f"Inventoried file path is outside role directory: {filename}"
+                )
+            if not inventoried_path.exists():
+                raise ValueError(f"Inventoried file is missing: {inventoried_path}")
+
+            resolved_file = inventoried_path.resolve()
+            _refuse_if_prod_path(resolved_file)
+            if (
+                not _is_under(resolved_file, role_directory)
+                and not inventoried_path.is_symlink()
+            ):
+                raise ValueError(
+                    f"Inventoried file resolves outside role directory: {filename}"
+                )
+            if not resolved_file.is_file():
+                raise ValueError(f"Inventoried path is not a file: {resolved_file}")
+
+            inventoried_sha256 = file_entry.get("sha256")
+            reopened_sha256 = hashlib.sha256(resolved_file.read_bytes()).hexdigest()
+            if reopened_sha256 != inventoried_sha256:
+                raise ValueError(
+                    f"Inventoried SHA256 changed for {filename}: "
+                    f"expected {inventoried_sha256}, found {reopened_sha256}"
+                )
+
+            observations: list[tuple[datetime, float]] = []
+            previous_timestamp: datetime | None = None
+            total_rows = 0
+            with open(resolved_file, newline="") as csv_file:
+                reader = csv.reader(csv_file)
+                header = next(reader, None)
+                if header is None:
+                    raise ValueError(f"Missing CSV header in {filename}")
+                header_lookup = {name.lower(): i for i, name in enumerate(header)}
+                timestamp_index = header_lookup.get("fundingtime")
+                rate_index = header_lookup.get("fundingrate")
+                if timestamp_index is None:
+                    raise ValueError(f"Missing fundingTime column in {filename}")
+                if rate_index is None:
+                    raise ValueError(f"Missing fundingRate column in {filename}")
+
+                for row_number, row in enumerate(reader, start=2):
+                    total_rows += 1
+                    timestamp_value = (
+                        row[timestamp_index].strip()
+                        if timestamp_index < len(row)
+                        else ""
+                    )
+                    rate_value = row[rate_index].strip() if rate_index < len(row) else ""
+                    try:
+                        timestamp = _parse_timestamp(timestamp_value)
+                    except (OverflowError, OSError, ValueError) as exc:
+                        raise ValueError(
+                            f"Malformed fundingTime in {filename} row {row_number}: "
+                            f"{timestamp_value!r}"
+                        ) from exc
+                    try:
+                        funding_rate = float(rate_value)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"Malformed fundingRate in {filename} row {row_number}: "
+                            f"{rate_value!r}"
+                        ) from exc
+                    if not math.isfinite(funding_rate):
+                        raise ValueError(
+                            f"Malformed fundingRate in {filename} row {row_number}: "
+                            f"{rate_value!r}"
+                        )
+                    if previous_timestamp is not None and timestamp <= previous_timestamp:
+                        raise ValueError(
+                            f"Non-monotonic fundingTime in {filename} row {row_number}: "
+                            f"{timestamp_value!r}"
+                        )
+                    observations.append((timestamp, funding_rate))
+                    previous_timestamp = timestamp
+
+            inventoried_rows = file_entry.get("row_count")
+            if inventoried_rows is not None and total_rows != inventoried_rows:
+                raise ValueError(
+                    f"Inventoried row count changed for {filename}: "
+                    f"expected {inventoried_rows}, found {total_rows}"
+                )
+
+            per_split_windows: list[dict[str, Any]] = []
+            for window in windows:
+                train_values = [
+                    value
+                    for timestamp, value in observations
+                    if _timestamp_in_window(
+                        timestamp,
+                        start=window["train_start"],
+                        end=window["train_end"],
+                    )
+                ]
+                validation_values = [
+                    value
+                    for timestamp, value in observations
+                    if _timestamp_in_window(
+                        timestamp,
+                        start=window["validation_start"],
+                        end=window["validation_end"],
+                        include_end=window["include_validation_end"],
+                    )
+                ]
+                per_split_windows.append(
+                    {
+                        "split_id": window["split_id"],
+                        "train_window": _funding_rate_summary(train_values),
+                        "validation_window": _funding_rate_summary(validation_values),
+                        "calculation_status": "FUNDING_OBSERVATIONAL_ADJUSTMENT_ONLY",
+                    }
+                )
+
+            file_results.append(
+                {
+                    "role": "funding",
+                    "filename": filename,
+                    "timestamp_column": "fundingTime",
+                    "funding_rate_column": "fundingRate",
+                    **_funding_rate_summary([value for _, value in observations]),
+                    "per_split_windows": per_split_windows,
+                    "calculation_status": "FUNDING_OBSERVATIONAL_ADJUSTMENT_ONLY",
+                }
+            )
+
+    return {
+        "processed_role": "funding",
+        "ignored_roles": ignored_roles,
+        "files": file_results,
+        "bars_adjusted_status": "NOT_EXECUTED",
+        "calculation_status": "FUNDING_OBSERVATIONAL_ADJUSTMENT_ONLY",
+    }
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -1157,6 +1371,7 @@ def build_real_validation_receipt(
     row_materialization: dict | None = None,
     gross_observational_returns: dict | None = None,
     cost_case_observational_drag: dict | None = None,
+    funding_observational_adjustments: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -1226,6 +1441,8 @@ def build_real_validation_receipt(
         receipt["gross_observational_returns"] = gross_observational_returns
     if cost_case_observational_drag is not None:
         receipt["cost_case_observational_drag"] = cost_case_observational_drag
+    if funding_observational_adjustments is not None:
+        receipt["funding_observational_adjustments"] = funding_observational_adjustments
 
     return receipt
 
@@ -1473,6 +1690,12 @@ def main(argv: list[str] | None = None) -> int:
                 gross_observational_returns=gross_observational_returns,
                 cost_cases=cost_cases,
             )
+            funding_observational_adjustments = (
+                materialize_funding_observational_adjustments(
+                    inventory=inventory,
+                    split_definitions=split_definitions,
+                )
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -1487,6 +1710,7 @@ def main(argv: list[str] | None = None) -> int:
             row_materialization=row_materialization,
             gross_observational_returns=gross_observational_returns,
             cost_case_observational_drag=cost_case_observational_drag,
+            funding_observational_adjustments=funding_observational_adjustments,
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
