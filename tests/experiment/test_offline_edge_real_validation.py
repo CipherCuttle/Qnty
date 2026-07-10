@@ -29,6 +29,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     build_deterministic_split_definitions,
     build_real_validation_input_inventory,
     build_real_validation_receipt,
+    materialize_cost_case_observational_drag,
     materialize_gross_observational_returns,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
@@ -1173,6 +1174,84 @@ class TestGrossObservationalReturns:
 # ── New: Receipt with inventory tests ───────────────────────────────────
 
 
+class TestCostCaseObservationalDrag:
+    @staticmethod
+    def _gross_fixture() -> dict:
+        summary = {
+            "observation_count": 2,
+            "min_gross_return": -0.01,
+            "max_gross_return": 0.02,
+            "mean_gross_return": 0.005,
+        }
+        return {
+            "files": [{
+                "filename": "bars.csv",
+                **summary,
+                "per_split_windows": [{
+                    "split_id": "split_0",
+                    "train_window": summary.copy(),
+                    "validation_window": summary.copy(),
+                }],
+            }]
+        }
+
+    def test_low_base_high_drag_and_descriptive_values(self):
+        result = materialize_cost_case_observational_drag(
+            gross_observational_returns=self._gross_fixture(),
+            cost_cases=build_cost_case_matrix(),
+        )
+        cases = {case["cost_case"]: case for case in result["cost_cases"]}
+        assert set(cases) == {"low", "base", "high"}
+        assert cases["low"]["assumed_drag_bps_per_observation"] == 9.0
+        assert cases["base"]["assumed_drag_bps_per_observation"] == 22.0
+        assert cases["high"]["assumed_drag_bps_per_observation"] == 44.0
+        base_file = cases["base"]["files"][0]
+        assert base_file["gross_observation_count"] == 2
+        assert base_file["gross_minus_drag_observation_mean"] == pytest.approx(0.0028)
+        assert base_file["gross_minus_drag_observation_min"] == pytest.approx(-0.0122)
+        assert base_file["gross_minus_drag_observation_max"] == pytest.approx(0.0178)
+        split = base_file["per_split_windows"][0]
+        assert split["train_window"]["gross_observation_count"] == 2
+        assert split["validation_window"]["gross_observation_count"] == 2
+
+    def test_consumes_gross_section_without_opening_files(self, monkeypatch):
+        def refuse_open(*args, **kwargs):
+            raise AssertionError("cost drag helper must not open files")
+
+        monkeypatch.setattr("builtins.open", refuse_open)
+        result = materialize_cost_case_observational_drag(
+            gross_observational_returns=self._gross_fixture(),
+            cost_cases=build_cost_case_matrix(),
+        )
+        assert len(result["cost_cases"]) == 3
+
+    def test_introduces_no_forbidden_or_generic_keys(self):
+        result = materialize_cost_case_observational_drag(
+            gross_observational_returns=self._gross_fixture(),
+            cost_cases=build_cost_case_matrix(),
+        )
+        forbidden = {
+            "pnl", "sharpe", "edge", "trade", "trades", "signal", "signals",
+            "position", "positions", "portfolio", "return", "returns",
+            "net_return_value", "cost_adjusted_return", "funding_adjusted_return",
+        }
+        assert forbidden.isdisjoint(_all_dict_keys(result))
+
+    def test_receipt_section_validates_and_preserves_guardrails(self):
+        drag = materialize_cost_case_observational_drag(
+            gross_observational_returns=self._gross_fixture(),
+            cost_cases=build_cost_case_matrix(),
+        )
+        receipt = _base_receipt(cost_case_observational_drag=drag)
+        validate_real_validation_receipt(receipt)
+        assert receipt["cost_case_observational_drag"] == drag
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        assert all(value is False for value in receipt["required_outputs_present"].values())
+        assert all(value is False for value in receipt["forbidden_calculation_status"].values())
+        assert all(value is True for value in receipt["guardrail_status"].values())
+        assert "EDGE_CANDIDATE" not in json.dumps(receipt)
+
+
 class TestReceiptWithInventory:
     def test_receipt_with_gross_observational_returns_validates(self, tmp_path):
         _write_tiny_bars_csv(tmp_path)
@@ -1474,8 +1553,11 @@ class TestCLIWithDirs:
 
     def test_cli_with_bars_funding_dirs_writes_receipt(self, tmp_path):
         bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
         bars_dir.mkdir()
+        funding_dir.mkdir()
         _write_tiny_bars_csv(bars_dir)
+        _write_tiny_funding_csv(funding_dir)
 
         out_dir = Path("/tmp") / f"qnty_cli_dirs_bars_test_{uuid.uuid4().hex}"
         receipt_path = out_dir / "real_validation_receipt.json"
@@ -1496,6 +1578,8 @@ class TestCLIWithDirs:
                     "c" * 40,
                     "--bars-dir",
                     str(bars_dir),
+                    "--funding-dir",
+                    str(funding_dir),
                 ],
                 capture_output=True,
                 text=True,
@@ -1509,11 +1593,21 @@ class TestCLIWithDirs:
             assert "input_inventory" in written
             assert "row_materialization" in written
             assert "gross_observational_returns" in written
+            assert "cost_case_observational_drag" in written
             materialized_roles = written["row_materialization"]["roles"]
             assert materialized_roles[0]["files"][0]["total_rows"] == 3
             gross = written["gross_observational_returns"]
             assert gross["files"][0]["observation_count"] == 2
             assert gross["funding_adjusted_status"] == "NOT_EXECUTED"
+            drag_cases = written["cost_case_observational_drag"]["cost_cases"]
+            assert {case["cost_case"] for case in drag_cases} == {"low", "base", "high"}
+            assert all(
+                case["files"][0]["gross_observation_count"]
+                == gross["files"][0]["observation_count"]
+                for case in drag_cases
+            )
+            assert all(value is False for value in written["required_outputs_present"].values())
+            assert all(value is False for value in written["forbidden_calculation_status"].values())
             assert "EDGE_CANDIDATE" not in result.stdout
             assert "EDGE_CANDIDATE" not in json.dumps(written)
         finally:
