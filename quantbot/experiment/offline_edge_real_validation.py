@@ -30,6 +30,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -1311,14 +1312,28 @@ def materialize_funding_observational_adjustments(
 
 
 def _symbol_from_filename(filename: Any, suffix: str, role: str) -> str:
-    if not isinstance(filename, str) or not filename.endswith(suffix):
+    if not isinstance(filename, str):
         raise ValueError(
-            f"Invalid {role} filename {filename!r}; expected suffix {suffix!r}"
+            f"Invalid {role} filename {filename!r}; expected a string"
         )
-    symbol = filename[: -len(suffix)]
-    if not symbol:
-        raise ValueError(f"Empty symbol in {role} filename {filename!r}")
-    return symbol
+
+    if suffix == "_8h_ohlcv.csv":
+        match = re.fullmatch(r"(?P<symbol>[A-Za-z0-9]+)_8h_ohlcv\.csv", filename)
+        expected = "<symbol>_8h_ohlcv.csv"
+    elif suffix == "_funding.csv":
+        match = re.fullmatch(
+            r"(?P<symbol>[A-Za-z0-9]+)(?:_(?P<interval>[1-9][0-9]*[mhd]))?_funding\.csv",
+            filename,
+        )
+        expected = "<symbol>[_<interval>]_funding.csv"
+    else:
+        raise ValueError(f"Unsupported filename suffix parser: {suffix!r}")
+
+    if match is None:
+        raise ValueError(
+            f"Invalid {role} filename {filename!r}; expected {expected}"
+        )
+    return match.group("symbol")
 
 
 def _files_by_symbol(files: Any, suffix: str, role: str) -> dict[str, dict]:
