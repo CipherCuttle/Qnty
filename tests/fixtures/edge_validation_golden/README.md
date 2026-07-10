@@ -81,3 +81,26 @@ performance, does **not** apply costs to trades, does **not** call the paper eng
 and does **not** replay real funding. The CLI verdict remains `SKELETON_ONLY`.
 `EDGE_UNPROVEN` / `BLOCK_LIVE_INTEGRATION` remain in force; long-only / 1x is the
 only assumed lane.
+
+## PR D — Volnorm Reconstruction Fixtures
+
+Added in PR D:
+
+| File | Purpose |
+|------|---------|
+| [`sample_volnorm_bars.csv`](sample_volnorm_bars.csv) | Deterministic OHLCV bars (6 rows, monotonic timestamps) for fixture-only volnorm reconstruction |
+| [`expected_volnorm_weights.json`](expected_volnorm_weights.json) | Golden expected output of `reconstruct_fixture_volnorm_weights` over the above bars with default params |
+
+These fixtures are consumed by:
+- [`offline_edge_volnorm.py`](../../../quantbot/experiment/offline_edge_volnorm.py) — stdlib-only helpers that rebuild a V2-*style* inverse-vol, heat-capped weight from fixture bars
+- [`test_offline_edge_volnorm.py`](../../../tests/experiment/test_offline_edge_volnorm.py) — unit tests for the reconstruction helpers
+- [`test_offline_edge_validation_cli.py`](../../../tests/experiment/test_offline_edge_validation_cli.py) — CLI test exercising `--volnorm-bars`
+
+**Scope note:** PR D is a *fixture-only mirror* of the V2 volnorm concept. It is
+**not** full V2: it reconstructs a single-instrument realized-vol weight from
+simple returns, not the multi-symbol portfolio-heat scaling in
+[`volnorm_portfolio.py`](../../../quantbot/experiment/volnorm_portfolio.py). It
+does **not** compute strategy performance / PnL, generate trades, call the paper
+engine, replay real funding, run walk-forward, create Lane B, or emit
+`EDGE_CANDIDATE`. The CLI verdict remains `SKELETON_ONLY`. `EDGE_UNPROVEN` /
+`BLOCK_LIVE_INTEGRATION` remain in force; long-only / 1x is the only assumed lane.

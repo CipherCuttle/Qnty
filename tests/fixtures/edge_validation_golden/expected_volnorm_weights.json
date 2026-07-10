@@ -1,0 +1,13 @@
+{
+  "description": "Golden expected output of reconstruct_fixture_volnorm_weights over sample_volnorm_bars.csv with default params (vol_lookback_bars=90, vol_floor=1e-6, heat_cap=1.0). Fixture-only reconstruction; NOT strategy PnL and NOT an edge claim. EDGE_UNPROVEN / BLOCK_LIVE_INTEGRATION remain.",
+  "volnorm_version": "fixture-0.1",
+  "bar_count": 6,
+  "return_count": 5,
+  "returns_used": 5,
+  "vol_lookback_bars": 90,
+  "vol_floor": 1e-06,
+  "heat_cap": 1.0,
+  "realized_volatility": 0.010802420353670135,
+  "inverse_vol_weight": 1.0,
+  "weight_clamped_to_heat_cap": true
+}

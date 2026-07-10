@@ -17,6 +17,12 @@ INCONCLUSIVE: str = "INCONCLUSIVE"
 # Placeholder fingerprint for when no input directories are provided
 PLACEHOLDER_SKELETON_NO_OP: str = "PLACEHOLDER_SKELETON_NO_OP"
 
+# PR D — fixture-only volnorm reconstruction stage identity.  This is a
+# SKELETON_ONLY stage: it reconstructs a deterministic weight from fixture bars
+# and does NOT compute strategy PnL or emit an edge verdict.
+FIXTURE_VOLNORM_STAGE_ID: str = "A"
+FIXTURE_VOLNORM_STAGE_NAME: str = "fixture_volnorm_reconstruction"
+
 # Forbidden future verdicts — named here for refusal tests only
 EDGE_CANDIDATE: str = "EDGE_CANDIDATE"
 NO_EDGE: str = "NO_EDGE"
