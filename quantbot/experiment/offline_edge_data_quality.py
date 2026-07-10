@@ -4,10 +4,9 @@ Stdlib-only. No engine, exchange, DB, numpy, pandas, or file-write dependencies.
 """
 
 import csv
-import datetime  # noqa: F401 — kept per import spec
 import os
 from pathlib import Path
-from typing import Any, Optional  # noqa: F401 — kept per import spec
+from typing import Any
 
 from quantbot.experiment.offline_edge_schema import DATA_QUALITY_PREFLIGHT_VERSION
 
@@ -40,6 +39,7 @@ def inspect_csv_file(path: Path) -> dict[str, Any]:
     Never raises; catches ``csv.Error`` and stores the message in the
     ``error`` key.
     """
+    _refuse_prod_path(path)
     result: dict[str, Any] = {
         "path": str(path),
         "row_count": 0,
@@ -231,6 +231,8 @@ def build_data_quality_preflight(paths: list[Path]) -> dict[str, Any]:
     dict
         Aggregated summary with readiness flags.
     """
+    if not paths:
+        raise ValueError("At least one input directory path is required")
     dir_results = [inspect_input_directory(p) for p in paths]
 
     # Summed counts

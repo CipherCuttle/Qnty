@@ -1,6 +1,6 @@
 """Tests for quantbot/experiment/offline_edge_data_quality.py
 
-PR B — stdlib-only data quality preflight.  No engine, exchange, or DB imports.
+PR G — stdlib-only data quality preflight.  No engine, exchange, or DB imports.
 """
 
 from __future__ import annotations
@@ -98,6 +98,30 @@ class TestInspectCsvFile:
 
 
 # ---------------------------------------------------------------------------
+# Tests — inspect_csv_file prod-path guards
+# ---------------------------------------------------------------------------
+
+
+class TestInspectCsvFileProdPathGuard:
+    """inspect_csv_file must fail closed on prod paths (PR G)."""
+
+    def test_refuses_srv_qnty_path(self):
+        """inspect_csv_file('/srv/qnty/some.csv') raises ValueError."""
+        with pytest.raises(ValueError, match="production boundary"):
+            inspect_csv_file(Path("/srv/qnty/some.csv"))
+
+    def test_refuses_traversal_into_srv_qnty(self):
+        """inspect_csv_file('/tmp/../../srv/qnty/some.csv') raises ValueError."""
+        with pytest.raises(ValueError, match="production boundary"):
+            inspect_csv_file(Path("/tmp/../../srv/qnty/some.csv"))
+
+    def test_does_not_refuse_sibling_srv_qnty2(self):
+        """inspect_csv_file('/srv/qnty2/some.csv') is NOT prod-refused; falls through to FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            inspect_csv_file(Path("/srv/qnty2/some.csv"))
+
+
+# ---------------------------------------------------------------------------
 # Tests — inspect_input_directory
 # ---------------------------------------------------------------------------
 
@@ -171,17 +195,14 @@ class TestBuildDataQualityPreflight:
         assert r1 == r2
 
     def test_preflight_empty_list(self) -> None:
-        """Empty input list produces a zero-count summary with conservative flags."""
-        result = build_data_quality_preflight([])
-        assert result["file_count"] == 0
-        assert result["csv_file_count"] == 0
-        assert result["total_row_count"] == 0
-        assert result["readiness_flags"]["has_any_rows"] is False
-        assert result["readiness_flags"]["has_timestamp_column"] is False
-        assert result["readiness_flags"]["timestamps_monotonic"] is True
-        assert result["readiness_flags"]["no_duplicate_timestamps"] is True
-        assert result["readiness_flags"]["no_null_required_values"] is True
-        assert result["readiness_flags"]["data_quality_preflight_only"] is True
+        """Empty input list now raises ValueError (prod-path guard)."""
+        with pytest.raises(ValueError, match="At least one input directory path is required"):
+            build_data_quality_preflight([])
+
+    def test_refuses_empty_paths(self):
+        """build_data_quality_preflight([]) raises ValueError."""
+        with pytest.raises(ValueError, match="At least one input directory path is required"):
+            build_data_quality_preflight([])
 
 
 # ---------------------------------------------------------------------------
