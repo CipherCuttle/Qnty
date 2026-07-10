@@ -14,6 +14,7 @@ directory arguments.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import subprocess
 import sys
@@ -31,6 +32,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     build_real_validation_receipt,
     materialize_cost_case_observational_drag,
     materialize_gross_observational_returns,
+    materialize_funding_observational_adjustments,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -52,6 +54,7 @@ FORBIDDEN_IMPORT_MODULES = {
 }
 FORBIDDEN_IMPORT_PREFIXES = (
     "quantbot.exec",
+    "quantbot.exchange",
     "quantbot.paper",
     "quantbot.live",
 )
@@ -1171,6 +1174,177 @@ class TestGrossObservationalReturns:
         assert forbidden.isdisjoint(_all_dict_keys(result))
 
 
+class TestFundingObservationalAdjustments:
+    @staticmethod
+    def _inventory_for_file(path: Path) -> dict:
+        return {
+            "roles": [
+                {
+                    "role": "funding",
+                    "directory": str(path.parent.resolve()),
+                    "files": [
+                        {
+                            "filename": path.name,
+                            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                            "row_count": max(len(path.read_text().splitlines()) - 1, 0),
+                        }
+                    ],
+                }
+            ]
+        }
+
+    def test_calculates_funding_summary_and_split_counts(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir)
+        funding_path = funding_dir / "funding.csv"
+        funding_path.write_text(
+            "fundingTime,fundingRate,unused\n"
+            "2026-01-01T12:00:00Z,0.0003,bad\n"
+            "2026-01-02T00:00:00Z,-0.0001,bad\n"
+            "2026-01-02T12:00:00Z,0,bad\n"
+        )
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir, funding_dir=funding_dir
+        )
+
+        first = materialize_funding_observational_adjustments(
+            inventory=inventory, split_definitions=_two_split_windows()
+        )
+        second = materialize_funding_observational_adjustments(
+            inventory=inventory, split_definitions=_two_split_windows()
+        )
+
+        assert first == second
+        summary = first["files"][0]
+        assert summary["observation_count"] == 3
+        assert summary["positive_count"] == 1
+        assert summary["negative_count"] == 1
+        assert summary["zero_count"] == 1
+        assert summary["min_funding_rate"] == pytest.approx(-0.0001)
+        assert summary["max_funding_rate"] == pytest.approx(0.0003)
+        assert summary["mean_funding_rate"] == pytest.approx(0.0002 / 3)
+        assert [
+            (
+                window["train_window"]["observation_count"],
+                window["validation_window"]["observation_count"],
+            )
+            for window in summary["per_split_windows"]
+        ] == [(0, 1), (1, 2)]
+        assert first["processed_role"] == "funding"
+        assert first["ignored_roles"] == ["bars"]
+        assert first["bars_adjusted_status"] == "NOT_EXECUTED"
+        assert first["calculation_status"] == "FUNDING_OBSERVATIONAL_ADJUSTMENT_ONLY"
+
+    def test_bars_role_is_ignored_and_not_reopened(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        bars_path = _write_tiny_bars_csv(bars_dir)
+        _write_tiny_funding_csv(funding_dir)
+        inventory = build_real_validation_input_inventory(
+            bars_dir=bars_dir, funding_dir=funding_dir
+        )
+        bars_path.write_text("changed after inventory\n")
+
+        result = materialize_funding_observational_adjustments(
+            inventory=inventory, split_definitions=_two_split_windows()
+        )
+
+        assert {item["role"] for item in result["files"]} == {"funding"}
+        assert result["bars_adjusted_status"] == "NOT_EXECUTED"
+
+    def test_missing_funding_rate_column_fails_closed(self, tmp_path):
+        path = tmp_path / "funding.csv"
+        path.write_text("fundingTime,other\n2026-01-01T00:00:00Z,1\n")
+        inventory = self._inventory_for_file(path)
+        with pytest.raises(ValueError, match="Missing fundingRate column"):
+            materialize_funding_observational_adjustments(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    def test_missing_funding_time_column_fails_closed(self, tmp_path):
+        path = tmp_path / "funding.csv"
+        path.write_text("other,fundingRate\n2026-01-01T00:00:00Z,0.0001\n")
+        inventory = self._inventory_for_file(path)
+        with pytest.raises(ValueError, match="Missing fundingTime column"):
+            materialize_funding_observational_adjustments(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    @pytest.mark.parametrize("rate", ["bad", "", "nan", "inf", "-inf"])
+    def test_malformed_or_non_finite_funding_rate_fails_closed(self, tmp_path, rate):
+        path = tmp_path / "funding.csv"
+        path.write_text(
+            "fundingTime,fundingRate\n"
+            f"2026-01-01T00:00:00Z,{rate}\n"
+        )
+        inventory = self._inventory_for_file(path)
+        with pytest.raises(ValueError, match="Malformed fundingRate"):
+            materialize_funding_observational_adjustments(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    def test_malformed_funding_time_fails_closed(self, tmp_path):
+        path = tmp_path / "funding.csv"
+        path.write_text("fundingTime,fundingRate\nnot-a-time,0.0001\n")
+        inventory = self._inventory_for_file(path)
+        with pytest.raises(ValueError, match="Malformed fundingTime"):
+            materialize_funding_observational_adjustments(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    def test_non_monotonic_funding_time_fails_closed(self, tmp_path):
+        path = tmp_path / "funding.csv"
+        path.write_text(
+            "fundingTime,fundingRate\n"
+            "2026-01-02T00:00:00Z,0.0001\n"
+            "2026-01-01T00:00:00Z,0.0002\n"
+        )
+        inventory = self._inventory_for_file(path)
+        with pytest.raises(ValueError, match="Non-monotonic fundingTime"):
+            materialize_funding_observational_adjustments(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    def test_sha_mismatch_after_inventory_fails_closed(self, tmp_path):
+        path = _write_tiny_funding_csv(tmp_path)
+        inventory = self._inventory_for_file(path)
+        path.write_text("fundingTime,fundingRate\n2026-01-01T00:00:00Z,0\n")
+        with pytest.raises(ValueError, match="Inventoried SHA256 changed"):
+            materialize_funding_observational_adjustments(
+                inventory=inventory, split_definitions=_two_split_windows()
+            )
+
+    def test_safe_keys_and_receipt_guardrails(self, tmp_path):
+        path = _write_tiny_funding_csv(tmp_path)
+        adjustments = materialize_funding_observational_adjustments(
+            inventory=self._inventory_for_file(path),
+            split_definitions=_two_split_windows(),
+        )
+        forbidden = {
+            "pnl", "sharpe", "edge", "strategy_performance", "return", "returns",
+            "net_return_value", "cost_adjusted_return", "funding_adjusted_return",
+            "trade", "trades", "signal", "signals", "position", "positions",
+            "portfolio", "live_ready", "deploy_ready", "profitable",
+        }
+        assert forbidden.isdisjoint(_all_dict_keys(adjustments))
+
+        receipt = _base_receipt(funding_observational_adjustments=adjustments)
+        validate_real_validation_receipt(receipt)
+        assert receipt["funding_observational_adjustments"] == adjustments
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        assert all(value is False for value in receipt["required_outputs_present"].values())
+        assert all(value is False for value in receipt["forbidden_calculation_status"].values())
+        assert all(value is True for value in receipt["guardrail_status"].values())
+        serialized = json.dumps(receipt)
+        assert OFFLINE_EDGE_CANDIDATE not in serialized
+        assert "EDGE_CANDIDATE" not in serialized
+
+
 # ── New: Receipt with inventory tests ───────────────────────────────────
 
 
@@ -1594,6 +1768,7 @@ class TestCLIWithDirs:
             assert "row_materialization" in written
             assert "gross_observational_returns" in written
             assert "cost_case_observational_drag" in written
+            assert "funding_observational_adjustments" in written
             materialized_roles = written["row_materialization"]["roles"]
             assert materialized_roles[0]["files"][0]["total_rows"] == 3
             gross = written["gross_observational_returns"]
@@ -1606,6 +1781,10 @@ class TestCLIWithDirs:
                 == gross["files"][0]["observation_count"]
                 for case in drag_cases
             )
+            funding = written["funding_observational_adjustments"]
+            assert funding["processed_role"] == "funding"
+            assert funding["files"][0]["observation_count"] == 2
+            assert funding["bars_adjusted_status"] == "NOT_EXECUTED"
             assert all(value is False for value in written["required_outputs_present"].values())
             assert all(value is False for value in written["forbidden_calculation_status"].values())
             assert "EDGE_CANDIDATE" not in result.stdout
