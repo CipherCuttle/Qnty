@@ -2430,63 +2430,47 @@ def _compute_history_range_status(
 
 
 def _select_best_policy(policy_results: list[dict]) -> dict[str, Any]:
-    """Deterministic policy selection: fewest collisions wins.
+    """Deterministic policy selection with three independent selectors.
 
-    Tie-breaking: floor > round > ceil, then smallest unique canonical count.
-    Returns winner dict, tie_count, tied_policy_names.
+    Each selector picks by its own metric, with tie-breaking by
+    deterministic policy order: floor > round > ceil.
+    Returns a dict with structured objects for each selector.
     """
     policy_order = {"floor_to_second": 0, "round_half_away_from_zero": 1, "ceil_to_second": 2}
-    min_collisions = min(
-        p["funding_timestamp_collision_count"] for p in policy_results
-    )
-    tied = [p for p in policy_results if p["funding_timestamp_collision_count"] == min_collisions]
-    if len(tied) == 1:
-        winner = tied[0]
+
+    def _select_by_key(key: str) -> dict[str, Any]:
+        best_value = max(p[key] for p in policy_results)
+        tied = [p for p in policy_results if p[key] == best_value]
+        winner = min(tied, key=lambda p: policy_order[p["policy_name"]])
         return {
-            "best_policy_by_exact_matched_count": winner["policy_name"],
-            "best_policy_by_bars_match_ratio": winner["policy_name"],
-            "best_policy_by_funding_match_ratio": winner["policy_name"],
-            "tie_count": 1,
-            "tied_policy_names": [winner["policy_name"]],
-        }
-    # Tie-break by match ratio.
-    max_bars_ratio = max(p["bars_match_ratio_after_canonicalization"] for p in tied)
-    tied2 = [
-        p for p in tied
-        if p["bars_match_ratio_after_canonicalization"] == max_bars_ratio
-    ]
-    if len(tied2) == 1:
-        winner = tied2[0]
-        return {
-            "best_policy_by_exact_matched_count": winner["policy_name"],
-            "best_policy_by_bars_match_ratio": winner["policy_name"],
-            "best_policy_by_funding_match_ratio": winner["policy_name"],
+            "policy_name": winner["policy_name"],
+            key: best_value,
             "tie_count": len(tied),
             "tied_policy_names": [p["policy_name"] for p in tied],
         }
-    # Further tie-break by funding match ratio.
-    max_funding_ratio = max(p["funding_match_ratio_after_canonicalization"] for p in tied2)
-    tied3 = [
-        p for p in tied2
-        if p["funding_match_ratio_after_canonicalization"] == max_funding_ratio
-    ]
-    if len(tied3) == 1:
-        winner = tied3[0]
+
+    def _select_by_collision() -> dict[str, Any]:
+        best_value = min(p["funding_timestamp_collision_count"] for p in policy_results)
+        tied = [p for p in policy_results if p["funding_timestamp_collision_count"] == best_value]
+        winner = min(tied, key=lambda p: policy_order[p["policy_name"]])
         return {
-            "best_policy_by_exact_matched_count": winner["policy_name"],
-            "best_policy_by_bars_match_ratio": winner["policy_name"],
-            "best_policy_by_funding_match_ratio": winner["policy_name"],
+            "policy_name": winner["policy_name"],
+            "funding_timestamp_collision_count": best_value,
             "tie_count": len(tied),
             "tied_policy_names": [p["policy_name"] for p in tied],
         }
-    # Final tie-break: deterministic policy order.
-    winner = min(tied3, key=lambda p: policy_order[p["policy_name"]])
+
     return {
-        "best_policy_by_exact_matched_count": winner["policy_name"],
-        "best_policy_by_bars_match_ratio": winner["policy_name"],
-        "best_policy_by_funding_match_ratio": winner["policy_name"],
-        "tie_count": len(tied),
-        "tied_policy_names": [p["policy_name"] for p in tied],
+        "best_policy_by_exact_matched_count": _select_by_key(
+            "exact_matched_after_canonicalization_count"
+        ),
+        "best_policy_by_bars_match_ratio": _select_by_key(
+            "bars_match_ratio_after_canonicalization"
+        ),
+        "best_policy_by_funding_match_ratio": _select_by_key(
+            "funding_match_ratio_after_canonicalization"
+        ),
+        "best_policy_by_lowest_collision_count": _select_by_collision(),
     }
 
 
@@ -2759,10 +2743,10 @@ def _canonicalization_status(
         return "EMPTY_BOTH"
     matched = len(canonicalized_set & bars_set)
     if matched == 0:
-        return "NO_MATCH"
+        return "NO_CANONICAL_TIMESTAMP_MATCH"
     if canonicalized_set == bars_set:
         return "EXACT_CANONICAL_TIMESTAMP_SET_MATCH"
-    return "PARTIAL"
+    return "PARTIAL_CANONICAL_TIMESTAMP_SET_MATCH"
 
 
 def _per_policy_canonicalization_diagnostics(
@@ -2898,10 +2882,19 @@ def materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
         best_policy = _select_best_policy(policy_results)
 
         # Structural flags.
-        history_range = _compute_history_range_status(
+        raw_history_range_status = _compute_history_range_status(
             bars_timestamps, funding_timestamps
         )
         jitter = _compute_subsecond_jitter_stats(funding_timestamps)
+
+        # Per-policy canonicalized range status (avoids false range mismatch
+        # when bars are whole-second and funding has subsecond jitter).
+        per_policy_range_status: dict[str, str] = {}
+        for pname, pfn in _CANONICALIZATION_POLICIES:
+            canon_funding_dts = [_parse_timestamp(pfn(ts)) for ts in funding_timestamps]
+            per_policy_range_status[pname] = _compute_history_range_status(
+                bars_timestamps, canon_funding_dts
+            )
 
         bars_set = set(bars_ts_strs)
         canonicalized_sets = {
@@ -3015,7 +3008,7 @@ def materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
                 "canonicalization_policies": policy_results,
                 "best_policy_summary": best_policy,
                 "structural_flags": {
-                    "history_range_status": history_range,
+                    "raw_history_range_status": raw_history_range_status,
                     "extra_funding_timestamps_outside_bars_range_count": (
                         extra_funding_outside
                     ),
@@ -3027,6 +3020,15 @@ def materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
                     "max_abs_subsecond_jitter_microseconds": jitter[
                         "max_abs_subsecond_jitter_microseconds"
                     ],
+                    "floor_canonicalized_history_range_status": (
+                        per_policy_range_status["floor_to_second"]
+                    ),
+                    "round_canonicalized_history_range_status": (
+                        per_policy_range_status["round_half_away_from_zero"]
+                    ),
+                    "ceil_canonicalized_history_range_status": (
+                        per_policy_range_status["ceil_to_second"]
+                    ),
                 },
                 "per_split_diagnostics": per_split_diagnostics,
                 "calculation_status": (
