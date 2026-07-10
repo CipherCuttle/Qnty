@@ -913,6 +913,25 @@ class TestRowMaterialization:
                 split_definitions=_two_split_windows(),
             )
 
+    def test_symlinked_csv_to_safe_external_source_is_accepted(self, tmp_path):
+        role_dir = tmp_path / "bars"
+        external_dir = tmp_path / "external"
+        role_dir.mkdir()
+        external_dir.mkdir()
+        external_csv = _write_tiny_bars_csv(external_dir, "source.csv")
+        (role_dir / "bars.csv").symlink_to(external_csv)
+        inventory = build_real_validation_input_inventory(bars_dir=role_dir)
+
+        result = materialize_input_rows_for_splits(
+            inventory=inventory,
+            split_definitions=_two_split_windows(),
+        )
+
+        file_result = result["roles"][0]["files"][0]
+        assert file_result["filename"] == "bars.csv"
+        assert file_result["total_rows"] == 3
+        assert file_result["assigned_rows"] == 3
+
     def test_symlinked_csv_resolving_to_prod_is_refused(
         self, tmp_path, monkeypatch
     ):
@@ -928,6 +947,42 @@ class TestRowMaterialization:
         monkeypatch.setattr(real_validation, "PROD_BASE", fake_prod)
 
         with pytest.raises(ValueError, match="Refusing path under prod base"):
+            materialize_input_rows_for_splits(
+                inventory=inventory,
+                split_definitions=_two_split_windows(),
+            )
+
+    def test_symlink_target_content_change_fails_sha256_check(self, tmp_path):
+        role_dir = tmp_path / "bars"
+        external_dir = tmp_path / "external"
+        role_dir.mkdir()
+        external_dir.mkdir()
+        external_csv = _write_tiny_bars_csv(external_dir, "source.csv")
+        (role_dir / "bars.csv").symlink_to(external_csv)
+        inventory = build_real_validation_input_inventory(bars_dir=role_dir)
+        external_csv.write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T01:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T01:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T01:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+
+        with pytest.raises(ValueError, match="Inventoried SHA256 changed"):
+            materialize_input_rows_for_splits(
+                inventory=inventory,
+                split_definitions=_two_split_windows(),
+            )
+
+    @pytest.mark.parametrize(
+        "filename",
+        ["../evil.csv", "/tmp/evil.csv", "subdir/file.csv"],
+    )
+    def test_inventory_filename_traversal_is_refused(self, tmp_path, filename):
+        _write_tiny_bars_csv(tmp_path)
+        inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+        inventory["roles"][0]["files"][0]["filename"] = filename
+
+        with pytest.raises(ValueError, match="simple filename"):
             materialize_input_rows_for_splits(
                 inventory=inventory,
                 split_definitions=_two_split_windows(),
@@ -1396,6 +1451,67 @@ class TestCLIWithDirs:
                 r["role"] for r in written["row_materialization"]["roles"]
             }
             assert materialized_role_names == {"bars", "funding"}
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    def test_cli_with_bars_and_funding_symlink_dirs(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        external_dir = tmp_path / "external"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        external_dir.mkdir()
+        bars_source = _write_tiny_bars_csv(external_dir, "bars_source.csv")
+        funding_source = _write_tiny_numeric_funding_csv(
+            external_dir, "funding_source.csv"
+        )
+        (bars_dir / "bars.csv").symlink_to(bars_source)
+        (funding_dir / "funding.csv").symlink_to(funding_source)
+
+        out_dir = Path("/tmp") / f"qnty_cli_dirs_symlinks_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                    "--funding-dir",
+                    str(funding_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert written["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+            assert "row_materialization" in written
+            assert all(
+                value is False
+                for value in written["required_outputs_present"].values()
+            )
+            assert all(
+                value is False
+                for value in written["forbidden_calculation_status"].values()
+            )
+            assert OFFLINE_EDGE_CANDIDATE not in result.stdout
+            assert OFFLINE_EDGE_CANDIDATE not in json.dumps(written)
         finally:
             if receipt_path.exists():
                 receipt_path.unlink()
