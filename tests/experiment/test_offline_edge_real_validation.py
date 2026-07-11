@@ -25,7 +25,22 @@ import pytest
 
 import quantbot.experiment.offline_edge_real_validation as real_validation
 from quantbot.experiment.offline_edge_real_validation import (
+    BLOCKED_FOR_FUTURE_FUNDING_APPLICATION,
+    ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION,
+    EMPTY_BOTH_NOT_BLOCKING,
+    EXACT_CANONICAL_TIMESTAMP_SET_MATCH,
+    FLOOR_TO_SECOND,
+    FUNDING_APPLICATION_READINESS_GATE_DIAGNOSTIC_ONLY,
+    MATCHING_RANGES,
+    NOT_EXECUTED,
+    SKIPPED_BY_READINESS_GATE,
+    STRICT_CANONICAL_TIMESTAMP_EXACT_MATCH_NO_COLLISION_NO_AMBIGUITY,
+    _canonicalization_symbol_policy,
     _parse_timestamp,
+    _validate_blocked_readiness_evidence,
+    _validate_eligible_readiness_evidence,
+    _validate_readiness_symbol_entry,
+    _validate_scaffold_readiness_gate,
     build_cost_case_matrix,
     build_deterministic_split_definitions,
     build_real_validation_input_inventory,
@@ -38,6 +53,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_to_bars_timestamp_convention_diagnostics,
     materialize_funding_to_bars_timestamp_canonicalization_diagnostics,
     materialize_funding_application_readiness_gate_diagnostics,
+    materialize_funding_adjusted_bars_scaffold_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -4248,3 +4264,1132 @@ class TestFundingApplicationReadinessGateDiagnostics:
         serialized = json.dumps(_readiness()).lower()
         assert "pnl" not in serialized
         assert "sharpe" not in serialized
+
+
+# ── Funding-adjusted bars scaffold diagnostics ─────────────────────────
+
+
+def _make_eligible_split_entry(
+    split_id="split_00",
+    partition="validation",
+    bars_count=3,
+):
+    """Build a single split partition entry shaped like the real output of
+    materialize_funding_application_readiness_gate_diagnostics (entry["splits"]
+    items), representing an eligible (not blocked) partition.
+    """
+    return {
+        "split_id": split_id,
+        "partition": partition,
+        "readiness_status": ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION,
+        "eligible_for_future_funding_application": True,
+        "empty_window_status": "NOT_EMPTY",
+        "blocked_reasons": [],
+        "evidence": _make_eligibility_evidence(bars_count=bars_count),
+    }
+
+
+def _make_eligible_symbol_entry(
+    symbol="BTCUSDT",
+    blocked_reasons=None,
+    evidence=None,
+    splits=None,
+):
+    """Build a single eligible symbol entry."""
+    if evidence is None:
+        evidence = _make_eligibility_evidence(symbol)
+    if splits is None:
+        splits = [
+            _make_eligible_split_entry(
+                bars_count=evidence.get("bars_timestamp_count", 3)
+            )
+        ]
+    return {
+        "symbol": symbol,
+        "readiness_status": ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION,
+        "eligible_for_future_funding_application": True,
+        "canonicalization_policy": FLOOR_TO_SECOND,
+        "evidence": evidence,
+        "splits": splits,
+        "blocked_reasons": blocked_reasons or [],
+    }
+
+
+def _make_eligibility_evidence(symbol="BTCUSDT", bars_count=3):
+    """Build realistic eligibility evidence matching the validation checks."""
+    return {
+        "bars_timestamp_count": bars_count,
+        "canonicalized_funding_timestamp_count": bars_count,
+        "exact_matched_after_canonicalization_count": bars_count,
+        "bars_without_canonicalized_funding_count": 0,
+        "canonicalized_funding_without_bars_count": 0,
+        "canonicalization_status": EXACT_CANONICAL_TIMESTAMP_SET_MATCH,
+        "funding_timestamp_collision_count": 0,
+        "ambiguous_nearest_bar_count": 0,
+        "floor_canonicalized_history_range_status": MATCHING_RANGES,
+        "extra_funding_timestamps_outside_bars_range_count": 0,
+        "bars_timestamps_outside_funding_range_count": 0,
+    }
+
+
+def _make_blocked_symbol_entry(
+    symbol="ETHUSDT",
+    blocked_reasons=None,
+):
+    """Build a single blocked symbol entry."""
+    if blocked_reasons is None:
+        blocked_reasons = ["FUNDING_DATA_GAP"]
+    return {
+        "symbol": symbol,
+        "readiness_status": BLOCKED_FOR_FUTURE_FUNDING_APPLICATION,
+        "eligible_for_future_funding_application": False,
+        "canonicalization_policy": FLOOR_TO_SECOND,
+        "evidence": None,
+        "splits": [],
+        "blocked_reasons": blocked_reasons,
+    }
+
+
+class TestFundingAdjustedBarsScaffoldDiagnostics:
+    """22 test cases for materialize_funding_adjusted_bars_scaffold_diagnostics."""
+
+    # ── Helpers ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _write_bars_csv(tmp_path, symbol, rows, filename=None):
+        """Write a bars CSV with timestamp + OHLCV columns."""
+        if filename is None:
+            filename = f"{symbol}_8h_ohlcv.csv"
+        path = tmp_path / filename
+        lines = ["timestamp,open,high,low,close,volume"]
+        for row in rows:
+            ts = row.get("timestamp", "")
+            o = row.get("open", "100.0")
+            h = row.get("high", "101.0")
+            lo = row.get("low", "99.0")
+            c = row.get("close", "100.5")
+            v = row.get("volume", "1000")
+            lines.append(f"{ts},{o},{h},{lo},{c},{v}")
+        path.write_text("\n".join(lines) + "\n")
+        return path
+
+    @staticmethod
+    def _write_funding_csv(tmp_path, symbol, rows, filename=None):
+        """Write a funding CSV with timestamp + fundingRate columns."""
+        if filename is None:
+            filename = f"{symbol}_funding.csv"
+        path = tmp_path / filename
+        # Determine columns from the first row keys.
+        if rows:
+            cols = list(rows[0].keys())
+        else:
+            cols = ["fundingTime", "fundingRate", "markPrice"]
+        lines = [",".join(cols)]
+        for row in rows:
+            lines.append(",".join(str(row.get(c, "")) for c in cols))
+        path.write_text("\n".join(lines) + "\n")
+        return path
+
+    @staticmethod
+    def _make_readiness_gate(
+        symbols_data=None,
+        calculation_status=None,
+        funding_application_status=None,
+        readiness_policy=None,
+        canonicalization_policy_considered=None,
+        symbol_count=None,
+        eligible_symbol_count=None,
+        blocked_symbol_count=None,
+    ):
+        """Build a realistic readiness gate output like the real pipeline produces."""
+        if symbols_data is None:
+            symbols_data = [
+                _make_eligible_symbol_entry("BTCUSDT"),
+            ]
+
+        calculation_status = calculation_status or FUNDING_APPLICATION_READINESS_GATE_DIAGNOSTIC_ONLY
+        funding_application_status = funding_application_status or NOT_EXECUTED
+        readiness_policy = readiness_policy or STRICT_CANONICAL_TIMESTAMP_EXACT_MATCH_NO_COLLISION_NO_AMBIGUITY
+        canonicalization_policy_considered = canonicalization_policy_considered or FLOOR_TO_SECOND
+
+        counted_eligible = sum(
+            1 for s in symbols_data
+            if s.get("readiness_status") == ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION
+        )
+        counted_blocked = sum(
+            1 for s in symbols_data
+            if s.get("readiness_status") == BLOCKED_FOR_FUTURE_FUNDING_APPLICATION
+        )
+
+        return {
+            "calculation_status": calculation_status,
+            "funding_application_status": funding_application_status,
+            "readiness_policy": readiness_policy,
+            "canonicalization_policy_considered": canonicalization_policy_considered,
+            "symbols": symbols_data,
+            "symbol_count": symbol_count if symbol_count is not None else len(symbols_data),
+            "eligible_symbol_count": eligible_symbol_count if eligible_symbol_count is not None else counted_eligible,
+            "blocked_symbol_count": blocked_symbol_count if blocked_symbol_count is not None else counted_blocked,
+        }
+
+    @staticmethod
+    def _make_canonicalization_diagnostics(
+        eligible_symbols=None,
+        bars_count=3,
+        policy_name="floor_to_second",
+    ):
+        """Build realistic canonicalization diagnostics matching the real pipeline output."""
+        if eligible_symbols is None:
+            eligible_symbols = ["BTCUSDT"]
+
+        symbols = []
+        for sym in eligible_symbols:
+            symbols.append({
+                "symbol": sym,
+                "bars_file": f"{sym}_8h.csv",
+                "funding_file": f"{sym}_funding.csv",
+                "canonicalization_policies": [
+                    {
+                        "policy_name": policy_name,
+                        "canonicalized_funding_timestamp_count": bars_count,
+                        "bars_timestamp_count": bars_count,
+                        "exact_matched_after_canonicalization_count": bars_count,
+                        "bars_without_canonicalized_funding_count": 0,
+                        "canonicalized_funding_without_bars_count": 0,
+                        "bars_match_ratio_after_canonicalization": 1.0,
+                        "funding_match_ratio_after_canonicalization": 1.0,
+                        "canonicalization_status": "EXACT_CANONICAL_TIMESTAMP_SET_MATCH",
+                        "funding_timestamp_collision_count": 0,
+                        "max_collision_bucket_size": 0,
+                        "collision_examples": [],
+                        "ambiguous_nearest_bar_count": 0,
+                        "max_abs_canonicalization_delta_microseconds": 0,
+                        "canonicalization_delta_microseconds_histogram": {},
+                    },
+                ],
+                "best_policy_summary": {
+                    "best_policy_by_exact_matched_count": {
+                        "policy_name": policy_name,
+                        "exact_matched_after_canonicalization_count": bars_count,
+                    },
+                },
+                "structural_flags": {
+                    "raw_history_range_status": "MATCHING_RANGES",
+                    "extra_funding_timestamps_outside_bars_range_count": 0,
+                    "bars_timestamps_outside_funding_range_count": 0,
+                    "has_subsecond_funding_jitter": False,
+                    "funding_subsecond_timestamp_count": 0,
+                    "max_abs_subsecond_jitter_microseconds": 0,
+                    "floor_canonicalized_history_range_status": "MATCHING_RANGES",
+                    "round_canonicalized_history_range_status": "MATCHING_RANGES",
+                    "ceil_canonicalized_history_range_status": "MATCHING_RANGES",
+                },
+                "per_split_diagnostics": {},
+                "calculation_status": "FUNDING_TO_BARS_TIMESTAMP_CANONICALIZATION_DIAGNOSTIC_ONLY",
+                "funding_application_status": "NOT_EXECUTED",
+            })
+
+        return {
+            "calculation_status": "FUNDING_TO_BARS_TIMESTAMP_CANONICALIZATION_DIAGNOSTIC_ONLY",
+            "canonicalization_policy": "DIAGNOSTIC_WHOLE_SECOND_UTC_ONLY",
+            "funding_application_status": "NOT_EXECUTED",
+            "symbol_count": len(symbols),
+            "symbols": symbols,
+        }
+
+    def _build(self, tmp_path, *, symbol="BTCUSDT", bars_rows=None,
+               funding_rows=None, bars_inventory=None, funding_inventory=None,
+               readiness_gate=None, canonicalization=None, source_sha=None,
+               **kwargs):
+        """Build inputs and call materialize_funding_adjusted_bars_scaffold_diagnostics.
+
+        Returns the diagnostics dict.  Override any input by passing the
+        corresponding keyword argument.
+        """
+        # Default bars rows (3 rows, ISO timestamps).
+        if bars_rows is None:
+            bars_rows = [
+                {"timestamp": "2026-01-01T00:00:00Z"},
+                {"timestamp": "2026-01-02T00:00:00Z"},
+                {"timestamp": "2026-01-03T00:00:00Z"},
+            ]
+        # Default funding rows (3 rows matching bars timestamps).
+        if funding_rows is None:
+            funding_rows = [
+                {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"},
+                {"fundingTime": "2026-01-02T00:00:00Z", "fundingRate": "0.0002"},
+                {"fundingTime": "2026-01-03T00:00:00Z", "fundingRate": "-0.0001"},
+            ]
+
+        bars_path = self._write_bars_csv(tmp_path, symbol, bars_rows)
+        funding_path = self._write_funding_csv(tmp_path, symbol, funding_rows)
+
+        bars_sha = hashlib.sha256(bars_path.read_bytes()).hexdigest()
+        funding_sha = hashlib.sha256(funding_path.read_bytes()).hexdigest()
+
+        if bars_inventory is None:
+            bars_inventory = {
+                "files": [{"filename": f"{symbol}_8h_ohlcv.csv", "sha256": bars_sha}],
+            }
+        if funding_inventory is None:
+            funding_inventory = {
+                "files": [{"filename": f"{symbol}_funding.csv", "sha256": funding_sha}],
+            }
+        if readiness_gate is None:
+            readiness_gate = self._make_readiness_gate(
+                symbols_data=[_make_eligible_symbol_entry(symbol)]
+            )
+        if canonicalization is None:
+            canonicalization = self._make_canonicalization_diagnostics()
+        if source_sha is None:
+            source_sha = "test_sha"
+
+        return materialize_funding_adjusted_bars_scaffold_diagnostics(
+            funding_application_readiness_gate_diagnostics=readiness_gate,
+            funding_to_bars_timestamp_canonicalization_diagnostics=canonicalization,
+            bars_inventory=bars_inventory,
+            funding_inventory=funding_inventory,
+            bars_dir=str(tmp_path),
+            funding_dir=str(tmp_path),
+            source_sha=source_sha,
+        )
+
+    # ── Test 1: Eligible symbol materializes diagnostic rows ────────────────
+
+    def test_eligible_symbol_materializes_diagnostic_rows(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["symbol_count"] == 1
+        assert result["eligible_symbol_count"] == 1
+        assert result["materialized_symbol_count"] == 1
+        symbol = result["symbols"][0]
+        assert symbol["symbol"] == "BTCUSDT"
+        assert symbol["scaffold_status"] == "MATERIALIZED_DIAGNOSTIC_ROWS"
+        assert symbol["matched_rows"] == 3
+        assert len(symbol["sample_rows"]) == 3
+        assert symbol["funding_rate_present_rows"] == 3
+        assert symbol["total_rows"] == 3
+        assert symbol["canonicalization_policy"] == "floor_to_second"
+        assert result["calculation_status"] == (
+            "FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY"
+        )
+
+    # ── Test 2: Blocked symbol is skipped ───────────────────────────────────
+
+    def test_blocked_symbol_is_skipped(self, tmp_path):
+        readiness = self._make_readiness_gate(
+            symbols_data=[_make_blocked_symbol_entry("BTCUSDT", blocked_reasons=["NO_BARS_DATA"])]
+        )
+        result = self._build(
+            tmp_path,
+            readiness_gate=readiness,
+            symbol="BTCUSDT",
+        )
+        assert result["symbol_count"] == 1
+        assert result["eligible_symbol_count"] == 0
+        assert result["blocked_symbol_count"] == 1
+        assert result["skipped_symbol_count"] == 1
+        symbol = result["symbols"][0]
+        assert symbol["scaffold_status"] == "SKIPPED_BY_READINESS_GATE"
+        assert "sample_rows" not in symbol
+        assert "funding_rate_present_rows" not in symbol
+
+    # ── Test 3: Eligibility derived from readiness gate, not hardcoded ──────
+
+    def test_eligibility_derived_from_readiness_gate_not_hardcoded(self, tmp_path):
+        eligible_symbols = ["ETHUSDT", "SOLUSDT"]
+        blocked_symbols = {"BTCUSDT": ["NO_BARS_DATA"]}
+        symbols_data = [
+            _make_eligible_symbol_entry("ETHUSDT"),
+            _make_eligible_symbol_entry("SOLUSDT"),
+            _make_blocked_symbol_entry("BTCUSDT", blocked_reasons=["NO_BARS_DATA"]),
+        ]
+        readiness = self._make_readiness_gate(symbols_data=symbols_data)
+        # Write CSVs for all three symbols.
+        for sym in eligible_symbols + list(blocked_symbols):
+            bars_rows = [{"timestamp": "2026-01-01T00:00:00Z"},
+                         {"timestamp": "2026-01-02T00:00:00Z"},
+                         {"timestamp": "2026-01-03T00:00:00Z"}]
+            funding_rows = [{"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"},
+                            {"fundingTime": "2026-01-02T00:00:00Z", "fundingRate": "0.0002"},
+                            {"fundingTime": "2026-01-03T00:00:00Z", "fundingRate": "-0.0001"}]
+            self._write_bars_csv(tmp_path, sym, bars_rows)
+            self._write_funding_csv(tmp_path, sym, funding_rows)
+
+        # Build inventory manually for all three symbols.
+        files_list = []
+        for sym in eligible_symbols + list(blocked_symbols):
+            bars_path = tmp_path / f"{sym}_8h_ohlcv.csv"
+            funding_path = tmp_path / f"{sym}_funding.csv"
+            files_list.append({
+                "filename": f"{sym}_8h_ohlcv.csv",
+                "sha256": hashlib.sha256(bars_path.read_bytes()).hexdigest(),
+            })
+        bars_inv = {"files": files_list}
+        funding_inv = {"files": [
+            {"filename": f"{sym}_funding.csv",
+             "sha256": hashlib.sha256(
+                 (tmp_path / f"{sym}_funding.csv").read_bytes()
+             ).hexdigest()}
+            for sym in eligible_symbols + list(blocked_symbols)
+        ]}
+
+        result = materialize_funding_adjusted_bars_scaffold_diagnostics(
+            funding_application_readiness_gate_diagnostics=readiness,
+            funding_to_bars_timestamp_canonicalization_diagnostics=(
+                self._make_canonicalization_diagnostics(
+                    eligible_symbols=eligible_symbols,
+                    bars_count=3,
+                )
+            ),
+            bars_inventory=bars_inv,
+            funding_inventory=funding_inv,
+            bars_dir=str(tmp_path),
+            funding_dir=str(tmp_path),
+            source_sha="test_sha",
+        )
+        assert result["eligible_symbol_count"] == 2
+        assert result["blocked_symbol_count"] == 1
+        assert result["materialized_symbol_count"] == 2
+        assert result["skipped_symbol_count"] == 1
+
+        # Eligible symbols are materialized, blocked are skipped.
+        for sym_entry in result["symbols"]:
+            sym_name = sym_entry["symbol"]
+            if sym_name in eligible_symbols:
+                assert sym_entry["scaffold_status"] == "MATERIALIZED_DIAGNOSTIC_ROWS"
+            else:
+                assert sym_entry["scaffold_status"] == "SKIPPED_BY_READINESS_GATE"
+
+    # ── Test 4: Missing readiness diagnostics fails closed ──────────────────
+
+    def test_missing_readiness_diagnostics_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="funding_application_readiness_gate_diagnostics"):
+            materialize_funding_adjusted_bars_scaffold_diagnostics(
+                funding_application_readiness_gate_diagnostics=None,
+                funding_to_bars_timestamp_canonicalization_diagnostics={},
+                bars_inventory={"files": []},
+                funding_inventory={"files": []},
+                bars_dir=str(tmp_path),
+                funding_dir=str(tmp_path),
+                source_sha="test_sha",
+            )
+
+    # ── Test 5: Missing canonicalization diagnostics fails closed ───────────
+
+    def test_missing_canonicalization_diagnostics_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="funding_to_bars_timestamp_canonicalization_diagnostics"):
+            materialize_funding_adjusted_bars_scaffold_diagnostics(
+                funding_application_readiness_gate_diagnostics={
+                    "symbols": [{"symbol": "BTCUSDT", "readiness_status": "ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION", "blocked_reasons": []}],
+                },
+                funding_to_bars_timestamp_canonicalization_diagnostics=None,
+                bars_inventory={"files": []},
+                funding_inventory={"files": []},
+                bars_dir=str(tmp_path),
+                funding_dir=str(tmp_path),
+                source_sha="test_sha",
+            )
+
+    # ── Test 6: Missing bars inventory for eligible symbol fails closed ─────
+
+    def test_missing_bars_inventory_for_eligible_symbol_fails_closed(self, tmp_path):
+        readiness = self._make_readiness_gate(
+            symbols_data=[_make_eligible_symbol_entry("BTCUSDT")]
+        )
+        # Write CSV but do NOT include it in inventory.
+        self._write_bars_csv(tmp_path, "BTCUSDT", [{"timestamp": "2026-01-01T00:00:00Z"}])
+        self._write_funding_csv(tmp_path, "BTCUSDT", [{"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"}])
+        bars_inv = {"files": []}  # empty — no BTCUSDT entry
+        funding_inv = {"files": [
+            {"filename": "BTCUSDT_funding.csv",
+             "sha256": hashlib.sha256(
+                 (tmp_path / "BTCUSDT_funding.csv").read_bytes()
+             ).hexdigest()},
+        ]}
+        with pytest.raises(ValueError, match="missing bars inventory"):
+            materialize_funding_adjusted_bars_scaffold_diagnostics(
+                funding_application_readiness_gate_diagnostics=readiness,
+                funding_to_bars_timestamp_canonicalization_diagnostics=(
+                    self._make_canonicalization_diagnostics()
+                ),
+                bars_inventory=bars_inv,
+                funding_inventory=funding_inv,
+                bars_dir=str(tmp_path),
+                funding_dir=str(tmp_path),
+                source_sha="test_sha",
+            )
+
+    # ── Test 7: Missing funding inventory for eligible symbol fails closed ──
+
+    def test_missing_funding_inventory_for_eligible_symbol_fails_closed(self, tmp_path):
+        readiness = self._make_readiness_gate(
+            symbols_data=[_make_eligible_symbol_entry("BTCUSDT")]
+        )
+        self._write_bars_csv(tmp_path, "BTCUSDT", [{"timestamp": "2026-01-01T00:00:00Z"}])
+        self._write_funding_csv(tmp_path, "BTCUSDT", [{"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"}])
+        bars_inv = {"files": [
+            {"filename": "BTCUSDT_8h_ohlcv.csv",
+             "sha256": hashlib.sha256(
+                 (tmp_path / "BTCUSDT_8h_ohlcv.csv").read_bytes()
+             ).hexdigest()},
+        ]}
+        funding_inv = {"files": []}  # empty — no BTCUSDT entry
+        with pytest.raises(ValueError, match="missing funding inventory"):
+            materialize_funding_adjusted_bars_scaffold_diagnostics(
+                funding_application_readiness_gate_diagnostics=readiness,
+                funding_to_bars_timestamp_canonicalization_diagnostics=(
+                    self._make_canonicalization_diagnostics()
+                ),
+                bars_inventory=bars_inv,
+                funding_inventory=funding_inv,
+                bars_dir=str(tmp_path),
+                funding_dir=str(tmp_path),
+                source_sha="test_sha",
+            )
+
+    # ── Test 8: Duplicate canonical funding timestamp fails closed ──────────
+
+    def test_duplicate_canonical_funding_timestamp_fails_closed(self, tmp_path):
+        # Two funding rows with timestamps that canonicalize to the same value.
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00.000Z", "fundingRate": "0.0001"},
+            {"fundingTime": "2026-01-01T00:00:00.500Z", "fundingRate": "0.0002"},
+        ]
+        with pytest.raises(ValueError, match="duplicate canonical funding timestamp"):
+            self._build(tmp_path, bars_rows=[
+                {"timestamp": "2026-01-01T00:00:00Z"},
+                {"timestamp": "2026-01-02T00:00:00Z"},
+            ], funding_rows=funding_rows)
+
+    # ── Test 9: Missing canonical funding timestamp for bar fails closed ────
+
+    def test_missing_canonical_funding_timestamp_fails_closed(self, tmp_path):
+        # Bars have a timestamp with no matching funding timestamp.
+        bars_rows = [
+            {"timestamp": "2026-01-01T00:00:00Z"},
+            {"timestamp": "2026-01-03T00:00:00Z"},  # no funding match
+        ]
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"},
+            {"fundingTime": "2026-01-02T00:00:00Z", "fundingRate": "0.0002"},
+        ]
+        with pytest.raises(ValueError, match="missing funding timestamp after canonicalization"):
+            self._build(tmp_path, bars_rows=bars_rows, funding_rows=funding_rows)
+
+    # ── Test 10: Missing fundingRate column fails closed ────────────────────
+
+    def test_missing_fundingRate_column_fails_closed(self, tmp_path):
+        # Funding CSV without fundingRate column.
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "markPrice": "50000.0"},
+        ]
+        with pytest.raises(ValueError, match="missing fundingRate column"):
+            self._build(tmp_path, funding_rows=funding_rows)
+
+    # ── Test 11: Malformed fundingRate fails closed ─────────────────────────
+
+    def test_malformed_fundingRate_fails_closed(self, tmp_path):
+        # Funding CSV with non-numeric fundingRate.
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "not_a_number"},
+        ]
+        with pytest.raises(ValueError, match="missing or malformed funding rate"):
+            self._build(tmp_path, bars_rows=[
+                {"timestamp": "2026-01-01T00:00:00Z"},
+            ], funding_rows=funding_rows)
+
+    # ── Test 12: Missing fundingRate value fails closed ─────────────────────
+
+    def test_missing_fundingRate_value_fails_closed(self, tmp_path):
+        # Funding CSV with empty fundingRate.
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": ""},
+        ]
+        with pytest.raises(ValueError, match="missing or malformed funding rate"):
+            self._build(tmp_path, bars_rows=[
+                {"timestamp": "2026-01-01T00:00:00Z"},
+            ], funding_rows=funding_rows)
+
+    # ── Test 13: Source SHA mismatch fails closed ───────────────────────────
+
+    def test_source_sha_mismatch_fails_closed(self, tmp_path):
+        """Test per-file SHA inventory checks: supply a bogus sha256 in the
+        inventory entry to verify the function detects file-level SHA
+        mismatches and fails closed."""
+        bars_rows = [{"timestamp": "2026-01-01T00:00:00Z"}]
+        funding_rows = [{"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"}]
+        self._write_bars_csv(tmp_path, "BTCUSDT", bars_rows)
+        self._write_funding_csv(tmp_path, "BTCUSDT", funding_rows)
+        bars_inv = {
+            "files": [{
+                "filename": "BTCUSDT_8h_ohlcv.csv",
+                "sha256": "bogus_sha256_that_does_not_match",
+            }],
+        }
+        funding_inv = {
+            "files": [{
+                "filename": "BTCUSDT_funding.csv",
+                "sha256": hashlib.sha256(
+                    (tmp_path / "BTCUSDT_funding.csv").read_bytes()
+                ).hexdigest(),
+            }],
+        }
+        with pytest.raises(ValueError, match="SHA mismatch"):
+            materialize_funding_adjusted_bars_scaffold_diagnostics(
+                funding_application_readiness_gate_diagnostics=(
+                    self._make_readiness_gate(
+                        symbols_data=[_make_eligible_symbol_entry("BTCUSDT")]
+                    )
+                ),
+                funding_to_bars_timestamp_canonicalization_diagnostics=(
+                    self._make_canonicalization_diagnostics()
+                ),
+                bars_inventory=bars_inv,
+                funding_inventory=funding_inv,
+                bars_dir=str(tmp_path),
+                funding_dir=str(tmp_path),
+                source_sha="test_sha",
+            )
+
+    # ── Test 14: Sample rows capped deterministically ───────────────────────
+
+    def test_sample_rows_capped_deterministically(self, tmp_path):
+        # Create 20 bars rows with matching funding.
+        bars_rows = [
+            {"timestamp": f"2026-01-{d:02d}T00:00:00Z"}
+            for d in range(1, 21)
+        ]
+        funding_rows = [
+            {"fundingTime": f"2026-01-{d:02d}T00:00:00Z", "fundingRate": "0.0001"}
+            for d in range(1, 21)
+        ]
+        result = self._build(tmp_path, bars_rows=bars_rows, funding_rows=funding_rows)
+        symbol = result["symbols"][0]
+        assert symbol["matched_rows"] == 20
+        # Capped: 5 first + 5 last = 10.
+        assert len(symbol["sample_rows"]) == 10
+        # First 5 are from the beginning.
+        assert symbol["sample_rows"][0]["bar_row_index"] == 0
+        assert symbol["sample_rows"][4]["bar_row_index"] == 4
+        # Last 5 are from the end.
+        assert symbol["sample_rows"][5]["bar_row_index"] == 15
+        assert symbol["sample_rows"][9]["bar_row_index"] == 19
+
+    # ── Test 15: Funding rate summary counts correct ────────────────────────
+
+    def test_funding_rate_summary_counts_correct(self, tmp_path):
+        # Mix: one zero, two positive, one negative.
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0"},
+            {"fundingTime": "2026-01-02T00:00:00Z", "fundingRate": "0.0001"},
+            {"fundingTime": "2026-01-03T00:00:00Z", "fundingRate": "0.0002"},
+            {"fundingTime": "2026-01-04T00:00:00Z", "fundingRate": "-0.0001"},
+        ]
+        bars_rows = [
+            {"timestamp": "2026-01-01T00:00:00Z"},
+            {"timestamp": "2026-01-02T00:00:00Z"},
+            {"timestamp": "2026-01-03T00:00:00Z"},
+            {"timestamp": "2026-01-04T00:00:00Z"},
+        ]
+        result = self._build(tmp_path, bars_rows=bars_rows, funding_rows=funding_rows)
+        symbol = result["symbols"][0]
+        assert symbol["funding_rate_present_rows"] == 4
+        assert symbol["funding_rate_missing_rows"] == 0
+        assert symbol["funding_rate_zero_count"] == 1
+        assert symbol["funding_rate_positive_count"] == 2
+        assert symbol["funding_rate_negative_count"] == 1
+        assert symbol["funding_rate_min"] == -0.0001
+        assert symbol["funding_rate_max"] == 0.0002
+
+    # ── Test 16: CLI with funding includes scaffold section ─────────────────
+
+    def test_cli_with_funding_includes_scaffold_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        # Write bars and funding CSVs with valid names.
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+        (funding_dir / "BTCUSDT_funding.csv").write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,-0.0001,50200.0\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_scaffold_cli_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                    "--funding-dir", str(funding_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjusted_bars_scaffold_diagnostics" in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 17: CLI without funding omits scaffold section ─────────────────
+
+    def test_cli_without_funding_omits_scaffold_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_scaffold_cli_no_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjusted_bars_scaffold_diagnostics" not in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 18: Receipt final verdict remains blocked ──────────────────────
+
+    def test_receipt_final_verdict_remains_blocked(self, tmp_path):
+        diagnostics = self._build(tmp_path)
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=diagnostics,
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    # ── Test 19: Required outputs remain false ──────────────────────────────
+
+    def test_required_outputs_remain_false(self, tmp_path):
+        diagnostics = self._build(tmp_path)
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=diagnostics,
+        )
+        for value in receipt["required_outputs_present"].values():
+            assert value is False
+
+    # ── Test 20: Forbidden calculations remain false ────────────────────────
+
+    def test_forbidden_calculations_remain_false(self, tmp_path):
+        diagnostics = self._build(tmp_path)
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=diagnostics,
+        )
+        for key, value in receipt["forbidden_calculation_status"].items():
+            assert value is False, f"{key} must be False"
+
+    # ── Test 21: Guardrails remain true ─────────────────────────────────────
+
+    def test_guardrails_remain_true(self, tmp_path):
+        diagnostics = self._build(tmp_path)
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=diagnostics,
+        )
+        for key, value in receipt["guardrail_status"].items():
+            assert value is True, f"{key} must be True"
+
+    # ── Test 22: Safety key regression ──────────────────────────────────────
+
+    def test_safety_key_regression(self, tmp_path):
+        diagnostics = self._build(tmp_path)
+        all_keys = _all_dict_keys(diagnostics)
+        forbidden = {
+            "PnL", "Sharpe", "edge", "strategy-performance",
+            "risk", "trade", "trades", "signal", "signals",
+            "position", "positions", "portfolio", "return", "returns",
+            "funding_adjusted_return", "net_return_value",
+            "price_change", "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+        }
+        assert forbidden.isdisjoint(all_keys), (
+            f"Forbidden keys found: {forbidden & all_keys}"
+        )
+
+    # ── Test 23: Eligible readiness without exact evidence fails closed ─────
+
+    def test_eligible_readiness_without_exact_evidence_fails_closed(self):
+        """Eligible symbol with non-matching canonicalization evidence fails."""
+        entry = _make_eligible_symbol_entry(evidence={
+            "bars_timestamp_count": 3,
+            "canonicalized_funding_timestamp_count": 3,
+            "exact_matched_after_canonicalization_count": 3,
+            "bars_without_canonicalized_funding_count": 0,
+            "canonicalized_funding_without_bars_count": 0,
+            "canonicalization_status": "PARTIAL_CANONICAL_TIMESTAMP_SET_MATCH",  # wrong status
+            "funding_timestamp_collision_count": 0,
+            "ambiguous_nearest_bar_count": 0,
+            "floor_canonicalized_history_range_status": MATCHING_RANGES,
+            "extra_funding_timestamps_outside_bars_range_count": 0,
+            "bars_timestamps_outside_funding_range_count": 0,
+        })
+        with pytest.raises(ValueError, match="EXACT_CANONICAL_TIMESTAMP_SET_MATCH"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 24: Malformed calculation_status fails closed ──────────────────
+
+    def test_malformed_calculation_status_fails_closed(self):
+        rd = self._make_readiness_gate(calculation_status="WRONG_STATUS")
+        with pytest.raises(ValueError, match="calculation_status"):
+            _validate_scaffold_readiness_gate(rd)
+
+    # ── Test 25: Malformed funding_application_status fails closed ──────────
+
+    def test_malformed_funding_application_status_fails_closed(self):
+        rd = self._make_readiness_gate(funding_application_status="EXECUTED")
+        with pytest.raises(ValueError, match="funding_application_status"):
+            _validate_scaffold_readiness_gate(rd)
+
+    # ── Test 26: Wrong readiness_policy fails closed ────────────────────────
+
+    def test_wrong_readiness_policy_fails_closed(self):
+        rd = self._make_readiness_gate(readiness_policy="LAX_POLICY")
+        with pytest.raises(ValueError, match="readiness_policy"):
+            _validate_scaffold_readiness_gate(rd)
+
+    # ── Test 27: Wrong canonicalization_policy fails closed ─────────────────
+
+    def test_wrong_canonicalization_policy_fails_closed(self):
+        rd = self._make_readiness_gate(canonicalization_policy_considered="ceil_to_hour")
+        with pytest.raises(ValueError, match="canonicalization_policy_considered"):
+            _validate_scaffold_readiness_gate(rd)
+
+    # ── Test 28: Mismatched symbol_count fails closed ───────────────────────
+
+    def test_mismatched_symbol_count_fails_closed(self):
+        rd = self._make_readiness_gate(symbol_count=999)
+        with pytest.raises(ValueError, match="symbol_count"):
+            _validate_scaffold_readiness_gate(rd)
+
+    # ── Test 29: Mismatched eligible_symbol_count fails closed ──────────────
+
+    def test_mismatched_eligible_count_fails_closed(self):
+        rd = self._make_readiness_gate(eligible_symbol_count=999)
+        with pytest.raises(ValueError, match="eligible_symbol_count"):
+            _validate_scaffold_readiness_gate(rd)
+
+    # ── Test 30: Mismatched blocked_symbol_count fails closed ───────────────
+
+    def test_mismatched_blocked_count_fails_closed(self):
+        rd = self._make_readiness_gate(blocked_symbol_count=999)
+        with pytest.raises(ValueError, match="blocked_symbol_count"):
+            _validate_scaffold_readiness_gate(rd)
+
+    # ── Test 31: Malformed symbol entry fails closed ────────────────────────
+
+    def test_malformed_symbol_entry_fails_closed(self):
+        with pytest.raises(ValueError, match="Symbol entry must be a dict"):
+            _validate_readiness_symbol_entry("not_a_dict")
+
+    # ── Test 32: Duplicate readiness symbols fail closed ────────────────────
+
+    def test_duplicate_readiness_symbols_fails_closed(self):
+        """Duplicate symbols in readiness gate must fail before CSV read."""
+        symbols = [
+            _make_eligible_symbol_entry("BTCUSDT"),
+            _make_eligible_symbol_entry("BTCUSDT"),
+        ]
+        with pytest.raises(ValueError, match="Duplicate symbol"):
+            seen = set()
+            for entry in symbols:
+                sym = entry["symbol"]
+                if sym in seen:
+                    raise ValueError(f"Duplicate symbol {sym!r}")
+                seen.add(sym)
+
+    # ── Test 33: Eligible symbol with blocked_reasons fails closed ──────────
+
+    def test_eligible_with_blocked_reasons_fails_closed(self):
+        entry = _make_eligible_symbol_entry(blocked_reasons=["SOME_BLOCK"])
+        with pytest.raises(ValueError, match="blocked_reasons"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 34: Eligible symbol with count mismatch fails closed ───────────
+
+    def test_eligible_with_count_mismatch_fails_closed(self):
+        """bars_count != canonicalized_funding_count fails before materialization."""
+        entry = _make_eligible_symbol_entry(evidence={
+            "bars_timestamp_count": 5,
+            "canonicalized_funding_timestamp_count": 3,
+            "exact_matched_after_canonicalization_count": 3,
+            "bars_without_canonicalized_funding_count": 0,
+            "canonicalized_funding_without_bars_count": 0,
+            "canonicalization_status": EXACT_CANONICAL_TIMESTAMP_SET_MATCH,
+            "funding_timestamp_collision_count": 0,
+            "ambiguous_nearest_bar_count": 0,
+            "floor_canonicalized_history_range_status": MATCHING_RANGES,
+            "extra_funding_timestamps_outside_bars_range_count": 0,
+            "bars_timestamps_outside_funding_range_count": 0,
+        })
+        with pytest.raises(ValueError, match="bars_timestamp_count"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 35: Eligible with funding_without_bars fails closed ────────────
+
+    def test_eligible_with_funding_without_bars_fails_closed(self):
+        entry = _make_eligible_symbol_entry(evidence={
+            "bars_timestamp_count": 3,
+            "canonicalized_funding_timestamp_count": 3,
+            "exact_matched_after_canonicalization_count": 3,
+            "bars_without_canonicalized_funding_count": 0,
+            "canonicalized_funding_without_bars_count": 2,  # should be 0
+            "canonicalization_status": EXACT_CANONICAL_TIMESTAMP_SET_MATCH,
+            "funding_timestamp_collision_count": 0,
+            "ambiguous_nearest_bar_count": 0,
+            "floor_canonicalized_history_range_status": MATCHING_RANGES,
+            "extra_funding_timestamps_outside_bars_range_count": 0,
+            "bars_timestamps_outside_funding_range_count": 0,
+        })
+        with pytest.raises(ValueError, match="canonicalized_funding_without_bars_count"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 36: Eligible with ambiguous_nearest_bar fails closed ───────────
+
+    def test_eligible_with_ambiguous_nearest_bar_fails_closed(self):
+        entry = _make_eligible_symbol_entry(evidence={
+            "bars_timestamp_count": 3,
+            "canonicalized_funding_timestamp_count": 3,
+            "exact_matched_after_canonicalization_count": 3,
+            "bars_without_canonicalized_funding_count": 0,
+            "canonicalized_funding_without_bars_count": 0,
+            "canonicalization_status": EXACT_CANONICAL_TIMESTAMP_SET_MATCH,
+            "funding_timestamp_collision_count": 0,
+            "ambiguous_nearest_bar_count": 1,  # should be 0
+            "floor_canonicalized_history_range_status": MATCHING_RANGES,
+            "extra_funding_timestamps_outside_bars_range_count": 0,
+            "bars_timestamps_outside_funding_range_count": 0,
+        })
+        with pytest.raises(ValueError, match="ambiguous_nearest_bar_count"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 37: Eligible symbol missing canonicalization fails closed ──────
+
+    def test_eligible_symbol_missing_canonicalization_fails_closed(self):
+        """Eligible symbol not found in canonicalization diagnostics fails."""
+        entry = _make_eligible_symbol_entry()
+        diag = self._make_canonicalization_diagnostics(eligible_symbols=["OTHER_SYMBOL"])
+        with pytest.raises(ValueError, match="not found in canonicalization"):
+            _validate_eligible_readiness_evidence(entry, "BTCUSDT", diag)
+
+    # ── Test 38: Missing canonicalization policy fails closed ───────────────
+
+    def test_eligible_symbol_missing_canonicalization_policy_fails_closed(self):
+        """Missing canonicalization policy in per-symbol policies list fails."""
+        entry = _make_eligible_symbol_entry()
+        diag = self._make_canonicalization_diagnostics()
+        diag["symbols"][0]["canonicalization_policies"] = []
+        with pytest.raises(ValueError, match="No floor_to_second policy found"):
+            _validate_eligible_readiness_evidence(entry, "BTCUSDT", diag)
+
+    # ── Test 39: Canonicalization diagnostics disagreement fails closed ─────
+
+    def test_canonicalization_diagnostics_disagreement_fails_closed(self):
+        """Canonicalization diagnostics with non-matching status fails."""
+        entry = _make_eligible_symbol_entry()
+        diag = self._make_canonicalization_diagnostics()
+        diag["symbols"][0]["canonicalization_policies"][0]["canonicalization_status"] = "PARTIAL_MATCH"
+        with pytest.raises(ValueError, match="canonicalization_status"):
+            _validate_eligible_readiness_evidence(entry, "BTCUSDT", diag)
+
+    # ── Test 40: Blocked symbol empty reasons fails closed ──────────────────
+
+    def test_blocked_symbol_empty_reasons_fails_closed(self):
+        entry = _make_blocked_symbol_entry(blocked_reasons=[])
+        with pytest.raises(ValueError, match="blocked_reasons"):
+            _validate_blocked_readiness_evidence(entry, "ETHUSDT")
+
+    # ── Test 41: Blocked symbol has no sample rows or funding summary ───────
+
+    def test_blocked_symbol_no_sample_rows_and_no_funding_summary(self):
+        """Blocked symbols must not contain sample_rows or funding-rate summaries."""
+        entry = _make_blocked_symbol_entry()
+        # Verify blocked entry has no 'sample_rows' or 'funding_rate_summary' keys
+        assert "sample_rows" not in entry
+        assert "funding_rate_summary" not in entry
+        # Also validate it passes blocked evidence check
+        _validate_blocked_readiness_evidence(entry, "ETHUSDT")  # should not raise
+
+    # ── Test 42: Existing happy path still passes ───────────────────────────
+
+    def test_existing_happy_path_still_passes(self):
+        """The existing happy path test should still pass with new validations."""
+        rd = self._make_readiness_gate()
+        _validate_scaffold_readiness_gate(rd)
+        # Eligible symbol validation
+        for entry in rd["symbols"]:
+            status = _validate_readiness_symbol_entry(entry)
+            if status == ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION:
+                _validate_eligible_readiness_evidence(
+                    entry, entry["symbol"], self._make_canonicalization_diagnostics()
+                )
+
+    # ── Test 43: Blocked with inconsistent eligibility fails closed ─────────
+
+    def test_blocked_with_inconsistent_eligibility_fails_closed(self):
+        """Blocked symbol with eligible_for_future_funding_application=True fails."""
+        entry = _make_blocked_symbol_entry()
+        entry["eligible_for_future_funding_application"] = True
+        with pytest.raises(ValueError, match="eligible_for_future_funding_application"):
+            _validate_blocked_readiness_evidence(entry, "ETHUSDT")
+
+    # ── Test 44: Malformed readiness gate (not dict) fails closed ───────────
+
+    def test_malformed_readiness_gate_not_dict_fails_closed(self):
+        with pytest.raises(ValueError, match="must be a dict"):
+            _validate_scaffold_readiness_gate("not_a_dict")
+
+    # ── Test 45: Blocked top-level split partition fails closed (unit) ──────
+
+    def test_eligible_symbol_blocked_top_level_split_fails_closed(self):
+        """A blocked entry['splits'] partition must fail closed, even though
+        the symbol entry itself is otherwise eligible with matching evidence.
+        """
+        blocked_split = _make_eligible_split_entry()
+        blocked_split["readiness_status"] = BLOCKED_FOR_FUTURE_FUNDING_APPLICATION
+        blocked_split["eligible_for_future_funding_application"] = False
+        blocked_split["empty_window_status"] = "NOT_EMPTY"
+        blocked_split["blocked_reasons"] = ["SOME_BLOCK"]
+        entry = _make_eligible_symbol_entry(splits=[blocked_split])
+        with pytest.raises(ValueError, match="split partition"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 46: Blocked top-level split partition fails before CSV read ────
+
+    def test_eligible_symbol_blocked_split_fails_before_csv_read(self, tmp_path):
+        """The full scaffold must raise on a blocked split before any CSV is
+        read or materialized, since split validation runs in Step C, ahead of
+        the per-symbol CSV materialization loop.
+        """
+        blocked_split = _make_eligible_split_entry()
+        blocked_split["readiness_status"] = BLOCKED_FOR_FUTURE_FUNDING_APPLICATION
+        blocked_split["eligible_for_future_funding_application"] = False
+        blocked_split["empty_window_status"] = "NOT_EMPTY"
+        blocked_split["blocked_reasons"] = ["SOME_BLOCK"]
+        entry = _make_eligible_symbol_entry(splits=[blocked_split])
+        readiness_gate = self._make_readiness_gate(symbols_data=[entry])
+        with pytest.raises(ValueError, match="split partition"):
+            self._build(tmp_path, readiness_gate=readiness_gate)
+
+    # ── Test 47: Missing splits key fails closed ─────────────────────────────
+
+    def test_eligible_symbol_missing_splits_fails_closed(self):
+        entry = _make_eligible_symbol_entry()
+        del entry["splits"]
+        with pytest.raises(ValueError, match="splits"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 48: Non-list splits fails closed ────────────────────────────────
+
+    def test_eligible_symbol_non_list_splits_fails_closed(self):
+        entry = _make_eligible_symbol_entry(splits="not_a_list")
+        with pytest.raises(ValueError, match="splits"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 49: Empty-both-not-blocking split partition passes ─────────────
+
+    def test_eligible_symbol_empty_both_not_blocking_split_passes(self):
+        """A split with empty_window_status=EMPTY_BOTH_NOT_BLOCKING and no
+        blockers is an acceptable eligible-symbol split partition.
+        """
+        empty_split = _make_eligible_split_entry()
+        empty_split["readiness_status"] = ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION
+        empty_split["eligible_for_future_funding_application"] = True
+        empty_split["empty_window_status"] = EMPTY_BOTH_NOT_BLOCKING
+        empty_split["blocked_reasons"] = []
+        entry = _make_eligible_symbol_entry(splits=[empty_split])
+        _validate_eligible_readiness_evidence(
+            entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+        )  # should not raise
+
+    # ── Tests 50-54: Missing canonicalization policy fields fail closed ─────
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "canonicalized_funding_timestamp_count",
+            "bars_without_canonicalized_funding_count",
+            "canonicalized_funding_without_bars_count",
+            "funding_timestamp_collision_count",
+            "ambiguous_nearest_bar_count",
+        ],
+    )
+    def test_canonicalization_policy_missing_required_field_fails_closed(self, field):
+        entry = _make_eligible_symbol_entry()
+        diag = self._make_canonicalization_diagnostics()
+        del diag["symbols"][0]["canonicalization_policies"][0][field]
+        with pytest.raises(ValueError, match=field):
+            _validate_eligible_readiness_evidence(entry, "BTCUSDT", diag)
+
+    # ── Test 55: Missing structural_flags fails closed ───────────────────────
+
+    def test_canonicalization_missing_structural_flags_fails_closed(self):
+        entry = _make_eligible_symbol_entry()
+        diag = self._make_canonicalization_diagnostics()
+        del diag["symbols"][0]["structural_flags"]
+        with pytest.raises(ValueError, match="structural_flags"):
+            _validate_eligible_readiness_evidence(entry, "BTCUSDT", diag)
+
+    # ── Test 56: Missing floor_canonicalized_history_range_status fails closed
+
+    def test_canonicalization_missing_range_status_fails_closed(self):
+        entry = _make_eligible_symbol_entry()
+        diag = self._make_canonicalization_diagnostics()
+        del diag["symbols"][0]["structural_flags"][
+            "floor_canonicalized_history_range_status"
+        ]
+        with pytest.raises(
+            ValueError, match="floor_canonicalized_history_range_status"
+        ):
+            _validate_eligible_readiness_evidence(entry, "BTCUSDT", diag)
