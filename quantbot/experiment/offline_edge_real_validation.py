@@ -64,6 +64,7 @@ __all__ = [
     "materialize_funding_to_bars_timestamp_canonicalization_diagnostics",
     "materialize_funding_application_readiness_gate_diagnostics",
     "materialize_funding_adjusted_bars_scaffold_diagnostics",
+    "materialize_funding_adjustment_policy_contract_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -130,6 +131,15 @@ _VALID_READINESS_STATUSES = {
     ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION,
     BLOCKED_FOR_FUTURE_FUNDING_APPLICATION,
 }
+
+# === Funding adjustment policy contract constants ===
+FUNDING_ADJUSTMENT_POLICY_CONTRACT_DIAGNOSTIC_ONLY = "FUNDING_ADJUSTMENT_POLICY_CONTRACT_DIAGNOSTIC_ONLY"
+FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY = "FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY"
+DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY = "DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY"
+MATERIALIZED_DIAGNOSTIC_ROWS = "MATERIALIZED_DIAGNOSTIC_ROWS"
+ELIGIBLE_FOR_FUTURE_FUNDING_ADJUSTMENT_POLICY = "ELIGIBLE_FOR_FUTURE_FUNDING_ADJUSTMENT_POLICY"
+BLOCKED_BY_READINESS_GATE = "BLOCKED_BY_READINESS_GATE"
+EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP = "EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP"
 
 PROD_BASE = Path("/srv/qnty")
 TMP_BASE = Path("/tmp")
@@ -4159,6 +4169,343 @@ def materialize_funding_adjusted_bars_scaffold_diagnostics(
     }
 
 
+# ── Funding adjustment policy contract diagnostics ──────────────────────
+
+
+def _validate_materialized_scaffold_entry(entry: dict[str, Any], symbol: str) -> None:
+    """Validate a MATERIALIZED_DIAGNOSTIC_ROWS scaffold entry before carrying
+    its row-availability facts forward into the policy contract."""
+    for field in (
+        "total_rows",
+        "matched_rows",
+        "missing_funding_rows",
+        "duplicate_canonical_funding_rows",
+        "funding_rate_present_rows",
+        "funding_rate_missing_rows",
+    ):
+        value = entry.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(
+                f"Materialized scaffold symbol {symbol!r} has invalid {field}: {value!r}"
+            )
+
+    if entry["missing_funding_rows"] != 0:
+        raise ValueError(
+            f"Materialized scaffold symbol {symbol!r} has nonzero "
+            f"missing_funding_rows: {entry['missing_funding_rows']}"
+        )
+    if entry["duplicate_canonical_funding_rows"] != 0:
+        raise ValueError(
+            f"Materialized scaffold symbol {symbol!r} has nonzero "
+            f"duplicate_canonical_funding_rows: "
+            f"{entry['duplicate_canonical_funding_rows']}"
+        )
+    if entry["matched_rows"] != entry["total_rows"]:
+        raise ValueError(
+            f"Materialized scaffold symbol {symbol!r} has matched_rows "
+            f"({entry['matched_rows']}) != total_rows ({entry['total_rows']})"
+        )
+    if entry["funding_rate_present_rows"] != entry["total_rows"]:
+        raise ValueError(
+            f"Materialized scaffold symbol {symbol!r} has "
+            f"funding_rate_present_rows ({entry['funding_rate_present_rows']}) "
+            f"!= total_rows ({entry['total_rows']})"
+        )
+    if entry["funding_rate_missing_rows"] != 0:
+        raise ValueError(
+            f"Materialized scaffold symbol {symbol!r} has nonzero "
+            f"funding_rate_missing_rows: {entry['funding_rate_missing_rows']}"
+        )
+
+    canonicalization_policy = entry.get("canonicalization_policy")
+    if canonicalization_policy != FLOOR_TO_SECOND:
+        raise ValueError(
+            f"Materialized scaffold symbol {symbol!r} has canonicalization_policy "
+            f"{canonicalization_policy!r}, expected {FLOOR_TO_SECOND!r}"
+        )
+
+    if "sample_rows" not in entry:
+        raise ValueError(
+            f"Materialized scaffold symbol {symbol!r} is missing sample_rows"
+        )
+
+
+def _validate_skipped_scaffold_entry(entry: dict[str, Any], symbol: str) -> None:
+    """Validate a SKIPPED_BY_READINESS_GATE scaffold entry before carrying its
+    blocked reasons forward into the policy contract."""
+    reasons = entry.get("blocked_reasons")
+    if not isinstance(reasons, list) or not reasons:
+        raise ValueError(
+            f"Skipped scaffold symbol {symbol!r} has empty or missing "
+            f"blocked_reasons"
+        )
+    if "sample_rows" in entry:
+        raise ValueError(
+            f"Skipped scaffold symbol {symbol!r} must not carry sample_rows"
+        )
+    if "future_application_required_inputs" in entry:
+        raise ValueError(
+            f"Skipped scaffold symbol {symbol!r} must not carry "
+            f"future_application_required_inputs"
+        )
+    funding_rate_fields = sorted(
+        key for key in entry if key.startswith("funding_rate_")
+    )
+    if funding_rate_fields:
+        raise ValueError(
+            f"Skipped scaffold symbol {symbol!r} must not carry funding-rate "
+            f"summary fields: {funding_rate_fields}"
+        )
+
+
+def materialize_funding_adjustment_policy_contract_diagnostics(
+    *,
+    funding_adjusted_bars_scaffold_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Materialize the diagnostic-only funding adjustment policy contract.
+
+    Defines the exact policy a future funding-adjustment calculation must
+    obey — timestamp matching, symbol eligibility, funding-rate parsing, and
+    long/short funding-cashflow sign conventions — using only the
+    eligibility and row-availability facts already proven by the
+    funding-adjusted bars scaffold. This function performs no PnL, Sharpe,
+    returns, edge, strategy, trade, position, signal, portfolio, drawdown,
+    risk, or live-readiness calculation. It does not infer or apply either
+    side of the long/short funding-cashflow convention it documents.
+    """
+    scaffold = funding_adjusted_bars_scaffold_diagnostics
+    if not scaffold or not isinstance(scaffold, dict):
+        raise ValueError(
+            "funding_adjusted_bars_scaffold_diagnostics is required and must "
+            "be a non-empty dict"
+        )
+
+    calc_status = scaffold.get("calculation_status")
+    if calc_status != FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY:
+        raise ValueError(
+            f"Expected scaffold calculation_status="
+            f"{FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY!r}, got {calc_status!r}"
+        )
+
+    funding_app_status = scaffold.get("funding_application_status")
+    if funding_app_status != DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY:
+        raise ValueError(
+            f"Expected scaffold funding_application_status="
+            f"{DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY!r}, "
+            f"got {funding_app_status!r}"
+        )
+
+    canon_policy = scaffold.get("canonicalization_policy_used")
+    if canon_policy != FLOOR_TO_SECOND:
+        raise ValueError(
+            f"Expected scaffold canonicalization_policy_used={FLOOR_TO_SECOND!r}, "
+            f"got {canon_policy!r}"
+        )
+
+    symbols = scaffold.get("symbols")
+    if not isinstance(symbols, list):
+        raise ValueError("scaffold symbols must be a list")
+
+    symbol_count = scaffold.get("symbol_count")
+    if (
+        not isinstance(symbol_count, int)
+        or isinstance(symbol_count, bool)
+        or symbol_count != len(symbols)
+    ):
+        raise ValueError(
+            f"scaffold symbol_count ({symbol_count!r}) must equal "
+            f"len(symbols) ({len(symbols)})"
+        )
+
+    count_fields = {}
+    for field in (
+        "eligible_symbol_count",
+        "blocked_symbol_count",
+        "materialized_symbol_count",
+        "skipped_symbol_count",
+    ):
+        value = scaffold.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(
+                f"scaffold {field} must be a non-negative integer, got {value!r}"
+            )
+        count_fields[field] = value
+
+    if (
+        count_fields["eligible_symbol_count"] + count_fields["blocked_symbol_count"]
+        != symbol_count
+    ):
+        raise ValueError(
+            f"scaffold eligible_symbol_count "
+            f"({count_fields['eligible_symbol_count']}) + blocked_symbol_count "
+            f"({count_fields['blocked_symbol_count']}) != symbol_count "
+            f"({symbol_count})"
+        )
+    if count_fields["materialized_symbol_count"] != count_fields["eligible_symbol_count"]:
+        raise ValueError(
+            f"scaffold materialized_symbol_count "
+            f"({count_fields['materialized_symbol_count']}) != "
+            f"eligible_symbol_count ({count_fields['eligible_symbol_count']})"
+        )
+    if count_fields["skipped_symbol_count"] != count_fields["blocked_symbol_count"]:
+        raise ValueError(
+            f"scaffold skipped_symbol_count "
+            f"({count_fields['skipped_symbol_count']}) != blocked_symbol_count "
+            f"({count_fields['blocked_symbol_count']})"
+        )
+
+    seen_symbols: set[str] = set()
+    policy_symbols: list[dict[str, Any]] = []
+    counted_eligible = 0
+    counted_blocked = 0
+
+    for index, entry in enumerate(symbols):
+        if not isinstance(entry, dict):
+            raise ValueError(f"scaffold symbol entry at index {index} must be a dict")
+
+        symbol = entry.get("symbol")
+        if not isinstance(symbol, str) or not symbol:
+            raise ValueError(
+                f"scaffold symbol entry at index {index} has invalid symbol "
+                f"{symbol!r}"
+            )
+        if symbol in seen_symbols:
+            raise ValueError(f"Duplicate scaffold symbol: {symbol}")
+        seen_symbols.add(symbol)
+
+        scaffold_status = entry.get("scaffold_status")
+
+        if scaffold_status == MATERIALIZED_DIAGNOSTIC_ROWS:
+            _validate_materialized_scaffold_entry(entry, symbol)
+            policy_symbols.append(
+                {
+                    "symbol": symbol,
+                    "scaffold_status": MATERIALIZED_DIAGNOSTIC_ROWS,
+                    "policy_status": ELIGIBLE_FOR_FUTURE_FUNDING_ADJUSTMENT_POLICY,
+                    "canonicalization_policy": FLOOR_TO_SECOND,
+                    "funding_rate_column": "fundingRate",
+                    "funding_rate_unit": "decimal_rate_not_percent",
+                    "timestamp_match_policy": (
+                        EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP
+                    ),
+                    "row_availability_status": "COMPLETE",
+                    "total_rows": entry["total_rows"],
+                    "matched_rows": entry["matched_rows"],
+                    "funding_rate_present_rows": entry["funding_rate_present_rows"],
+                    "missing_funding_rows": entry["missing_funding_rows"],
+                    "duplicate_canonical_funding_rows": (
+                        entry["duplicate_canonical_funding_rows"]
+                    ),
+                    "future_application_required_inputs": {
+                        "explicit_position_side": (
+                            "FUTURE_STRATEGY_POSITION_SIDE_REQUIRED"
+                        ),
+                        "notional_or_size_source": (
+                            "FUTURE_STRATEGY_NOTIONAL_SOURCE_REQUIRED"
+                        ),
+                        "strategy_rule_source": (
+                            "FUTURE_STRATEGY_RULE_SOURCE_REQUIRED"
+                        ),
+                    },
+                }
+            )
+            counted_eligible += 1
+        elif scaffold_status == SKIPPED_BY_READINESS_GATE:
+            _validate_skipped_scaffold_entry(entry, symbol)
+            policy_symbols.append(
+                {
+                    "symbol": symbol,
+                    "scaffold_status": SKIPPED_BY_READINESS_GATE,
+                    "policy_status": BLOCKED_BY_READINESS_GATE,
+                    "blocked_reasons": list(entry["blocked_reasons"]),
+                }
+            )
+            counted_blocked += 1
+        else:
+            raise ValueError(
+                f"Unrecognized scaffold_status {scaffold_status!r} for symbol "
+                f"{symbol!r}"
+            )
+
+    if counted_eligible != count_fields["eligible_symbol_count"]:
+        raise ValueError(
+            f"Counted eligible symbols ({counted_eligible}) != scaffold "
+            f"eligible_symbol_count ({count_fields['eligible_symbol_count']})"
+        )
+    if counted_blocked != count_fields["blocked_symbol_count"]:
+        raise ValueError(
+            f"Counted blocked symbols ({counted_blocked}) != scaffold "
+            f"blocked_symbol_count ({count_fields['blocked_symbol_count']})"
+        )
+
+    return {
+        "calculation_status": FUNDING_ADJUSTMENT_POLICY_CONTRACT_DIAGNOSTIC_ONLY,
+        "funding_adjustment_application_status": NOT_EXECUTED,
+        "strategy_application_status": NOT_EXECUTED,
+        "pnl_application_status": NOT_EXECUTED,
+        "requires_scaffold_diagnostics": True,
+        "scaffold_section_required": "funding_adjusted_bars_scaffold_diagnostics",
+        "canonicalization_policy_required": FLOOR_TO_SECOND,
+        "funding_rate_column": "fundingRate",
+        "funding_rate_unit": "decimal_rate_not_percent",
+        "funding_rate_annualization_status": "NOT_ANNUALIZED",
+        "timestamp_match_policy": EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP,
+        "timestamp_policy_contract": {
+            "source": "SCAFFOLD_OUTPUT_ONLY",
+            "funding_timestamp_canonicalization_required": FLOOR_TO_SECOND,
+            "future_match_rule": (
+                EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP
+            ),
+            "nearest_neighbor_matching_allowed": False,
+            "forward_fill_allowed": False,
+            "backfill_allowed": False,
+            "interpolation_allowed": False,
+            "timezone_inference_allowed": False,
+            "exchange_clock_inference_allowed": False,
+        },
+        "eligibility_policy_contract": {
+            "eligible_scaffold_status_required": MATERIALIZED_DIAGNOSTIC_ROWS,
+            "skipped_scaffold_status_carried_forward": SKIPPED_BY_READINESS_GATE,
+            "blocked_reasons_carried_forward": True,
+            "hardcoded_symbol_list_used": False,
+        },
+        "funding_rate_policy_contract": {
+            "funding_rate_column": "fundingRate",
+            "funding_rate_unit": "decimal_rate_not_percent",
+            "annualization_allowed": False,
+            "compounding_allowed": False,
+            "missing_rate_inference_allowed": False,
+            "fail_closed_on_missing_or_invalid": True,
+        },
+        "position_side_policy_contract": {
+            "long_side_contract": (
+                "LONG_PAYS_POSITIVE_FUNDING_RECEIVES_NEGATIVE_FUNDING"
+            ),
+            "short_side_contract": (
+                "SHORT_RECEIVES_POSITIVE_FUNDING_PAYS_NEGATIVE_FUNDING"
+            ),
+            "position_side_source_required": (
+                "FUTURE_STRATEGY_POSITION_SIDE_REQUIRED"
+            ),
+            "position_side_inference_status": NOT_EXECUTED,
+            "position_side_application_status": NOT_EXECUTED,
+        },
+        "output_policy_contract": {
+            "may_summarize_eligible_and_skipped_symbols": True,
+            "may_include_policy_strings_and_validation_flags": True,
+            "emits_full_row_dataset": False,
+            "emits_ohlcv_values": False,
+            "emits_row_level_adjusted_values": False,
+            "emits_strategy_values": False,
+            "emits_performance_values": False,
+        },
+        "eligible_symbol_count": counted_eligible,
+        "blocked_symbol_count": counted_blocked,
+        "policy_symbol_count": len(policy_symbols),
+        "symbols": policy_symbols,
+    }
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -4231,6 +4578,7 @@ def build_real_validation_receipt(
     funding_to_bars_timestamp_canonicalization_diagnostics: dict | None = None,
     funding_application_readiness_gate_diagnostics: dict | None = None,
     funding_adjusted_bars_scaffold_diagnostics: dict | None = None,
+    funding_adjustment_policy_contract_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -4326,6 +4674,10 @@ def build_real_validation_receipt(
     if funding_adjusted_bars_scaffold_diagnostics is not None:
         receipt["funding_adjusted_bars_scaffold_diagnostics"] = (
             funding_adjusted_bars_scaffold_diagnostics
+        )
+    if funding_adjustment_policy_contract_diagnostics is not None:
+        receipt["funding_adjustment_policy_contract_diagnostics"] = (
+            funding_adjustment_policy_contract_diagnostics
         )
 
     return receipt
@@ -4656,6 +5008,15 @@ def main(argv: list[str] | None = None) -> int:
                 if funding_dir is not None
                 else None
             )
+            funding_adjustment_policy_contract_diagnostics = (
+                materialize_funding_adjustment_policy_contract_diagnostics(
+                    funding_adjusted_bars_scaffold_diagnostics=(
+                        funding_adjusted_bars_scaffold_diagnostics
+                    ),
+                )
+                if funding_dir is not None
+                else None
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -4688,6 +5049,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             funding_adjusted_bars_scaffold_diagnostics=(
                 funding_adjusted_bars_scaffold_diagnostics
+            ),
+            funding_adjustment_policy_contract_diagnostics=(
+                funding_adjustment_policy_contract_diagnostics
             ),
         )
     else:
