@@ -19,6 +19,7 @@ import json
 import subprocess
 import sys
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     SKIPPED_BY_READINESS_GATE,
     STRICT_CANONICAL_TIMESTAMP_EXACT_MATCH_NO_COLLISION_NO_AMBIGUITY,
     _canonicalization_symbol_policy,
+    _materialize_fixture_case,
     _parse_timestamp,
     _validate_blocked_readiness_evidence,
     _validate_eligible_readiness_evidence,
@@ -55,6 +57,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_application_readiness_gate_diagnostics,
     materialize_funding_adjusted_bars_scaffold_diagnostics,
     materialize_funding_adjustment_policy_contract_diagnostics,
+    materialize_funding_adjustment_arithmetic_scaffold_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -5942,3 +5945,637 @@ class TestFundingAdjustmentPolicyContractDiagnostics:
             materialize_funding_adjustment_policy_contract_diagnostics(
                 funding_adjusted_bars_scaffold_diagnostics=scaffold,
             )
+
+
+# ── Funding adjustment arithmetic scaffold diagnostics ──────────────────
+
+
+def _empty_valid_scaffold():
+    return {
+        "calculation_status": "FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY",
+        "funding_application_status": "DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY",
+        "canonicalization_policy_used": FLOOR_TO_SECOND,
+        "symbol_count": 0,
+        "eligible_symbol_count": 0,
+        "blocked_symbol_count": 0,
+        "materialized_symbol_count": 0,
+        "skipped_symbol_count": 0,
+        "symbols": [],
+    }
+
+
+def _valid_arithmetic_scaffold_contract(
+    *, side_overrides=None, output_overrides=None, **top_overrides
+):
+    """Build a real, valid funding_adjustment_policy_contract_diagnostics
+    dict (via the actual materializer, on an empty symbol scaffold) and
+    apply optional overrides for testing fail-closed behavior."""
+    contract = materialize_funding_adjustment_policy_contract_diagnostics(
+        funding_adjusted_bars_scaffold_diagnostics=_empty_valid_scaffold(),
+    )
+    contract.update(top_overrides)
+    if side_overrides:
+        contract["position_side_policy_contract"] = {
+            **contract["position_side_policy_contract"],
+            **side_overrides,
+        }
+    if output_overrides:
+        contract["output_policy_contract"] = {
+            **contract["output_policy_contract"],
+            **output_overrides,
+        }
+    return contract
+
+
+class TestFundingAdjustmentArithmeticScaffoldDiagnostics:
+    """40 test cases for
+    materialize_funding_adjustment_arithmetic_scaffold_diagnostics."""
+
+    # ── Test 1: Happy path emits six fixture cases and all pass ─────────────
+
+    def test_happy_path_emits_six_fixture_cases_all_pass(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        result = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        assert result["calculation_status"] == (
+            "FUNDING_ADJUSTMENT_ARITHMETIC_SCAFFOLD_DIAGNOSTIC_ONLY"
+        )
+        assert result["fixture_case_count"] == 6
+        assert result["passed_fixture_case_count"] == 6
+        assert result["failed_fixture_case_count"] == 0
+        assert len(result["fixture_cases"]) == 6
+        for case in result["fixture_cases"]:
+            assert case["fixture_status"] == "PASS"
+
+    # ── Test 2: Long positive funding produces negative cashflow ────────────
+
+    def test_long_positive_funding_produces_negative_cashflow(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        result = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        case = result["fixture_cases"][0]
+        assert case["side"] == "LONG"
+        assert Decimal(case["funding_rate"] if isinstance(case["funding_rate"], str) else str(case["funding_rate"])) > 0
+        assert Decimal(case["cashflow_per_notional_unit"]) < 0
+
+    # ── Test 3: Long negative funding produces positive cashflow ────────────
+
+    def test_long_negative_funding_produces_positive_cashflow(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        result = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        case = result["fixture_cases"][1]
+        assert case["side"] == "LONG"
+        assert Decimal(case["cashflow_per_notional_unit"]) > 0
+
+    # ── Test 4: Short positive funding produces positive cashflow ───────────
+
+    def test_short_positive_funding_produces_positive_cashflow(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        result = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        case = result["fixture_cases"][2]
+        assert case["side"] == "SHORT"
+        assert Decimal(case["cashflow_per_notional_unit"]) > 0
+
+    # ── Test 5: Short negative funding produces negative cashflow ───────────
+
+    def test_short_negative_funding_produces_negative_cashflow(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        result = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        case = result["fixture_cases"][3]
+        assert case["side"] == "SHORT"
+        assert Decimal(case["cashflow_per_notional_unit"]) < 0
+
+    # ── Test 6: Zero funding produces zero for long ──────────────────────────
+
+    def test_zero_funding_produces_zero_for_long(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        result = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        case = result["fixture_cases"][4]
+        assert case["side"] == "LONG"
+        assert Decimal(case["cashflow_per_notional_unit"]) == 0
+
+    # ── Test 7: Zero funding produces zero for short ─────────────────────────
+
+    def test_zero_funding_produces_zero_for_short(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        result = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        case = result["fixture_cases"][5]
+        assert case["side"] == "SHORT"
+        assert Decimal(case["cashflow_per_notional_unit"]) == 0
+
+    # ── Test 8: Decimal string inputs are accepted ───────────────────────────
+
+    def test_decimal_string_inputs_accepted(self):
+        case = _materialize_fixture_case(
+            {
+                "case_id": "string_case",
+                "side": "LONG",
+                "funding_rate": "0.01",
+                "notional_per_unit": "100",
+            }
+        )
+        assert case["fixture_status"] == "PASS"
+        assert Decimal(case["cashflow_per_notional_unit"]) == Decimal("-1.00")
+
+    # ── Test 9: Float inputs converted through Decimal(str(value)) ──────────
+
+    def test_float_inputs_converted_through_decimal_str(self):
+        case = _materialize_fixture_case(
+            {
+                "case_id": "float_case",
+                "side": "SHORT",
+                "funding_rate": 0.01,
+                "notional_per_unit": 100.0,
+            }
+        )
+        assert case["fixture_status"] == "PASS"
+        assert Decimal(case["cashflow_per_notional_unit"]) == Decimal(
+            str(Decimal(str(0.01)) * Decimal(str(100.0)))
+        )
+
+    # ── Test 10: Missing policy contract fails closed ────────────────────────
+
+    def test_missing_policy_contract_fails_closed(self):
+        with pytest.raises(
+            ValueError, match="funding_adjustment_policy_contract_diagnostics"
+        ):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=None,
+            )
+
+    # ── Test 11: Wrong policy calculation status fails closed ───────────────
+
+    def test_wrong_policy_calculation_status_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(calculation_status="WRONG")
+        with pytest.raises(ValueError, match="calculation_status"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 12: Wrong funding adjustment application status fails closed ──
+
+    def test_wrong_funding_adjustment_application_status_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            funding_adjustment_application_status="EXECUTED"
+        )
+        with pytest.raises(
+            ValueError, match="funding_adjustment_application_status"
+        ):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 13: Wrong strategy application status fails closed ─────────────
+
+    def test_wrong_strategy_application_status_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            strategy_application_status="EXECUTED"
+        )
+        with pytest.raises(ValueError, match="strategy_application_status"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 14: Wrong pnl application status fails closed ──────────────────
+
+    def test_wrong_pnl_application_status_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(pnl_application_status="EXECUTED")
+        with pytest.raises(ValueError, match="pnl_application_status"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 15: Wrong funding rate unit fails closed ────────────────────────
+
+    def test_wrong_funding_rate_unit_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(funding_rate_unit="percent")
+        with pytest.raises(ValueError, match="funding_rate_unit"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 16: Wrong annualization status fails closed ────────────────────
+
+    def test_wrong_annualization_status_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            funding_rate_annualization_status="ANNUALIZED"
+        )
+        with pytest.raises(ValueError, match="funding_rate_annualization_status"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 17: Wrong timestamp match policy fails closed ──────────────────
+
+    def test_wrong_timestamp_match_policy_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            timestamp_match_policy="NEAREST_NEIGHBOR"
+        )
+        with pytest.raises(ValueError, match="timestamp_match_policy"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 18: Wrong long-side contract fails closed ──────────────────────
+
+    def test_wrong_long_side_contract_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            side_overrides={"long_side_contract": "WRONG"}
+        )
+        with pytest.raises(ValueError, match="long_side_contract"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 19: Wrong short-side contract fails closed ─────────────────────
+
+    def test_wrong_short_side_contract_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            side_overrides={"short_side_contract": "WRONG"}
+        )
+        with pytest.raises(ValueError, match="short_side_contract"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 20: Position side inference/application not NOT_EXECUTED fails
+    #    closed ──────────────────────────────────────────────────────────────
+
+    def test_position_side_inference_not_not_executed_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            side_overrides={"position_side_inference_status": "EXECUTED"}
+        )
+        with pytest.raises(ValueError, match="position_side_inference_status"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    def test_position_side_application_not_not_executed_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            side_overrides={"position_side_application_status": "EXECUTED"}
+        )
+        with pytest.raises(ValueError, match="position_side_application_status"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 21: Output policy claiming row-level adjusted values fails
+    #    closed ──────────────────────────────────────────────────────────────
+
+    def test_output_policy_row_level_adjusted_values_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            output_overrides={"emits_row_level_adjusted_values": True}
+        )
+        with pytest.raises(ValueError, match="emits_row_level_adjusted_values"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 22: Output policy claiming strategy values fails closed ────────
+
+    def test_output_policy_strategy_values_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            output_overrides={"emits_strategy_values": True}
+        )
+        with pytest.raises(ValueError, match="emits_strategy_values"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 23: Output policy claiming performance values fails closed ─────
+
+    def test_output_policy_performance_values_fails_closed(self):
+        contract = _valid_arithmetic_scaffold_contract(
+            output_overrides={"emits_performance_values": True}
+        )
+        with pytest.raises(ValueError, match="emits_performance_values"):
+            materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                funding_adjustment_policy_contract_diagnostics=contract,
+            )
+
+    # ── Test 24: Unsupported side fails closed ────────────────────────────────
+
+    def test_unsupported_side_fails_closed(self):
+        with pytest.raises(ValueError, match="unsupported side"):
+            _materialize_fixture_case(
+                {
+                    "case_id": "x",
+                    "side": "MID",
+                    "funding_rate": 0.01,
+                    "notional_per_unit": 100,
+                }
+            )
+
+    # ── Test 25: Missing side fails closed ────────────────────────────────────
+
+    def test_missing_side_fails_closed(self):
+        with pytest.raises(ValueError, match="missing side"):
+            _materialize_fixture_case(
+                {
+                    "case_id": "x",
+                    "funding_rate": 0.01,
+                    "notional_per_unit": 100,
+                }
+            )
+
+    # ── Test 26: Malformed funding rate fails closed ─────────────────────────
+
+    def test_malformed_funding_rate_fails_closed(self):
+        with pytest.raises(ValueError, match="funding_rate is malformed"):
+            _materialize_fixture_case(
+                {
+                    "case_id": "x",
+                    "side": "LONG",
+                    "funding_rate": "not_a_number",
+                    "notional_per_unit": 100,
+                }
+            )
+
+    # ── Test 27: NaN funding rate fails closed ────────────────────────────────
+
+    def test_nan_funding_rate_fails_closed(self):
+        with pytest.raises(ValueError, match="funding_rate must be finite"):
+            _materialize_fixture_case(
+                {
+                    "case_id": "x",
+                    "side": "LONG",
+                    "funding_rate": float("nan"),
+                    "notional_per_unit": 100,
+                }
+            )
+
+    # ── Test 28: Infinite funding rate fails closed ──────────────────────────
+
+    def test_infinite_funding_rate_fails_closed(self):
+        with pytest.raises(ValueError, match="funding_rate must be finite"):
+            _materialize_fixture_case(
+                {
+                    "case_id": "x",
+                    "side": "LONG",
+                    "funding_rate": float("inf"),
+                    "notional_per_unit": 100,
+                }
+            )
+
+    # ── Test 29: Missing notional fails closed ────────────────────────────────
+
+    def test_missing_notional_fails_closed(self):
+        with pytest.raises(ValueError, match="missing notional_per_unit"):
+            _materialize_fixture_case(
+                {
+                    "case_id": "x",
+                    "side": "LONG",
+                    "funding_rate": 0.01,
+                }
+            )
+
+    # ── Test 30: Zero notional fails closed ───────────────────────────────────
+
+    def test_zero_notional_fails_closed(self):
+        with pytest.raises(ValueError, match="notional_per_unit must be positive"):
+            _materialize_fixture_case(
+                {
+                    "case_id": "x",
+                    "side": "LONG",
+                    "funding_rate": 0.01,
+                    "notional_per_unit": 0,
+                }
+            )
+
+    # ── Test 31: Negative notional fails closed ───────────────────────────────
+
+    def test_negative_notional_fails_closed(self):
+        with pytest.raises(ValueError, match="notional_per_unit must be positive"):
+            _materialize_fixture_case(
+                {
+                    "case_id": "x",
+                    "side": "LONG",
+                    "funding_rate": 0.01,
+                    "notional_per_unit": -100,
+                }
+            )
+
+    # ── Test 32: Malformed notional fails closed ──────────────────────────────
+
+    def test_malformed_notional_fails_closed(self):
+        with pytest.raises(ValueError, match="notional_per_unit is malformed"):
+            _materialize_fixture_case(
+                {
+                    "case_id": "x",
+                    "side": "LONG",
+                    "funding_rate": 0.01,
+                    "notional_per_unit": "not_a_number",
+                }
+            )
+
+    # ── Test 33: Fixture expected mismatch fails closed ──────────────────────
+
+    def test_fixture_expected_mismatch_fails_closed(self):
+        with pytest.raises(ValueError, match="does not equal expected"):
+            _materialize_fixture_case(
+                {
+                    "case_id": "x",
+                    "side": "LONG",
+                    "funding_rate": 0.01,
+                    "notional_per_unit": 100,
+                    "expected_cashflow_per_notional_unit": "999",
+                }
+            )
+
+    # ── Test 34: CLI with funding includes arithmetic scaffold section ──────
+
+    def test_cli_with_funding_includes_arithmetic_scaffold_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+        (funding_dir / "BTCUSDT_funding.csv").write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,-0.0001,50200.0\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_arith_scaffold_cli_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                    "--funding-dir", str(funding_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjustment_arithmetic_scaffold_diagnostics" in written
+            section = written["funding_adjustment_arithmetic_scaffold_diagnostics"]
+            assert section["fixture_case_count"] == 6
+            assert section["passed_fixture_case_count"] == 6
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 35: CLI without funding omits arithmetic scaffold section ──────
+
+    def test_cli_without_funding_omits_arithmetic_scaffold_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_arith_scaffold_cli_no_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert (
+                "funding_adjustment_arithmetic_scaffold_diagnostics" not in written
+            )
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 36: Receipt final verdict remains blocked ────────────────────────
+
+    def test_receipt_final_verdict_remains_blocked(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        arithmetic = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_policy_contract_diagnostics=contract,
+            funding_adjustment_arithmetic_scaffold_diagnostics=arithmetic,
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        validate_real_validation_receipt(receipt)  # must not raise
+
+    # ── Test 37: Required outputs remain false ────────────────────────────────
+
+    def test_required_outputs_remain_false(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        arithmetic = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_policy_contract_diagnostics=contract,
+            funding_adjustment_arithmetic_scaffold_diagnostics=arithmetic,
+        )
+        for value in receipt["required_outputs_present"].values():
+            assert value is False
+
+    # ── Test 38: Forbidden calculations remain false ─────────────────────────
+
+    def test_forbidden_calculations_remain_false(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        arithmetic = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_policy_contract_diagnostics=contract,
+            funding_adjustment_arithmetic_scaffold_diagnostics=arithmetic,
+        )
+        for key, value in receipt["forbidden_calculation_status"].items():
+            assert value is False, f"{key} must be False"
+
+    # ── Test 39: Guardrails remain true ───────────────────────────────────────
+
+    def test_guardrails_remain_true(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        arithmetic = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_policy_contract_diagnostics=contract,
+            funding_adjustment_arithmetic_scaffold_diagnostics=arithmetic,
+        )
+        for key, value in receipt["guardrail_status"].items():
+            assert value is True, f"{key} must be True"
+
+    # ── Test 40: Safety-key regression ────────────────────────────────────────
+
+    def test_safety_key_regression(self):
+        contract = _valid_arithmetic_scaffold_contract()
+        arithmetic = materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        all_keys = _all_dict_keys(arithmetic)
+        forbidden = {
+            "PnL", "Sharpe", "edge", "strategy-performance",
+            "risk", "trade", "trades", "signal", "signals",
+            "position", "positions", "portfolio", "return", "returns",
+            "funding_adjusted_return", "net_return_value",
+            "price_change", "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+        }
+        assert forbidden.isdisjoint(all_keys), (
+            f"Forbidden keys found: {forbidden & all_keys}"
+        )
+
+        def _all_values(value):
+            if isinstance(value, dict):
+                for v in value.values():
+                    yield from _all_values(v)
+            elif isinstance(value, list):
+                for v in value:
+                    yield from _all_values(v)
+            else:
+                yield value
+
+        for case in arithmetic["fixture_cases"]:
+            assert set(case.keys()) == {
+                "case_id", "side", "funding_rate", "notional_per_unit",
+                "cashflow_per_notional_unit",
+                "expected_cashflow_per_notional_unit", "fixture_status",
+                "formula", "application_scope",
+            }
+        string_values = {v for v in _all_values(arithmetic) if isinstance(v, str)}
+        assert not any("BTCUSDT" in v or "ETHUSDT" in v for v in string_values)
+        assert not any("T00:00:00Z" in v for v in string_values)

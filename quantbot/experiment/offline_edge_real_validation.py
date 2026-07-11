@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import csv
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import math
@@ -65,6 +66,7 @@ __all__ = [
     "materialize_funding_application_readiness_gate_diagnostics",
     "materialize_funding_adjusted_bars_scaffold_diagnostics",
     "materialize_funding_adjustment_policy_contract_diagnostics",
+    "materialize_funding_adjustment_arithmetic_scaffold_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -140,6 +142,61 @@ MATERIALIZED_DIAGNOSTIC_ROWS = "MATERIALIZED_DIAGNOSTIC_ROWS"
 ELIGIBLE_FOR_FUTURE_FUNDING_ADJUSTMENT_POLICY = "ELIGIBLE_FOR_FUTURE_FUNDING_ADJUSTMENT_POLICY"
 BLOCKED_BY_READINESS_GATE = "BLOCKED_BY_READINESS_GATE"
 EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP = "EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP"
+
+# === Funding adjustment arithmetic scaffold constants ===
+FUNDING_ADJUSTMENT_ARITHMETIC_SCAFFOLD_DIAGNOSTIC_ONLY = "FUNDING_ADJUSTMENT_ARITHMETIC_SCAFFOLD_DIAGNOSTIC_ONLY"
+FIXTURE_ONLY_NOT_APPLIED_TO_STRATEGY = "FIXTURE_ONLY_NOT_APPLIED_TO_STRATEGY"
+LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL = "LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL"
+EXPLICIT_FIXTURE_ONLY = "EXPLICIT_FIXTURE_ONLY"
+
+# Deterministic in-code fixture rows proving the funding cashflow sign
+# convention from funding_adjustment_policy_contract_diagnostics. Inputs and
+# expected outputs are both hardcoded here so a future edit to the formula
+# that silently breaks the sign convention fails closed instead of passing.
+_FUNDING_ARITHMETIC_FIXTURE_CASES: tuple[dict[str, Any], ...] = (
+    {
+        "case_id": "case_1_long_positive_funding",
+        "side": "LONG",
+        "funding_rate": 0.01,
+        "notional_per_unit": 100,
+        "expected_cashflow_per_notional_unit": "-1.0",
+    },
+    {
+        "case_id": "case_2_long_negative_funding",
+        "side": "LONG",
+        "funding_rate": -0.01,
+        "notional_per_unit": 100,
+        "expected_cashflow_per_notional_unit": "1.0",
+    },
+    {
+        "case_id": "case_3_short_positive_funding",
+        "side": "SHORT",
+        "funding_rate": 0.01,
+        "notional_per_unit": 100,
+        "expected_cashflow_per_notional_unit": "1.0",
+    },
+    {
+        "case_id": "case_4_short_negative_funding",
+        "side": "SHORT",
+        "funding_rate": -0.01,
+        "notional_per_unit": 100,
+        "expected_cashflow_per_notional_unit": "-1.0",
+    },
+    {
+        "case_id": "case_5_long_zero_funding",
+        "side": "LONG",
+        "funding_rate": 0.0,
+        "notional_per_unit": 100,
+        "expected_cashflow_per_notional_unit": "0.0",
+    },
+    {
+        "case_id": "case_6_short_zero_funding",
+        "side": "SHORT",
+        "funding_rate": 0.0,
+        "notional_per_unit": 100,
+        "expected_cashflow_per_notional_unit": "0.0",
+    },
+)
 
 PROD_BASE = Path("/srv/qnty")
 TMP_BASE = Path("/tmp")
@@ -4506,6 +4563,247 @@ def materialize_funding_adjustment_policy_contract_diagnostics(
     }
 
 
+_VALID_FUNDING_ARITHMETIC_FIXTURE_SIDES = frozenset({"LONG", "SHORT"})
+
+
+def _to_finite_decimal(value: Any, field_name: str, case_id: Any) -> Decimal:
+    """Convert *value* to a finite ``Decimal`` via ``Decimal(str(value))``.
+
+    Accepts ``int``, ``float``, or ``str``. Raises ``ValueError`` for any
+    other type, and for any value that converts to a non-finite (NaN or
+    Infinity) or malformed ``Decimal``.
+    """
+    if not isinstance(value, (int, float, str)):
+        raise ValueError(
+            f"fixture case {case_id!r} {field_name} must be int, float, or "
+            f"str, got {type(value).__name__}"
+        )
+    try:
+        decimal_value = Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ValueError(
+            f"fixture case {case_id!r} {field_name} is malformed: {value!r}"
+        ) from exc
+    if not decimal_value.is_finite():
+        raise ValueError(
+            f"fixture case {case_id!r} {field_name} must be finite "
+            f"(no NaN/Infinity), got {value!r}"
+        )
+    return decimal_value
+
+
+def _materialize_fixture_case(case: dict[str, Any]) -> dict[str, Any]:
+    """Validate one funding-cashflow fixture case and compute its diagnostic
+    cashflow-per-notional-unit value.
+
+    Consumes only explicit fixture inputs (``case_id``, ``side``,
+    ``funding_rate``, ``notional_per_unit``). Performs no strategy, PnL,
+    returns, or bar-row calculation. Fails closed on any missing,
+    unsupported, non-finite, or non-positive input, and on any mismatch
+    between the computed cashflow and an explicit
+    ``expected_cashflow_per_notional_unit`` fixture field, if present.
+    """
+    if not isinstance(case, dict):
+        raise ValueError("fixture case must be a dict")
+
+    case_id = case.get("case_id")
+    if not isinstance(case_id, str) or not case_id:
+        raise ValueError(f"fixture case_id is required, got {case_id!r}")
+
+    side = case.get("side")
+    if side is None:
+        raise ValueError(f"fixture case {case_id!r} is missing side")
+    if side not in _VALID_FUNDING_ARITHMETIC_FIXTURE_SIDES:
+        raise ValueError(
+            f"fixture case {case_id!r} has unsupported side {side!r}; must "
+            f"be one of {sorted(_VALID_FUNDING_ARITHMETIC_FIXTURE_SIDES)}"
+        )
+
+    if "funding_rate" not in case or case["funding_rate"] is None:
+        raise ValueError(f"fixture case {case_id!r} is missing funding_rate")
+    funding_rate = _to_finite_decimal(case["funding_rate"], "funding_rate", case_id)
+
+    if "notional_per_unit" not in case or case["notional_per_unit"] is None:
+        raise ValueError(
+            f"fixture case {case_id!r} is missing notional_per_unit"
+        )
+    notional_per_unit = _to_finite_decimal(
+        case["notional_per_unit"], "notional_per_unit", case_id
+    )
+    if notional_per_unit <= 0:
+        raise ValueError(
+            f"fixture case {case_id!r} notional_per_unit must be positive, "
+            f"got {notional_per_unit}"
+        )
+
+    if side == "LONG":
+        cashflow = -funding_rate * notional_per_unit
+    else:
+        cashflow = funding_rate * notional_per_unit
+
+    expected_raw = case.get("expected_cashflow_per_notional_unit")
+    if expected_raw is not None:
+        expected_decimal = _to_finite_decimal(
+            expected_raw, "expected_cashflow_per_notional_unit", case_id
+        )
+        if cashflow != expected_decimal:
+            raise ValueError(
+                f"fixture case {case_id!r} computed cashflow_per_notional_unit "
+                f"{cashflow} does not equal expected {expected_decimal}"
+            )
+    else:
+        expected_decimal = cashflow
+
+    return {
+        "case_id": case_id,
+        "side": side,
+        "funding_rate": case["funding_rate"],
+        "notional_per_unit": case["notional_per_unit"],
+        "cashflow_per_notional_unit": str(cashflow),
+        "expected_cashflow_per_notional_unit": str(expected_decimal),
+        "fixture_status": "PASS",
+        "formula": LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL,
+        "application_scope": "EXPLICIT_FIXTURE_ONLY_NOT_STRATEGY",
+    }
+
+
+def materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+    *,
+    funding_adjustment_policy_contract_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Materialize the diagnostic-only funding adjustment arithmetic scaffold.
+
+    Proves the long/short funding cashflow sign convention documented by
+    ``funding_adjustment_policy_contract_diagnostics`` on tiny, deterministic,
+    in-code fixture rows only. This function performs no strategy, bars,
+    returns, PnL, Sharpe, edge, trade, position, signal, portfolio,
+    drawdown, risk, or live-readiness calculation, and consumes no real row
+    samples, symbols, timestamps, or OHLCV data.
+    """
+    contract = funding_adjustment_policy_contract_diagnostics
+    if not contract or not isinstance(contract, dict):
+        raise ValueError(
+            "funding_adjustment_policy_contract_diagnostics is required and "
+            "must be a non-empty dict"
+        )
+
+    def _require(d: dict[str, Any], key: str, expected: Any, prefix: str = "") -> None:
+        actual = d.get(key)
+        if actual != expected:
+            raise ValueError(
+                f"Expected funding_adjustment_policy_contract_diagnostics."
+                f"{prefix}{key}={expected!r}, got {actual!r}"
+            )
+
+    _require(contract, "calculation_status", FUNDING_ADJUSTMENT_POLICY_CONTRACT_DIAGNOSTIC_ONLY)
+    _require(contract, "funding_adjustment_application_status", NOT_EXECUTED)
+    _require(contract, "strategy_application_status", NOT_EXECUTED)
+    _require(contract, "pnl_application_status", NOT_EXECUTED)
+    _require(contract, "funding_rate_unit", "decimal_rate_not_percent")
+    _require(contract, "funding_rate_annualization_status", "NOT_ANNUALIZED")
+    _require(
+        contract,
+        "timestamp_match_policy",
+        EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP,
+    )
+
+    side_contract = contract.get("position_side_policy_contract")
+    if not isinstance(side_contract, dict):
+        raise ValueError(
+            "funding_adjustment_policy_contract_diagnostics."
+            "position_side_policy_contract must be a dict"
+        )
+    _require(
+        side_contract,
+        "long_side_contract",
+        "LONG_PAYS_POSITIVE_FUNDING_RECEIVES_NEGATIVE_FUNDING",
+        prefix="position_side_policy_contract.",
+    )
+    _require(
+        side_contract,
+        "short_side_contract",
+        "SHORT_RECEIVES_POSITIVE_FUNDING_PAYS_NEGATIVE_FUNDING",
+        prefix="position_side_policy_contract.",
+    )
+    _require(
+        side_contract,
+        "position_side_inference_status",
+        NOT_EXECUTED,
+        prefix="position_side_policy_contract.",
+    )
+    _require(
+        side_contract,
+        "position_side_application_status",
+        NOT_EXECUTED,
+        prefix="position_side_policy_contract.",
+    )
+
+    output_contract = contract.get("output_policy_contract")
+    if not isinstance(output_contract, dict):
+        raise ValueError(
+            "funding_adjustment_policy_contract_diagnostics."
+            "output_policy_contract must be a dict"
+        )
+    _require(
+        output_contract,
+        "emits_row_level_adjusted_values",
+        False,
+        prefix="output_policy_contract.",
+    )
+    _require(
+        output_contract,
+        "emits_strategy_values",
+        False,
+        prefix="output_policy_contract.",
+    )
+    _require(
+        output_contract,
+        "emits_performance_values",
+        False,
+        prefix="output_policy_contract.",
+    )
+
+    fixture_cases = [
+        _materialize_fixture_case(dict(raw_case))
+        for raw_case in _FUNDING_ARITHMETIC_FIXTURE_CASES
+    ]
+
+    passed_count = sum(
+        1 for case in fixture_cases if case["fixture_status"] == "PASS"
+    )
+    failed_count = len(fixture_cases) - passed_count
+    if failed_count:
+        raise ValueError(
+            f"{failed_count} funding adjustment arithmetic fixture case(s) "
+            f"did not pass"
+        )
+
+    result = {
+        "calculation_status": FUNDING_ADJUSTMENT_ARITHMETIC_SCAFFOLD_DIAGNOSTIC_ONLY,
+        "funding_adjustment_application_status": FIXTURE_ONLY_NOT_APPLIED_TO_STRATEGY,
+        "strategy_application_status": NOT_EXECUTED,
+        "pnl_application_status": NOT_EXECUTED,
+        "requires_policy_contract_diagnostics": True,
+        "policy_contract_section_required": (
+            "funding_adjustment_policy_contract_diagnostics"
+        ),
+        "funding_rate_unit": "decimal_rate_not_percent",
+        "annualization_status": "NOT_ANNUALIZED",
+        "compounding_status": "NOT_COMPOUNDED",
+        "side_source": EXPLICIT_FIXTURE_ONLY,
+        "notional_source": EXPLICIT_FIXTURE_ONLY,
+        "strategy_rule_source": NOT_EXECUTED,
+        "fixture_case_count": len(fixture_cases),
+        "passed_fixture_case_count": passed_count,
+        "failed_fixture_case_count": failed_count,
+        "fixture_cases": fixture_cases,
+    }
+    _assert_no_forbidden_calculation_keys(
+        result, "$.funding_adjustment_arithmetic_scaffold_diagnostics"
+    )
+    return result
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -4579,6 +4877,7 @@ def build_real_validation_receipt(
     funding_application_readiness_gate_diagnostics: dict | None = None,
     funding_adjusted_bars_scaffold_diagnostics: dict | None = None,
     funding_adjustment_policy_contract_diagnostics: dict | None = None,
+    funding_adjustment_arithmetic_scaffold_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -4678,6 +4977,10 @@ def build_real_validation_receipt(
     if funding_adjustment_policy_contract_diagnostics is not None:
         receipt["funding_adjustment_policy_contract_diagnostics"] = (
             funding_adjustment_policy_contract_diagnostics
+        )
+    if funding_adjustment_arithmetic_scaffold_diagnostics is not None:
+        receipt["funding_adjustment_arithmetic_scaffold_diagnostics"] = (
+            funding_adjustment_arithmetic_scaffold_diagnostics
         )
 
     return receipt
@@ -5017,6 +5320,15 @@ def main(argv: list[str] | None = None) -> int:
                 if funding_dir is not None
                 else None
             )
+            funding_adjustment_arithmetic_scaffold_diagnostics = (
+                materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
+                    funding_adjustment_policy_contract_diagnostics=(
+                        funding_adjustment_policy_contract_diagnostics
+                    ),
+                )
+                if funding_dir is not None
+                else None
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -5052,6 +5364,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             funding_adjustment_policy_contract_diagnostics=(
                 funding_adjustment_policy_contract_diagnostics
+            ),
+            funding_adjustment_arithmetic_scaffold_diagnostics=(
+                funding_adjustment_arithmetic_scaffold_diagnostics
             ),
         )
     else:
