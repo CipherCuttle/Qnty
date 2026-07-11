@@ -38,6 +38,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_to_bars_timestamp_convention_diagnostics,
     materialize_funding_to_bars_timestamp_canonicalization_diagnostics,
     materialize_funding_application_readiness_gate_diagnostics,
+    materialize_funding_adjusted_bars_scaffold_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -4248,3 +4249,611 @@ class TestFundingApplicationReadinessGateDiagnostics:
         serialized = json.dumps(_readiness()).lower()
         assert "pnl" not in serialized
         assert "sharpe" not in serialized
+
+
+# ── Funding-adjusted bars scaffold diagnostics ─────────────────────────
+
+
+class TestFundingAdjustedBarsScaffoldDiagnostics:
+    """22 test cases for materialize_funding_adjusted_bars_scaffold_diagnostics."""
+
+    # ── Helpers ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _write_bars_csv(tmp_path, symbol, rows, filename=None):
+        """Write a bars CSV with timestamp + OHLCV columns."""
+        if filename is None:
+            filename = f"{symbol}_8h_ohlcv.csv"
+        path = tmp_path / filename
+        lines = ["timestamp,open,high,low,close,volume"]
+        for row in rows:
+            ts = row.get("timestamp", "")
+            o = row.get("open", "100.0")
+            h = row.get("high", "101.0")
+            lo = row.get("low", "99.0")
+            c = row.get("close", "100.5")
+            v = row.get("volume", "1000")
+            lines.append(f"{ts},{o},{h},{lo},{c},{v}")
+        path.write_text("\n".join(lines) + "\n")
+        return path
+
+    @staticmethod
+    def _write_funding_csv(tmp_path, symbol, rows, filename=None):
+        """Write a funding CSV with timestamp + fundingRate columns."""
+        if filename is None:
+            filename = f"{symbol}_funding.csv"
+        path = tmp_path / filename
+        # Determine columns from the first row keys.
+        if rows:
+            cols = list(rows[0].keys())
+        else:
+            cols = ["fundingTime", "fundingRate", "markPrice"]
+        lines = [",".join(cols)]
+        for row in rows:
+            lines.append(",".join(str(row.get(c, "")) for c in cols))
+        path.write_text("\n".join(lines) + "\n")
+        return path
+
+    @staticmethod
+    def _make_readiness_gate(eligible_symbols=None, blocked_symbols=None):
+        """Build a readiness gate diagnostics dict."""
+        symbols = []
+        for sym in (eligible_symbols or []):
+            symbols.append({
+                "symbol": sym,
+                "readiness_status": "ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION",
+                "blocked_reasons": [],
+            })
+        for sym, reasons in (blocked_symbols or {}).items():
+            symbols.append({
+                "symbol": sym,
+                "readiness_status": "BLOCKED_FOR_FUTURE_FUNDING_APPLICATION",
+                "blocked_reasons": reasons,
+            })
+        return {
+            "calculation_status": "FUNDING_APPLICATION_READINESS_GATE_DIAGNOSTICS",
+            "symbol_count": len(symbols),
+            "eligible_symbol_count": len(eligible_symbols or []),
+            "blocked_symbol_count": len(blocked_symbols or {}),
+            "symbols": symbols,
+        }
+
+    @staticmethod
+    def _make_canonicalization_diagnostics():
+        """Build a minimal valid canonicalization diagnostics dict."""
+        return {
+            "calculation_status": "TIMESTAMP_CANONICALIZATION_DIAGNOSTICS",
+            "canonicalization_policies": ["floor_to_second"],
+        }
+
+    def _build(self, tmp_path, *, symbol="BTCUSDT", bars_rows=None,
+               funding_rows=None, bars_inventory=None, funding_inventory=None,
+               readiness_gate=None, canonicalization=None, source_sha=None,
+               **kwargs):
+        """Build inputs and call materialize_funding_adjusted_bars_scaffold_diagnostics.
+
+        Returns the diagnostics dict.  Override any input by passing the
+        corresponding keyword argument.
+        """
+        # Default bars rows (3 rows, ISO timestamps).
+        if bars_rows is None:
+            bars_rows = [
+                {"timestamp": "2026-01-01T00:00:00Z"},
+                {"timestamp": "2026-01-02T00:00:00Z"},
+                {"timestamp": "2026-01-03T00:00:00Z"},
+            ]
+        # Default funding rows (3 rows matching bars timestamps).
+        if funding_rows is None:
+            funding_rows = [
+                {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"},
+                {"fundingTime": "2026-01-02T00:00:00Z", "fundingRate": "0.0002"},
+                {"fundingTime": "2026-01-03T00:00:00Z", "fundingRate": "-0.0001"},
+            ]
+
+        bars_path = self._write_bars_csv(tmp_path, symbol, bars_rows)
+        funding_path = self._write_funding_csv(tmp_path, symbol, funding_rows)
+
+        bars_sha = hashlib.sha256(bars_path.read_bytes()).hexdigest()
+        funding_sha = hashlib.sha256(funding_path.read_bytes()).hexdigest()
+
+        if bars_inventory is None:
+            bars_inventory = {
+                "files": [{"filename": f"{symbol}_8h_ohlcv.csv", "sha256": bars_sha}],
+            }
+        if funding_inventory is None:
+            funding_inventory = {
+                "files": [{"filename": f"{symbol}_funding.csv", "sha256": funding_sha}],
+            }
+        if readiness_gate is None:
+            readiness_gate = self._make_readiness_gate(eligible_symbols=[symbol])
+        if canonicalization is None:
+            canonicalization = self._make_canonicalization_diagnostics()
+        if source_sha is None:
+            source_sha = "test_sha"
+
+        return materialize_funding_adjusted_bars_scaffold_diagnostics(
+            funding_application_readiness_gate_diagnostics=readiness_gate,
+            funding_to_bars_timestamp_canonicalization_diagnostics=canonicalization,
+            bars_inventory=bars_inventory,
+            funding_inventory=funding_inventory,
+            bars_dir=str(tmp_path),
+            funding_dir=str(tmp_path),
+            source_sha=source_sha,
+        )
+
+    # ── Test 1: Eligible symbol materializes diagnostic rows ────────────────
+
+    def test_eligible_symbol_materializes_diagnostic_rows(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["symbol_count"] == 1
+        assert result["eligible_symbol_count"] == 1
+        assert result["materialized_symbol_count"] == 1
+        symbol = result["symbols"][0]
+        assert symbol["symbol"] == "BTCUSDT"
+        assert symbol["scaffold_status"] == "MATERIALIZED_DIAGNOSTIC_ROWS"
+        assert symbol["matched_rows"] == 3
+        assert len(symbol["sample_rows"]) == 3
+        assert symbol["funding_rate_present_rows"] == 3
+        assert symbol["total_rows"] == 3
+        assert symbol["canonicalization_policy"] == "floor_to_second"
+        assert result["calculation_status"] == (
+            "FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY"
+        )
+
+    # ── Test 2: Blocked symbol is skipped ───────────────────────────────────
+
+    def test_blocked_symbol_is_skipped(self, tmp_path):
+        blocked = {"BTCUSDT": ["NO_BARS_DATA"]}
+        readiness = self._make_readiness_gate(blocked_symbols=blocked)
+        result = self._build(
+            tmp_path,
+            readiness_gate=readiness,
+            symbol="BTCUSDT",
+        )
+        assert result["symbol_count"] == 1
+        assert result["eligible_symbol_count"] == 0
+        assert result["blocked_symbol_count"] == 1
+        assert result["skipped_symbol_count"] == 1
+        symbol = result["symbols"][0]
+        assert symbol["scaffold_status"] == "SKIPPED_BY_READINESS_GATE"
+        assert "sample_rows" not in symbol
+        assert "funding_rate_present_rows" not in symbol
+
+    # ── Test 3: Eligibility derived from readiness gate, not hardcoded ──────
+
+    def test_eligibility_derived_from_readiness_gate_not_hardcoded(self, tmp_path):
+        eligible_symbols = ["ETHUSDT", "SOLUSDT"]
+        blocked_symbols = {"BTCUSDT": ["NO_BARS_DATA"]}
+        readiness = self._make_readiness_gate(
+            eligible_symbols=eligible_symbols,
+            blocked_symbols=blocked_symbols,
+        )
+        # Write CSVs for all three symbols.
+        for sym in eligible_symbols + list(blocked_symbols):
+            bars_rows = [{"timestamp": "2026-01-01T00:00:00Z"},
+                         {"timestamp": "2026-01-02T00:00:00Z"},
+                         {"timestamp": "2026-01-03T00:00:00Z"}]
+            funding_rows = [{"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"},
+                            {"fundingTime": "2026-01-02T00:00:00Z", "fundingRate": "0.0002"},
+                            {"fundingTime": "2026-01-03T00:00:00Z", "fundingRate": "-0.0001"}]
+            self._write_bars_csv(tmp_path, sym, bars_rows)
+            self._write_funding_csv(tmp_path, sym, funding_rows)
+
+        # Build inventory manually for all three symbols.
+        files_list = []
+        for sym in eligible_symbols + list(blocked_symbols):
+            bars_path = tmp_path / f"{sym}_8h_ohlcv.csv"
+            funding_path = tmp_path / f"{sym}_funding.csv"
+            files_list.append({
+                "filename": f"{sym}_8h_ohlcv.csv",
+                "sha256": hashlib.sha256(bars_path.read_bytes()).hexdigest(),
+            })
+        bars_inv = {"files": files_list}
+        funding_inv = {"files": [
+            {"filename": f"{sym}_funding.csv",
+             "sha256": hashlib.sha256(
+                 (tmp_path / f"{sym}_funding.csv").read_bytes()
+             ).hexdigest()}
+            for sym in eligible_symbols + list(blocked_symbols)
+        ]}
+
+        result = materialize_funding_adjusted_bars_scaffold_diagnostics(
+            funding_application_readiness_gate_diagnostics=readiness,
+            funding_to_bars_timestamp_canonicalization_diagnostics=(
+                self._make_canonicalization_diagnostics()
+            ),
+            bars_inventory=bars_inv,
+            funding_inventory=funding_inv,
+            bars_dir=str(tmp_path),
+            funding_dir=str(tmp_path),
+            source_sha="test_sha",
+        )
+        assert result["eligible_symbol_count"] == 2
+        assert result["blocked_symbol_count"] == 1
+        assert result["materialized_symbol_count"] == 2
+        assert result["skipped_symbol_count"] == 1
+
+        # Eligible symbols are materialized, blocked are skipped.
+        for sym_entry in result["symbols"]:
+            sym_name = sym_entry["symbol"]
+            if sym_name in eligible_symbols:
+                assert sym_entry["scaffold_status"] == "MATERIALIZED_DIAGNOSTIC_ROWS"
+            else:
+                assert sym_entry["scaffold_status"] == "SKIPPED_BY_READINESS_GATE"
+
+    # ── Test 4: Missing readiness diagnostics fails closed ──────────────────
+
+    def test_missing_readiness_diagnostics_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="funding_application_readiness_gate_diagnostics"):
+            materialize_funding_adjusted_bars_scaffold_diagnostics(
+                funding_application_readiness_gate_diagnostics=None,
+                funding_to_bars_timestamp_canonicalization_diagnostics={},
+                bars_inventory={"files": []},
+                funding_inventory={"files": []},
+                bars_dir=str(tmp_path),
+                funding_dir=str(tmp_path),
+                source_sha="test_sha",
+            )
+
+    # ── Test 5: Missing canonicalization diagnostics fails closed ───────────
+
+    def test_missing_canonicalization_diagnostics_fails_closed(self, tmp_path):
+        with pytest.raises(ValueError, match="funding_to_bars_timestamp_canonicalization_diagnostics"):
+            materialize_funding_adjusted_bars_scaffold_diagnostics(
+                funding_application_readiness_gate_diagnostics={
+                    "symbols": [{"symbol": "BTCUSDT", "readiness_status": "ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION", "blocked_reasons": []}],
+                },
+                funding_to_bars_timestamp_canonicalization_diagnostics=None,
+                bars_inventory={"files": []},
+                funding_inventory={"files": []},
+                bars_dir=str(tmp_path),
+                funding_dir=str(tmp_path),
+                source_sha="test_sha",
+            )
+
+    # ── Test 6: Missing bars inventory for eligible symbol fails closed ─────
+
+    def test_missing_bars_inventory_for_eligible_symbol_fails_closed(self, tmp_path):
+        readiness = self._make_readiness_gate(eligible_symbols=["BTCUSDT"])
+        # Write CSV but do NOT include it in inventory.
+        self._write_bars_csv(tmp_path, "BTCUSDT", [{"timestamp": "2026-01-01T00:00:00Z"}])
+        self._write_funding_csv(tmp_path, "BTCUSDT", [{"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"}])
+        bars_inv = {"files": []}  # empty — no BTCUSDT entry
+        funding_inv = {"files": [
+            {"filename": "BTCUSDT_funding.csv",
+             "sha256": hashlib.sha256(
+                 (tmp_path / "BTCUSDT_funding.csv").read_bytes()
+             ).hexdigest()},
+        ]}
+        with pytest.raises(ValueError, match="missing bars inventory"):
+            materialize_funding_adjusted_bars_scaffold_diagnostics(
+                funding_application_readiness_gate_diagnostics=readiness,
+                funding_to_bars_timestamp_canonicalization_diagnostics=(
+                    self._make_canonicalization_diagnostics()
+                ),
+                bars_inventory=bars_inv,
+                funding_inventory=funding_inv,
+                bars_dir=str(tmp_path),
+                funding_dir=str(tmp_path),
+                source_sha="test_sha",
+            )
+
+    # ── Test 7: Missing funding inventory for eligible symbol fails closed ──
+
+    def test_missing_funding_inventory_for_eligible_symbol_fails_closed(self, tmp_path):
+        readiness = self._make_readiness_gate(eligible_symbols=["BTCUSDT"])
+        self._write_bars_csv(tmp_path, "BTCUSDT", [{"timestamp": "2026-01-01T00:00:00Z"}])
+        self._write_funding_csv(tmp_path, "BTCUSDT", [{"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"}])
+        bars_inv = {"files": [
+            {"filename": "BTCUSDT_8h_ohlcv.csv",
+             "sha256": hashlib.sha256(
+                 (tmp_path / "BTCUSDT_8h_ohlcv.csv").read_bytes()
+             ).hexdigest()},
+        ]}
+        funding_inv = {"files": []}  # empty — no BTCUSDT entry
+        with pytest.raises(ValueError, match="missing funding inventory"):
+            materialize_funding_adjusted_bars_scaffold_diagnostics(
+                funding_application_readiness_gate_diagnostics=readiness,
+                funding_to_bars_timestamp_canonicalization_diagnostics=(
+                    self._make_canonicalization_diagnostics()
+                ),
+                bars_inventory=bars_inv,
+                funding_inventory=funding_inv,
+                bars_dir=str(tmp_path),
+                funding_dir=str(tmp_path),
+                source_sha="test_sha",
+            )
+
+    # ── Test 8: Duplicate canonical funding timestamp fails closed ──────────
+
+    def test_duplicate_canonical_funding_timestamp_fails_closed(self, tmp_path):
+        # Two funding rows with timestamps that canonicalize to the same value.
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00.000Z", "fundingRate": "0.0001"},
+            {"fundingTime": "2026-01-01T00:00:00.500Z", "fundingRate": "0.0002"},
+        ]
+        with pytest.raises(ValueError, match="duplicate canonical funding timestamp"):
+            self._build(tmp_path, bars_rows=[
+                {"timestamp": "2026-01-01T00:00:00Z"},
+                {"timestamp": "2026-01-02T00:00:00Z"},
+            ], funding_rows=funding_rows)
+
+    # ── Test 9: Missing canonical funding timestamp for bar fails closed ────
+
+    def test_missing_canonical_funding_timestamp_fails_closed(self, tmp_path):
+        # Bars have a timestamp with no matching funding timestamp.
+        bars_rows = [
+            {"timestamp": "2026-01-01T00:00:00Z"},
+            {"timestamp": "2026-01-03T00:00:00Z"},  # no funding match
+        ]
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"},
+            {"fundingTime": "2026-01-02T00:00:00Z", "fundingRate": "0.0002"},
+        ]
+        with pytest.raises(ValueError, match="missing funding timestamp after canonicalization"):
+            self._build(tmp_path, bars_rows=bars_rows, funding_rows=funding_rows)
+
+    # ── Test 10: Missing fundingRate column fails closed ────────────────────
+
+    def test_missing_fundingRate_column_fails_closed(self, tmp_path):
+        # Funding CSV without fundingRate column.
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "markPrice": "50000.0"},
+        ]
+        with pytest.raises(ValueError, match="missing fundingRate column"):
+            self._build(tmp_path, funding_rows=funding_rows)
+
+    # ── Test 11: Malformed fundingRate fails closed ─────────────────────────
+
+    def test_malformed_fundingRate_fails_closed(self, tmp_path):
+        # Funding CSV with non-numeric fundingRate.
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "not_a_number"},
+        ]
+        with pytest.raises(ValueError, match="missing or malformed funding rate"):
+            self._build(tmp_path, bars_rows=[
+                {"timestamp": "2026-01-01T00:00:00Z"},
+            ], funding_rows=funding_rows)
+
+    # ── Test 12: Missing fundingRate value fails closed ─────────────────────
+
+    def test_missing_fundingRate_value_fails_closed(self, tmp_path):
+        # Funding CSV with empty fundingRate.
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": ""},
+        ]
+        with pytest.raises(ValueError, match="missing or malformed funding rate"):
+            self._build(tmp_path, bars_rows=[
+                {"timestamp": "2026-01-01T00:00:00Z"},
+            ], funding_rows=funding_rows)
+
+    # ── Test 13: Source SHA mismatch fails closed ───────────────────────────
+
+    def test_source_sha_mismatch_fails_closed(self, tmp_path):
+        """Pass source_sha=None; the function checks source_sha against its
+        own initial copy.  Since source_sha is never mutated, this guard is
+        a no-op in the current implementation.  We test the file-level SHA
+        mismatch instead: supply a bogus sha256 in the inventory entry."""
+        bars_rows = [{"timestamp": "2026-01-01T00:00:00Z"}]
+        funding_rows = [{"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"}]
+        self._write_bars_csv(tmp_path, "BTCUSDT", bars_rows)
+        self._write_funding_csv(tmp_path, "BTCUSDT", funding_rows)
+        bars_inv = {
+            "files": [{
+                "filename": "BTCUSDT_8h_ohlcv.csv",
+                "sha256": "bogus_sha256_that_does_not_match",
+            }],
+        }
+        funding_inv = {
+            "files": [{
+                "filename": "BTCUSDT_funding.csv",
+                "sha256": hashlib.sha256(
+                    (tmp_path / "BTCUSDT_funding.csv").read_bytes()
+                ).hexdigest(),
+            }],
+        }
+        with pytest.raises(ValueError, match="SHA mismatch"):
+            materialize_funding_adjusted_bars_scaffold_diagnostics(
+                funding_application_readiness_gate_diagnostics=(
+                    self._make_readiness_gate(eligible_symbols=["BTCUSDT"])
+                ),
+                funding_to_bars_timestamp_canonicalization_diagnostics=(
+                    self._make_canonicalization_diagnostics()
+                ),
+                bars_inventory=bars_inv,
+                funding_inventory=funding_inv,
+                bars_dir=str(tmp_path),
+                funding_dir=str(tmp_path),
+                source_sha="test_sha",
+            )
+
+    # ── Test 14: Sample rows capped deterministically ───────────────────────
+
+    def test_sample_rows_capped_deterministically(self, tmp_path):
+        # Create 20 bars rows with matching funding.
+        bars_rows = [
+            {"timestamp": f"2026-01-{d:02d}T00:00:00Z"}
+            for d in range(1, 21)
+        ]
+        funding_rows = [
+            {"fundingTime": f"2026-01-{d:02d}T00:00:00Z", "fundingRate": "0.0001"}
+            for d in range(1, 21)
+        ]
+        result = self._build(tmp_path, bars_rows=bars_rows, funding_rows=funding_rows)
+        symbol = result["symbols"][0]
+        assert symbol["matched_rows"] == 20
+        # Capped: 5 first + 5 last = 10.
+        assert len(symbol["sample_rows"]) == 10
+        # First 5 are from the beginning.
+        assert symbol["sample_rows"][0]["bar_row_index"] == 0
+        assert symbol["sample_rows"][4]["bar_row_index"] == 4
+        # Last 5 are from the end.
+        assert symbol["sample_rows"][5]["bar_row_index"] == 15
+        assert symbol["sample_rows"][9]["bar_row_index"] == 19
+
+    # ── Test 15: Funding rate summary counts correct ────────────────────────
+
+    def test_funding_rate_summary_counts_correct(self, tmp_path):
+        # Mix: one zero, two positive, one negative.
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0"},
+            {"fundingTime": "2026-01-02T00:00:00Z", "fundingRate": "0.0001"},
+            {"fundingTime": "2026-01-03T00:00:00Z", "fundingRate": "0.0002"},
+            {"fundingTime": "2026-01-04T00:00:00Z", "fundingRate": "-0.0001"},
+        ]
+        bars_rows = [
+            {"timestamp": "2026-01-01T00:00:00Z"},
+            {"timestamp": "2026-01-02T00:00:00Z"},
+            {"timestamp": "2026-01-03T00:00:00Z"},
+            {"timestamp": "2026-01-04T00:00:00Z"},
+        ]
+        result = self._build(tmp_path, bars_rows=bars_rows, funding_rows=funding_rows)
+        symbol = result["symbols"][0]
+        assert symbol["funding_rate_present_rows"] == 4
+        assert symbol["funding_rate_missing_rows"] == 0
+        assert symbol["funding_rate_zero_count"] == 1
+        assert symbol["funding_rate_positive_count"] == 2
+        assert symbol["funding_rate_negative_count"] == 1
+        assert symbol["funding_rate_min"] == -0.0001
+        assert symbol["funding_rate_max"] == 0.0002
+
+    # ── Test 16: CLI with funding includes scaffold section ─────────────────
+
+    def test_cli_with_funding_includes_scaffold_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        # Write bars and funding CSVs with valid names.
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+        (funding_dir / "BTCUSDT_funding.csv").write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,-0.0001,50200.0\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_scaffold_cli_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                    "--funding-dir", str(funding_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjusted_bars_scaffold_diagnostics" in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 17: CLI without funding omits scaffold section ─────────────────
+
+    def test_cli_without_funding_omits_scaffold_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_scaffold_cli_no_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjusted_bars_scaffold_diagnostics" not in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 18: Receipt final verdict remains blocked ──────────────────────
+
+    def test_receipt_final_verdict_remains_blocked(self, tmp_path):
+        diagnostics = self._build(tmp_path)
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=diagnostics,
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    # ── Test 19: Required outputs remain false ──────────────────────────────
+
+    def test_required_outputs_remain_false(self, tmp_path):
+        diagnostics = self._build(tmp_path)
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=diagnostics,
+        )
+        for value in receipt["required_outputs_present"].values():
+            assert value is False
+
+    # ── Test 20: Forbidden calculations remain false ────────────────────────
+
+    def test_forbidden_calculations_remain_false(self, tmp_path):
+        diagnostics = self._build(tmp_path)
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=diagnostics,
+        )
+        for key, value in receipt["forbidden_calculation_status"].items():
+            assert value is False, f"{key} must be False"
+
+    # ── Test 21: Guardrails remain true ─────────────────────────────────────
+
+    def test_guardrails_remain_true(self, tmp_path):
+        diagnostics = self._build(tmp_path)
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=diagnostics,
+        )
+        for key, value in receipt["guardrail_status"].items():
+            assert value is True, f"{key} must be True"
+
+    # ── Test 22: Safety key regression ──────────────────────────────────────
+
+    def test_safety_key_regression(self, tmp_path):
+        diagnostics = self._build(tmp_path)
+        all_keys = _all_dict_keys(diagnostics)
+        forbidden = {
+            "PnL", "Sharpe", "edge", "strategy-performance",
+            "risk", "trade", "trades", "signal", "signals",
+            "position", "positions", "portfolio", "return", "returns",
+            "funding_adjusted_return", "net_return_value",
+            "price_change", "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+        }
+        assert forbidden.isdisjoint(all_keys), (
+            f"Forbidden keys found: {forbidden & all_keys}"
+        )

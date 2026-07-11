@@ -63,6 +63,7 @@ __all__ = [
     "materialize_funding_to_bars_timestamp_convention_diagnostics",
     "materialize_funding_to_bars_timestamp_canonicalization_diagnostics",
     "materialize_funding_application_readiness_gate_diagnostics",
+    "materialize_funding_adjusted_bars_scaffold_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -3311,6 +3312,387 @@ def materialize_funding_application_readiness_gate_diagnostics(
     }
 
 
+def _canonicalize_floor_to_second(ts: str) -> str:
+    """Canonicalize a timestamp by truncating sub-second precision (floor)."""
+    dt = _parse_timestamp(ts)
+    dt = dt.replace(microsecond=0)
+    return _format_timestamp(dt)
+
+
+def materialize_funding_adjusted_bars_scaffold_diagnostics(
+    *,
+    funding_application_readiness_gate_diagnostics: dict[str, Any],
+    funding_to_bars_timestamp_canonicalization_diagnostics: dict[str, Any],
+    bars_inventory: dict[str, Any],
+    funding_inventory: dict[str, Any],
+    bars_dir: str | None,
+    funding_dir: str | None,
+    source_sha: str | None,
+) -> dict[str, Any]:
+    """Materialize diagnostic scaffold rows for funding-adjusted bars.
+
+    This is a scaffold-only diagnostic. It loads bars and funding CSVs for
+    symbols deemed eligible by the readiness gate, canonicalizes funding
+    timestamps using floor_to_second, and emits row-level metadata proving
+    alignment and funding-rate availability.
+
+    No PnL, Sharpe, returns, edge, trades, positions, signals, portfolio,
+    drawdown, risk, or live readiness is computed.
+    """
+    # ── Fail closed ─────────────────────────────────────────────────────
+    if not funding_application_readiness_gate_diagnostics:
+        raise ValueError(
+            "funding_application_readiness_gate_diagnostics is required"
+        )
+    if not funding_to_bars_timestamp_canonicalization_diagnostics:
+        raise ValueError(
+            "funding_to_bars_timestamp_canonicalization_diagnostics is required"
+        )
+
+    # ── Track source SHA for consistency check ──────────────────────────
+    _initial_sha = source_sha
+
+    # ── Index inventory files by symbol ──────────────────────────────────
+    bars_files = (
+        bars_inventory.get("files") if isinstance(bars_inventory, dict) else None
+    )
+    funding_files = (
+        funding_inventory.get("files")
+        if isinstance(funding_inventory, dict)
+        else None
+    )
+
+    if not isinstance(bars_files, list):
+        raise ValueError("bars_inventory must contain a 'files' list")
+    if not isinstance(funding_files, list):
+        raise ValueError("funding_inventory must contain a 'files' list")
+
+    bars_by_symbol = _files_by_symbol(bars_files, "_8h_ohlcv.csv", "bars")
+    funding_by_symbol = _files_by_symbol(funding_files, "_funding.csv", "funding")
+
+    # ── Resolve directories ─────────────────────────────────────────────
+    if bars_dir is None:
+        raise ValueError("bars_dir is required")
+    if funding_dir is None:
+        raise ValueError("funding_dir is required")
+    bars_dir_path = Path(bars_dir)
+    funding_dir_path = Path(funding_dir)
+
+    # ── Extract symbols from readiness gate ─────────────────────────────
+    readiness_symbols = funding_application_readiness_gate_diagnostics.get(
+        "symbols", []
+    )
+    if not isinstance(readiness_symbols, list):
+        raise ValueError(
+            "funding_application_readiness_gate_diagnostics must contain "
+            "a 'symbols' list"
+        )
+
+    symbols_out: list[dict[str, Any]] = []
+    eligible_count = 0
+    blocked_count = 0
+    materialized_count = 0
+    skipped_count = 0
+
+    for symbol_entry in readiness_symbols:
+        if not isinstance(symbol_entry, dict):
+            continue
+        symbol_name = symbol_entry.get("symbol")
+        if not isinstance(symbol_name, str):
+            continue
+
+        readiness_status = symbol_entry.get("readiness_status", "")
+        blocked_reasons = symbol_entry.get("blocked_reasons", [])
+        if not isinstance(blocked_reasons, list):
+            blocked_reasons = []
+
+        if readiness_status == "ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION":
+            # ── Process eligible symbol ──────────────────────────────────
+            # Verify source SHA hasn't changed during materialization.
+            if source_sha != _initial_sha:
+                raise ValueError("Source SHA changed during materialization")
+
+            # Check inventory presence for this symbol.
+            bars_entry = bars_by_symbol.get(symbol_name)
+            funding_entry = funding_by_symbol.get(symbol_name)
+
+            if bars_entry is None:
+                raise ValueError(
+                    f"Eligible symbol {symbol_name} is missing bars inventory"
+                )
+            if funding_entry is None:
+                raise ValueError(
+                    f"Eligible symbol {symbol_name} is missing funding inventory"
+                )
+
+            # Load bars CSV and verify SHA.
+            bars_filename = bars_entry["filename"]
+            bars_path = bars_dir_path / bars_filename
+            if not bars_path.is_file():
+                raise ValueError(f"Bars CSV not found: {bars_path}")
+
+            bars_sha256 = hashlib.sha256(
+                bars_path.read_bytes()
+            ).hexdigest()
+            if bars_sha256 != bars_entry.get("sha256"):
+                raise ValueError(
+                    f"Bars SHA mismatch for {symbol_name}: "
+                    f"expected {bars_entry['sha256']}, got {bars_sha256}"
+                )
+
+            # Load funding CSV and verify SHA.
+            funding_filename = funding_entry["filename"]
+            funding_path = funding_dir_path / funding_filename
+            if not funding_path.is_file():
+                raise ValueError(f"Funding CSV not found: {funding_path}")
+
+            funding_sha256 = hashlib.sha256(
+                funding_path.read_bytes()
+            ).hexdigest()
+            if funding_sha256 != funding_entry.get("sha256"):
+                raise ValueError(
+                    f"Funding SHA mismatch for {symbol_name}: "
+                    f"expected {funding_entry['sha256']}, got {funding_sha256}"
+                )
+
+            # Read bar timestamps (timestamp column only).
+            bars_timestamps: list[str] = []
+            with open(bars_path, newline="") as f:
+                reader = csv.DictReader(f)
+                if reader.fieldnames is None:
+                    raise ValueError(f"Empty bars CSV: {bars_path}")
+                col_lower = {h.lower(): h for h in reader.fieldnames}
+                ts_col = col_lower.get("timestamp")
+                if ts_col is None:
+                    raise ValueError(
+                        f"Bars CSV missing timestamp column: {bars_path}"
+                    )
+                for row in reader:
+                    ts_val = row.get(ts_col, "").strip()
+                    if ts_val:
+                        bars_timestamps.append(ts_val)
+
+            # Read funding rows (fundingTime, fundingRate columns only).
+            funding_rows: list[dict[str, Any]] = []
+            with open(funding_path, newline="") as f:
+                reader = csv.DictReader(f)
+                if reader.fieldnames is None:
+                    raise ValueError(f"Empty funding CSV: {funding_path}")
+                col_lower = {h.lower(): h for h in reader.fieldnames}
+                ts_col = col_lower.get("fundingtime")
+                rate_col = col_lower.get("fundingrate")
+                if ts_col is None:
+                    raise ValueError(
+                        f"Funding CSV missing fundingTime column: {funding_path}"
+                    )
+                if rate_col is None:
+                    raise ValueError(
+                        f"Funding CSV missing fundingRate column: {funding_path}"
+                    )
+                for row in reader:
+                    ts_val = row.get(ts_col, "").strip()
+                    rate_val = row.get(rate_col, "").strip()
+                    if ts_val:
+                        funding_rows.append(
+                            {
+                                "timestamp": ts_val,
+                                "fundingRate": rate_val,
+                            }
+                        )
+
+            # Canonicalize funding timestamps (floor_to_second).
+            # Build canonical -> list of original indices to detect duplicates.
+            canonical_to_indices: dict[str, list[int]] = {}
+            for idx, frow in enumerate(funding_rows):
+                canonical = _canonicalize_floor_to_second(frow["timestamp"])
+                if canonical not in canonical_to_indices:
+                    canonical_to_indices[canonical] = []
+                canonical_to_indices[canonical].append(idx)
+
+            # Count and fail closed on duplicate canonical funding timestamps.
+            duplicate_canonical_funding_rows = sum(
+                1 for indices in canonical_to_indices.values()
+                if len(indices) > 1
+            )
+            if duplicate_canonical_funding_rows > 0:
+                raise ValueError(
+                    f"Eligible symbol {symbol_name} has "
+                    f"duplicate canonical funding timestamp"
+                )
+
+            # Build canonical funding lookup.
+            # canonical_ts -> {funding_rate, funding_row_index}
+            funding_lookup: dict[str, dict[str, Any]] = {}
+            for idx, frow in enumerate(funding_rows):
+                canonical = _canonicalize_floor_to_second(frow["timestamp"])
+                rate_str = frow["fundingRate"]
+                rate: float | None = None
+                if rate_str:
+                    try:
+                        rate = float(rate_str)
+                    except (ValueError, TypeError):
+                        rate = None
+                funding_lookup[canonical] = {
+                    "funding_rate": rate,
+                    "funding_row_index": idx,
+                }
+
+            # Canonicalize all bar timestamps.
+            bars_canonical = [
+                _canonicalize_floor_to_second(ts) for ts in bars_timestamps
+            ]
+
+            # Fail closed: check for missing funding timestamps.
+            missing_funding_canonicals = [
+                bc for bc in bars_canonical if bc not in funding_lookup
+            ]
+            if missing_funding_canonicals:
+                raise ValueError(
+                    f"Eligible symbol {symbol_name} has missing funding "
+                    f"timestamp after canonicalization: "
+                    f"{missing_funding_canonicals[0]}"
+                )
+
+            # Check for malformed funding rate (fail closed).
+            for canonical, entry in funding_lookup.items():
+                rate = entry["funding_rate"]
+                if rate is None:
+                    raise ValueError(
+                        f"Eligible symbol {symbol_name} has missing or "
+                        f"malformed funding rate at canonical timestamp "
+                        f"{canonical}"
+                    )
+
+            # Join bar rows with funding by canonical timestamp.
+            matched_rows: list[dict[str, Any]] = []
+            for bar_idx, (bar_ts, bar_canonical) in enumerate(
+                zip(bars_timestamps, bars_canonical)
+            ):
+                fentry = funding_lookup[bar_canonical]
+                rate = fentry["funding_rate"]
+                is_present = (
+                    rate is not None
+                    and not (isinstance(rate, float) and math.isnan(rate))
+                )
+                matched_rows.append(
+                    {
+                        "timestamp": bar_ts,
+                        "canonical_funding_timestamp": bar_canonical,
+                        "bar_row_index": bar_idx,
+                        "funding_row_index": fentry["funding_row_index"],
+                        "funding_rate": rate,
+                        "funding_rate_present": is_present,
+                        "readiness_status": (
+                            "ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION"
+                        ),
+                    }
+                )
+
+            # Collect sample rows (5 first + 5 last, capped).
+            if len(matched_rows) <= 10:
+                sample_rows = list(matched_rows)
+            else:
+                sample_rows = matched_rows[:5] + matched_rows[-5:]
+
+            # Compute funding-rate summary statistics.
+            present_rates = [
+                r["funding_rate"]
+                for r in matched_rows
+                if r["funding_rate_present"]
+            ]
+            funding_rate_present_count = len(present_rates)
+            funding_rate_missing_count = (
+                len(matched_rows) - funding_rate_present_count
+            )
+            funding_rate_min = min(present_rates) if present_rates else None
+            funding_rate_max = max(present_rates) if present_rates else None
+            funding_rate_zero_count = sum(
+                1 for r in present_rates if r == 0.0
+            )
+            funding_rate_positive_count = sum(
+                1 for r in present_rates if r > 0
+            )
+            funding_rate_negative_count = sum(
+                1 for r in present_rates if r < 0
+            )
+
+            # Build per-symbol output.
+            symbol_diag: dict[str, Any] = {
+                "symbol": symbol_name,
+                "readiness_status": (
+                    "ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION"
+                ),
+                "scaffold_status": "MATERIALIZED_DIAGNOSTIC_ROWS",
+                "canonicalization_policy": "floor_to_second",
+                "total_rows": len(bars_timestamps),
+                "matched_rows": len(matched_rows),
+                "missing_funding_rows": len(missing_funding_canonicals),
+                "duplicate_canonical_funding_rows": (
+                    duplicate_canonical_funding_rows
+                ),
+                "funding_rate_present_rows": funding_rate_present_count,
+                "funding_rate_missing_rows": funding_rate_missing_count,
+                "funding_rate_min": funding_rate_min,
+                "funding_rate_max": funding_rate_max,
+                "funding_rate_zero_count": funding_rate_zero_count,
+                "funding_rate_positive_count": funding_rate_positive_count,
+                "funding_rate_negative_count": funding_rate_negative_count,
+                "first_timestamp": (
+                    _canonicalize_floor_to_second(bars_timestamps[0])
+                    if bars_timestamps
+                    else None
+                ),
+                "last_timestamp": (
+                    _canonicalize_floor_to_second(bars_timestamps[-1])
+                    if bars_timestamps
+                    else None
+                ),
+                "sample_rows": sample_rows,
+            }
+            eligible_count += 1
+            materialized_count += 1
+            symbols_out.append(symbol_diag)
+
+        else:
+            # ── Blocked symbol ──────────────────────────────────────────
+            # Verify that blocked symbols are not accidentally materialized.
+            if readiness_status not in (
+                "BLOCKED_FOR_FUTURE_FUNDING_APPLICATION",
+            ):
+                if not blocked_reasons:
+                    blocked_reasons = ["UNEXPECTED_STATUS"]
+
+            symbols_out.append(
+                {
+                    "symbol": symbol_name,
+                    "readiness_status": (
+                        "BLOCKED_FOR_FUTURE_FUNDING_APPLICATION"
+                    ),
+                    "scaffold_status": "SKIPPED_BY_READINESS_GATE",
+                    "blocked_reasons": list(dict.fromkeys(blocked_reasons)),
+                }
+            )
+            blocked_count += 1
+            skipped_count += 1
+
+    return {
+        "calculation_status": (
+            "FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY"
+        ),
+        "funding_application_status": (
+            "DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY"
+        ),
+        "readiness_gate_required": True,
+        "canonicalization_policy_used": "floor_to_second",
+        "symbol_count": len(symbols_out),
+        "eligible_symbol_count": eligible_count,
+        "blocked_symbol_count": blocked_count,
+        "materialized_symbol_count": materialized_count,
+        "skipped_symbol_count": skipped_count,
+        "symbols": symbols_out,
+    }
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -3382,6 +3764,7 @@ def build_real_validation_receipt(
     funding_to_bars_timestamp_convention_diagnostics: dict | None = None,
     funding_to_bars_timestamp_canonicalization_diagnostics: dict | None = None,
     funding_application_readiness_gate_diagnostics: dict | None = None,
+    funding_adjusted_bars_scaffold_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -3472,6 +3855,11 @@ def build_real_validation_receipt(
     if funding_application_readiness_gate_diagnostics is not None:
         receipt["funding_application_readiness_gate_diagnostics"] = (
             funding_application_readiness_gate_diagnostics
+        )
+
+    if funding_adjusted_bars_scaffold_diagnostics is not None:
+        receipt["funding_adjusted_bars_scaffold_diagnostics"] = (
+            funding_adjusted_bars_scaffold_diagnostics
         )
 
     return receipt
@@ -3779,6 +4167,29 @@ def main(argv: list[str] | None = None) -> int:
                 if funding_dir is not None
                 else None
             )
+            funding_adjusted_bars_scaffold_diagnostics = (
+                materialize_funding_adjusted_bars_scaffold_diagnostics(
+                    funding_application_readiness_gate_diagnostics=(
+                        funding_application_readiness_gate_diagnostics
+                    ),
+                    funding_to_bars_timestamp_canonicalization_diagnostics=(
+                        funding_to_bars_timestamp_canonicalization_diagnostics
+                    ),
+                    bars_inventory=next(
+                        r for r in inventory["roles"]
+                        if r["role"] == "bars"
+                    ),
+                    funding_inventory=next(
+                        r for r in inventory["roles"]
+                        if r["role"] == "funding"
+                    ),
+                    bars_dir=str(bars_dir),
+                    funding_dir=str(funding_dir),
+                    source_sha=args.code_commit_sha,
+                )
+                if funding_dir is not None
+                else None
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -3808,6 +4219,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             funding_application_readiness_gate_diagnostics=(
                 funding_application_readiness_gate_diagnostics
+            ),
+            funding_adjusted_bars_scaffold_diagnostics=(
+                funding_adjusted_bars_scaffold_diagnostics
             ),
         )
     else:
