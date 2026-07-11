@@ -4269,23 +4269,48 @@ class TestFundingApplicationReadinessGateDiagnostics:
 # ── Funding-adjusted bars scaffold diagnostics ─────────────────────────
 
 
+def _make_eligible_split_entry(
+    split_id="split_00",
+    partition="validation",
+    bars_count=3,
+):
+    """Build a single split partition entry shaped like the real output of
+    materialize_funding_application_readiness_gate_diagnostics (entry["splits"]
+    items), representing an eligible (not blocked) partition.
+    """
+    return {
+        "split_id": split_id,
+        "partition": partition,
+        "readiness_status": ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION,
+        "eligible_for_future_funding_application": True,
+        "empty_window_status": "NOT_EMPTY",
+        "blocked_reasons": [],
+        "evidence": _make_eligibility_evidence(bars_count=bars_count),
+    }
+
+
 def _make_eligible_symbol_entry(
     symbol="BTCUSDT",
     blocked_reasons=None,
     evidence=None,
+    splits=None,
 ):
     """Build a single eligible symbol entry."""
     if evidence is None:
         evidence = _make_eligibility_evidence(symbol)
+    if splits is None:
+        splits = [
+            _make_eligible_split_entry(
+                bars_count=evidence.get("bars_timestamp_count", 3)
+            )
+        ]
     return {
         "symbol": symbol,
         "readiness_status": ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION,
         "eligible_for_future_funding_application": True,
         "canonicalization_policy": FLOOR_TO_SECOND,
         "evidence": evidence,
-        "splits": [
-            {"split_partition_status": ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION},
-        ],
+        "splits": splits,
         "blocked_reasons": blocked_reasons or [],
     }
 
@@ -5258,3 +5283,113 @@ class TestFundingAdjustedBarsScaffoldDiagnostics:
     def test_malformed_readiness_gate_not_dict_fails_closed(self):
         with pytest.raises(ValueError, match="must be a dict"):
             _validate_scaffold_readiness_gate("not_a_dict")
+
+    # ── Test 45: Blocked top-level split partition fails closed (unit) ──────
+
+    def test_eligible_symbol_blocked_top_level_split_fails_closed(self):
+        """A blocked entry['splits'] partition must fail closed, even though
+        the symbol entry itself is otherwise eligible with matching evidence.
+        """
+        blocked_split = _make_eligible_split_entry()
+        blocked_split["readiness_status"] = BLOCKED_FOR_FUTURE_FUNDING_APPLICATION
+        blocked_split["eligible_for_future_funding_application"] = False
+        blocked_split["empty_window_status"] = "NOT_EMPTY"
+        blocked_split["blocked_reasons"] = ["SOME_BLOCK"]
+        entry = _make_eligible_symbol_entry(splits=[blocked_split])
+        with pytest.raises(ValueError, match="split partition"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 46: Blocked top-level split partition fails before CSV read ────
+
+    def test_eligible_symbol_blocked_split_fails_before_csv_read(self, tmp_path):
+        """The full scaffold must raise on a blocked split before any CSV is
+        read or materialized, since split validation runs in Step C, ahead of
+        the per-symbol CSV materialization loop.
+        """
+        blocked_split = _make_eligible_split_entry()
+        blocked_split["readiness_status"] = BLOCKED_FOR_FUTURE_FUNDING_APPLICATION
+        blocked_split["eligible_for_future_funding_application"] = False
+        blocked_split["empty_window_status"] = "NOT_EMPTY"
+        blocked_split["blocked_reasons"] = ["SOME_BLOCK"]
+        entry = _make_eligible_symbol_entry(splits=[blocked_split])
+        readiness_gate = self._make_readiness_gate(symbols_data=[entry])
+        with pytest.raises(ValueError, match="split partition"):
+            self._build(tmp_path, readiness_gate=readiness_gate)
+
+    # ── Test 47: Missing splits key fails closed ─────────────────────────────
+
+    def test_eligible_symbol_missing_splits_fails_closed(self):
+        entry = _make_eligible_symbol_entry()
+        del entry["splits"]
+        with pytest.raises(ValueError, match="splits"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 48: Non-list splits fails closed ────────────────────────────────
+
+    def test_eligible_symbol_non_list_splits_fails_closed(self):
+        entry = _make_eligible_symbol_entry(splits="not_a_list")
+        with pytest.raises(ValueError, match="splits"):
+            _validate_eligible_readiness_evidence(
+                entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+            )
+
+    # ── Test 49: Empty-both-not-blocking split partition passes ─────────────
+
+    def test_eligible_symbol_empty_both_not_blocking_split_passes(self):
+        """A split with empty_window_status=EMPTY_BOTH_NOT_BLOCKING and no
+        blockers is an acceptable eligible-symbol split partition.
+        """
+        empty_split = _make_eligible_split_entry()
+        empty_split["readiness_status"] = ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION
+        empty_split["eligible_for_future_funding_application"] = True
+        empty_split["empty_window_status"] = EMPTY_BOTH_NOT_BLOCKING
+        empty_split["blocked_reasons"] = []
+        entry = _make_eligible_symbol_entry(splits=[empty_split])
+        _validate_eligible_readiness_evidence(
+            entry, "BTCUSDT", self._make_canonicalization_diagnostics()
+        )  # should not raise
+
+    # ── Tests 50-54: Missing canonicalization policy fields fail closed ─────
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "canonicalized_funding_timestamp_count",
+            "bars_without_canonicalized_funding_count",
+            "canonicalized_funding_without_bars_count",
+            "funding_timestamp_collision_count",
+            "ambiguous_nearest_bar_count",
+        ],
+    )
+    def test_canonicalization_policy_missing_required_field_fails_closed(self, field):
+        entry = _make_eligible_symbol_entry()
+        diag = self._make_canonicalization_diagnostics()
+        del diag["symbols"][0]["canonicalization_policies"][0][field]
+        with pytest.raises(ValueError, match=field):
+            _validate_eligible_readiness_evidence(entry, "BTCUSDT", diag)
+
+    # ── Test 55: Missing structural_flags fails closed ───────────────────────
+
+    def test_canonicalization_missing_structural_flags_fails_closed(self):
+        entry = _make_eligible_symbol_entry()
+        diag = self._make_canonicalization_diagnostics()
+        del diag["symbols"][0]["structural_flags"]
+        with pytest.raises(ValueError, match="structural_flags"):
+            _validate_eligible_readiness_evidence(entry, "BTCUSDT", diag)
+
+    # ── Test 56: Missing floor_canonicalized_history_range_status fails closed
+
+    def test_canonicalization_missing_range_status_fails_closed(self):
+        entry = _make_eligible_symbol_entry()
+        diag = self._make_canonicalization_diagnostics()
+        del diag["symbols"][0]["structural_flags"][
+            "floor_canonicalized_history_range_status"
+        ]
+        with pytest.raises(
+            ValueError, match="floor_canonicalized_history_range_status"
+        ):
+            _validate_eligible_readiness_evidence(entry, "BTCUSDT", diag)

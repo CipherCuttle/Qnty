@@ -3558,15 +3558,56 @@ def _validate_eligible_readiness_evidence(
             f"for eligible {symbol!r}"
         )
 
-    # Split partitions validation
-    splits = evidence.get("splits")
-    if splits is not None:
-        for split_entry in splits:
-            split_status = split_entry.get("split_partition_status") if isinstance(split_entry, dict) else None
-            if split_status not in (ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION, EMPTY_BOTH_NOT_BLOCKING):
-                raise ValueError(
-                    f"Unexpected split_partition_status {split_status!r} for {symbol!r}"
-                )
+    # Split partitions validation — split diagnostics live at the symbol-entry
+    # level (entry["splits"]) as emitted by
+    # materialize_funding_application_readiness_gate_diagnostics, not inside
+    # evidence. Missing or malformed split diagnostics must fail closed rather
+    # than be silently skipped.
+    splits = entry.get("splits")
+    if not isinstance(splits, list):
+        raise ValueError(
+            f"Eligible symbol {symbol!r} missing splits or splits is not a list, "
+            f"got {type(splits).__name__}"
+        )
+
+    for index, split_entry in enumerate(splits):
+        if not isinstance(split_entry, dict):
+            raise ValueError(
+                f"Split partition at index {index} must be a dict for eligible "
+                f"symbol {symbol!r}, got {type(split_entry).__name__}"
+            )
+
+        split_id = split_entry.get("split_id")
+        split_eligible = split_entry.get("eligible_for_future_funding_application")
+        split_readiness_status = split_entry.get("readiness_status")
+        empty_window_status = split_entry.get("empty_window_status")
+        split_blocked_reasons = split_entry.get("blocked_reasons")
+
+        if not isinstance(split_blocked_reasons, list):
+            raise ValueError(
+                f"Split partition {split_id!r} blocked_reasons must be a list "
+                f"for eligible symbol {symbol!r}, got "
+                f"{type(split_blocked_reasons).__name__}"
+            )
+
+        is_eligible_split = (
+            split_eligible is True
+            and split_readiness_status == ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION
+        )
+        is_empty_not_blocking_split = (
+            empty_window_status == EMPTY_BOTH_NOT_BLOCKING
+            and not split_blocked_reasons
+        )
+
+        if not (is_eligible_split or is_empty_not_blocking_split):
+            raise ValueError(
+                f"Blocked, malformed, or one-sided-empty split partition "
+                f"{split_id!r} for eligible symbol {symbol!r}: "
+                f"eligible_for_future_funding_application={split_eligible!r}, "
+                f"readiness_status={split_readiness_status!r}, "
+                f"empty_window_status={empty_window_status!r}, "
+                f"blocked_reasons={split_blocked_reasons!r}"
+            )
 
     # Cross-check canonicalization diagnostics
     _canonicalization_symbol_policy(symbol, canonicalization_diagnostics, bars_count)
@@ -3620,63 +3661,94 @@ def _canonicalization_symbol_policy(
             f"No floor_to_second policy found in canonicalization_policies for {symbol!r}"
         )
 
-    # Validate policy-level fields
-    can_status = floor_policy.get("canonicalization_status")
+    # All policy-level fields below are mandatory for eligible funding scaffold
+    # materialization: a missing field must raise, not be silently treated as
+    # a pass-through optional value.
+    _missing = object()
+
+    def _require_policy_field(field: str) -> Any:
+        value = floor_policy.get(field, _missing)
+        if value is _missing:
+            raise ValueError(
+                f"Missing required canonicalization policy field {field!r} "
+                f"for {symbol!r}"
+            )
+        return value
+
+    policy_name = _require_policy_field("policy_name")
+    if policy_name != FLOOR_TO_SECOND:
+        raise ValueError(
+            f"Canonicalization diagnostic policy_name={policy_name!r} "
+            f"for {symbol!r}, expected {FLOOR_TO_SECOND!r}"
+        )
+
+    can_status = _require_policy_field("canonicalization_status")
     if can_status != EXACT_CANONICAL_TIMESTAMP_SET_MATCH:
         raise ValueError(
             f"Canonicalization diagnostic canonicalization_status={can_status!r} "
             f"for {symbol!r}, expected {EXACT_CANONICAL_TIMESTAMP_SET_MATCH!r}"
         )
 
-    matched = floor_policy.get("exact_matched_after_canonicalization_count")
+    matched = _require_policy_field("exact_matched_after_canonicalization_count")
     if matched != bars_count:
         raise ValueError(
             f"Canonicalization matched count ({matched}) != bars count ({bars_count}) "
             f"for {symbol!r}"
         )
 
-    funding_count = floor_policy.get("canonicalized_funding_timestamp_count")
-    if funding_count is not None and funding_count != bars_count:
+    funding_count = _require_policy_field("canonicalized_funding_timestamp_count")
+    if funding_count != bars_count:
         raise ValueError(
             f"Canonicalization funding count ({funding_count}) != bars count ({bars_count}) "
             f"for {symbol!r}"
         )
 
-    bars_without = floor_policy.get("bars_without_canonicalized_funding_count")
-    if bars_without is not None and bars_without != 0:
+    bars_without = _require_policy_field("bars_without_canonicalized_funding_count")
+    if bars_without != 0:
         raise ValueError(
             f"bars_without_canonicalized_funding_count ({bars_without}) != 0 "
             f"for {symbol!r}"
         )
 
-    funding_without = floor_policy.get("canonicalized_funding_without_bars_count")
-    if funding_without is not None and funding_without != 0:
+    funding_without = _require_policy_field("canonicalized_funding_without_bars_count")
+    if funding_without != 0:
         raise ValueError(
             f"canonicalized_funding_without_bars_count ({funding_without}) != 0 "
             f"for {symbol!r}"
         )
 
-    collision = floor_policy.get("funding_timestamp_collision_count")
-    if collision is not None and collision != 0:
+    collision = _require_policy_field("funding_timestamp_collision_count")
+    if collision != 0:
         raise ValueError(
             f"funding_timestamp_collision_count ({collision}) != 0 for {symbol!r}"
         )
 
-    ambiguous = floor_policy.get("ambiguous_nearest_bar_count")
-    if ambiguous is not None and ambiguous != 0:
+    ambiguous = _require_policy_field("ambiguous_nearest_bar_count")
+    if ambiguous != 0:
         raise ValueError(
             f"ambiguous_nearest_bar_count ({ambiguous}) != 0 for {symbol!r}"
         )
 
-    # Read structural_flags for range status
-    structural = diag_entry.get("structural_flags", {})
-    if isinstance(structural, dict):
-        range_status = structural.get("floor_canonicalized_history_range_status")
-        if range_status is not None and range_status != MATCHING_RANGES:
-            raise ValueError(
-                f"floor_canonicalized_history_range_status ({range_status!r}) != "
-                f"{MATCHING_RANGES!r} for {symbol!r}"
-            )
+    # structural_flags is mandatory and must be a dict.
+    structural = diag_entry.get("structural_flags", _missing)
+    if structural is _missing:
+        raise ValueError(f"Missing required structural_flags for {symbol!r}")
+    if not isinstance(structural, dict):
+        raise ValueError(
+            f"structural_flags must be a dict for {symbol!r}, "
+            f"got {type(structural).__name__}"
+        )
+
+    range_status = structural.get("floor_canonicalized_history_range_status", _missing)
+    if range_status is _missing:
+        raise ValueError(
+            f"Missing required floor_canonicalized_history_range_status for {symbol!r}"
+        )
+    if range_status != MATCHING_RANGES:
+        raise ValueError(
+            f"floor_canonicalized_history_range_status ({range_status!r}) != "
+            f"{MATCHING_RANGES!r} for {symbol!r}"
+        )
 
 
 def _validate_blocked_readiness_evidence(entry: dict, symbol: str) -> None:
