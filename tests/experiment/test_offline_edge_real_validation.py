@@ -54,6 +54,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_to_bars_timestamp_canonicalization_diagnostics,
     materialize_funding_application_readiness_gate_diagnostics,
     materialize_funding_adjusted_bars_scaffold_diagnostics,
+    materialize_funding_adjustment_policy_contract_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -5393,3 +5394,551 @@ class TestFundingAdjustedBarsScaffoldDiagnostics:
             ValueError, match="floor_canonicalized_history_range_status"
         ):
             _validate_eligible_readiness_evidence(entry, "BTCUSDT", diag)
+
+
+# ── Funding adjustment policy contract diagnostics ──────────────────────
+
+
+def _valid_policy_contract_scaffold(symbols=None, **overrides):
+    """Build a scaffold dict shaped exactly like the real output of
+    materialize_funding_adjusted_bars_scaffold_diagnostics, for feeding
+    directly into materialize_funding_adjustment_policy_contract_diagnostics
+    without re-running the CSV pipeline.
+    """
+    if symbols is None:
+        symbols = [
+            {
+                "symbol": "BTCUSDT",
+                "readiness_status": ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION,
+                "scaffold_status": "MATERIALIZED_DIAGNOSTIC_ROWS",
+                "canonicalization_policy": FLOOR_TO_SECOND,
+                "total_rows": 3,
+                "matched_rows": 3,
+                "missing_funding_rows": 0,
+                "duplicate_canonical_funding_rows": 0,
+                "funding_rate_present_rows": 3,
+                "funding_rate_missing_rows": 0,
+                "funding_rate_min": -0.0001,
+                "funding_rate_max": 0.0002,
+                "funding_rate_zero_count": 0,
+                "funding_rate_positive_count": 2,
+                "funding_rate_negative_count": 1,
+                "first_timestamp": "2026-01-01T00:00:00Z",
+                "last_timestamp": "2026-01-03T00:00:00Z",
+                "sample_rows": [{"timestamp": "2026-01-01T00:00:00Z"}],
+            },
+            {
+                "symbol": "ETHUSDT",
+                "readiness_status": BLOCKED_FOR_FUTURE_FUNDING_APPLICATION,
+                "scaffold_status": "SKIPPED_BY_READINESS_GATE",
+                "blocked_reasons": ["FUNDING_DATA_GAP"],
+            },
+        ]
+
+    eligible_count = sum(
+        1 for s in symbols if s.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS"
+    )
+    blocked_count = sum(
+        1 for s in symbols if s.get("scaffold_status") == "SKIPPED_BY_READINESS_GATE"
+    )
+
+    scaffold = {
+        "calculation_status": "FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY",
+        "funding_application_status": "DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY",
+        "readiness_gate_required": True,
+        "canonicalization_policy_used": FLOOR_TO_SECOND,
+        "source_sha": "test_sha",
+        "symbol_count": len(symbols),
+        "eligible_symbol_count": eligible_count,
+        "blocked_symbol_count": blocked_count,
+        "materialized_symbol_count": eligible_count,
+        "skipped_symbol_count": blocked_count,
+        "symbols": symbols,
+    }
+    scaffold.update(overrides)
+    return scaffold
+
+
+class TestFundingAdjustmentPolicyContractDiagnostics:
+    """25 test cases for materialize_funding_adjustment_policy_contract_diagnostics."""
+
+    # ── Helpers ─────────────────────────────────────────────────────────────
+
+    def _build_scaffold(self, tmp_path, **kwargs):
+        """Materialize a real scaffold diagnostics dict via the CSV pipeline."""
+        return TestFundingAdjustedBarsScaffoldDiagnostics()._build(tmp_path, **kwargs)
+
+    def _build_multi_symbol_scaffold(
+        self, tmp_path, eligible_symbols, blocked_reasons_by_symbol
+    ):
+        """Materialize a real scaffold diagnostics dict for a mix of eligible
+        and blocked symbols via the CSV pipeline."""
+        scaffold_helper = TestFundingAdjustedBarsScaffoldDiagnostics()
+        symbols_data = [_make_eligible_symbol_entry(sym) for sym in eligible_symbols]
+        symbols_data += [
+            _make_blocked_symbol_entry(sym, blocked_reasons=reasons)
+            for sym, reasons in blocked_reasons_by_symbol.items()
+        ]
+        readiness = TestFundingAdjustedBarsScaffoldDiagnostics._make_readiness_gate(
+            symbols_data=symbols_data
+        )
+
+        all_symbols = eligible_symbols + list(blocked_reasons_by_symbol)
+        bars_rows = [
+            {"timestamp": "2026-01-01T00:00:00Z"},
+            {"timestamp": "2026-01-02T00:00:00Z"},
+            {"timestamp": "2026-01-03T00:00:00Z"},
+        ]
+        funding_rows = [
+            {"fundingTime": "2026-01-01T00:00:00Z", "fundingRate": "0.0001"},
+            {"fundingTime": "2026-01-02T00:00:00Z", "fundingRate": "0.0002"},
+            {"fundingTime": "2026-01-03T00:00:00Z", "fundingRate": "-0.0001"},
+        ]
+        for sym in all_symbols:
+            scaffold_helper._write_bars_csv(tmp_path, sym, bars_rows)
+            scaffold_helper._write_funding_csv(tmp_path, sym, funding_rows)
+
+        bars_files = [
+            {
+                "filename": f"{sym}_8h_ohlcv.csv",
+                "sha256": hashlib.sha256(
+                    (tmp_path / f"{sym}_8h_ohlcv.csv").read_bytes()
+                ).hexdigest(),
+            }
+            for sym in all_symbols
+        ]
+        funding_files = [
+            {
+                "filename": f"{sym}_funding.csv",
+                "sha256": hashlib.sha256(
+                    (tmp_path / f"{sym}_funding.csv").read_bytes()
+                ).hexdigest(),
+            }
+            for sym in all_symbols
+        ]
+
+        return materialize_funding_adjusted_bars_scaffold_diagnostics(
+            funding_application_readiness_gate_diagnostics=readiness,
+            funding_to_bars_timestamp_canonicalization_diagnostics=(
+                TestFundingAdjustedBarsScaffoldDiagnostics._make_canonicalization_diagnostics(
+                    eligible_symbols=eligible_symbols,
+                    bars_count=3,
+                )
+            ),
+            bars_inventory={"files": bars_files},
+            funding_inventory={"files": funding_files},
+            bars_dir=str(tmp_path),
+            funding_dir=str(tmp_path),
+            source_sha="test_sha",
+        )
+
+    # ── Test 1: Happy path emits contract for materialized eligible symbol ──
+
+    def test_happy_path_emits_contract_for_materialized_eligible_symbol(self, tmp_path):
+        scaffold = self._build_scaffold(tmp_path)
+        contract = materialize_funding_adjustment_policy_contract_diagnostics(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+        )
+        assert contract["calculation_status"] == (
+            "FUNDING_ADJUSTMENT_POLICY_CONTRACT_DIAGNOSTIC_ONLY"
+        )
+        assert contract["eligible_symbol_count"] == 1
+        assert contract["blocked_symbol_count"] == 0
+        assert contract["policy_symbol_count"] == 1
+        symbol = contract["symbols"][0]
+        assert symbol["symbol"] == "BTCUSDT"
+        assert symbol["scaffold_status"] == "MATERIALIZED_DIAGNOSTIC_ROWS"
+        assert symbol["policy_status"] == (
+            "ELIGIBLE_FOR_FUTURE_FUNDING_ADJUSTMENT_POLICY"
+        )
+        assert symbol["row_availability_status"] == "COMPLETE"
+        assert symbol["total_rows"] == 3
+        assert symbol["matched_rows"] == 3
+
+    # ── Test 2: Blocked symbols carried forward ──────────────────────────────
+
+    def test_blocked_symbols_carried_forward(self, tmp_path):
+        readiness = TestFundingAdjustedBarsScaffoldDiagnostics._make_readiness_gate(
+            symbols_data=[
+                _make_blocked_symbol_entry("ETHUSDT", blocked_reasons=["NO_BARS_DATA"])
+            ]
+        )
+        scaffold = self._build_scaffold(
+            tmp_path, readiness_gate=readiness, symbol="ETHUSDT"
+        )
+        contract = materialize_funding_adjustment_policy_contract_diagnostics(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+        )
+        assert contract["blocked_symbol_count"] == 1
+        symbol = contract["symbols"][0]
+        assert symbol["scaffold_status"] == "SKIPPED_BY_READINESS_GATE"
+        assert symbol["policy_status"] == "BLOCKED_BY_READINESS_GATE"
+        assert symbol["blocked_reasons"] == ["NO_BARS_DATA"]
+        assert "sample_rows" not in symbol
+        assert "future_application_required_inputs" not in symbol
+
+    # ── Test 3: Eligibility derived from scaffold, not hardcoded ────────────
+
+    def test_eligibility_derived_from_scaffold_not_hardcoded(self, tmp_path):
+        scaffold = self._build_multi_symbol_scaffold(
+            tmp_path,
+            eligible_symbols=["ETHUSDT", "SOLUSDT"],
+            blocked_reasons_by_symbol={"BTCUSDT": ["NO_BARS_DATA"]},
+        )
+        contract = materialize_funding_adjustment_policy_contract_diagnostics(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+        )
+        assert contract["eligible_symbol_count"] == 2
+        assert contract["blocked_symbol_count"] == 1
+        by_symbol = {s["symbol"]: s for s in contract["symbols"]}
+        assert by_symbol["ETHUSDT"]["policy_status"] == (
+            "ELIGIBLE_FOR_FUTURE_FUNDING_ADJUSTMENT_POLICY"
+        )
+        assert by_symbol["SOLUSDT"]["policy_status"] == (
+            "ELIGIBLE_FOR_FUTURE_FUNDING_ADJUSTMENT_POLICY"
+        )
+        assert by_symbol["BTCUSDT"]["policy_status"] == "BLOCKED_BY_READINESS_GATE"
+        assert by_symbol["BTCUSDT"]["blocked_reasons"] == ["NO_BARS_DATA"]
+
+    # ── Test 4: Missing scaffold diagnostics fails closed ───────────────────
+
+    def test_missing_scaffold_diagnostics_fails_closed(self):
+        with pytest.raises(
+            ValueError, match="funding_adjusted_bars_scaffold_diagnostics"
+        ):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=None,
+            )
+
+    # ── Test 5: Wrong scaffold calculation_status fails closed ──────────────
+
+    def test_wrong_scaffold_calculation_status_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold(calculation_status="WRONG_STATUS")
+        with pytest.raises(ValueError, match="calculation_status"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 6: Wrong scaffold funding_application_status fails closed ──────
+
+    def test_wrong_scaffold_funding_application_status_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold(funding_application_status="EXECUTED")
+        with pytest.raises(ValueError, match="funding_application_status"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 7: Wrong scaffold canonicalization policy fails closed ─────────
+
+    def test_wrong_scaffold_canonicalization_policy_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold(canonicalization_policy_used="ceil_to_hour")
+        with pytest.raises(ValueError, match="canonicalization_policy_used"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 8: Inconsistent scaffold counts fail closed ─────────────────────
+
+    def test_inconsistent_scaffold_counts_fail_closed(self):
+        scaffold = _valid_policy_contract_scaffold(symbol_count=5)
+        with pytest.raises(ValueError, match="symbol_count"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 9: Duplicate scaffold symbols fail closed ───────────────────────
+
+    def test_duplicate_scaffold_symbols_fail_closed(self):
+        base_symbol = _valid_policy_contract_scaffold()["symbols"][0]
+        scaffold = _valid_policy_contract_scaffold(
+            symbols=[dict(base_symbol), dict(base_symbol)]
+        )
+        with pytest.raises(ValueError, match="Duplicate scaffold symbol"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 10: matched_rows != total_rows fails closed ─────────────────────
+
+    def test_materialized_symbol_matched_rows_mismatch_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold()
+        scaffold["symbols"][0]["matched_rows"] = 2
+        with pytest.raises(ValueError, match="matched_rows"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 11: nonzero missing_funding_rows fails closed ───────────────────
+
+    def test_materialized_symbol_missing_funding_rows_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold()
+        scaffold["symbols"][0]["missing_funding_rows"] = 1
+        with pytest.raises(ValueError, match="missing_funding_rows"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 12: nonzero duplicate_canonical_funding_rows fails closed ───────
+
+    def test_materialized_symbol_duplicate_canonical_funding_rows_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold()
+        scaffold["symbols"][0]["duplicate_canonical_funding_rows"] = 1
+        with pytest.raises(ValueError, match="duplicate_canonical_funding_rows"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 13: missing funding-rate rows fail closed ───────────────────────
+
+    def test_materialized_symbol_missing_funding_rate_rows_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold()
+        scaffold["symbols"][0]["funding_rate_present_rows"] = 2
+        with pytest.raises(ValueError, match="funding_rate_present_rows"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 14: skipped symbol with sample_rows fails closed ────────────────
+
+    def test_skipped_symbol_with_sample_rows_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold()
+        scaffold["symbols"][1]["sample_rows"] = []
+        with pytest.raises(ValueError, match="sample_rows"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 15: skipped symbol with funding-rate summary fields fails closed
+
+    def test_skipped_symbol_with_funding_rate_summary_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold()
+        scaffold["symbols"][1]["funding_rate_present_rows"] = 3
+        with pytest.raises(ValueError, match="funding-rate"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 16: skipped symbol missing blocked_reasons fails closed ─────────
+
+    def test_skipped_symbol_missing_blocked_reasons_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold()
+        scaffold["symbols"][1]["blocked_reasons"] = []
+        with pytest.raises(ValueError, match="blocked_reasons"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
+
+    # ── Test 17: long/short side policy strings present but not applied ─────
+
+    def test_position_side_contract_present_but_not_applied(self, tmp_path):
+        scaffold = self._build_scaffold(tmp_path)
+        contract = materialize_funding_adjustment_policy_contract_diagnostics(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+        )
+        side_contract = contract["position_side_policy_contract"]
+        assert side_contract["long_side_contract"] == (
+            "LONG_PAYS_POSITIVE_FUNDING_RECEIVES_NEGATIVE_FUNDING"
+        )
+        assert side_contract["short_side_contract"] == (
+            "SHORT_RECEIVES_POSITIVE_FUNDING_PAYS_NEGATIVE_FUNDING"
+        )
+        assert side_contract["position_side_inference_status"] == "NOT_EXECUTED"
+        assert side_contract["position_side_application_status"] == "NOT_EXECUTED"
+        assert contract["strategy_application_status"] == "NOT_EXECUTED"
+        assert contract["pnl_application_status"] == "NOT_EXECUTED"
+        assert contract["funding_adjustment_application_status"] == "NOT_EXECUTED"
+
+    # ── Test 18: future explicit position side required, not inferred ───────
+
+    def test_future_explicit_position_side_required_not_inferred(self, tmp_path):
+        scaffold = self._build_scaffold(tmp_path)
+        contract = materialize_funding_adjustment_policy_contract_diagnostics(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+        )
+        symbol = contract["symbols"][0]
+        required_inputs = symbol["future_application_required_inputs"]
+        assert required_inputs["explicit_position_side"] == (
+            "FUTURE_STRATEGY_POSITION_SIDE_REQUIRED"
+        )
+        side_contract = contract["position_side_policy_contract"]
+        assert side_contract["position_side_source_required"] == (
+            "FUTURE_STRATEGY_POSITION_SIDE_REQUIRED"
+        )
+        assert side_contract["position_side_inference_status"] == "NOT_EXECUTED"
+
+    # ── Test 19: CLI with funding includes policy contract section ──────────
+
+    def test_cli_with_funding_includes_policy_contract_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+        (funding_dir / "BTCUSDT_funding.csv").write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,-0.0001,50200.0\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_policy_contract_cli_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                    "--funding-dir", str(funding_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjustment_policy_contract_diagnostics" in written
+            assert written["funding_adjustment_policy_contract_diagnostics"][
+                "eligible_symbol_count"
+            ] == 1
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 20: CLI without funding omits policy contract section ──────────
+
+    def test_cli_without_funding_omits_policy_contract_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_policy_contract_cli_no_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjustment_policy_contract_diagnostics" not in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 21: Receipt final verdict remains blocked ───────────────────────
+
+    def test_receipt_final_verdict_remains_blocked(self, tmp_path):
+        scaffold = self._build_scaffold(tmp_path)
+        contract = materialize_funding_adjustment_policy_contract_diagnostics(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+        )
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        validate_real_validation_receipt(receipt)  # must not raise
+
+    # ── Test 22: Required outputs remain false ────────────────────────────────
+
+    def test_required_outputs_remain_false(self, tmp_path):
+        scaffold = self._build_scaffold(tmp_path)
+        contract = materialize_funding_adjustment_policy_contract_diagnostics(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+        )
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        for value in receipt["required_outputs_present"].values():
+            assert value is False
+
+    # ── Test 23: Forbidden calculations remain false ─────────────────────────
+
+    def test_forbidden_calculations_remain_false(self, tmp_path):
+        scaffold = self._build_scaffold(tmp_path)
+        contract = materialize_funding_adjustment_policy_contract_diagnostics(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+        )
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        for key, value in receipt["forbidden_calculation_status"].items():
+            assert value is False, f"{key} must be False"
+
+    # ── Test 24: Guardrails remain true ───────────────────────────────────────
+
+    def test_guardrails_remain_true(self, tmp_path):
+        scaffold = self._build_scaffold(tmp_path)
+        contract = materialize_funding_adjustment_policy_contract_diagnostics(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+        )
+        receipt = _base_receipt(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            funding_adjustment_policy_contract_diagnostics=contract,
+        )
+        for key, value in receipt["guardrail_status"].items():
+            assert value is True, f"{key} must be True"
+
+    # ── Test 25: Safety-key regression ────────────────────────────────────────
+
+    def test_safety_key_regression(self, tmp_path):
+        scaffold = self._build_multi_symbol_scaffold(
+            tmp_path,
+            eligible_symbols=["ETHUSDT"],
+            blocked_reasons_by_symbol={"BTCUSDT": ["NO_BARS_DATA"]},
+        )
+        contract = materialize_funding_adjustment_policy_contract_diagnostics(
+            funding_adjusted_bars_scaffold_diagnostics=scaffold,
+        )
+        all_keys = _all_dict_keys(contract)
+        forbidden = {
+            "PnL", "Sharpe", "edge", "strategy-performance",
+            "risk", "trade", "trades", "signal", "signals",
+            "position", "positions", "portfolio", "return", "returns",
+            "funding_adjusted_return", "net_return_value",
+            "price_change", "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+        }
+        assert forbidden.isdisjoint(all_keys), (
+            f"Forbidden keys found: {forbidden & all_keys}"
+        )
+
+    # ── Supplemental: unrecognized scaffold_status fails closed ─────────────
+
+    def test_unrecognized_scaffold_status_fails_closed(self):
+        scaffold = _valid_policy_contract_scaffold()
+        scaffold["symbols"][0]["scaffold_status"] = "SOMETHING_ELSE"
+        with pytest.raises(ValueError, match="Unrecognized scaffold_status"):
+            materialize_funding_adjustment_policy_contract_diagnostics(
+                funding_adjusted_bars_scaffold_diagnostics=scaffold,
+            )
