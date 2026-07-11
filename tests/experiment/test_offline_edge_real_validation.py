@@ -58,6 +58,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_adjusted_bars_scaffold_diagnostics,
     materialize_funding_adjustment_policy_contract_diagnostics,
     materialize_funding_adjustment_arithmetic_scaffold_diagnostics,
+    materialize_funding_adjustment_row_scaffold_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -5987,6 +5988,76 @@ def _valid_arithmetic_scaffold_contract(
     return contract
 
 
+def _valid_row_scaffold_inputs():
+    """Return valid upstream section dicts for row scaffold diagnostics."""
+    policy_contract = {
+        "calculation_status": "FUNDING_ADJUSTMENT_POLICY_CONTRACT_DIAGNOSTIC_ONLY",
+        "funding_adjustment_application_status": "NOT_EXECUTED",
+        "strategy_application_status": "NOT_EXECUTED",
+        "pnl_application_status": "NOT_EXECUTED",
+        "funding_rate_unit": "decimal_rate_not_percent",
+        "funding_rate_annualization_status": "NOT_ANNUALIZED",
+        "timestamp_match_policy": "EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP",
+    }
+
+    arithmetic_scaffold = {
+        "calculation_status": "FUNDING_ADJUSTMENT_ARITHMETIC_SCAFFOLD_DIAGNOSTIC_ONLY",
+        "funding_adjustment_application_status": "FIXTURE_ONLY_NOT_APPLIED_TO_STRATEGY",
+        "strategy_application_status": "NOT_EXECUTED",
+        "pnl_application_status": "NOT_EXECUTED",
+        "funding_rate_unit": "decimal_rate_not_percent",
+        "annualization_status": "NOT_ANNUALIZED",
+        "compounding_status": "NOT_COMPOUNDED",
+        "side_source": "EXPLICIT_FIXTURE_ONLY",
+        "notional_source": "EXPLICIT_FIXTURE_ONLY",
+        "fixture_case_count": 6,
+        "passed_fixture_case_count": 6,
+        "failed_fixture_case_count": 0,
+    }
+
+    bars_scaffold = {
+        "calculation_status": "FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY",
+        "funding_application_status": "DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY",
+        "canonicalization_policy_used": "floor_to_second",
+        "symbol_count": 2,
+        "eligible_symbol_count": 1,
+        "blocked_symbol_count": 1,
+        "materialized_symbol_count": 1,
+        "skipped_symbol_count": 1,
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "scaffold_status": "MATERIALIZED_DIAGNOSTIC_ROWS",
+                "total_rows": 100,
+                "matched_rows": 100,
+                "funding_rate_present_rows": 100,
+                "missing_funding_rows": 0,
+                "duplicate_canonical_funding_rows": 0,
+                "funding_rate_missing_rows": 0,
+                "sample_rows": [
+                    {
+                        "bar_row_index": 0,
+                        "funding_row_index": 0,
+                        "funding_rate": "0.0001",
+                    },
+                    {
+                        "bar_row_index": 1,
+                        "funding_row_index": 1,
+                        "funding_rate": "-0.00005",
+                    },
+                ],
+            },
+            {
+                "symbol": "ETHUSDT",
+                "scaffold_status": "SKIPPED_BY_READINESS_GATE",
+                "blocked_reasons": ["funding_rate_gap_exceeds_threshold"],
+            },
+        ],
+    }
+
+    return policy_contract, arithmetic_scaffold, bars_scaffold
+
+
 class TestFundingAdjustmentArithmeticScaffoldDiagnostics:
     """40 test cases for
     materialize_funding_adjustment_arithmetic_scaffold_diagnostics."""
@@ -6579,3 +6650,696 @@ class TestFundingAdjustmentArithmeticScaffoldDiagnostics:
         string_values = {v for v in _all_values(arithmetic) if isinstance(v, str)}
         assert not any("BTCUSDT" in v or "ETHUSDT" in v for v in string_values)
         assert not any("T00:00:00Z" in v for v in string_values)
+
+
+class TestFundingAdjustmentRowScaffoldDiagnostics:
+    """38 test cases for
+    materialize_funding_adjustment_row_scaffold_diagnostics."""
+
+    # ── Test 1: Happy path emits materialized row scaffold samples ──────────
+
+    def test_happy_path_emits_materialized_row_scaffold_samples(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        assert result["calculation_status"] == (
+            "FUNDING_ADJUSTMENT_ROW_SCAFFOLD_DIAGNOSTIC_ONLY"
+        )
+        assert result["eligible_symbol_count"] == 1
+        assert result["blocked_symbol_count"] == 1
+        assert result["materialized_symbol_count"] == 1
+        assert result["skipped_symbol_count"] == 1
+        assert len(result["symbols"]) == 2
+        # BTCUSDT should have cashflow samples
+        btc = result["symbols"][0]
+        assert btc["symbol"] == "BTCUSDT"
+        assert btc["scaffold_status"] == "MATERIALIZED_DIAGNOSTIC_ROWS"
+        assert btc["row_scaffold_status"] == (
+            "MATERIALIZED_DIAGNOSTIC_CASHFLOW_SAMPLES"
+        )
+        assert len(btc["sample_rows"]) == 2
+        # ETHUSDT should be blocked
+        eth = result["symbols"][1]
+        assert eth["symbol"] == "ETHUSDT"
+        assert eth["scaffold_status"] == "SKIPPED_BY_READINESS_GATE"
+
+    # ── Test 2: Long/short cashflow factors are opposites ──────────────────
+
+    def test_long_short_cashflow_factors_opposites(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        btc = result["symbols"][0]
+        for sample in btc["sample_rows"]:
+            long_cf = Decimal(sample["long_cashflow_factor"])
+            short_cf = Decimal(sample["short_cashflow_factor"])
+            assert long_cf == -short_cf, (
+                f"Expected long ({long_cf}) == -short ({short_cf})"
+            )
+
+    # ── Test 3: Positive funding => long negative, short positive ──────────
+
+    def test_positive_funding_long_negative_short_positive(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        btc = result["symbols"][0]
+        # First sample: funding_rate = "0.0001" (positive)
+        s0 = btc["sample_rows"][0]
+        assert Decimal(s0["long_cashflow_factor"]) < 0
+        assert Decimal(s0["short_cashflow_factor"]) > 0
+
+    # ── Test 4: Negative funding => long positive, short negative ──────────
+
+    def test_negative_funding_long_positive_short_negative(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        btc = result["symbols"][0]
+        # Second sample: funding_rate = "-0.00005" (negative)
+        s1 = btc["sample_rows"][1]
+        assert Decimal(s1["long_cashflow_factor"]) > 0
+        assert Decimal(s1["short_cashflow_factor"]) < 0
+
+    # ── Test 5: Zero funding => both cashflow factors zero ─────────────────
+
+    def test_zero_funding_both_zero(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][0]["sample_rows"][0]["funding_rate"] = "0"
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        btc = result["symbols"][0]
+        s0 = btc["sample_rows"][0]
+        assert Decimal(s0["long_cashflow_factor"]) == 0
+        assert Decimal(s0["short_cashflow_factor"]) == 0
+
+    # ── Test 6: Decimal string funding rate accepted ───────────────────────
+
+    def test_decimal_string_funding_rate_accepted(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][0]["sample_rows"][0]["funding_rate"] = "0.0001"
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        btc = result["symbols"][0]
+        assert btc["sample_rows"][0]["funding_rate"] == "0.0001"
+
+    # ── Test 7: Float funding rate converted with Decimal(str) ─────────────
+
+    def test_float_funding_rate_converted_with_decimal_str(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][0]["sample_rows"][0]["funding_rate"] = 0.0001
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        btc = result["symbols"][0]
+        # The cashflow factors should be deterministic strings
+        assert isinstance(btc["sample_rows"][0]["long_cashflow_factor"], str)
+
+    # ── Test 8: Missing policy contract fails closed ──────────────────────
+
+    def test_missing_policy_contract_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        with pytest.raises(
+            ValueError, match="funding_adjustment_policy_contract_diagnostics"
+        ):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                None, arith, bars,
+            )
+
+    # ── Test 9: Missing arithmetic scaffold fails closed ──────────────────
+
+    def test_missing_arithmetic_scaffold_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        with pytest.raises(
+            ValueError, match="funding_adjustment_arithmetic_scaffold_diagnostics"
+        ):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, None, bars,
+            )
+
+    # ── Test 10: Missing bars scaffold fails closed ────────────────────────
+
+    def test_missing_bars_scaffold_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        with pytest.raises(
+            ValueError, match="funding_adjusted_bars_scaffold_diagnostics"
+        ):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, None,
+            )
+
+    # ── Test 11: Wrong policy contract status fails closed ─────────────────
+
+    def test_wrong_policy_contract_status_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        pc["calculation_status"] = "WRONG"
+        with pytest.raises(ValueError, match="calculation_status"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 12: Wrong arithmetic scaffold status fails closed ─────────────
+
+    def test_wrong_arithmetic_scaffold_status_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        arith["calculation_status"] = "WRONG"
+        with pytest.raises(ValueError, match="calculation_status"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 13: Wrong bars scaffold status fails closed ──────────────────
+
+    def test_wrong_bars_scaffold_status_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["calculation_status"] = "WRONG"
+        with pytest.raises(ValueError, match="calculation_status"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 14: Wrong funding_rate_unit fails closed ─────────────────────
+
+    def test_wrong_funding_rate_unit_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        pc["funding_rate_unit"] = "percent"
+        with pytest.raises(ValueError, match="funding_rate_unit"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 15: Wrong arithmetic fixture counts fail closed ──────────────
+
+    def test_wrong_arithmetic_fixture_counts_fail_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        arith["fixture_case_count"] = 5
+        with pytest.raises(ValueError, match="fixture_case_count"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 16: Inconsistent scaffold counts fail closed ─────────────────
+
+    def test_inconsistent_scaffold_counts_fail_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][0]["matched_rows"] = 50
+        with pytest.raises(ValueError, match="matched_rows"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 17: Duplicate scaffold symbols fail closed ───────────────────
+
+    def test_duplicate_scaffold_symbols_fail_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        dup = dict(bars["symbols"][0])
+        dup["scaffold_status"] = "SKIPPED_BY_READINESS_GATE"
+        dup["blocked_reasons"] = ["test_dup"]
+        bars["symbols"].append(dup)
+        with pytest.raises(ValueError, match="Duplicate"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 18: Eligible symbol missing sample_rows fails closed ─────────
+
+    def test_eligible_symbol_missing_sample_rows_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        del bars["symbols"][0]["sample_rows"]
+        with pytest.raises(ValueError, match="sample_rows"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 19: Eligible sample_rows not a list fails closed ─────────────
+
+    def test_eligible_sample_rows_not_list_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][0]["sample_rows"] = {}
+        with pytest.raises(ValueError, match="sample_rows"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 20: Eligible sample row missing funding_rate fails closed ────
+
+    def test_eligible_sample_row_missing_funding_rate_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        del bars["symbols"][0]["sample_rows"][0]["funding_rate"]
+        with pytest.raises(ValueError, match="funding_rate"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 21: Eligible sample row missing bar_row_index fails closed ───
+
+    def test_eligible_sample_row_missing_bar_row_index_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        del bars["symbols"][0]["sample_rows"][0]["bar_row_index"]
+        with pytest.raises(ValueError, match="bar_row_index"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 22: Eligible sample row missing funding_row_index fails closed─
+
+    def test_eligible_sample_row_missing_funding_row_index_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        del bars["symbols"][0]["sample_rows"][0]["funding_row_index"]
+        with pytest.raises(ValueError, match="funding_row_index"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 23: Malformed funding rate fails closed ──────────────────────
+
+    def test_malformed_funding_rate_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][0]["sample_rows"][0]["funding_rate"] = "not_a_number"
+        with pytest.raises(ValueError, match="malformed"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 24: NaN funding rate fails closed ────────────────────────────
+
+    def test_nan_funding_rate_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][0]["sample_rows"][0]["funding_rate"] = float("nan")
+        with pytest.raises(ValueError, match="Funding rate is NaN"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 25: Infinite funding rate fails closed ───────────────────────
+
+    def test_infinite_funding_rate_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][0]["sample_rows"][0]["funding_rate"] = float("inf")
+        with pytest.raises(ValueError, match="Funding rate is infinite"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 26: Sample row count exceeds 10 fails closed ─────────────────
+
+    def test_sample_row_count_exceeds_10_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][0]["sample_rows"] = [
+            {"bar_row_index": i, "funding_row_index": i, "funding_rate": "0.0001"}
+            for i in range(11)
+        ]
+        with pytest.raises(ValueError, match="exceeds maximum of 10"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 27: Blocked symbols carried forward without samples ──────────
+
+    def test_blocked_symbols_carried_forward_without_samples(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        eth = result["symbols"][1]
+        assert eth["symbol"] == "ETHUSDT"
+        assert eth["scaffold_status"] == "SKIPPED_BY_READINESS_GATE"
+        assert eth["row_scaffold_status"] == "SKIPPED_BY_READINESS_GATE"
+        assert eth["blocked_reasons"] == ["funding_rate_gap_exceeds_threshold"]
+
+    # ── Test 28: Blocked symbol with sample_rows fails closed ─────────────
+
+    def test_blocked_symbol_with_sample_rows_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][1]["sample_rows"] = []
+        with pytest.raises(ValueError, match="sample_rows"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 29: Blocked symbol with cashflow-like samples fails closed ───
+
+    def test_blocked_symbol_with_cashflow_samples_fails_closed(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        bars["symbols"][1]["sample_rows"] = []
+        with pytest.raises(ValueError, match="sample_rows"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                pc, arith, bars,
+            )
+
+    # ── Test 30: Output contains no timestamp or OHLCV fields ─────────────
+
+    def test_output_contains_no_timestamp_or_ohlcv_fields(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        all_keys = _all_dict_keys(result)
+        forbidden = {"timestamp", "open", "high", "low", "close", "volume"}
+        # "timestamp_match_policy" is a value, not a key, so it's safe
+        found = {k for k in forbidden if k in all_keys}
+        assert not found, f"Forbidden keys found: {found}"
+
+    # ── Test 31: Output contains no strategy/pnl/returns/edge keys ────────
+
+    def test_output_contains_no_strategy_pnl_returns_edge_keys(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        all_keys = _all_dict_keys(result)
+        forbidden = {
+            "pnl", "PnL", "Pnl", "Sharpe", "sharpe", "edge",
+            "risk", "trade", "trades", "signal", "signals",
+            "position", "positions", "portfolio",
+            "return", "returns",
+            "funding_adjusted_return", "net_return_value",
+            "price_change", "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+        }
+        found = {k for k in forbidden if k in all_keys}
+        assert not found, f"Forbidden keys found: {found}"
+
+    # ── Test 32: CLI with funding includes row scaffold section ───────────
+
+    def test_cli_with_funding_includes_row_scaffold_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+        (funding_dir / "BTCUSDT_funding.csv").write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,-0.0001,50200.0\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_row_scaffold_cli_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                    "--funding-dir", str(funding_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjustment_row_scaffold_diagnostics" in written
+            section = written["funding_adjustment_row_scaffold_diagnostics"]
+            assert section["calculation_status"] == (
+                "FUNDING_ADJUSTMENT_ROW_SCAFFOLD_DIAGNOSTIC_ONLY"
+            )
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 33: CLI without funding omits row scaffold section ───────────
+
+    def test_cli_without_funding_omits_row_scaffold_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_row_scaffold_cli_no_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjustment_row_scaffold_diagnostics" not in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 34: Receipt final verdict remains blocked ────────────────────
+
+    def test_receipt_final_verdict_remains_blocked(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+        )
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        row_scaffold = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_row_scaffold_diagnostics=row_scaffold,
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        validate_real_validation_receipt(receipt)  # must not raise
+
+    # ── Test 35: Required outputs remain false ────────────────────────────
+
+    def test_required_outputs_remain_false(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        row_scaffold = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_row_scaffold_diagnostics=row_scaffold,
+        )
+        for value in receipt["required_outputs_present"].values():
+            assert value is False
+
+    # ── Test 36: Forbidden calculations remain false ──────────────────────
+
+    def test_forbidden_calculations_remain_false(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        row_scaffold = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_row_scaffold_diagnostics=row_scaffold,
+        )
+        for key, value in receipt["forbidden_calculation_status"].items():
+            assert value is False, f"{key} must be False"
+
+    # ── Test 37: Guardrails remain true ───────────────────────────────────
+
+    def test_guardrails_remain_true(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        row_scaffold = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_row_scaffold_diagnostics=row_scaffold,
+        )
+        for key, value in receipt["guardrail_status"].items():
+            assert value is True, f"{key} must be True"
+
+    # ── Test 38: Safety-key regression ────────────────────────────────────
+
+    def test_safety_key_regression(self):
+        pc, arith, bars = _valid_row_scaffold_inputs()
+        result = materialize_funding_adjustment_row_scaffold_diagnostics(
+            pc, arith, bars,
+        )
+        all_keys = _all_dict_keys(result)
+        forbidden = {
+            "PnL", "Sharpe", "edge", "strategy-performance",
+            "risk", "trade", "trades", "signal", "signals",
+            "position", "positions", "portfolio", "return", "returns",
+            "funding_adjusted_return", "net_return_value",
+            "price_change", "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+        }
+        assert forbidden.isdisjoint(all_keys), (
+            f"Forbidden keys found: {forbidden & all_keys}"
+        )
+
+        def _all_values(value):
+            if isinstance(value, dict):
+                for v in value.values():
+                    yield from _all_values(v)
+            elif isinstance(value, list):
+                for v in value:
+                    yield from _all_values(v)
+            else:
+                yield value
+
+        string_values = {v for v in _all_values(result) if isinstance(v, str)}
+        assert not any("T00:00:00Z" in v for v in string_values)
+
+    # ── Test 39: String 'NaN' funding rate fails closed ─────────────────────
+
+    def test_string_nan_funding_rate_fails_closed(self):
+        """String 'Nan' funding rate must raise ValueError."""
+        # Arrange
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        # Set a sample row funding_rate to string "NaN"
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS":
+                for row in symbol.get("sample_rows", []):
+                    row["funding_rate"] = "NaN"
+        # Act / Assert
+        with pytest.raises(ValueError, match="not finite|NaN"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 40: String 'Infinity' funding rate fails closed ────────────────
+
+    def test_string_infinity_funding_rate_fails_closed(self):
+        """String 'Infinity' funding rate must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS":
+                for row in symbol.get("sample_rows", []):
+                    row["funding_rate"] = "Infinity"
+        with pytest.raises(ValueError, match="not finite|Infinity"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 41: Decimal('NaN') funding rate fails closed ───────────────────
+
+    def test_decimal_nan_funding_rate_fails_closed(self):
+        """Decimal('NaN') funding rate must raise ValueError."""
+        from decimal import Decimal
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS":
+                for row in symbol.get("sample_rows", []):
+                    row["funding_rate"] = Decimal("NaN")
+        with pytest.raises(ValueError, match="not finite|NaN"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 42: Decimal('Infinity') funding rate fails closed ──────────────
+
+    def test_decimal_infinity_funding_rate_fails_closed(self):
+        """Decimal('Infinity') funding rate must raise ValueError."""
+        from decimal import Decimal
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS":
+                for row in symbol.get("sample_rows", []):
+                    row["funding_rate"] = Decimal("Infinity")
+        with pytest.raises(ValueError, match="not finite|Infinity"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 43: bool funding rate fails closed ─────────────────────────────
+
+    def test_bool_funding_rate_fails_closed(self):
+        """bool funding rate must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS":
+                for row in symbol.get("sample_rows", []):
+                    row["funding_rate"] = True
+        with pytest.raises(ValueError, match="bool|must not be bool"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 44: Blocked symbol with cashflow_samples fails closed ──────────
+
+    def test_blocked_symbol_with_cashflow_samples_fails_closed(self):
+        """Blocked symbol containing cashflow_samples must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "SKIPPED_BY_READINESS_GATE":
+                symbol["cashflow_samples"] = [{"cashflow": 0.0}]
+        with pytest.raises(ValueError, match="must not contain|cashflow_samples"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 45: Wrong symbol_count fails closed ────────────────────────────
+
+    def test_wrong_symbol_count_fails_closed(self):
+        """Mismatched symbol_count must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        bars_scaffold["symbol_count"] = 999
+        with pytest.raises(ValueError, match="symbol_count.*!=.*"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 46: Wrong eligible_symbol_count fails closed ───────────────────
+
+    def test_wrong_eligible_symbol_count_fails_closed(self):
+        """Mismatched eligible_symbol_count must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        bars_scaffold["eligible_symbol_count"] = 999
+        with pytest.raises(ValueError, match="eligible_symbol_count.*!=.*"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 47: Wrong blocked_symbol_count fails closed ────────────────────
+
+    def test_wrong_blocked_symbol_count_fails_closed(self):
+        """Mismatched blocked_symbol_count must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        bars_scaffold["blocked_symbol_count"] = 999
+        with pytest.raises(ValueError, match="blocked_symbol_count.*!=.*"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 48: Wrong materialized_symbol_count fails closed ───────────────
+
+    def test_wrong_materialized_symbol_count_fails_closed(self):
+        """Mismatched materialized_symbol_count must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        bars_scaffold["materialized_symbol_count"] = 999
+        with pytest.raises(ValueError, match="materialized_symbol_count.*!=.*"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 49: Wrong skipped_symbol_count fails closed ────────────────────
+
+    def test_wrong_skipped_symbol_count_fails_closed(self):
+        """Mismatched skipped_symbol_count must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        bars_scaffold["skipped_symbol_count"] = 999
+        with pytest.raises(ValueError, match="skipped_symbol_count.*!=.*"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
