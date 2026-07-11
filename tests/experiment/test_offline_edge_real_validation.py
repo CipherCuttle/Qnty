@@ -37,6 +37,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_to_bars_temporal_joinability_diagnostics,
     materialize_funding_to_bars_timestamp_convention_diagnostics,
     materialize_funding_to_bars_timestamp_canonicalization_diagnostics,
+    materialize_funding_application_readiness_gate_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -2587,6 +2588,12 @@ class TestFundingToBarsTemporalJoinabilityDiagnostics:
             )
             assert section["timestamp_match_policy"] == "EXACT_UTC_TIMESTAMP_ONLY"
             assert section["funding_application_status"] == "NOT_EXECUTED"
+            readiness = written["funding_application_readiness_gate_diagnostics"]
+            assert readiness["calculation_status"] == (
+                "FUNDING_APPLICATION_READINESS_GATE_DIAGNOSTIC_ONLY"
+            )
+            assert readiness["funding_application_status"] == "NOT_EXECUTED"
+            assert written["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
             assert section["symbols"][0]["symbol"] == "BTCUSDT"
             assert written["final_offline_verdict"] == (
                 BLOCKED_BY_VALIDATION_IMPLEMENTATION
@@ -4006,6 +4013,7 @@ class TestFundingToBarsTimestampCanonicalizationDiagnostics:
             with open(receipt_path) as f:
                 written = json.load(f)
             assert "funding_to_bars_timestamp_canonicalization_diagnostics" not in written
+            assert "funding_application_readiness_gate_diagnostics" not in written
         finally:
             if receipt_path.exists():
                 receipt_path.unlink()
@@ -4048,3 +4056,195 @@ class TestFundingToBarsTimestampCanonicalizationDiagnostics:
         serialized = json.dumps(receipt)
         assert "OFFLINE_EDGE_CANDIDATE" not in serialized
         assert "EDGE_CANDIDATE" not in serialized
+
+
+def _readiness_inputs() -> dict[str, dict]:
+    floor = {
+        "policy_name": "floor_to_second",
+        "bars_timestamp_count": 2,
+        "canonicalized_funding_timestamp_count": 2,
+        "exact_matched_after_canonicalization_count": 2,
+        "bars_without_canonicalized_funding_count": 0,
+        "canonicalized_funding_without_bars_count": 0,
+        "canonicalization_status": "EXACT_CANONICAL_TIMESTAMP_SET_MATCH",
+        "funding_timestamp_collision_count": 0,
+        "ambiguous_nearest_bar_count": 0,
+    }
+    symbol = {
+        "symbol": "BTCUSDT",
+        "canonicalization_policies": [dict(floor)],
+        "structural_flags": {
+            "floor_canonicalized_history_range_status": "MATCHING_RANGES",
+            "extra_funding_timestamps_outside_bars_range_count": 0,
+            "bars_timestamps_outside_funding_range_count": 0,
+        },
+        "per_split_diagnostics": {
+            "split_00": {"train": [dict(floor)], "validation": [dict(floor)]}
+        },
+    }
+    return {
+        "funding_to_bars_alignment_diagnostics": {"symbols": [{"symbol": "BTCUSDT"}]},
+        "funding_to_bars_temporal_joinability_diagnostics": {"symbols": [{"symbol": "BTCUSDT"}]},
+        "funding_to_bars_timestamp_convention_diagnostics": {"symbols": [{"symbol": "BTCUSDT"}]},
+        "funding_to_bars_timestamp_canonicalization_diagnostics": {"symbols": [symbol]},
+    }
+
+
+def _readiness(**inputs) -> dict:
+    values = _readiness_inputs()
+    values.update(inputs)
+    return materialize_funding_application_readiness_gate_diagnostics(**values)
+
+
+class TestFundingApplicationReadinessGateDiagnostics:
+    def test_eligible_exact_symbol_and_splits(self):
+        result = _readiness()
+        assert result["eligible_symbol_count"] == 1
+        symbol = result["symbols"][0]
+        assert symbol["eligible_for_future_funding_application"] is True
+        assert all(item["eligible_for_future_funding_application"] for item in symbol["splits"])
+
+    @pytest.mark.parametrize(
+        ("target", "field", "value", "reason"),
+        [
+            ("policy", "canonicalized_funding_timestamp_count", 3, "COUNT_MISMATCH"),
+            (
+                "policy",
+                "canonicalization_status",
+                "PARTIAL_CANONICAL_TIMESTAMP_SET_MATCH",
+                "PARTIAL_CANONICAL_TIMESTAMP_SET_MATCH",
+            ),
+            (
+                "policy",
+                "canonicalization_status",
+                "NO_CANONICAL_TIMESTAMP_MATCH",
+                "NO_CANONICAL_TIMESTAMP_MATCH",
+            ),
+            (
+                "policy",
+                "canonicalized_funding_without_bars_count",
+                1,
+                "CANONICALIZED_FUNDING_WITHOUT_BARS",
+            ),
+            (
+                "policy",
+                "bars_without_canonicalized_funding_count",
+                1,
+                "BARS_WITHOUT_CANONICALIZED_FUNDING",
+            ),
+            ("policy", "funding_timestamp_collision_count", 1, "CANONICALIZED_TIMESTAMP_COLLISION"),
+            ("policy", "ambiguous_nearest_bar_count", 1, "AMBIGUOUS_NEAREST_BAR"),
+            (
+                "flags",
+                "floor_canonicalized_history_range_status",
+                "BARS_END_BEFORE_FUNDING",
+                "RANGE_MISMATCH",
+            ),
+            (
+                "flags",
+                "extra_funding_timestamps_outside_bars_range_count",
+                1,
+                "EXTRA_FUNDING_OUTSIDE_BARS_RANGE",
+            ),
+            (
+                "flags",
+                "bars_timestamps_outside_funding_range_count",
+                1,
+                "BARS_OUTSIDE_FUNDING_RANGE",
+            ),
+        ],
+    )
+    def test_symbol_blockers(self, target, field, value, reason):
+        inputs = _readiness_inputs()
+        symbol = inputs["funding_to_bars_timestamp_canonicalization_diagnostics"]["symbols"][0]
+        container = (
+            symbol["canonicalization_policies"][0]
+            if target == "policy"
+            else symbol["structural_flags"]
+        )
+        container[field] = value
+        result = materialize_funding_application_readiness_gate_diagnostics(**inputs)
+        assert reason in result["symbols"][0]["blocked_reasons"]
+        assert result["blocked_symbol_count"] == 1
+
+    def _set_split_counts(self, bars, funding, matched, status):
+        inputs = _readiness_inputs()
+        split = inputs["funding_to_bars_timestamp_canonicalization_diagnostics"][
+            "symbols"
+        ][0]["per_split_diagnostics"]["split_00"]["validation"][0]
+        split.update({
+            "bars_timestamp_count": bars,
+            "canonicalized_funding_timestamp_count": funding,
+            "exact_matched_after_canonicalization_count": matched,
+            "bars_without_canonicalized_funding_count": max(bars - matched, 0),
+            "canonicalized_funding_without_bars_count": max(funding - matched, 0),
+            "canonicalization_status": status,
+        })
+        return materialize_funding_application_readiness_gate_diagnostics(**inputs)
+
+    def test_empty_both_split_not_blocking(self):
+        result = self._set_split_counts(0, 0, 0, "EMPTY_BOTH")
+        split = result["symbols"][0]["splits"][1]
+        assert split["empty_window_status"] == "EMPTY_BOTH_NOT_BLOCKING"
+        assert result["eligible_symbol_count"] == 1
+
+    @pytest.mark.parametrize(
+        ("bars", "funding", "status", "empty_status", "reason"),
+        [
+            (
+                0,
+                1,
+                "NO_CANONICAL_TIMESTAMP_MATCH",
+                "EMPTY_BARS_NONEMPTY_FUNDING_BLOCKING",
+                "EMPTY_BARS_NONEMPTY_FUNDING",
+            ),
+            (
+                1,
+                0,
+                "NO_CANONICAL_TIMESTAMP_MATCH",
+                "EMPTY_FUNDING_NONEMPTY_BARS_BLOCKING",
+                "EMPTY_FUNDING_NONEMPTY_BARS",
+            ),
+        ],
+    )
+    def test_one_sided_empty_split_blocks_symbol(self, bars, funding, status, empty_status, reason):
+        result = self._set_split_counts(bars, funding, 0, status)
+        split = result["symbols"][0]["splits"][1]
+        assert split["empty_window_status"] == empty_status
+        assert reason in split["blocked_reasons"]
+        assert result["blocked_symbol_count"] == 1
+
+    def test_any_blocked_partition_blocks_symbol(self):
+        result = self._set_split_counts(2, 3, 2, "PARTIAL_CANONICAL_TIMESTAMP_SET_MATCH")
+        assert result["symbols"][0]["eligible_for_future_funding_application"] is False
+
+    def test_all_nonempty_and_empty_both_are_eligible(self):
+        result = self._set_split_counts(0, 0, 0, "EMPTY_BOTH")
+        assert result["symbols"][0]["eligible_for_future_funding_application"] is True
+
+    def test_missing_canonicalization_diagnostics_fails_closed(self):
+        inputs = _readiness_inputs()
+        inputs["funding_to_bars_timestamp_canonicalization_diagnostics"] = {"symbols": []}
+        result = materialize_funding_application_readiness_gate_diagnostics(**inputs)
+        assert "MISSING_CANONICALIZATION_DIAGNOSTICS" in result["symbols"][0]["blocked_reasons"]
+
+    def test_missing_floor_policy_fails_closed(self):
+        inputs = _readiness_inputs()
+        inputs["funding_to_bars_timestamp_canonicalization_diagnostics"]["symbols"][
+            0
+        ]["canonicalization_policies"] = []
+        result = materialize_funding_application_readiness_gate_diagnostics(**inputs)
+        assert "MISSING_POLICY_DIAGNOSTICS" in result["symbols"][0]["blocked_reasons"]
+
+    def test_unexpected_status_fails_closed(self):
+        inputs = _readiness_inputs()
+        inputs["funding_to_bars_timestamp_canonicalization_diagnostics"]["symbols"][
+            0
+        ]["canonicalization_policies"][0]["canonicalization_status"] = "SURPRISING"
+        result = materialize_funding_application_readiness_gate_diagnostics(**inputs)
+        assert "UNEXPECTED_STATUS" in result["symbols"][0]["blocked_reasons"]
+
+    def test_safety_keys_exclude_pnl_and_sharpe(self):
+        serialized = json.dumps(_readiness()).lower()
+        assert "pnl" not in serialized
+        assert "sharpe" not in serialized

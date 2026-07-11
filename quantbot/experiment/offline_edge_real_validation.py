@@ -62,6 +62,7 @@ __all__ = [
     "materialize_funding_to_bars_temporal_joinability_diagnostics",
     "materialize_funding_to_bars_timestamp_convention_diagnostics",
     "materialize_funding_to_bars_timestamp_canonicalization_diagnostics",
+    "materialize_funding_application_readiness_gate_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -3047,6 +3048,269 @@ def materialize_funding_to_bars_timestamp_canonicalization_diagnostics(
     }
 
 
+_READINESS_POLICY = "floor_to_second"
+_READINESS_EXACT_STATUS = "EXACT_CANONICAL_TIMESTAMP_SET_MATCH"
+
+
+def _diagnostic_symbols(section: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(section, dict) or not isinstance(section.get("symbols"), list):
+        return {}
+    return {
+        str(item["symbol"]): item
+        for item in section["symbols"]
+        if isinstance(item, dict) and isinstance(item.get("symbol"), str)
+    }
+
+
+def _readiness_reasons(evidence: dict[str, Any]) -> list[str]:
+    """Return controlled, deterministically ordered readiness blockers."""
+    reasons: list[str] = []
+    bars = evidence.get("bars_timestamp_count")
+    funding = evidence.get("canonicalized_funding_timestamp_count")
+    matched = evidence.get("exact_matched_after_canonicalization_count")
+    status = evidence.get("canonicalization_status")
+    if not all(isinstance(value, int) for value in (bars, funding, matched)):
+        reasons.append("MISSING_POLICY_DIAGNOSTICS")
+    elif bars != funding or matched != bars or matched != funding:
+        reasons.append("COUNT_MISMATCH")
+    if status == "PARTIAL_CANONICAL_TIMESTAMP_SET_MATCH":
+        reasons.append("PARTIAL_CANONICAL_TIMESTAMP_SET_MATCH")
+    elif status == "NO_CANONICAL_TIMESTAMP_MATCH":
+        reasons.append("NO_CANONICAL_TIMESTAMP_MATCH")
+    elif status != _READINESS_EXACT_STATUS:
+        reasons.append("UNEXPECTED_STATUS")
+    checks = (
+        (
+            "canonicalized_funding_without_bars_count",
+            "CANONICALIZED_FUNDING_WITHOUT_BARS",
+        ),
+        (
+            "bars_without_canonicalized_funding_count",
+            "BARS_WITHOUT_CANONICALIZED_FUNDING",
+        ),
+        ("funding_timestamp_collision_count", "CANONICALIZED_TIMESTAMP_COLLISION"),
+        ("ambiguous_nearest_bar_count", "AMBIGUOUS_NEAREST_BAR"),
+    )
+    for field, reason in checks:
+        value = evidence.get(field)
+        if not isinstance(value, int):
+            if "MISSING_POLICY_DIAGNOSTICS" not in reasons:
+                reasons.append("MISSING_POLICY_DIAGNOSTICS")
+        elif value > 0:
+            reasons.append(reason)
+    return reasons
+
+
+def _split_readiness(split_id: str, partition: str, policies: Any) -> dict[str, Any]:
+    floor = (
+        next(
+            (
+                policy
+                for policy in policies
+                if isinstance(policy, dict)
+                and policy.get("policy_name") == _READINESS_POLICY
+            ),
+            None,
+        )
+        if isinstance(policies, list)
+        else None
+    )
+    if floor is None:
+        evidence: dict[str, Any] = {}
+        reasons = ["MISSING_POLICY_DIAGNOSTICS"]
+        empty_status = "NOT_EMPTY"
+    else:
+        evidence = {
+            "bars_count": floor.get("bars_timestamp_count"),
+            "canonicalized_funding_count": floor.get(
+                "canonicalized_funding_timestamp_count"
+            ),
+            "exact_matched_after_canonicalization_count": floor.get(
+                "exact_matched_after_canonicalization_count"
+            ),
+            "bars_without_canonicalized_funding_count": floor.get(
+                "bars_without_canonicalized_funding_count"
+            ),
+            "canonicalized_funding_without_bars_count": floor.get(
+                "canonicalized_funding_without_bars_count"
+            ),
+            "canonicalization_status": floor.get("canonicalization_status"),
+            "funding_timestamp_collision_count": floor.get(
+                "funding_timestamp_collision_count"
+            ),
+            "ambiguous_nearest_bar_count": floor.get("ambiguous_nearest_bar_count"),
+        }
+        normalized = dict(evidence)
+        normalized["bars_timestamp_count"] = evidence["bars_count"]
+        normalized["canonicalized_funding_timestamp_count"] = evidence[
+            "canonicalized_funding_count"
+        ]
+        bars, funding = evidence["bars_count"], evidence["canonicalized_funding_count"]
+        if bars == 0 and funding == 0:
+            empty_status, reasons = "EMPTY_BOTH_NOT_BLOCKING", []
+        elif bars == 0 and isinstance(funding, int) and funding > 0:
+            empty_status = "EMPTY_BARS_NONEMPTY_FUNDING_BLOCKING"
+            reasons = ["EMPTY_BARS_NONEMPTY_FUNDING"] + _readiness_reasons(
+                normalized
+            )
+        elif funding == 0 and isinstance(bars, int) and bars > 0:
+            empty_status = "EMPTY_FUNDING_NONEMPTY_BARS_BLOCKING"
+            reasons = ["EMPTY_FUNDING_NONEMPTY_BARS"] + _readiness_reasons(
+                normalized
+            )
+        else:
+            empty_status, reasons = "NOT_EMPTY", _readiness_reasons(normalized)
+    eligible = not reasons
+    return {
+        "split_id": split_id,
+        "partition": partition,
+        "readiness_status": (
+            "ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION" if eligible
+            else "BLOCKED_FOR_FUTURE_FUNDING_APPLICATION"
+        ),
+        "eligible_for_future_funding_application": eligible,
+        "empty_window_status": empty_status,
+        "blocked_reasons": list(dict.fromkeys(reasons)),
+        "evidence": evidence,
+    }
+
+
+def materialize_funding_application_readiness_gate_diagnostics(
+    *,
+    funding_to_bars_alignment_diagnostics: dict,
+    funding_to_bars_temporal_joinability_diagnostics: dict,
+    funding_to_bars_timestamp_convention_diagnostics: dict,
+    funding_to_bars_timestamp_canonicalization_diagnostics: dict,
+) -> dict[str, Any]:
+    """Classify future funding-application readiness from existing evidence only."""
+    canonical = _diagnostic_symbols(
+        funding_to_bars_timestamp_canonicalization_diagnostics
+    )
+    corroborating = [
+        _diagnostic_symbols(funding_to_bars_alignment_diagnostics),
+        _diagnostic_symbols(funding_to_bars_temporal_joinability_diagnostics),
+        _diagnostic_symbols(funding_to_bars_timestamp_convention_diagnostics),
+    ]
+    all_symbols = sorted(set(canonical).union(*(set(item) for item in corroborating)))
+    symbols: list[dict[str, Any]] = []
+    for symbol_name in all_symbols:
+        source = canonical.get(symbol_name)
+        missing_canonical = source is None
+        floor = (
+            next(
+                (
+                    policy
+                    for policy in source.get("canonicalization_policies", [])
+                    if isinstance(policy, dict)
+                    and policy.get("policy_name") == _READINESS_POLICY
+                ),
+                None,
+            )
+            if source
+            else None
+        )
+        evidence = {
+            key: (floor.get(key) if floor else None)
+            for key in (
+                "bars_timestamp_count",
+                "canonicalized_funding_timestamp_count",
+                "exact_matched_after_canonicalization_count",
+                "bars_without_canonicalized_funding_count",
+                "canonicalized_funding_without_bars_count",
+                "canonicalization_status",
+                "funding_timestamp_collision_count",
+                "ambiguous_nearest_bar_count",
+            )
+        }
+        flags = source.get("structural_flags", {}) if source else {}
+        evidence.update(
+            {
+                "floor_canonicalized_history_range_status": flags.get(
+                    "floor_canonicalized_history_range_status"
+                ),
+                "extra_funding_timestamps_outside_bars_range_count": flags.get(
+                    "extra_funding_timestamps_outside_bars_range_count"
+                ),
+                "bars_timestamps_outside_funding_range_count": flags.get(
+                    "bars_timestamps_outside_funding_range_count"
+                ),
+            }
+        )
+        reasons = (
+            ["MISSING_CANONICALIZATION_DIAGNOSTICS"]
+            if missing_canonical
+            else _readiness_reasons(evidence)
+        )
+        if any(symbol_name not in item for item in corroborating):
+            reasons.append("MISSING_POLICY_DIAGNOSTICS")
+        if evidence["floor_canonicalized_history_range_status"] != "MATCHING_RANGES":
+            reasons.append(
+                "RANGE_MISMATCH"
+                if evidence["floor_canonicalized_history_range_status"] is not None
+                else "MISSING_POLICY_DIAGNOSTICS"
+            )
+        for field, reason in (
+            (
+                "extra_funding_timestamps_outside_bars_range_count",
+                "EXTRA_FUNDING_OUTSIDE_BARS_RANGE",
+            ),
+            (
+                "bars_timestamps_outside_funding_range_count",
+                "BARS_OUTSIDE_FUNDING_RANGE",
+            ),
+        ):
+            value = evidence[field]
+            if isinstance(value, int) and value > 0:
+                reasons.append(reason)
+            elif not isinstance(value, int):
+                reasons.append("MISSING_POLICY_DIAGNOSTICS")
+        splits = [
+            _split_readiness(split_id, partition, partitions.get(partition))
+            for split_id, partitions in sorted(
+                (source or {}).get("per_split_diagnostics", {}).items()
+            )
+            for partition in ("train", "validation")
+        ]
+        if not isinstance((source or {}).get("per_split_diagnostics"), dict):
+            reasons.append("MISSING_POLICY_DIAGNOSTICS")
+        if any(not split["eligible_for_future_funding_application"] for split in splits):
+            reasons.extend(
+                reason for split in splits for reason in split["blocked_reasons"]
+            )
+        reasons = list(dict.fromkeys(reasons))
+        eligible = not reasons
+        symbols.append(
+            {
+                "symbol": symbol_name,
+                "readiness_status": (
+                    "ELIGIBLE_FOR_FUTURE_FUNDING_APPLICATION"
+                    if eligible
+                    else "BLOCKED_FOR_FUTURE_FUNDING_APPLICATION"
+                ),
+                "eligible_for_future_funding_application": eligible,
+                "canonicalization_policy": _READINESS_POLICY,
+                "blocked_reasons": reasons,
+                "evidence": evidence,
+                "splits": splits,
+            }
+        )
+    eligible_count = sum(
+        item["eligible_for_future_funding_application"] for item in symbols
+    )
+    return {
+        "calculation_status": "FUNDING_APPLICATION_READINESS_GATE_DIAGNOSTIC_ONLY",
+        "funding_application_status": "NOT_EXECUTED",
+        "readiness_policy": (
+            "STRICT_CANONICAL_TIMESTAMP_EXACT_MATCH_NO_COLLISION_NO_AMBIGUITY"
+        ),
+        "canonicalization_policy_considered": _READINESS_POLICY,
+        "symbol_count": len(symbols),
+        "eligible_symbol_count": eligible_count,
+        "blocked_symbol_count": len(symbols) - eligible_count,
+        "symbols": symbols,
+    }
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -3117,6 +3381,7 @@ def build_real_validation_receipt(
     funding_to_bars_temporal_joinability_diagnostics: dict | None = None,
     funding_to_bars_timestamp_convention_diagnostics: dict | None = None,
     funding_to_bars_timestamp_canonicalization_diagnostics: dict | None = None,
+    funding_application_readiness_gate_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -3203,6 +3468,10 @@ def build_real_validation_receipt(
     if funding_to_bars_timestamp_canonicalization_diagnostics is not None:
         receipt["funding_to_bars_timestamp_canonicalization_diagnostics"] = (
             funding_to_bars_timestamp_canonicalization_diagnostics
+        )
+    if funding_application_readiness_gate_diagnostics is not None:
+        receipt["funding_application_readiness_gate_diagnostics"] = (
+            funding_application_readiness_gate_diagnostics
         )
 
     return receipt
@@ -3492,6 +3761,24 @@ def main(argv: list[str] | None = None) -> int:
                 if funding_dir is not None
                 else None
             )
+            funding_application_readiness_gate_diagnostics = (
+                materialize_funding_application_readiness_gate_diagnostics(
+                    funding_to_bars_alignment_diagnostics=(
+                        funding_to_bars_alignment_diagnostics
+                    ),
+                    funding_to_bars_temporal_joinability_diagnostics=(
+                        funding_to_bars_temporal_joinability_diagnostics
+                    ),
+                    funding_to_bars_timestamp_convention_diagnostics=(
+                        funding_to_bars_timestamp_convention_diagnostics
+                    ),
+                    funding_to_bars_timestamp_canonicalization_diagnostics=(
+                        funding_to_bars_timestamp_canonicalization_diagnostics
+                    ),
+                )
+                if funding_dir is not None
+                else None
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -3518,6 +3805,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             funding_to_bars_timestamp_canonicalization_diagnostics=(
                 funding_to_bars_timestamp_canonicalization_diagnostics
+            ),
+            funding_application_readiness_gate_diagnostics=(
+                funding_application_readiness_gate_diagnostics
             ),
         )
     else:
