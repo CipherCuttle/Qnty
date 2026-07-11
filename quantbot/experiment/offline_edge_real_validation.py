@@ -67,6 +67,7 @@ __all__ = [
     "materialize_funding_adjusted_bars_scaffold_diagnostics",
     "materialize_funding_adjustment_policy_contract_diagnostics",
     "materialize_funding_adjustment_arithmetic_scaffold_diagnostics",
+    "materialize_funding_adjustment_row_scaffold_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -148,6 +149,10 @@ FUNDING_ADJUSTMENT_ARITHMETIC_SCAFFOLD_DIAGNOSTIC_ONLY = "FUNDING_ADJUSTMENT_ARI
 FIXTURE_ONLY_NOT_APPLIED_TO_STRATEGY = "FIXTURE_ONLY_NOT_APPLIED_TO_STRATEGY"
 LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL = "LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL"
 EXPLICIT_FIXTURE_ONLY = "EXPLICIT_FIXTURE_ONLY"
+
+# === Funding adjustment row scaffold constants ===
+FUNDING_ADJUSTMENT_ROW_SCAFFOLD_DIAGNOSTIC_ONLY = "FUNDING_ADJUSTMENT_ROW_SCAFFOLD_DIAGNOSTIC_ONLY"
+DIAGNOSTIC_ROW_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY = "DIAGNOSTIC_ROW_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY"
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -4804,6 +4809,395 @@ def materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
     return result
 
 
+def _validate_funding_rate(funding_rate):
+    """Validate funding rate is not NaN, infinite, or otherwise malformed."""
+    if funding_rate is None:
+        raise ValueError("Funding rate is None")
+    if isinstance(funding_rate, float):
+        if math.isnan(funding_rate):
+            raise ValueError("Funding rate is NaN")
+        if math.isinf(funding_rate):
+            raise ValueError("Funding rate is infinite")
+    elif isinstance(funding_rate, str):
+        try:
+            Decimal(funding_rate)
+        except Exception as e:
+            raise ValueError(f"Funding rate string '{funding_rate}' is malformed: {e}")
+    elif isinstance(funding_rate, (int,)):
+        pass  # valid
+    elif isinstance(funding_rate, Decimal):
+        pass  # valid
+    else:
+        raise ValueError(f"Unexpected funding rate type: {type(funding_rate).__name__}")
+
+
+def materialize_funding_adjustment_row_scaffold_diagnostics(
+    funding_adjustment_policy_contract_diagnostics,
+    funding_adjustment_arithmetic_scaffold_diagnostics,
+    funding_adjusted_bars_scaffold_diagnostics,
+) -> dict:
+    """Materialize the diagnostic-only funding adjustment row scaffold.
+
+    Validates the upstream policy contract, arithmetic scaffold, and bars
+    scaffold sections, then builds per-symbol cashflow samples from the
+    bars scaffold sample rows using unit notional and both hypothetical
+    sides. This function performs no strategy, PnL, Sharpe, edge, trade,
+    position, signal, portfolio, drawdown, risk, or live-readiness
+    calculation, and emits no timestamps, OHLCV, returns, or real
+    strategy-side/notional data.
+    """
+    # ── Step 1: Validate policy contract section exists and is dict ──────
+    if not isinstance(funding_adjustment_policy_contract_diagnostics, dict):
+        raise ValueError(
+            "funding_adjustment_policy_contract_diagnostics must be a dict"
+        )
+
+    # ── Step 2: Validate policy contract status fields ───────────────────
+    policy = funding_adjustment_policy_contract_diagnostics
+    if policy.get("calculation_status") != FUNDING_ADJUSTMENT_POLICY_CONTRACT_DIAGNOSTIC_ONLY:
+        raise ValueError(
+            f"Expected policy contract calculation_status="
+            f"{FUNDING_ADJUSTMENT_POLICY_CONTRACT_DIAGNOSTIC_ONLY!r}, "
+            f"got {policy.get('calculation_status')!r}"
+        )
+    if policy.get("funding_adjustment_application_status") != NOT_EXECUTED:
+        raise ValueError(
+            f"Expected policy contract funding_adjustment_application_status="
+            f"{NOT_EXECUTED!r}, "
+            f"got {policy.get('funding_adjustment_application_status')!r}"
+        )
+    if policy.get("strategy_application_status") != NOT_EXECUTED:
+        raise ValueError(
+            f"Expected policy contract strategy_application_status="
+            f"{NOT_EXECUTED!r}, "
+            f"got {policy.get('strategy_application_status')!r}"
+        )
+    if policy.get("pnl_application_status") != NOT_EXECUTED:
+        raise ValueError(
+            f"Expected policy contract pnl_application_status="
+            f"{NOT_EXECUTED!r}, "
+            f"got {policy.get('pnl_application_status')!r}"
+        )
+    if policy.get("funding_rate_unit") != "decimal_rate_not_percent":
+        raise ValueError(
+            f"Expected policy contract funding_rate_unit='decimal_rate_not_percent', "
+            f"got {policy.get('funding_rate_unit')!r}"
+        )
+    if policy.get("funding_rate_annualization_status") != "NOT_ANNUALIZED":
+        raise ValueError(
+            f"Expected policy contract funding_rate_annualization_status="
+            f"'NOT_ANNUALIZED', "
+            f"got {policy.get('funding_rate_annualization_status')!r}"
+        )
+    if policy.get("timestamp_match_policy") != EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP:
+        raise ValueError(
+            f"Expected policy contract timestamp_match_policy="
+            f"{EXACT_CANONICAL_FUNDING_TIMESTAMP_TO_BAR_TIMESTAMP!r}, "
+            f"got {policy.get('timestamp_match_policy')!r}"
+        )
+
+    # ── Step 3: Validate arithmetic scaffold section exists and is dict ──
+    if not isinstance(funding_adjustment_arithmetic_scaffold_diagnostics, dict):
+        raise ValueError(
+            "funding_adjustment_arithmetic_scaffold_diagnostics must be a dict"
+        )
+
+    # ── Step 4: Validate arithmetic scaffold status fields ───────────────
+    arith = funding_adjustment_arithmetic_scaffold_diagnostics
+    if arith.get("calculation_status") != FUNDING_ADJUSTMENT_ARITHMETIC_SCAFFOLD_DIAGNOSTIC_ONLY:
+        raise ValueError(
+            f"Expected arithmetic scaffold calculation_status="
+            f"{FUNDING_ADJUSTMENT_ARITHMETIC_SCAFFOLD_DIAGNOSTIC_ONLY!r}, "
+            f"got {arith.get('calculation_status')!r}"
+        )
+    if arith.get("funding_adjustment_application_status") != FIXTURE_ONLY_NOT_APPLIED_TO_STRATEGY:
+        raise ValueError(
+            f"Expected arithmetic scaffold "
+            f"funding_adjustment_application_status="
+            f"{FIXTURE_ONLY_NOT_APPLIED_TO_STRATEGY!r}, "
+            f"got {arith.get('funding_adjustment_application_status')!r}"
+        )
+    if arith.get("strategy_application_status") != NOT_EXECUTED:
+        raise ValueError(
+            f"Expected arithmetic scaffold strategy_application_status="
+            f"{NOT_EXECUTED!r}, "
+            f"got {arith.get('strategy_application_status')!r}"
+        )
+    if arith.get("pnl_application_status") != NOT_EXECUTED:
+        raise ValueError(
+            f"Expected arithmetic scaffold pnl_application_status="
+            f"{NOT_EXECUTED!r}, "
+            f"got {arith.get('pnl_application_status')!r}"
+        )
+    if arith.get("funding_rate_unit") != "decimal_rate_not_percent":
+        raise ValueError(
+            f"Expected arithmetic scaffold funding_rate_unit="
+            f"'decimal_rate_not_percent', "
+            f"got {arith.get('funding_rate_unit')!r}"
+        )
+    if arith.get("annualization_status") != "NOT_ANNUALIZED":
+        raise ValueError(
+            f"Expected arithmetic scaffold annualization_status="
+            f"'NOT_ANNUALIZED', "
+            f"got {arith.get('annualization_status')!r}"
+        )
+    if arith.get("compounding_status") != "NOT_COMPOUNDED":
+        raise ValueError(
+            f"Expected arithmetic scaffold compounding_status="
+            f"'NOT_COMPOUNDED', "
+            f"got {arith.get('compounding_status')!r}"
+        )
+    if arith.get("side_source") != EXPLICIT_FIXTURE_ONLY:
+        raise ValueError(
+            f"Expected arithmetic scaffold side_source="
+            f"{EXPLICIT_FIXTURE_ONLY!r}, "
+            f"got {arith.get('side_source')!r}"
+        )
+    if arith.get("notional_source") != EXPLICIT_FIXTURE_ONLY:
+        raise ValueError(
+            f"Expected arithmetic scaffold notional_source="
+            f"{EXPLICIT_FIXTURE_ONLY!r}, "
+            f"got {arith.get('notional_source')!r}"
+        )
+    if arith.get("fixture_case_count") != 6:
+        raise ValueError(
+            f"Expected arithmetic scaffold fixture_case_count=6, "
+            f"got {arith.get('fixture_case_count')!r}"
+        )
+    if arith.get("passed_fixture_case_count") != 6:
+        raise ValueError(
+            f"Expected arithmetic scaffold passed_fixture_case_count=6, "
+            f"got {arith.get('passed_fixture_case_count')!r}"
+        )
+    if arith.get("failed_fixture_case_count") != 0:
+        raise ValueError(
+            f"Expected arithmetic scaffold failed_fixture_case_count=0, "
+            f"got {arith.get('failed_fixture_case_count')!r}"
+        )
+
+    # ── Step 5: Validate bars scaffold section exists and is dict ────────
+    if not isinstance(funding_adjusted_bars_scaffold_diagnostics, dict):
+        raise ValueError(
+            "funding_adjusted_bars_scaffold_diagnostics must be a dict"
+        )
+
+    # ── Step 6: Validate bars scaffold status fields ─────────────────────
+    bars = funding_adjusted_bars_scaffold_diagnostics
+    if bars.get("calculation_status") != FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY:
+        raise ValueError(
+            f"Expected bars scaffold calculation_status="
+            f"{FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY!r}, "
+            f"got {bars.get('calculation_status')!r}"
+        )
+    if bars.get("funding_application_status") != DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY:
+        raise ValueError(
+            f"Expected bars scaffold funding_application_status="
+            f"{DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY!r}, "
+            f"got {bars.get('funding_application_status')!r}"
+        )
+    if bars.get("canonicalization_policy_used") != FLOOR_TO_SECOND:
+        raise ValueError(
+            f"Expected bars scaffold canonicalization_policy_used="
+            f"{FLOOR_TO_SECOND!r}, "
+            f"got {bars.get('canonicalization_policy_used')!r}"
+        )
+
+    # ── Step 7: Validate scaffold counts are internally consistent ───────
+    symbols = bars.get("symbols", [])
+    if not isinstance(symbols, list):
+        raise ValueError("bars scaffold symbols must be a list")
+
+    seen_symbols: set[str] = set()
+    eligible_symbol_entries: list[dict] = []
+    blocked_symbol_entries: list[dict] = []
+
+    for entry in symbols:
+        if not isinstance(entry, dict):
+            raise ValueError("bars scaffold symbol entry must be a dict")
+        symbol = entry.get("symbol")
+        if not isinstance(symbol, str) or not symbol:
+            raise ValueError(f"bars scaffold symbol entry has invalid symbol {symbol!r}")
+        if symbol in seen_symbols:
+            raise ValueError(f"Duplicate scaffold symbol: {symbol}")
+        seen_symbols.add(symbol)
+
+        scaffold_status = entry.get("scaffold_status")
+        if scaffold_status == MATERIALIZED_DIAGNOSTIC_ROWS:
+            total_rows = entry.get("total_rows")
+            if not isinstance(total_rows, int) or isinstance(total_rows, bool) or total_rows < 0:
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} has invalid total_rows: {total_rows!r}"
+                )
+            matched_rows = entry.get("matched_rows")
+            if matched_rows != total_rows:
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} matched_rows ({matched_rows}) "
+                    f"!= total_rows ({total_rows})"
+                )
+            funding_rate_present_rows = entry.get("funding_rate_present_rows")
+            if funding_rate_present_rows != total_rows:
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} funding_rate_present_rows "
+                    f"({funding_rate_present_rows}) != total_rows ({total_rows})"
+                )
+            missing_funding_rows = entry.get("missing_funding_rows")
+            if missing_funding_rows != 0:
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} missing_funding_rows "
+                    f"({missing_funding_rows}) != 0"
+                )
+            duplicate_canonical_funding_rows = entry.get("duplicate_canonical_funding_rows")
+            if duplicate_canonical_funding_rows != 0:
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} "
+                    f"duplicate_canonical_funding_rows "
+                    f"({duplicate_canonical_funding_rows}) != 0"
+                )
+            funding_rate_missing_rows = entry.get("funding_rate_missing_rows")
+            if funding_rate_missing_rows != 0:
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} funding_rate_missing_rows "
+                    f"({funding_rate_missing_rows}) != 0"
+                )
+            sample_rows = entry.get("sample_rows")
+            if not isinstance(sample_rows, list):
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} sample_rows must be a list, "
+                    f"got {type(sample_rows).__name__}"
+                )
+            eligible_symbol_entries.append(entry)
+        elif scaffold_status == SKIPPED_BY_READINESS_GATE:
+            blocked_symbol_entries.append(entry)
+        else:
+            raise ValueError(
+                f"Symbol {symbol!r} has unexpected scaffold_status "
+                f"{scaffold_status!r}"
+            )
+
+    # ── Step 8: Build the output section ─────────────────────────────────
+    eligible_count = len(eligible_symbol_entries)
+    blocked_count = len(blocked_symbol_entries)
+
+    # ── Step 9: Build per-symbol entries ─────────────────────────────────
+    output_symbols: list[dict] = []
+
+    for entry in eligible_symbol_entries:
+        symbol = entry["symbol"]
+        sample_rows = entry["sample_rows"]
+        sample_row_count = len(sample_rows)
+
+        if sample_row_count > 10:
+            raise ValueError(
+                f"Eligible symbol {symbol!r} sample row count "
+                f"{sample_row_count} exceeds maximum of 10"
+            )
+
+        cashflow_samples = []
+        for row in sample_rows:
+            if "bar_row_index" not in row:
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} sample row missing bar_row_index"
+                )
+            if "funding_row_index" not in row:
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} sample row missing funding_row_index"
+                )
+            if "funding_rate" not in row:
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} sample row missing funding_rate"
+                )
+
+            funding_rate = row["funding_rate"]
+            _validate_funding_rate(funding_rate)
+
+            dr = Decimal(str(funding_rate))
+            unit_notional = Decimal("1")
+
+            long_cashflow_factor = -dr * unit_notional
+            short_cashflow_factor = dr * unit_notional
+
+            cashflow_samples.append({
+                "bar_row_index": row["bar_row_index"],
+                "funding_row_index": row["funding_row_index"],
+                "funding_rate": funding_rate,
+                "unit_notional": "1",
+                "long_cashflow_factor": str(long_cashflow_factor),
+                "short_cashflow_factor": str(short_cashflow_factor),
+                "formula": LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL,
+                "application_scope": "DIAGNOSTIC_SAMPLE_ONLY_NOT_STRATEGY",
+            })
+
+        output_symbols.append({
+            "symbol": symbol,
+            "scaffold_status": MATERIALIZED_DIAGNOSTIC_ROWS,
+            "row_scaffold_status": "MATERIALIZED_DIAGNOSTIC_CASHFLOW_SAMPLES",
+            "notional_policy": "UNIT_NOTIONAL_DIAGNOSTIC_ONLY",
+            "side_policy": "BOTH_HYPOTHETICAL_SIDES_DIAGNOSTIC_ONLY",
+            "funding_rate_unit": "decimal_rate_not_percent",
+            "total_rows": entry["total_rows"],
+            "sample_row_count": sample_row_count,
+            "sample_rows": cashflow_samples,
+        })
+
+    for entry in blocked_symbol_entries:
+        symbol = entry["symbol"]
+        blocked_reasons = entry.get("blocked_reasons", [])
+
+        if "sample_rows" in entry:
+            raise ValueError(
+                f"Blocked symbol {symbol!r} must not contain sample_rows"
+            )
+        for forbidden_key in ["row_scaffold_status", "notional_policy", "side_policy", "funding_rate_unit"]:
+            if forbidden_key in entry and forbidden_key != "scaffold_status":
+                raise ValueError(
+                    f"Blocked symbol {symbol!r} contains unexpected key "
+                    f"{forbidden_key}"
+                )
+
+        output_symbols.append({
+            "symbol": symbol,
+            "scaffold_status": SKIPPED_BY_READINESS_GATE,
+            "row_scaffold_status": SKIPPED_BY_READINESS_GATE,
+            "blocked_reasons": blocked_reasons,
+        })
+
+    section = {
+        "calculation_status": FUNDING_ADJUSTMENT_ROW_SCAFFOLD_DIAGNOSTIC_ONLY,
+        "funding_adjustment_application_status": (
+            DIAGNOSTIC_ROW_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY
+        ),
+        "strategy_application_status": NOT_EXECUTED,
+        "pnl_application_status": NOT_EXECUTED,
+        "requires_policy_contract_diagnostics": True,
+        "requires_arithmetic_scaffold_diagnostics": True,
+        "requires_funding_adjusted_bars_scaffold_diagnostics": True,
+        "policy_contract_section_required": (
+            "funding_adjustment_policy_contract_diagnostics"
+        ),
+        "arithmetic_scaffold_section_required": (
+            "funding_adjustment_arithmetic_scaffold_diagnostics"
+        ),
+        "funding_adjusted_bars_scaffold_section_required": (
+            "funding_adjusted_bars_scaffold_diagnostics"
+        ),
+        "funding_rate_unit": "decimal_rate_not_percent",
+        "notional_policy": "UNIT_NOTIONAL_DIAGNOSTIC_ONLY",
+        "side_policy": "BOTH_HYPOTHETICAL_SIDES_DIAGNOSTIC_ONLY",
+        "sample_policy": "CAPPED_DETERMINISTIC_SAMPLES_ONLY",
+        "sample_size_per_symbol": 10,
+        "eligible_symbol_count": eligible_count,
+        "blocked_symbol_count": blocked_count,
+        "materialized_symbol_count": eligible_count,
+        "skipped_symbol_count": blocked_count,
+        "symbols": output_symbols,
+    }
+
+    _assert_no_forbidden_calculation_keys(
+        section, "$.funding_adjustment_row_scaffold_diagnostics"
+    )
+    return section
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -4878,6 +5272,7 @@ def build_real_validation_receipt(
     funding_adjusted_bars_scaffold_diagnostics: dict | None = None,
     funding_adjustment_policy_contract_diagnostics: dict | None = None,
     funding_adjustment_arithmetic_scaffold_diagnostics: dict | None = None,
+    funding_adjustment_row_scaffold_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -4981,6 +5376,10 @@ def build_real_validation_receipt(
     if funding_adjustment_arithmetic_scaffold_diagnostics is not None:
         receipt["funding_adjustment_arithmetic_scaffold_diagnostics"] = (
             funding_adjustment_arithmetic_scaffold_diagnostics
+        )
+    if funding_adjustment_row_scaffold_diagnostics is not None:
+        receipt["funding_adjustment_row_scaffold_diagnostics"] = (
+            funding_adjustment_row_scaffold_diagnostics
         )
 
     return receipt
@@ -5329,6 +5728,21 @@ def main(argv: list[str] | None = None) -> int:
                 if funding_dir is not None
                 else None
             )
+            funding_adjustment_row_scaffold_diagnostics = (
+                materialize_funding_adjustment_row_scaffold_diagnostics(
+                    funding_adjustment_policy_contract_diagnostics=(
+                        funding_adjustment_policy_contract_diagnostics
+                    ),
+                    funding_adjustment_arithmetic_scaffold_diagnostics=(
+                        funding_adjustment_arithmetic_scaffold_diagnostics
+                    ),
+                    funding_adjusted_bars_scaffold_diagnostics=(
+                        funding_adjusted_bars_scaffold_diagnostics
+                    ),
+                )
+                if funding_dir is not None
+                else None
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -5367,6 +5781,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             funding_adjustment_arithmetic_scaffold_diagnostics=(
                 funding_adjustment_arithmetic_scaffold_diagnostics
+            ),
+            funding_adjustment_row_scaffold_diagnostics=(
+                funding_adjustment_row_scaffold_diagnostics
             ),
         )
     else:
