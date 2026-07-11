@@ -6019,6 +6019,11 @@ def _valid_row_scaffold_inputs():
         "calculation_status": "FUNDING_ADJUSTED_BARS_SCAFFOLD_DIAGNOSTIC_ONLY",
         "funding_application_status": "DIAGNOSTIC_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY",
         "canonicalization_policy_used": "floor_to_second",
+        "symbol_count": 2,
+        "eligible_symbol_count": 1,
+        "blocked_symbol_count": 1,
+        "materialized_symbol_count": 1,
+        "skipped_symbol_count": 1,
         "symbols": [
             {
                 "symbol": "BTCUSDT",
@@ -7195,3 +7200,146 @@ class TestFundingAdjustmentRowScaffoldDiagnostics:
 
         string_values = {v for v in _all_values(result) if isinstance(v, str)}
         assert not any("T00:00:00Z" in v for v in string_values)
+
+    # ── Test 39: String 'NaN' funding rate fails closed ─────────────────────
+
+    def test_string_nan_funding_rate_fails_closed(self):
+        """String 'Nan' funding rate must raise ValueError."""
+        # Arrange
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        # Set a sample row funding_rate to string "NaN"
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS":
+                for row in symbol.get("sample_rows", []):
+                    row["funding_rate"] = "NaN"
+        # Act / Assert
+        with pytest.raises(ValueError, match="not finite|NaN"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 40: String 'Infinity' funding rate fails closed ────────────────
+
+    def test_string_infinity_funding_rate_fails_closed(self):
+        """String 'Infinity' funding rate must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS":
+                for row in symbol.get("sample_rows", []):
+                    row["funding_rate"] = "Infinity"
+        with pytest.raises(ValueError, match="not finite|Infinity"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 41: Decimal('NaN') funding rate fails closed ───────────────────
+
+    def test_decimal_nan_funding_rate_fails_closed(self):
+        """Decimal('NaN') funding rate must raise ValueError."""
+        from decimal import Decimal
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS":
+                for row in symbol.get("sample_rows", []):
+                    row["funding_rate"] = Decimal("NaN")
+        with pytest.raises(ValueError, match="not finite|NaN"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 42: Decimal('Infinity') funding rate fails closed ──────────────
+
+    def test_decimal_infinity_funding_rate_fails_closed(self):
+        """Decimal('Infinity') funding rate must raise ValueError."""
+        from decimal import Decimal
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS":
+                for row in symbol.get("sample_rows", []):
+                    row["funding_rate"] = Decimal("Infinity")
+        with pytest.raises(ValueError, match="not finite|Infinity"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 43: bool funding rate fails closed ─────────────────────────────
+
+    def test_bool_funding_rate_fails_closed(self):
+        """bool funding rate must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS":
+                for row in symbol.get("sample_rows", []):
+                    row["funding_rate"] = True
+        with pytest.raises(ValueError, match="bool|must not be bool"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 44: Blocked symbol with cashflow_samples fails closed ──────────
+
+    def test_blocked_symbol_with_cashflow_samples_fails_closed(self):
+        """Blocked symbol containing cashflow_samples must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        for symbol in bars_scaffold.get("symbols", []):
+            if symbol.get("scaffold_status") == "SKIPPED_BY_READINESS_GATE":
+                symbol["cashflow_samples"] = [{"cashflow": 0.0}]
+        with pytest.raises(ValueError, match="must not contain|cashflow_samples"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 45: Wrong symbol_count fails closed ────────────────────────────
+
+    def test_wrong_symbol_count_fails_closed(self):
+        """Mismatched symbol_count must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        bars_scaffold["symbol_count"] = 999
+        with pytest.raises(ValueError, match="symbol_count.*!=.*"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 46: Wrong eligible_symbol_count fails closed ───────────────────
+
+    def test_wrong_eligible_symbol_count_fails_closed(self):
+        """Mismatched eligible_symbol_count must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        bars_scaffold["eligible_symbol_count"] = 999
+        with pytest.raises(ValueError, match="eligible_symbol_count.*!=.*"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 47: Wrong blocked_symbol_count fails closed ────────────────────
+
+    def test_wrong_blocked_symbol_count_fails_closed(self):
+        """Mismatched blocked_symbol_count must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        bars_scaffold["blocked_symbol_count"] = 999
+        with pytest.raises(ValueError, match="blocked_symbol_count.*!=.*"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 48: Wrong materialized_symbol_count fails closed ───────────────
+
+    def test_wrong_materialized_symbol_count_fails_closed(self):
+        """Mismatched materialized_symbol_count must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        bars_scaffold["materialized_symbol_count"] = 999
+        with pytest.raises(ValueError, match="materialized_symbol_count.*!=.*"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )
+
+    # ── Test 49: Wrong skipped_symbol_count fails closed ────────────────────
+
+    def test_wrong_skipped_symbol_count_fails_closed(self):
+        """Mismatched skipped_symbol_count must raise ValueError."""
+        policy_contract, arithmetic_scaffold, bars_scaffold = _valid_row_scaffold_inputs()
+        bars_scaffold["skipped_symbol_count"] = 999
+        with pytest.raises(ValueError, match="skipped_symbol_count.*!=.*"):
+            materialize_funding_adjustment_row_scaffold_diagnostics(
+                policy_contract, arithmetic_scaffold, bars_scaffold
+            )

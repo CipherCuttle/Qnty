@@ -4809,26 +4809,40 @@ def materialize_funding_adjustment_arithmetic_scaffold_diagnostics(
     return result
 
 
-def _validate_funding_rate(funding_rate):
-    """Validate funding rate is not NaN, infinite, or otherwise malformed."""
-    if funding_rate is None:
-        raise ValueError("Funding rate is None")
-    if isinstance(funding_rate, float):
-        if math.isnan(funding_rate):
+def _validate_funding_rate(value: Any) -> Decimal:
+    """Validate and return a finite Decimal funding rate.
+
+    Rejects None, bool, NaN, Inf, and malformed values.
+    Accepts int, float, str, and Decimal, converts via Decimal(str(value)),
+    and requires the result to be finite.
+    """
+    if value is None:
+        raise ValueError("funding_rate is None")
+    if isinstance(value, bool):
+        raise ValueError(
+            f"funding_rate must not be bool: {value}"
+        )
+    if not isinstance(value, (int, float, str, Decimal)):
+        raise ValueError(
+            f"funding_rate must be int, float, str, or Decimal, got {type(value).__name__}"
+        )
+    # Float-specific NaN/Inf checks preserve existing error messages
+    if isinstance(value, float):
+        if math.isnan(value):
             raise ValueError("Funding rate is NaN")
-        if math.isinf(funding_rate):
+        if math.isinf(value):
             raise ValueError("Funding rate is infinite")
-    elif isinstance(funding_rate, str):
-        try:
-            Decimal(funding_rate)
-        except Exception as e:
-            raise ValueError(f"Funding rate string '{funding_rate}' is malformed: {e}")
-    elif isinstance(funding_rate, (int,)):
-        pass  # valid
-    elif isinstance(funding_rate, Decimal):
-        pass  # valid
-    else:
-        raise ValueError(f"Unexpected funding rate type: {type(funding_rate).__name__}")
+    try:
+        decimal_value = Decimal(str(value))
+    except (ValueError, ArithmeticError) as exc:
+        raise ValueError(
+            f"funding_rate is malformed: {value!r}"
+        ) from exc
+    if not decimal_value.is_finite():
+        raise ValueError(
+            f"funding_rate must be finite: {value!r}"
+        )
+    return decimal_value
 
 
 def materialize_funding_adjustment_row_scaffold_diagnostics(
@@ -5108,9 +5122,9 @@ def materialize_funding_adjustment_row_scaffold_diagnostics(
                 )
 
             funding_rate = row["funding_rate"]
-            _validate_funding_rate(funding_rate)
+            funding_rate_dec = _validate_funding_rate(funding_rate)
 
-            dr = Decimal(str(funding_rate))
+            dr = funding_rate_dec
             unit_notional = Decimal("1")
 
             long_cashflow_factor = -dr * unit_notional
@@ -5119,7 +5133,7 @@ def materialize_funding_adjustment_row_scaffold_diagnostics(
             cashflow_samples.append({
                 "bar_row_index": row["bar_row_index"],
                 "funding_row_index": row["funding_row_index"],
-                "funding_rate": funding_rate,
+                "funding_rate": str(funding_rate_dec),
                 "unit_notional": "1",
                 "long_cashflow_factor": str(long_cashflow_factor),
                 "short_cashflow_factor": str(short_cashflow_factor),
@@ -5143,23 +5157,78 @@ def materialize_funding_adjustment_row_scaffold_diagnostics(
         symbol = entry["symbol"]
         blocked_reasons = entry.get("blocked_reasons", [])
 
-        if "sample_rows" in entry:
-            raise ValueError(
-                f"Blocked symbol {symbol!r} must not contain sample_rows"
-            )
-        for forbidden_key in ["row_scaffold_status", "notional_policy", "side_policy", "funding_rate_unit"]:
-            if forbidden_key in entry and forbidden_key != "scaffold_status":
+        # Blocked/skipped symbols must NOT carry sample/cashflow-like data
+        BLOCKED_SYMBOL_FORBIDDEN_KEYS = {
+            "sample_rows",
+            "cashflow_samples",
+            "long_cashflow_factor",
+            "short_cashflow_factor",
+            "funding_rate",
+            "bar_row_index",
+            "funding_row_index",
+            "unit_notional",
+        }
+        for forbidden_key in BLOCKED_SYMBOL_FORBIDDEN_KEYS:
+            if forbidden_key in entry:
                 raise ValueError(
-                    f"Blocked symbol {symbol!r} contains unexpected key "
-                    f"{forbidden_key}"
+                    f"Blocked symbol {symbol!r} must not contain "
+                    f"'{forbidden_key}'"
                 )
 
-        output_symbols.append({
+        blocked_output = {
             "symbol": symbol,
             "scaffold_status": SKIPPED_BY_READINESS_GATE,
             "row_scaffold_status": SKIPPED_BY_READINESS_GATE,
             "blocked_reasons": blocked_reasons,
-        })
+        }
+        # Ensure blocked output is limited to symbol, statuses, blocked_reasons
+        allowed_output_keys = {"symbol", "scaffold_status", "row_scaffold_status", "blocked_reasons"}
+        extra_keys = set(blocked_output.keys()) - allowed_output_keys
+        if extra_keys:
+            raise ValueError(
+                f"Blocked symbol {symbol!r} output has extra keys: {extra_keys}"
+            )
+        output_symbols.append(blocked_output)
+
+    # ── Step 10: Reconcile top-level counts against derived values ──────
+    symbol_count = bars.get("symbol_count")
+    eligible_symbol_count = bars.get("eligible_symbol_count")
+    blocked_symbol_count = bars.get("blocked_symbol_count")
+    materialized_symbol_count = bars.get("materialized_symbol_count")
+    skipped_symbol_count = bars.get("skipped_symbol_count")
+
+    recon_symbol_count = len(output_symbols)
+    recon_eligible = sum(
+        1 for s in output_symbols
+        if s.get("scaffold_status") == "MATERIALIZED_DIAGNOSTIC_ROWS"
+    )
+    recon_blocked = sum(
+        1 for s in output_symbols
+        if s.get("scaffold_status") == "SKIPPED_BY_READINESS_GATE"
+    )
+    recon_materialized = recon_eligible
+    recon_skipped = recon_blocked
+
+    if symbol_count != recon_symbol_count:
+        raise ValueError(
+            f"symbol_count {symbol_count} != len(symbols) {recon_symbol_count}"
+        )
+    if eligible_symbol_count != recon_eligible:
+        raise ValueError(
+            f"eligible_symbol_count {eligible_symbol_count} != derived {recon_eligible}"
+        )
+    if blocked_symbol_count != recon_blocked:
+        raise ValueError(
+            f"blocked_symbol_count {blocked_symbol_count} != derived {recon_blocked}"
+        )
+    if materialized_symbol_count != recon_materialized:
+        raise ValueError(
+            f"materialized_symbol_count {materialized_symbol_count} != derived {recon_materialized}"
+        )
+    if skipped_symbol_count != recon_skipped:
+        raise ValueError(
+            f"skipped_symbol_count {skipped_symbol_count} != derived {recon_skipped}"
+        )
 
     section = {
         "calculation_status": FUNDING_ADJUSTMENT_ROW_SCAFFOLD_DIAGNOSTIC_ONLY,
@@ -5185,10 +5254,10 @@ def materialize_funding_adjustment_row_scaffold_diagnostics(
         "side_policy": "BOTH_HYPOTHETICAL_SIDES_DIAGNOSTIC_ONLY",
         "sample_policy": "CAPPED_DETERMINISTIC_SAMPLES_ONLY",
         "sample_size_per_symbol": 10,
-        "eligible_symbol_count": eligible_count,
-        "blocked_symbol_count": blocked_count,
-        "materialized_symbol_count": eligible_count,
-        "skipped_symbol_count": blocked_count,
+        "eligible_symbol_count": recon_eligible,
+        "blocked_symbol_count": recon_blocked,
+        "materialized_symbol_count": recon_materialized,
+        "skipped_symbol_count": recon_skipped,
         "symbols": output_symbols,
     }
 
