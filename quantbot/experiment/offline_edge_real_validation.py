@@ -74,6 +74,7 @@ __all__ = [
     "_build_oos_seal_diagnostics",
     "_build_null_benchmark_contract_diagnostics",
     "_build_multiple_testing_control_diagnostics",
+    "_build_trade_position_simulation_contract_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -219,6 +220,19 @@ MULTIPLE_TESTING_CONTROL_VERSION = "multiple-testing-control-0.1"
 MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY = "MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY"
 MULTIPLE_TESTING_CONTROL_NOT_DEFINED = "MULTIPLE_TESTING_CONTROL_NOT_DEFINED"
 MULTIPLE_TESTING_CONTROL_BLOCKED_REASON_NOT_DEFINED = "MULTIPLE_TESTING_CONTROL_NOT_DEFINED"
+
+# === Trade position simulation contract diagnostics constants ===
+# Diagnostic-only section that records that no trade/position simulation
+# contract exists yet, no simulator policies are defined, and simulation-based
+# scoring remains unauthorized. It does not define a simulator, generate
+# signals, implement trades/positions/orders/fills/execution, or compute
+# returns/PnL/Sharpe/risk/edge/portfolio values. Every field is either None,
+# NOT_DEFINED, or False — this is a diagnostic of absence, not a definition
+# of presence.
+TRADE_POSITION_SIMULATION_CONTRACT_VERSION = "trade-position-simulation-contract-0.1"
+TRADE_POSITION_SIMULATION_CONTRACT_DIAGNOSTIC_ONLY = "TRADE_POSITION_SIMULATION_CONTRACT_DIAGNOSTIC_ONLY"
+TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED = "TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED"
+TRADE_POSITION_SIMULATION_CONTRACT_BLOCKED_REASON_NOT_DEFINED = "TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED"
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -6247,6 +6261,110 @@ def _build_multiple_testing_control_diagnostics() -> dict[str, Any]:
         },
     }
 
+def _build_trade_position_simulation_contract_diagnostics() -> dict[str, Any]:
+    """Build a diagnostic-only section recording that no trade/position
+    simulation contract exists yet, no simulator policies are defined, and
+    simulation-based scoring remains unauthorized.
+
+    This section does **not** implement a simulator, generate signals,
+    implement trades/positions/orders/fills/execution, or compute
+    returns/PnL/Sharpe/drawdown/risk/edge/portfolio values. It does not
+    define fees, slippage, fill model, side policy, sizing values, entry
+    rules, exit rules, benchmark family, OOS dates, random seed, shuffle
+    policy, or permutation policy.
+
+    Fail-closed rules:
+    * ``trade_position_simulation_contract_status`` is always
+      ``TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED``.
+    * ``trade_position_simulation_contract_present`` is always ``False``.
+    * ``scoring_authorized`` is always ``False`` at this stage.
+    * ``scoring_blocked_reason`` is always
+      ``TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED``.
+    * All ``trade_position_simulation_contract_prerequisites_present`` values
+      are always ``False``.
+    * All policy fields are always ``NOT_DEFINED``.
+    """
+    return {
+        "contract_version": TRADE_POSITION_SIMULATION_CONTRACT_VERSION,
+        "calculation_status": TRADE_POSITION_SIMULATION_CONTRACT_DIAGNOSTIC_ONLY,
+        "trade_position_simulation_contract_status": (
+            TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED
+        ),
+        "trade_position_simulation_contract_present": False,
+        "trade_position_simulation_contract_hash": None,
+        "trade_position_simulation_contract_source": None,
+
+        "scoring_authorized": False,
+        "scoring_blocked_reason": (
+            TRADE_POSITION_SIMULATION_CONTRACT_BLOCKED_REASON_NOT_DEFINED
+        ),
+
+        "decision_timestamp_policy_defined": False,
+        "decision_timestamp_policy": NOT_DEFINED,
+        "order_timing_policy_defined": False,
+        "order_timing_policy": NOT_DEFINED,
+        "fill_policy_defined": False,
+        "fill_policy": NOT_DEFINED,
+        "slippage_policy_defined": False,
+        "slippage_policy": NOT_DEFINED,
+        "fee_application_policy_defined": False,
+        "fee_application_policy": NOT_DEFINED,
+        "funding_application_dependency_satisfied": False,
+
+        "side_policy_defined": False,
+        "side_policy": NOT_DEFINED,
+        "notional_sizing_policy_defined": False,
+        "notional_sizing_policy": NOT_DEFINED,
+        "entry_lifecycle_policy_defined": False,
+        "entry_lifecycle_policy": NOT_DEFINED,
+        "exit_lifecycle_policy_defined": False,
+        "exit_lifecycle_policy": NOT_DEFINED,
+        "holding_period_policy_defined": False,
+        "holding_period_policy": NOT_DEFINED,
+        "state_transition_policy_defined": False,
+        "state_transition_policy": NOT_DEFINED,
+        "concurrent_symbol_policy_defined": False,
+        "concurrent_symbol_policy": NOT_DEFINED,
+        "portfolio_accounting_policy_defined": False,
+        "portfolio_accounting_policy": NOT_DEFINED,
+        "invalid_state_policy_defined": False,
+        "invalid_state_policy": NOT_DEFINED,
+        "missing_data_policy_defined": False,
+        "missing_data_policy": NOT_DEFINED,
+
+        "strategy_rule_contract_dependency_satisfied": False,
+        "trial_manifest_dependency_satisfied": False,
+        "oos_seal_dependency_satisfied": False,
+        "null_benchmark_contract_dependency_satisfied": False,
+        "multiple_testing_control_dependency_satisfied": False,
+        "split_scoring_safe_dependency_satisfied": False,
+
+        "trade_position_simulation_contract_prerequisites_present": {
+            "strategy_rule_contract": False,
+            "trial_manifest": False,
+            "oos_seal": False,
+            "null_benchmark_contract": False,
+            "multiple_testing_control": False,
+            "split_scoring_safe": False,
+            "decision_timestamp_policy": False,
+            "order_timing_policy": False,
+            "fill_policy": False,
+            "slippage_policy": False,
+            "fee_application_policy": False,
+            "funding_application_policy": False,
+            "side_policy": False,
+            "notional_sizing_policy": False,
+            "entry_lifecycle_policy": False,
+            "exit_lifecycle_policy": False,
+            "holding_period_policy": False,
+            "state_transition_policy": False,
+            "concurrent_symbol_policy": False,
+            "portfolio_accounting_policy": False,
+            "invalid_state_policy": False,
+            "missing_data_policy": False,
+        },
+    }
+
 
 # ── Receipt builder ──────────────────────────────────────────────────────
 
@@ -6292,6 +6410,7 @@ def build_real_validation_receipt(
     oos_seal_diagnostics: dict | None = None,
     null_benchmark_contract_diagnostics: dict | None = None,
     multiple_testing_control_diagnostics: dict | None = None,
+    trade_position_simulation_contract_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -6421,6 +6540,10 @@ def build_real_validation_receipt(
     if multiple_testing_control_diagnostics is not None:
         receipt["multiple_testing_control_diagnostics"] = (
             multiple_testing_control_diagnostics
+        )
+    if trade_position_simulation_contract_diagnostics is not None:
+        receipt["trade_position_simulation_contract_diagnostics"] = (
+            trade_position_simulation_contract_diagnostics
         )
 
     return receipt
@@ -6808,6 +6931,9 @@ def main(argv: list[str] | None = None) -> int:
             multiple_testing_control_diagnostics = (
                 _build_multiple_testing_control_diagnostics()
             )
+            trade_position_simulation_contract_diagnostics = (
+                _build_trade_position_simulation_contract_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -6865,6 +6991,9 @@ def main(argv: list[str] | None = None) -> int:
             multiple_testing_control_diagnostics=(
                 multiple_testing_control_diagnostics
             ),
+            trade_position_simulation_contract_diagnostics=(
+                trade_position_simulation_contract_diagnostics
+            ),
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
@@ -6899,6 +7028,9 @@ def main(argv: list[str] | None = None) -> int:
             multiple_testing_control_diagnostics = (
                 _build_multiple_testing_control_diagnostics()
             )
+            trade_position_simulation_contract_diagnostics = (
+                _build_trade_position_simulation_contract_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: split leakage audit failed: {exc}")
             return 4
@@ -6920,6 +7052,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             multiple_testing_control_diagnostics=(
                 multiple_testing_control_diagnostics
+            ),
+            trade_position_simulation_contract_diagnostics=(
+                trade_position_simulation_contract_diagnostics
             ),
         )
 
