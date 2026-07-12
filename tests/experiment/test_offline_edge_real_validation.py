@@ -74,6 +74,11 @@ from quantbot.experiment.offline_edge_real_validation import (
     STRATEGY_RULE_CONTRACT_NOT_DEFINED,
     STRATEGY_RULE_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
     NOT_DEFINED,
+    TRIAL_MANIFEST_VERSION,
+    TRIAL_MANIFEST_DIAGNOSTIC_ONLY,
+    TRIAL_MANIFEST_NOT_DEFINED,
+    TRIAL_MANIFEST_BLOCKED_REASON_NOT_DEFINED,
+    _build_trial_manifest_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -8748,3 +8753,250 @@ class TestStrategyRuleContractDiagnostics:
         }
         overlap = forbidden & all_keys
         assert not overlap, f"Forbidden keys found in receipt: {overlap}"
+
+
+_TRIAL_MANIFEST_FORBIDDEN_KEYS = frozenset({
+    "pnl", "returns", "return", "sharpe", "drawdown", "risk", "edge",
+    "strategy_performance", "trade", "trades", "signal", "signals",
+    "position", "positions", "portfolio", "baseline_result",
+    "benchmark_result", "profitable", "live_ready", "deploy_ready",
+    "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+    "funding_adjusted_return", "net_return_value", "price_change",
+})
+
+
+class TestTrialManifestDiagnostics:
+    """Tests for _build_trial_manifest_diagnostics() and its
+    integration into the offline-edge receipt."""
+
+    # ── Helper returns a dict ──────────────────────────────────────────────
+    def test_helper_returns_dict(self):
+        result = _build_trial_manifest_diagnostics()
+        assert isinstance(result, dict)
+
+    # ── Top-level field values ─────────────────────────────────────────────
+    def test_manifest_version(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["manifest_version"] == TRIAL_MANIFEST_VERSION
+
+    def test_calculation_status(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["calculation_status"] == TRIAL_MANIFEST_DIAGNOSTIC_ONLY
+
+    def test_trial_manifest_status(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["trial_manifest_status"] == TRIAL_MANIFEST_NOT_DEFINED
+
+    def test_trial_manifest_present_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["trial_manifest_present"] is False
+
+    def test_trial_manifest_hash_none(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["trial_manifest_hash"] is None
+
+    def test_trial_manifest_source_none(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["trial_manifest_source"] is None
+
+    def test_scoring_authorized_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["scoring_authorized"] is False
+
+    def test_scoring_blocked_reason(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["scoring_blocked_reason"] == (
+            TRIAL_MANIFEST_BLOCKED_REASON_NOT_DEFINED
+        )
+
+    def test_trial_count_known_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["trial_count_known"] is False
+
+    def test_trial_count_none(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["trial_count"] is None
+
+    def test_candidate_count_known_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["candidate_count_known"] is False
+
+    def test_candidate_count_none(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["candidate_count"] is None
+
+    def test_rejected_trial_count_known_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["rejected_trial_count_known"] is False
+
+    def test_rejected_trial_count_none(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["rejected_trial_count"] is None
+
+    def test_strategy_candidate_id_none(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["strategy_candidate_id"] is None
+
+    def test_hypothesis_id_none(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["hypothesis_id"] is None
+
+    def test_parameter_search_space_defined_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["parameter_search_space_defined"] is False
+
+    def test_parameter_search_space_hash_none(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["parameter_search_space_hash"] is None
+
+    def test_llm_generated_trials_recorded_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["llm_generated_trials_recorded"] is False
+
+    def test_human_generated_trials_recorded_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["human_generated_trials_recorded"] is False
+
+    def test_manual_rejected_trials_recorded_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["manual_rejected_trials_recorded"] is False
+
+    def test_symbol_universe_frozen_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["symbol_universe_frozen"] is False
+
+    def test_split_policy_frozen_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["split_policy_frozen"] is False
+
+    def test_oos_seal_present_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["oos_seal_present"] is False
+
+    def test_null_benchmark_contract_present_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["null_benchmark_contract_present"] is False
+
+    def test_multiple_testing_policy_present_false(self):
+        result = _build_trial_manifest_diagnostics()
+        assert result["multiple_testing_policy_present"] is False
+
+    # ── Prerequisites all false ────────────────────────────────────────────
+    def test_prerequisites_all_false(self):
+        result = _build_trial_manifest_diagnostics()
+        prereqs = result["trial_manifest_prerequisites_present"]
+        assert isinstance(prereqs, dict)
+        for key, value in prereqs.items():
+            assert value is False, f"{key} must be False, got {value}"
+
+    def test_prerequisites_expected_keys(self):
+        result = _build_trial_manifest_diagnostics()
+        prereqs = result["trial_manifest_prerequisites_present"]
+        expected_keys = {
+            "strategy_rule_contract",
+            "split_scoring_safe",
+            "trial_count",
+            "candidate_registry",
+            "parameter_search_space",
+            "symbol_universe_freeze",
+            "split_policy_freeze",
+            "oos_seal",
+            "null_benchmark_contract",
+            "multiple_testing_policy",
+        }
+        assert prereqs.keys() == expected_keys
+
+    # ── Integration into receipt ───────────────────────────────────────────
+    def test_section_included_in_receipt(self):
+        receipt = _base_receipt(
+            trial_manifest_diagnostics=_build_trial_manifest_diagnostics(),
+        )
+        assert "trial_manifest_diagnostics" in receipt
+
+    def test_receipt_validates_with_section(self):
+        receipt = _base_receipt(
+            trial_manifest_diagnostics=_build_trial_manifest_diagnostics(),
+        )
+        # validate_real_validation_receipt should not raise
+        validate_real_validation_receipt(receipt)
+
+    def test_final_offline_verdict_unchanged(self):
+        receipt = _base_receipt(
+            trial_manifest_diagnostics=_build_trial_manifest_diagnostics(),
+        )
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_guardrails_unchanged(self):
+        receipt = _base_receipt(
+            trial_manifest_diagnostics=_build_trial_manifest_diagnostics(),
+        )
+        for key, value in receipt["guardrail_status"].items():
+            assert value is True, f"guardrail {key} must be True"
+
+    # ── No forbidden keys ──────────────────────────────────────────────────
+    def test_no_forbidden_calculation_keys(self):
+        result = _build_trial_manifest_diagnostics()
+        all_keys = _all_dict_keys(result)
+        assert _TRIAL_MANIFEST_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{_TRIAL_MANIFEST_FORBIDDEN_KEYS & all_keys}"
+        )
+
+    # ── CLI integration ────────────────────────────────────────────────────
+    def test_cli_inventory_path_includes_section(self, tmp_path):
+        """Inventory-based CLI path should include the section."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "trial_manifest_diagnostics" in receipt
+
+    def test_cli_fallback_path_includes_section(self, tmp_path):
+        """Fallback CLI path (no --bars-dir) should include the section."""
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--global-min-timestamp", "2026-01-01T00:00:00Z",
+            "--global-max-timestamp", "2026-02-01T00:00:00Z",
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "trial_manifest_diagnostics" in receipt
+
+    # ── Safety-key regression ──────────────────────────────────────────────
+    def test_no_forbidden_top_level_keys_in_receipt(self):
+        """Receipt with the section must still forbid pnl/sharpe/edge/strategy_performance."""
+        receipt = _base_receipt(
+            trial_manifest_diagnostics=_build_trial_manifest_diagnostics(),
+        )
+        for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
+            assert forbidden not in receipt
+
+    def test_no_forbidden_calculation_keys_in_receipt(self):
+        """Receipt with the section must still forbid all calculation keys."""
+        receipt = _base_receipt(
+            trial_manifest_diagnostics=_build_trial_manifest_diagnostics(),
+        )
+        all_keys = _all_dict_keys(receipt)
+        assert _TRIAL_MANIFEST_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found in receipt: "
+            f"{_TRIAL_MANIFEST_FORBIDDEN_KEYS & all_keys}"
+        )
