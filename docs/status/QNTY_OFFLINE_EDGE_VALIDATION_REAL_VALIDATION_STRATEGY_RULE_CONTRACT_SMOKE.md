@@ -146,3 +146,4 @@ final_offline_verdict remains BLOCKED_BY_VALIDATION_IMPLEMENTATION.
 strategy_rule_contract_diagnostics records CONTRACT_NOT_DEFINED.
 scoring_authorized remains false.
 No strategy work is authorized by this smoke.
+```
