@@ -104,6 +104,13 @@ from quantbot.experiment.offline_edge_real_validation import (
     NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED,
     NET_PNL_EQUITY_RISK_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
     _build_net_pnl_equity_risk_contract_diagnostics,
+    FINAL_OFFLINE_EDGE_VERDICT_LOGIC_VERSION,
+    FINAL_OFFLINE_EDGE_VERDICT_LOGIC_DIAGNOSTIC_ONLY,
+    FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED,
+    FINAL_VERDICT_ADVANCEMENT_BLOCKED_REASON,
+    FINAL_VERDICT_SPLIT_SCORING_NOT_SAFE,
+    UPSTREAM_REDUCTION_MODE_STATIC,
+    _build_final_offline_edge_verdict_logic_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -10567,3 +10574,305 @@ class TestNetPnlEquityRiskContractDiagnostics:
         assert receipt_path.exists()
         receipt = json.loads(receipt_path.read_text())
         assert "net_pnl_equity_risk_contract_diagnostics" in receipt
+
+
+_FINAL_OFFLINE_EDGE_VERDICT_LOGIC_FORBIDDEN_KEYS = frozenset({
+    "pnl", "returns", "return", "sharpe", "drawdown", "risk", "edge",
+    "strategy_performance", "trade", "trades", "signal", "signals",
+    "position", "positions", "portfolio", "baseline_result",
+    "benchmark_result", "profitable", "live_ready", "deploy_ready",
+    "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+    "funding_adjusted_return", "net_return_value", "price_change",
+    "p_value", "confidence_interval", "score", "metric",
+    "performance", "profit", "order", "orders", "fill", "fills",
+    "execution", "executions", "cost_adjusted_return",
+    "gross_return_value", "equity", "equity_curve",
+})
+
+
+class TestFinalOfflineEdgeVerdictLogicDiagnostics:
+    """Tests for _build_final_offline_edge_verdict_logic_diagnostics() and its
+    integration into the offline-edge receipt.
+
+    The section is a static absence record: it must never advance the verdict,
+    never authorize scoring/edge-candidacy/promotion/live integration, and
+    never introspect sibling receipt sections.
+    """
+
+    # ── Helper contract ────────────────────────────────────────────────────
+    def test_helper_returns_dict(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert isinstance(result, dict)
+
+    def test_logic_version(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["logic_version"] == FINAL_OFFLINE_EDGE_VERDICT_LOGIC_VERSION
+
+    def test_calculation_status(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["calculation_status"] == (
+            FINAL_OFFLINE_EDGE_VERDICT_LOGIC_DIAGNOSTIC_ONLY
+        )
+
+    def test_final_verdict_logic_status(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["final_verdict_logic_status"] == (
+            FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED
+        )
+
+    # ── Authorization locks ────────────────────────────────────────────────
+    def test_final_scoring_authorized_false(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["final_scoring_authorized"] is False
+
+    def test_final_verdict_advancement_authorized_false(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["final_verdict_advancement_authorized"] is False
+
+    def test_edge_candidate_authorized_false(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["edge_candidate_authorized"] is False
+
+    def test_live_integration_authorized_false(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["live_integration_authorized"] is False
+
+    def test_report_promotion_authorized_false(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["report_promotion_authorized"] is False
+
+    def test_all_authorization_flags_false(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        for key in (
+            "final_scoring_authorized",
+            "final_verdict_advancement_authorized",
+            "edge_candidate_authorized",
+            "live_integration_authorized",
+            "report_promotion_authorized",
+        ):
+            assert result[key] is False, f"{key!r} is not False: {result[key]!r}"
+
+    # ── Verdict is frozen ──────────────────────────────────────────────────
+    def test_current_final_offline_verdict_blocked(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["current_final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_next_final_offline_verdict_blocked(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["next_final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_current_equals_next_verdict(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert (
+            result["current_final_offline_verdict"]
+            == result["next_final_offline_verdict"]
+        )
+
+    def test_final_verdict_advancement_blocked_reason(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["final_verdict_advancement_blocked_reason"] == (
+            FINAL_VERDICT_ADVANCEMENT_BLOCKED_REASON
+        )
+
+    def test_upstream_reduction_mode_static(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["upstream_reduction_mode"] == UPSTREAM_REDUCTION_MODE_STATIC
+
+    # ── Required upstream gates ────────────────────────────────────────────
+    def test_required_upstream_gates_expected_keys(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        gates = result["required_upstream_gates"]
+        expected_keys = {
+            "strategy_rule_contract",
+            "trial_manifest",
+            "oos_seal",
+            "null_benchmark_contract",
+            "multiple_testing_control",
+            "trade_position_simulation_contract",
+            "net_pnl_equity_risk_contract",
+            "split_scoring_safe",
+        }
+        assert set(gates.keys()) == expected_keys, (
+            f"Gate keys mismatch. Extra: {set(gates.keys()) - expected_keys}. "
+            f"Missing: {expected_keys - set(gates.keys())}"
+        )
+
+    def test_required_upstream_gates_expected_values(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        assert result["required_upstream_gates"] == {
+            "strategy_rule_contract": STRATEGY_RULE_CONTRACT_NOT_DEFINED,
+            "trial_manifest": TRIAL_MANIFEST_NOT_DEFINED,
+            "oos_seal": OOS_SEAL_NOT_DEFINED,
+            "null_benchmark_contract": NULL_BENCHMARK_CONTRACT_NOT_DEFINED,
+            "multiple_testing_control": MULTIPLE_TESTING_CONTROL_NOT_DEFINED,
+            "trade_position_simulation_contract": (
+                TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED
+            ),
+            "net_pnl_equity_risk_contract": NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED,
+            "split_scoring_safe": FINAL_VERDICT_SPLIT_SCORING_NOT_SAFE,
+        }
+
+    # ── Prerequisites dict ─────────────────────────────────────────────────
+    def test_prerequisites_expected_keys(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        prereqs = result["final_verdict_prerequisites_present"]
+        expected_keys = {
+            "strategy_rule_contract",
+            "trial_manifest",
+            "oos_seal",
+            "split_scoring_safe",
+            "null_benchmark_contract",
+            "multiple_testing_control",
+            "trade_position_simulation_contract",
+            "net_pnl_equity_risk_contract",
+            "final_scoring_policy",
+            "edge_candidate_policy",
+            "report_promotion_policy",
+            "live_integration_policy",
+        }
+        assert set(prereqs.keys()) == expected_keys, (
+            f"Prerequisite keys mismatch. Extra: {set(prereqs.keys()) - expected_keys}. "
+            f"Missing: {expected_keys - set(prereqs.keys())}"
+        )
+
+    def test_prerequisites_all_false(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        prereqs = result["final_verdict_prerequisites_present"]
+        assert isinstance(prereqs, dict)
+        for key, value in prereqs.items():
+            assert value is False, f"Prerequisite {key!r} is not False: {value!r}"
+
+    def test_final_scoring_authorized_matches_prerequisites(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        prereqs = result["final_verdict_prerequisites_present"]
+        assert result["final_scoring_authorized"] == all(prereqs.values()) is False
+
+    # ── Receipt integration ────────────────────────────────────────────────
+    def test_integration_in_receipt_when_provided(self):
+        receipt = _base_receipt(
+            final_offline_edge_verdict_logic_diagnostics=(
+                _build_final_offline_edge_verdict_logic_diagnostics()
+            ),
+        )
+        assert "final_offline_edge_verdict_logic_diagnostics" in receipt
+
+    def test_not_in_receipt_when_omitted(self):
+        receipt = _base_receipt()
+        assert "final_offline_edge_verdict_logic_diagnostics" not in receipt
+
+    def test_receipt_validates(self):
+        receipt = _base_receipt(
+            final_offline_edge_verdict_logic_diagnostics=(
+                _build_final_offline_edge_verdict_logic_diagnostics()
+            ),
+        )
+        real_validation.validate_real_validation_receipt(receipt)
+
+    def test_final_offline_verdict_unchanged(self):
+        receipt = _base_receipt(
+            final_offline_edge_verdict_logic_diagnostics=(
+                _build_final_offline_edge_verdict_logic_diagnostics()
+            ),
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_section_verdict_matches_top_level_verdict(self):
+        receipt = _base_receipt(
+            final_offline_edge_verdict_logic_diagnostics=(
+                _build_final_offline_edge_verdict_logic_diagnostics()
+            ),
+        )
+        section = receipt["final_offline_edge_verdict_logic_diagnostics"]
+        assert section["current_final_offline_verdict"] == (
+            receipt["final_offline_verdict"]
+        )
+
+    def test_guardrails_unchanged(self):
+        receipt = _base_receipt(
+            final_offline_edge_verdict_logic_diagnostics=(
+                _build_final_offline_edge_verdict_logic_diagnostics()
+            ),
+        )
+        assert receipt["guardrail_status"]["edge_unproven"] is True
+        assert receipt["guardrail_status"]["block_live_integration"] is True
+        assert receipt["guardrail_status"]["no_report_promotion"] is True
+        assert receipt["guardrail_status"]["output_under_tmp_only"] is True
+
+    # ── Forbidden key safety ───────────────────────────────────────────────
+    def test_no_forbidden_calculation_keys(self):
+        result = _build_final_offline_edge_verdict_logic_diagnostics()
+        all_keys = _all_dict_keys(result)
+        assert _FINAL_OFFLINE_EDGE_VERDICT_LOGIC_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{_FINAL_OFFLINE_EDGE_VERDICT_LOGIC_FORBIDDEN_KEYS & all_keys}"
+        )
+
+    def test_no_forbidden_top_level_keys_in_receipt(self):
+        receipt = _base_receipt(
+            final_offline_edge_verdict_logic_diagnostics=(
+                _build_final_offline_edge_verdict_logic_diagnostics()
+            ),
+        )
+        for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
+            assert forbidden not in receipt
+
+    def test_no_forbidden_calculation_keys_in_receipt(self):
+        receipt = _base_receipt(
+            final_offline_edge_verdict_logic_diagnostics=(
+                _build_final_offline_edge_verdict_logic_diagnostics()
+            ),
+        )
+        all_keys = _all_dict_keys(receipt)
+        assert _FINAL_OFFLINE_EDGE_VERDICT_LOGIC_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found in receipt: "
+            f"{_FINAL_OFFLINE_EDGE_VERDICT_LOGIC_FORBIDDEN_KEYS & all_keys}"
+        )
+
+    # ── CLI integration ────────────────────────────────────────────────────
+    def test_cli_inventory_path_includes_section(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "final_offline_edge_verdict_logic_diagnostics" in receipt
+        section = receipt["final_offline_edge_verdict_logic_diagnostics"]
+        assert section["final_verdict_logic_status"] == (
+            FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_cli_fallback_path_includes_section(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--global-min-timestamp", "2026-01-01T00:00:00Z",
+            "--global-max-timestamp", "2026-02-01T00:00:00Z",
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "final_offline_edge_verdict_logic_diagnostics" in receipt
+        section = receipt["final_offline_edge_verdict_logic_diagnostics"]
+        assert section["final_verdict_logic_status"] == (
+            FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION

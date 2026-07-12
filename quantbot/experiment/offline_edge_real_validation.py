@@ -76,6 +76,7 @@ __all__ = [
     "_build_multiple_testing_control_diagnostics",
     "_build_trade_position_simulation_contract_diagnostics",
     "_build_net_pnl_equity_risk_contract_diagnostics",
+    "_build_final_offline_edge_verdict_logic_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -246,6 +247,23 @@ NET_PNL_EQUITY_RISK_CONTRACT_VERSION = "net-pnl-equity-risk-contract-0.1"
 NET_PNL_EQUITY_RISK_CONTRACT_DIAGNOSTIC_ONLY = "NET_PNL_EQUITY_RISK_CONTRACT_DIAGNOSTIC_ONLY"
 NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED = "NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED"
 NET_PNL_EQUITY_RISK_CONTRACT_BLOCKED_REASON_NOT_DEFINED = "NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED"
+
+# === Final offline-edge verdict logic diagnostics constants ===
+# Diagnostic-only section that records that final offline-edge scoring and
+# verdict advancement remain blocked because every decisive upstream gate is
+# still NOT_DEFINED or unsafe. It is a *static absence record*: it does not
+# read sibling receipt sections, does not derive readiness dynamically, does
+# not score anything, and does not advance ``final_offline_verdict``. It
+# implements no strategy, signals, trades, positions, orders, fills,
+# execution, returns, PnL, equity, drawdown, risk, edge, or benchmark
+# comparison. Every field is either a NOT_DEFINED marker or ``False`` — this
+# is a diagnostic of absence, not a definition of presence.
+FINAL_OFFLINE_EDGE_VERDICT_LOGIC_VERSION = "final-offline-edge-verdict-logic-0.1"
+FINAL_OFFLINE_EDGE_VERDICT_LOGIC_DIAGNOSTIC_ONLY = "FINAL_OFFLINE_EDGE_VERDICT_LOGIC_DIAGNOSTIC_ONLY"
+FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED = "FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED"
+FINAL_VERDICT_ADVANCEMENT_BLOCKED_REASON = "UPSTREAM_VALIDATION_CONTRACTS_NOT_DEFINED"
+FINAL_VERDICT_SPLIT_SCORING_NOT_SAFE = "SPLIT_SCORING_NOT_SAFE"
+UPSTREAM_REDUCTION_MODE_STATIC = "STATIC_ABSENCE_RECORD_NO_UPSTREAM_INTROSPECTION"
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -6477,6 +6495,76 @@ def _build_net_pnl_equity_risk_contract_diagnostics() -> dict[str, Any]:
     }
 
 
+def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
+    """Build a diagnostic-only section recording that final offline-edge
+    scoring and verdict advancement remain blocked because every decisive
+    upstream gate is still NOT_DEFINED or unsafe.
+
+    This is a **static absence record**. It performs no I/O, reads no sibling
+    receipt section, derives no readiness dynamically, and computes nothing —
+    it returns a constant dict. It does not score, does not compare against a
+    benchmark, and does not advance ``final_offline_verdict``. It implements
+    no strategy, signals, trades, positions, orders, fills, execution,
+    returns, PnL, equity, drawdown, risk, or edge.
+
+    Fail-closed rules:
+    * ``final_verdict_logic_status`` is always
+      ``FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED``.
+    * Every ``*_authorized`` flag is always ``False``.
+    * ``current_final_offline_verdict`` and ``next_final_offline_verdict`` are
+      both always ``BLOCKED_BY_VALIDATION_IMPLEMENTATION`` — this section can
+      never advance the verdict.
+    * All ``required_upstream_gates`` values are NOT_DEFINED / not-safe markers.
+    * All ``final_verdict_prerequisites_present`` values are always ``False``.
+    """
+    return {
+        "logic_version": FINAL_OFFLINE_EDGE_VERDICT_LOGIC_VERSION,
+        "calculation_status": FINAL_OFFLINE_EDGE_VERDICT_LOGIC_DIAGNOSTIC_ONLY,
+        "final_verdict_logic_status": FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED,
+
+        "final_scoring_authorized": False,
+        "final_verdict_advancement_authorized": False,
+        "edge_candidate_authorized": False,
+        "live_integration_authorized": False,
+        "report_promotion_authorized": False,
+
+        "current_final_offline_verdict": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+        "next_final_offline_verdict": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+        "final_verdict_advancement_blocked_reason": (
+            FINAL_VERDICT_ADVANCEMENT_BLOCKED_REASON
+        ),
+        "upstream_reduction_mode": UPSTREAM_REDUCTION_MODE_STATIC,
+
+        "required_upstream_gates": {
+            "strategy_rule_contract": STRATEGY_RULE_CONTRACT_NOT_DEFINED,
+            "trial_manifest": TRIAL_MANIFEST_NOT_DEFINED,
+            "oos_seal": OOS_SEAL_NOT_DEFINED,
+            "null_benchmark_contract": NULL_BENCHMARK_CONTRACT_NOT_DEFINED,
+            "multiple_testing_control": MULTIPLE_TESTING_CONTROL_NOT_DEFINED,
+            "trade_position_simulation_contract": (
+                TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED
+            ),
+            "net_pnl_equity_risk_contract": NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED,
+            "split_scoring_safe": FINAL_VERDICT_SPLIT_SCORING_NOT_SAFE,
+        },
+
+        "final_verdict_prerequisites_present": {
+            "strategy_rule_contract": False,
+            "trial_manifest": False,
+            "oos_seal": False,
+            "split_scoring_safe": False,
+            "null_benchmark_contract": False,
+            "multiple_testing_control": False,
+            "trade_position_simulation_contract": False,
+            "net_pnl_equity_risk_contract": False,
+            "final_scoring_policy": False,
+            "edge_candidate_policy": False,
+            "report_promotion_policy": False,
+            "live_integration_policy": False,
+        },
+    }
+
+
 # ── Receipt builder ──────────────────────────────────────────────────────
 
 
@@ -6523,6 +6611,7 @@ def build_real_validation_receipt(
     multiple_testing_control_diagnostics: dict | None = None,
     trade_position_simulation_contract_diagnostics: dict | None = None,
     net_pnl_equity_risk_contract_diagnostics: dict | None = None,
+    final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -6660,6 +6749,10 @@ def build_real_validation_receipt(
     if net_pnl_equity_risk_contract_diagnostics is not None:
         receipt["net_pnl_equity_risk_contract_diagnostics"] = (
             net_pnl_equity_risk_contract_diagnostics
+        )
+    if final_offline_edge_verdict_logic_diagnostics is not None:
+        receipt["final_offline_edge_verdict_logic_diagnostics"] = (
+            final_offline_edge_verdict_logic_diagnostics
         )
 
     return receipt
@@ -7053,6 +7146,9 @@ def main(argv: list[str] | None = None) -> int:
             net_pnl_equity_risk_contract_diagnostics = (
                 _build_net_pnl_equity_risk_contract_diagnostics()
             )
+            final_offline_edge_verdict_logic_diagnostics = (
+                _build_final_offline_edge_verdict_logic_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -7116,6 +7212,9 @@ def main(argv: list[str] | None = None) -> int:
             net_pnl_equity_risk_contract_diagnostics=(
                 net_pnl_equity_risk_contract_diagnostics
             ),
+            final_offline_edge_verdict_logic_diagnostics=(
+                final_offline_edge_verdict_logic_diagnostics
+            ),
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
@@ -7156,6 +7255,9 @@ def main(argv: list[str] | None = None) -> int:
             net_pnl_equity_risk_contract_diagnostics = (
                 _build_net_pnl_equity_risk_contract_diagnostics()
             )
+            final_offline_edge_verdict_logic_diagnostics = (
+                _build_final_offline_edge_verdict_logic_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: split leakage audit failed: {exc}")
             return 4
@@ -7183,6 +7285,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             net_pnl_equity_risk_contract_diagnostics=(
                 net_pnl_equity_risk_contract_diagnostics
+            ),
+            final_offline_edge_verdict_logic_diagnostics=(
+                final_offline_edge_verdict_logic_diagnostics
             ),
         )
 
