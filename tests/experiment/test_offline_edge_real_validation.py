@@ -59,6 +59,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_adjustment_policy_contract_diagnostics,
     materialize_funding_adjustment_arithmetic_scaffold_diagnostics,
     materialize_funding_adjustment_row_scaffold_diagnostics,
+    _build_funding_adjustment_sample_aggregate_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -7343,3 +7344,685 @@ class TestFundingAdjustmentRowScaffoldDiagnostics:
             materialize_funding_adjustment_row_scaffold_diagnostics(
                 policy_contract, arithmetic_scaffold, bars_scaffold
             )
+
+
+# ── Funding adjustment sample aggregate diagnostics ─────────────────────
+
+
+def _valid_aggregate_row_scaffold(
+    *,
+    eligible_symbols=None,
+    blocked_symbols=None,
+    **overrides,
+):
+    """Build a valid funding_adjustment_row_scaffold_diagnostics section
+    suitable for feeding into
+    _build_funding_adjustment_sample_aggregate_diagnostics.
+
+    Each eligible symbol gets cashflow sample rows with proper
+    long_cashflow_factor / short_cashflow_factor values that are exact
+    opposites (long == -short).
+    """
+    from quantbot.experiment.offline_edge_real_validation import (
+        LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL,
+    )
+
+    if eligible_symbols is None:
+        eligible_symbols = [
+            {
+                "symbol": "BTCUSDT",
+                "scaffold_status": "MATERIALIZED_DIAGNOSTIC_ROWS",
+                "row_scaffold_status": "MATERIALIZED_DIAGNOSTIC_CASHFLOW_SAMPLES",
+                "notional_policy": "UNIT_NOTIONAL_DIAGNOSTIC_ONLY",
+                "side_policy": "BOTH_HYPOTHETICAL_SIDES_DIAGNOSTIC_ONLY",
+                "funding_rate_unit": "decimal_rate_not_percent",
+                "total_rows": 100,
+                "sample_row_count": 3,
+                "sample_rows": [
+                    {
+                        "bar_row_index": 0,
+                        "funding_row_index": 0,
+                        "funding_rate": "0.0001",
+                        "unit_notional": "1",
+                        "long_cashflow_factor": "-0.0001",
+                        "short_cashflow_factor": "0.0001",
+                        "formula": LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL,
+                        "application_scope": "DIAGNOSTIC_SAMPLE_ONLY_NOT_STRATEGY",
+                    },
+                    {
+                        "bar_row_index": 1,
+                        "funding_row_index": 1,
+                        "funding_rate": "-0.00005",
+                        "unit_notional": "1",
+                        "long_cashflow_factor": "0.00005",
+                        "short_cashflow_factor": "-0.00005",
+                        "formula": LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL,
+                        "application_scope": "DIAGNOSTIC_SAMPLE_ONLY_NOT_STRATEGY",
+                    },
+                    {
+                        "bar_row_index": 2,
+                        "funding_row_index": 2,
+                        "funding_rate": "0.0",
+                        "unit_notional": "1",
+                        "long_cashflow_factor": "0.0",
+                        "short_cashflow_factor": "0.0",
+                        "formula": LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL,
+                        "application_scope": "DIAGNOSTIC_SAMPLE_ONLY_NOT_STRATEGY",
+                    },
+                ],
+            },
+        ]
+
+    if blocked_symbols is None:
+        blocked_symbols = [
+            {
+                "symbol": "ETHUSDT",
+                "scaffold_status": "SKIPPED_BY_READINESS_GATE",
+                "row_scaffold_status": "SKIPPED_BY_READINESS_GATE",
+                "blocked_reasons": ["FUNDING_DATA_GAP"],
+            },
+        ]
+
+    all_symbols = list(eligible_symbols) + list(blocked_symbols)
+    eligible_count = len(eligible_symbols)
+    blocked_count = len(blocked_symbols)
+
+    scaffold = {
+        "calculation_status": "FUNDING_ADJUSTMENT_ROW_SCAFFOLD_DIAGNOSTIC_ONLY",
+        "funding_adjustment_application_status": (
+            "DIAGNOSTIC_ROW_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY"
+        ),
+        "strategy_application_status": "NOT_EXECUTED",
+        "pnl_application_status": "NOT_EXECUTED",
+        "requires_policy_contract_diagnostics": True,
+        "requires_arithmetic_scaffold_diagnostics": True,
+        "requires_funding_adjusted_bars_scaffold_diagnostics": True,
+        "policy_contract_section_required": (
+            "funding_adjustment_policy_contract_diagnostics"
+        ),
+        "arithmetic_scaffold_section_required": (
+            "funding_adjustment_arithmetic_scaffold_diagnostics"
+        ),
+        "funding_adjusted_bars_scaffold_section_required": (
+            "funding_adjusted_bars_scaffold_diagnostics"
+        ),
+        "funding_rate_unit": "decimal_rate_not_percent",
+        "notional_policy": "UNIT_NOTIONAL_DIAGNOSTIC_ONLY",
+        "side_policy": "BOTH_HYPOTHETICAL_SIDES_DIAGNOSTIC_ONLY",
+        "sample_policy": "CAPPED_DETERMINISTIC_SAMPLES_ONLY",
+        "sample_size_per_symbol": 10,
+        "symbol_count": len(all_symbols),
+        "eligible_symbol_count": eligible_count,
+        "blocked_symbol_count": blocked_count,
+        "materialized_symbol_count": eligible_count,
+        "skipped_symbol_count": blocked_count,
+        "symbols": all_symbols,
+    }
+    scaffold.update(overrides)
+    return scaffold
+
+
+class TestFundingAdjustmentSampleAggregateDiagnostics:
+    """45 test cases for
+    _build_funding_adjustment_sample_aggregate_diagnostics."""
+
+    # ── Test 1: Happy path emits aggregate section ──────────────────────────
+
+    def test_happy_path_emits_aggregate_section(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        result = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        assert result["calculation_status"] == (
+            "FUNDING_ADJUSTMENT_SAMPLE_AGGREGATE_DIAGNOSTIC_ONLY"
+        )
+        assert result["funding_adjustment_application_status"] == (
+            "DIAGNOSTIC_SAMPLE_AGGREGATE_ONLY_NOT_APPLIED_TO_STRATEGY"
+        )
+        assert result["strategy_application_status"] == "NOT_EXECUTED"
+        assert result["pnl_application_status"] == "NOT_EXECUTED"
+        assert result["eligible_symbol_count"] == 1
+        assert result["blocked_symbol_count"] == 1
+        assert result["materialized_symbol_count"] == 1
+        assert result["skipped_symbol_count"] == 1
+        assert result["total_sample_row_count"] == 3
+        assert len(result["symbols"]) == 2
+
+    # ── Test 2: Per-symbol sample counts are preserved ──────────────────────
+
+    def test_per_symbol_sample_counts_preserved(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        result = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        btc = result["symbols"][0]
+        assert btc["symbol"] == "BTCUSDT"
+        assert btc["aggregate_status"] == "MATERIALIZED_DIAGNOSTIC_SAMPLE_AGGREGATES"
+        assert btc["sample_row_count"] == 3
+
+    # ── Test 3: Per-symbol long/short sums are exact opposites ──────────────
+
+    def test_per_symbol_long_short_sums_exact_opposites(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        result = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        btc = result["symbols"][0]
+        long_sum = Decimal(btc["long_cashflow_factor_sum"])
+        short_sum = Decimal(btc["short_cashflow_factor_sum"])
+        assert long_sum == -short_sum, (
+            f"Expected long_sum ({long_sum}) == -short_sum ({short_sum})"
+        )
+
+    # ── Test 4: Per-symbol long_short_sum_check is zero ─────────────────────
+
+    def test_per_symbol_long_short_sum_check_zero(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        result = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        btc = result["symbols"][0]
+        assert Decimal(btc["long_short_sum_check"]) == Decimal("0")
+
+    # ── Test 5: Global long/short sums are exact opposites ──────────────────
+
+    def test_global_long_short_sums_exact_opposites(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        result = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        global_long = Decimal(result["global_long_cashflow_factor_sum"])
+        global_short = Decimal(result["global_short_cashflow_factor_sum"])
+        assert global_long == -global_short, (
+            f"Expected global_long ({global_long}) == -global_short ({global_short})"
+        )
+        assert Decimal(result["global_long_short_sum_check"]) == Decimal("0")
+
+    # ── Test 6: Blocked symbols carried forward without numeric fields ──────
+
+    def test_blocked_symbols_carried_forward_without_numeric_fields(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        result = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        eth = result["symbols"][1]
+        assert eth["symbol"] == "ETHUSDT"
+        assert eth["aggregate_status"] == "SKIPPED_BY_READINESS_GATE"
+        assert eth["blocked_reasons"] == ["FUNDING_DATA_GAP"]
+        # Must not have numeric aggregate fields
+        assert "long_cashflow_factor_sum" not in eth
+        assert "short_cashflow_factor_sum" not in eth
+        assert "long_cashflow_factor_min" not in eth
+        assert "long_cashflow_factor_max" not in eth
+        assert "short_cashflow_factor_min" not in eth
+        assert "short_cashflow_factor_max" not in eth
+        assert "long_short_sum_check" not in eth
+        assert "sample_row_count" not in eth
+
+    # ── Test 7: Missing row scaffold fails closed ───────────────────────────
+
+    def test_missing_row_scaffold_fails_closed(self):
+        with pytest.raises(ValueError, match="funding_adjustment_row_scaffold_diagnostics"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(None)
+
+    # ── Test 8: Wrong calculation_status fails closed ───────────────────────
+
+    def test_wrong_calculation_status_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold(
+            calculation_status="SOME_OTHER_STATUS"
+        )
+        with pytest.raises(ValueError, match="calculation_status"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 9: Wrong funding_application_status fails closed ───────────────
+
+    def test_wrong_funding_application_status_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold(
+            funding_adjustment_application_status="EXECUTED"
+        )
+        with pytest.raises(ValueError, match="funding_adjustment_application_status"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 10: Wrong strategy_application_status fails closed ─────────────
+
+    def test_wrong_strategy_status_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold(
+            strategy_application_status="EXECUTED"
+        )
+        with pytest.raises(ValueError, match="strategy_application_status"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 11: Wrong pnl_application_status fails closed ──────────────────
+
+    def test_wrong_pnl_status_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold(
+            pnl_application_status="EXECUTED"
+        )
+        with pytest.raises(ValueError, match="pnl_application_status"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 12: Wrong funding_rate_unit fails closed ───────────────────────
+
+    def test_wrong_funding_rate_unit_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold(
+            funding_rate_unit="percent"
+        )
+        with pytest.raises(ValueError, match="funding_rate_unit"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 13: Wrong notional_policy fails closed ─────────────────────────
+
+    def test_wrong_notional_policy_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold(
+            notional_policy="REAL_NOTIONAL"
+        )
+        with pytest.raises(ValueError, match="notional_policy"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 14: Wrong side_policy fails closed ─────────────────────────────
+
+    def test_wrong_side_policy_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold(
+            side_policy="REAL_SIDE"
+        )
+        with pytest.raises(ValueError, match="side_policy"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 15: Wrong sample_policy fails closed ───────────────────────────
+
+    def test_wrong_sample_policy_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold(
+            sample_policy="FULL_DATASET"
+        )
+        with pytest.raises(ValueError, match="sample_policy"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 16: Wrong sample_size_per_symbol fails closed ──────────────────
+
+    def test_wrong_sample_size_per_symbol_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold(
+            sample_size_per_symbol=20
+        )
+        with pytest.raises(ValueError, match="sample_size_per_symbol"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 17: Inconsistent top-level counts fail closed ──────────────────
+
+    def test_inconsistent_top_level_counts_fail_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold(
+            eligible_symbol_count=999
+        )
+        with pytest.raises(ValueError, match="eligible_symbol_count"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 18: Duplicate symbols fail closed ──────────────────────────────
+
+    def test_duplicate_symbols_fail_closed(self):
+        eligible = _valid_aggregate_row_scaffold()["symbols"][0]
+        row_scaffold = _valid_aggregate_row_scaffold(
+            symbols=[dict(eligible), dict(eligible)],
+            symbol_count=2,
+            eligible_symbol_count=2,
+            materialized_symbol_count=2,
+        )
+        with pytest.raises(ValueError, match="Duplicate scaffold symbol"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 19: Eligible symbol missing sample_rows fails closed ───────────
+
+    def test_eligible_symbol_missing_sample_rows_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        del row_scaffold["symbols"][0]["sample_rows"]
+        with pytest.raises(ValueError, match="sample_rows"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 20: sample_row_count mismatch fails closed ─────────────────────
+
+    def test_sample_row_count_mismatch_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_row_count"] = 999
+        with pytest.raises(ValueError, match="sample_row_count"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 21: Sample count >10 fails closed ──────────────────────────────
+
+    def test_sample_count_exceeds_10_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL,
+        )
+        many_rows = [
+            {
+                "bar_row_index": i,
+                "funding_row_index": i,
+                "funding_rate": "0.0001",
+                "unit_notional": "1",
+                "long_cashflow_factor": "-0.0001",
+                "short_cashflow_factor": "0.0001",
+                "formula": LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL,
+                "application_scope": "DIAGNOSTIC_SAMPLE_ONLY_NOT_STRATEGY",
+            }
+            for i in range(11)
+        ]
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"] = many_rows
+        row_scaffold["symbols"][0]["sample_row_count"] = 11
+        with pytest.raises(ValueError, match="exceeds maximum of 10"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 22: Sample row missing key fails closed ────────────────────────
+
+    def test_sample_row_missing_key_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        del row_scaffold["symbols"][0]["sample_rows"][0]["funding_rate"]
+        with pytest.raises(ValueError, match="missing keys"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 23: Sample row with extra key fails closed ─────────────────────
+
+    def test_sample_row_with_extra_key_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["extra_key"] = "unexpected"
+        with pytest.raises(ValueError, match="extra keys"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 24: Malformed funding rate fails closed ────────────────────────
+
+    def test_malformed_funding_rate_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["funding_rate"] = "not-a-decimal"
+        with pytest.raises(ValueError, match="malformed|funding_rate"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 25: NaN funding rate fails closed ──────────────────────────────
+
+    def test_nan_funding_rate_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["funding_rate"] = "NaN"
+        with pytest.raises(ValueError, match="finite|NaN"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 26: Infinite funding rate fails closed ─────────────────────────
+
+    def test_infinite_funding_rate_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["funding_rate"] = "Infinity"
+        with pytest.raises(ValueError, match="finite|Infinity"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 27: Malformed long_cashflow_factor fails closed ────────────────
+
+    def test_malformed_long_cashflow_factor_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["long_cashflow_factor"] = "not-a-decimal"
+        with pytest.raises(ValueError, match="malformed|long_cashflow_factor"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 28: NaN long_cashflow_factor fails closed ──────────────────────
+
+    def test_nan_long_cashflow_factor_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["long_cashflow_factor"] = "NaN"
+        with pytest.raises(ValueError, match="finite|NaN"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 29: Infinite long_cashflow_factor fails closed ─────────────────
+
+    def test_infinite_long_cashflow_factor_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["long_cashflow_factor"] = "Infinity"
+        with pytest.raises(ValueError, match="finite|Infinity"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 30: Malformed short_cashflow_factor fails closed ───────────────
+
+    def test_malformed_short_cashflow_factor_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["short_cashflow_factor"] = "not-a-decimal"
+        with pytest.raises(ValueError, match="malformed|short_cashflow_factor"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 31: Long factor not equal to -funding_rate fails closed ────────
+
+    def test_long_factor_not_equal_negative_funding_rate_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["long_cashflow_factor"] = "-0.9999"
+        with pytest.raises(ValueError, match="long_cashflow_factor"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 32: Short factor not equal to funding_rate fails closed ────────
+
+    def test_short_factor_not_equal_funding_rate_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["short_cashflow_factor"] = "0.9999"
+        with pytest.raises(ValueError, match="short_cashflow_factor"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 33: Long/short factor not exact opposites fails closed ─────────
+
+    def test_long_short_factor_not_exact_opposites_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][0]["sample_rows"][0]["long_cashflow_factor"] = "-0.0002"
+        row_scaffold["symbols"][0]["sample_rows"][0]["short_cashflow_factor"] = "0.0001"
+        with pytest.raises(ValueError, match="long_cashflow_factor|short_cashflow_factor"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 34: Blocked symbol with sample_rows fails closed ───────────────
+
+    def test_blocked_symbol_with_sample_rows_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][1]["sample_rows"] = []
+        with pytest.raises(ValueError, match="extra keys"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 35: Blocked symbol with numeric aggregate fields fails closed ──
+
+    def test_blocked_symbol_with_numeric_aggregate_fields_fails_closed(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        row_scaffold["symbols"][1]["long_cashflow_factor_sum"] = "0.0"
+        with pytest.raises(ValueError, match="extra keys"):
+            _build_funding_adjustment_sample_aggregate_diagnostics(row_scaffold)
+
+    # ── Test 36: Output contains no sample_rows ─────────────────────────────
+
+    def test_output_contains_no_sample_rows(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        result = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        all_keys = _all_dict_keys(result)
+        assert "sample_rows" not in all_keys, (
+            "Aggregate output must not contain sample_rows"
+        )
+
+    # ── Test 37: Output contains no timestamp/OHLCV fields ──────────────────
+
+    def test_output_contains_no_timestamp_or_ohlcv_fields(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        result = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        all_keys = _all_dict_keys(result)
+        forbidden = {"timestamp", "open", "high", "low", "close", "volume"}
+        found = {k for k in forbidden if k in all_keys}
+        assert not found, f"Forbidden keys found: {found}"
+
+    # ── Test 38: Output contains no strategy/pnl/returns/edge keys ──────────
+
+    def test_output_contains_no_strategy_pnl_returns_edge_keys(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        result = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        all_keys = _all_dict_keys(result)
+        forbidden = {
+            "pnl", "PnL", "Pnl", "Sharpe", "sharpe", "edge",
+            "risk", "trade", "trades", "signal", "signals",
+            "position", "positions", "portfolio",
+            "return", "returns",
+            "funding_adjusted_return", "net_return_value",
+            "price_change", "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+        }
+        found = {k for k in forbidden if k in all_keys}
+        assert not found, f"Forbidden keys found: {found}"
+
+    # ── Test 39: CLI with funding includes aggregate diagnostics ────────────
+
+    def test_cli_with_funding_includes_aggregate_diagnostics(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+        (funding_dir / "BTCUSDT_funding.csv").write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,-0.0001,50200.0\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_agg_cli_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                    "--funding-dir", str(funding_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjustment_sample_aggregate_diagnostics" in written
+            section = written["funding_adjustment_sample_aggregate_diagnostics"]
+            assert section["calculation_status"] == (
+                "FUNDING_ADJUSTMENT_SAMPLE_AGGREGATE_DIAGNOSTIC_ONLY"
+            )
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 40: CLI without funding omits aggregate diagnostics ────────────
+
+    def test_cli_without_funding_omits_aggregate_diagnostics(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        (bars_dir / "BTCUSDT_8h_ohlcv.csv").write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-01T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            "2026-01-02T00:00:00Z,100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-03T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+
+        out_dir = Path("/tmp") / f"qnty_agg_cli_no_funding_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable, "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir", str(out_dir),
+                    "--input-manifest-fingerprint", "a" * 64,
+                    "--data-quality-receipt-sha256", "b" * 64,
+                    "--code-commit-sha", "c" * 40,
+                    "--bars-dir", str(bars_dir),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0, f"stderr: {result.stderr}"
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "funding_adjustment_sample_aggregate_diagnostics" not in written
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 41: Receipt final verdict remains BLOCKED_BY_VALIDATION_IMPLEMENTATION ──
+
+    def test_receipt_final_verdict_remains_blocked(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        aggregate = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_sample_aggregate_diagnostics=aggregate,
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        validate_real_validation_receipt(receipt)  # must not raise
+
+    # ── Test 42: Required outputs remain false ──────────────────────────────
+
+    def test_required_outputs_remain_false(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        aggregate = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_sample_aggregate_diagnostics=aggregate,
+        )
+        for value in receipt["required_outputs_present"].values():
+            assert value is False
+
+    # ── Test 43: Forbidden calculations remain false ────────────────────────
+
+    def test_forbidden_calculations_remain_false(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        aggregate = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_sample_aggregate_diagnostics=aggregate,
+        )
+        for key, value in receipt["forbidden_calculation_status"].items():
+            assert value is False, f"{key} must be False"
+
+    # ── Test 44: Guardrails remain true ─────────────────────────────────────
+
+    def test_guardrails_remain_true(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        aggregate = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        receipt = _base_receipt(
+            funding_adjustment_sample_aggregate_diagnostics=aggregate,
+        )
+        for key, value in receipt["guardrail_status"].items():
+            assert value is True, f"{key} must be True"
+
+    # ── Test 45: Safety-key regression ──────────────────────────────────────
+
+    def test_safety_key_regression(self):
+        row_scaffold = _valid_aggregate_row_scaffold()
+        result = _build_funding_adjustment_sample_aggregate_diagnostics(
+            row_scaffold,
+        )
+        all_keys = _all_dict_keys(result)
+        forbidden = {
+            "PnL", "Sharpe", "edge", "strategy-performance",
+            "risk", "trade", "trades", "signal", "signals",
+            "position", "positions", "portfolio", "return", "returns",
+            "funding_adjusted_return", "net_return_value",
+            "price_change", "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+            "timestamp", "open", "high", "low", "close", "volume",
+            "sample_rows",
+        }
+        assert forbidden.isdisjoint(all_keys), (
+            f"Forbidden keys found: {forbidden & all_keys}"
+        )

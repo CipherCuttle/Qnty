@@ -154,6 +154,12 @@ EXPLICIT_FIXTURE_ONLY = "EXPLICIT_FIXTURE_ONLY"
 FUNDING_ADJUSTMENT_ROW_SCAFFOLD_DIAGNOSTIC_ONLY = "FUNDING_ADJUSTMENT_ROW_SCAFFOLD_DIAGNOSTIC_ONLY"
 DIAGNOSTIC_ROW_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY = "DIAGNOSTIC_ROW_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY"
 
+# === Funding adjustment sample aggregate diagnostics constants ===
+FUNDING_ADJUSTMENT_SAMPLE_AGGREGATE_DIAGNOSTIC_ONLY = "FUNDING_ADJUSTMENT_SAMPLE_AGGREGATE_DIAGNOSTIC_ONLY"
+DIAGNOSTIC_SAMPLE_AGGREGATE_ONLY_NOT_APPLIED_TO_STRATEGY = "DIAGNOSTIC_SAMPLE_AGGREGATE_ONLY_NOT_APPLIED_TO_STRATEGY"
+MATERIALIZED_DIAGNOSTIC_SAMPLE_AGGREGATES = "MATERIALIZED_DIAGNOSTIC_SAMPLE_AGGREGATES"
+DIAGNOSTIC_CAPPED_SAMPLE_AGGREGATE_ONLY_NOT_STRATEGY = "DIAGNOSTIC_CAPPED_SAMPLE_AGGREGATE_ONLY_NOT_STRATEGY"
+
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
 # expected outputs are both hardcoded here so a future edit to the formula
@@ -5267,6 +5273,375 @@ def materialize_funding_adjustment_row_scaffold_diagnostics(
     return section
 
 
+def _build_funding_adjustment_sample_aggregate_diagnostics(
+    row_scaffold_section: dict,
+) -> dict:
+    """Build diagnostic-only sample aggregate summary over capped scaffold rows.
+
+    Consumes ``funding_adjustment_row_scaffold_diagnostics`` only. Validates
+    all row scaffold statuses and per-symbol data (fail closed), then computes
+    aggregate statistics over the capped deterministic sample rows. Emits no
+    strategy, PnL, Sharpe, edge, trade, position, signal, portfolio, drawdown,
+    risk, or live-readiness data.
+    """
+    # ── Step 1: Validate row scaffold section exists and is dict ──────
+    if not isinstance(row_scaffold_section, dict):
+        raise ValueError(
+            "funding_adjustment_row_scaffold_diagnostics is required and "
+            "must be a non-empty dict"
+        )
+
+    # ── Step 2: Validate row scaffold top-level status fields ─────────
+    scaffold = row_scaffold_section
+
+    _expected_statuses = {
+        "calculation_status": FUNDING_ADJUSTMENT_ROW_SCAFFOLD_DIAGNOSTIC_ONLY,
+        "funding_adjustment_application_status": (
+            DIAGNOSTIC_ROW_SCAFFOLD_ONLY_NOT_APPLIED_TO_STRATEGY
+        ),
+        "strategy_application_status": NOT_EXECUTED,
+        "pnl_application_status": NOT_EXECUTED,
+        "funding_rate_unit": "decimal_rate_not_percent",
+        "notional_policy": "UNIT_NOTIONAL_DIAGNOSTIC_ONLY",
+        "side_policy": "BOTH_HYPOTHETICAL_SIDES_DIAGNOSTIC_ONLY",
+        "sample_policy": "CAPPED_DETERMINISTIC_SAMPLES_ONLY",
+        "sample_size_per_symbol": 10,
+    }
+    for key, expected in _expected_statuses.items():
+        actual = scaffold.get(key)
+        if actual != expected:
+            raise ValueError(
+                f"Expected funding_adjustment_row_scaffold_diagnostics."
+                f"{key}={expected!r}, got {actual!r}"
+            )
+
+    # ── Step 3: Validate counts are internally consistent ─────────────
+    symbols = scaffold.get("symbols", [])
+    if not isinstance(symbols, list):
+        raise ValueError("row scaffold symbols must be a list")
+
+    seen_symbols: set[str] = set()
+    eligible_entries: list[dict] = []
+    blocked_entries: list[dict] = []
+
+    for entry in symbols:
+        if not isinstance(entry, dict):
+            raise ValueError("row scaffold symbol entry must be a dict")
+        symbol = entry.get("symbol")
+        if not isinstance(symbol, str) or not symbol:
+            raise ValueError(f"row scaffold symbol entry has invalid symbol {symbol!r}")
+        if symbol in seen_symbols:
+            raise ValueError(f"Duplicate scaffold symbol in aggregate: {symbol}")
+        seen_symbols.add(symbol)
+
+        scaffold_status = entry.get("scaffold_status")
+        row_scaffold_status = entry.get("row_scaffold_status")
+
+        if scaffold_status == MATERIALIZED_DIAGNOSTIC_ROWS:
+            # ── Validate eligible symbol ──────────────────────────────
+            if row_scaffold_status != "MATERIALIZED_DIAGNOSTIC_CASHFLOW_SAMPLES":
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} expected "
+                    f"row_scaffold_status='MATERIALIZED_DIAGNOSTIC_CASHFLOW_SAMPLES', "
+                    f"got {row_scaffold_status!r}"
+                )
+
+            sample_rows = entry.get("sample_rows")
+            if not isinstance(sample_rows, list):
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} sample_rows must be a list, "
+                    f"got {type(sample_rows).__name__}"
+                )
+
+            sample_row_count = entry.get("sample_row_count")
+            if sample_row_count != len(sample_rows):
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} sample_row_count "
+                    f"({sample_row_count}) != len(sample_rows) "
+                    f"({len(sample_rows)})"
+                )
+
+            if sample_row_count > 10:
+                raise ValueError(
+                    f"Eligible symbol {symbol!r} sample row count "
+                    f"{sample_row_count} exceeds maximum of 10"
+                )
+
+            # ── Validate each sample row ────────────────────────────
+            EXPECTED_SAMPLE_ROW_KEYS = {
+                "bar_row_index",
+                "funding_row_index",
+                "funding_rate",
+                "unit_notional",
+                "long_cashflow_factor",
+                "short_cashflow_factor",
+                "formula",
+                "application_scope",
+            }
+
+            for row_idx, row in enumerate(sample_rows):
+                if not isinstance(row, dict):
+                    raise ValueError(
+                        f"Eligible symbol {symbol!r} sample row "
+                        f"{row_idx} is not a dict"
+                    )
+                actual_keys = set(row.keys())
+                if actual_keys != EXPECTED_SAMPLE_ROW_KEYS:
+                    extra = actual_keys - EXPECTED_SAMPLE_ROW_KEYS
+                    missing = EXPECTED_SAMPLE_ROW_KEYS - actual_keys
+                    parts = []
+                    if extra:
+                        parts.append(f"extra keys: {sorted(extra)}")
+                    if missing:
+                        parts.append(f"missing keys: {sorted(missing)}")
+                    raise ValueError(
+                        f"Eligible symbol {symbol!r} sample row {row_idx} "
+                        f"key mismatch: {'; '.join(parts)}"
+                    )
+
+                if row.get("unit_notional") != "1":
+                    raise ValueError(
+                        f"Eligible symbol {symbol!r} sample row {row_idx} "
+                        f"unit_notional={row.get('unit_notional')!r}, expected '1'"
+                    )
+                if row.get("formula") != LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL:
+                    raise ValueError(
+                        f"Eligible symbol {symbol!r} sample row {row_idx} "
+                        f"formula={row.get('formula')!r}, expected "
+                        f"{LONG_NEGATES_FUNDING_RATE_SHORT_PRESERVES_FUNDING_RATE_TIMES_NOTIONAL!r}"
+                    )
+                if row.get("application_scope") != "DIAGNOSTIC_SAMPLE_ONLY_NOT_STRATEGY":
+                    raise ValueError(
+                        f"Eligible symbol {symbol!r} sample row {row_idx} "
+                        f"application_scope={row.get('application_scope')!r}, "
+                        f"expected 'DIAGNOSTIC_SAMPLE_ONLY_NOT_STRATEGY'"
+                    )
+
+                # Validate funding_rate and cashflow factors are finite decimals
+                funding_rate_str = row.get("funding_rate")
+                long_cf_str = row.get("long_cashflow_factor")
+                short_cf_str = row.get("short_cashflow_factor")
+
+                for field_name, raw in [
+                    ("funding_rate", funding_rate_str),
+                    ("long_cashflow_factor", long_cf_str),
+                    ("short_cashflow_factor", short_cf_str),
+                ]:
+                    if not isinstance(raw, str):
+                        raise ValueError(
+                            f"Eligible symbol {symbol!r} sample row {row_idx} "
+                            f"{field_name} must be a string, got {type(raw).__name__}"
+                        )
+                    try:
+                        dec = Decimal(raw)
+                    except (ValueError, ArithmeticError, InvalidOperation) as exc:
+                        raise ValueError(
+                            f"Eligible symbol {symbol!r} sample row {row_idx} "
+                            f"{field_name} is malformed: {raw!r}"
+                        ) from exc
+                    if not dec.is_finite():
+                        raise ValueError(
+                            f"Eligible symbol {symbol!r} sample row {row_idx} "
+                            f"{field_name} must be finite: {raw!r}"
+                        )
+
+                # Validate arithmetic invariants
+                funding_rate_dec = Decimal(funding_rate_str)
+                long_cf_dec = Decimal(long_cf_str)
+                short_cf_dec = Decimal(short_cf_str)
+
+                expected_long_cf = -funding_rate_dec
+                expected_short_cf = funding_rate_dec
+
+                if long_cf_dec != expected_long_cf:
+                    raise ValueError(
+                        f"Eligible symbol {symbol!r} sample row {row_idx} "
+                        f"long_cashflow_factor={long_cf_str}, expected "
+                        f"{str(expected_long_cf)} (=-funding_rate)"
+                    )
+                if short_cf_dec != expected_short_cf:
+                    raise ValueError(
+                        f"Eligible symbol {symbol!r} sample row {row_idx} "
+                        f"short_cashflow_factor={short_cf_str}, expected "
+                        f"{str(expected_short_cf)} (=funding_rate)"
+                    )
+                if long_cf_dec != -short_cf_dec:
+                    raise ValueError(
+                        f"Eligible symbol {symbol!r} sample row {row_idx} "
+                        f"long_cashflow_factor ({long_cf_str}) != "
+                        f"-short_cashflow_factor ({short_cf_str})"
+                    )
+
+            eligible_entries.append(entry)
+
+        elif scaffold_status == SKIPPED_BY_READINESS_GATE:
+            # ── Validate blocked/skipped symbol ─────────────────────
+            if row_scaffold_status != SKIPPED_BY_READINESS_GATE:
+                raise ValueError(
+                    f"Blocked symbol {symbol!r} expected "
+                    f"row_scaffold_status={SKIPPED_BY_READINESS_GATE!r}, "
+                    f"got {row_scaffold_status!r}"
+                )
+
+            blocked_reasons = entry.get("blocked_reasons")
+            if not isinstance(blocked_reasons, list):
+                raise ValueError(
+                    f"Blocked symbol {symbol!r} blocked_reasons must be a list"
+                )
+
+            # Must have exactly four keys
+            ALLOWED_BLOCKED_KEYS = {
+                "symbol", "scaffold_status", "row_scaffold_status",
+                "blocked_reasons",
+            }
+            actual_entry_keys = set(entry.keys())
+            if actual_entry_keys != ALLOWED_BLOCKED_KEYS:
+                extra = actual_entry_keys - ALLOWED_BLOCKED_KEYS
+                missing = ALLOWED_BLOCKED_KEYS - actual_entry_keys
+                parts = []
+                if extra:
+                    parts.append(f"extra keys: {sorted(extra)}")
+                if missing:
+                    parts.append(f"missing keys: {sorted(missing)}")
+                raise ValueError(
+                    f"Blocked symbol {symbol!r} entry has unexpected keys: "
+                    f"{'; '.join(parts)}"
+                )
+
+            blocked_entries.append(entry)
+
+        else:
+            raise ValueError(
+                f"Symbol {symbol!r} has unexpected scaffold_status "
+                f"{scaffold_status!r}"
+            )
+
+    # ── Step 4: Build per-symbol aggregate output ─────────────────────
+    output_symbols: list[dict] = []
+    total_sample_rows = 0
+    global_long_sum = Decimal("0")
+    global_short_sum = Decimal("0")
+
+    for entry in eligible_entries:
+        symbol = entry["symbol"]
+        sample_rows = entry["sample_rows"]
+        sample_row_count = len(sample_rows)
+        total_sample_rows += sample_row_count
+
+        # Compute aggregates
+        long_factors = [Decimal(row["long_cashflow_factor"]) for row in sample_rows]
+        short_factors = [Decimal(row["short_cashflow_factor"]) for row in sample_rows]
+
+        long_sum = sum(long_factors, Decimal("0"))
+        short_sum = sum(short_factors, Decimal("0"))
+        long_min = min(long_factors)
+        long_max = max(long_factors)
+        short_min = min(short_factors)
+        short_max = max(short_factors)
+
+        long_short_check = long_sum + short_sum
+        if long_short_check != Decimal("0"):
+            raise ValueError(
+                f"Eligible symbol {symbol!r} long_short_sum_check "
+                f"({str(long_short_check)}) != 0"
+            )
+
+        global_long_sum += long_sum
+        global_short_sum += short_sum
+
+        output_symbols.append({
+            "symbol": symbol,
+            "aggregate_status": MATERIALIZED_DIAGNOSTIC_SAMPLE_AGGREGATES,
+            "sample_row_count": sample_row_count,
+            "long_cashflow_factor_sum": str(long_sum),
+            "short_cashflow_factor_sum": str(short_sum),
+            "long_cashflow_factor_min": str(long_min),
+            "long_cashflow_factor_max": str(long_max),
+            "short_cashflow_factor_min": str(short_min),
+            "short_cashflow_factor_max": str(short_max),
+            "long_short_sum_check": str(long_short_check),
+            "application_scope": DIAGNOSTIC_CAPPED_SAMPLE_AGGREGATE_ONLY_NOT_STRATEGY,
+        })
+
+    for entry in blocked_entries:
+        symbol = entry["symbol"]
+        blocked_reasons = entry.get("blocked_reasons", [])
+        output_symbols.append({
+            "symbol": symbol,
+            "aggregate_status": SKIPPED_BY_READINESS_GATE,
+            "blocked_reasons": blocked_reasons,
+        })
+
+    # ── Step 5: Compute top-level counts ──────────────────────────────
+    eligible_count = scaffold.get("eligible_symbol_count")
+    blocked_count = scaffold.get("blocked_symbol_count")
+    materialized_count = scaffold.get("materialized_symbol_count")
+    skipped_count = scaffold.get("skipped_symbol_count")
+
+    recon_eligible = len(eligible_entries)
+    recon_blocked = len(blocked_entries)
+    recon_materialized = recon_eligible
+    recon_skipped = recon_blocked
+
+    if eligible_count != recon_eligible:
+        raise ValueError(
+            f"eligible_symbol_count {eligible_count} != derived {recon_eligible}"
+        )
+    if blocked_count != recon_blocked:
+        raise ValueError(
+            f"blocked_symbol_count {blocked_count} != derived {recon_blocked}"
+        )
+    if materialized_count != recon_materialized:
+        raise ValueError(
+            f"materialized_symbol_count {materialized_count} != derived "
+            f"{recon_materialized}"
+        )
+    if skipped_count != recon_skipped:
+        raise ValueError(
+            f"skipped_symbol_count {skipped_count} != derived {recon_skipped}"
+        )
+
+    # ── Step 6: Build global long/short summary ───────────────────────
+    global_long_short_check = global_long_sum + global_short_sum
+    if global_long_short_check != Decimal("0"):
+        raise ValueError(
+            f"global_long_short_sum_check ({str(global_long_short_check)}) != 0"
+        )
+
+    section = {
+        "calculation_status": FUNDING_ADJUSTMENT_SAMPLE_AGGREGATE_DIAGNOSTIC_ONLY,
+        "funding_adjustment_application_status": (
+            DIAGNOSTIC_SAMPLE_AGGREGATE_ONLY_NOT_APPLIED_TO_STRATEGY
+        ),
+        "strategy_application_status": NOT_EXECUTED,
+        "pnl_application_status": NOT_EXECUTED,
+        "requires_row_scaffold_diagnostics": True,
+        "row_scaffold_section_required": (
+            "funding_adjustment_row_scaffold_diagnostics"
+        ),
+        "aggregation_scope": "CAPPED_SAMPLE_ROWS_ONLY",
+        "full_dataset_aggregation_status": "NOT_EXECUTED",
+        "funding_rate_unit": "decimal_rate_not_percent",
+        "notional_policy": "UNIT_NOTIONAL_DIAGNOSTIC_ONLY",
+        "side_policy": "BOTH_HYPOTHETICAL_SIDES_DIAGNOSTIC_ONLY",
+        "sample_policy": "CAPPED_DETERMINISTIC_SAMPLES_ONLY",
+        "eligible_symbol_count": recon_eligible,
+        "blocked_symbol_count": recon_blocked,
+        "materialized_symbol_count": recon_materialized,
+        "skipped_symbol_count": recon_skipped,
+        "total_sample_row_count": total_sample_rows,
+        "global_long_cashflow_factor_sum": str(global_long_sum),
+        "global_short_cashflow_factor_sum": str(global_short_sum),
+        "global_long_short_sum_check": str(global_long_short_check),
+        "symbols": output_symbols,
+    }
+
+    _assert_no_forbidden_calculation_keys(
+        section, "$.funding_adjustment_sample_aggregate_diagnostics"
+    )
+    return section
+
+
 def build_cost_case_matrix() -> list[dict[str, Any]]:
     """Build the low/base/high cost-case sensitivity matrix skeleton.
 
@@ -5342,6 +5717,7 @@ def build_real_validation_receipt(
     funding_adjustment_policy_contract_diagnostics: dict | None = None,
     funding_adjustment_arithmetic_scaffold_diagnostics: dict | None = None,
     funding_adjustment_row_scaffold_diagnostics: dict | None = None,
+    funding_adjustment_sample_aggregate_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -5449,6 +5825,10 @@ def build_real_validation_receipt(
     if funding_adjustment_row_scaffold_diagnostics is not None:
         receipt["funding_adjustment_row_scaffold_diagnostics"] = (
             funding_adjustment_row_scaffold_diagnostics
+        )
+    if funding_adjustment_sample_aggregate_diagnostics is not None:
+        receipt["funding_adjustment_sample_aggregate_diagnostics"] = (
+            funding_adjustment_sample_aggregate_diagnostics
         )
 
     return receipt
@@ -5812,6 +6192,13 @@ def main(argv: list[str] | None = None) -> int:
                 if funding_dir is not None
                 else None
             )
+            funding_adjustment_sample_aggregate_diagnostics = (
+                _build_funding_adjustment_sample_aggregate_diagnostics(
+                    funding_adjustment_row_scaffold_diagnostics,
+                )
+                if funding_dir is not None
+                else None
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -5853,6 +6240,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             funding_adjustment_row_scaffold_diagnostics=(
                 funding_adjustment_row_scaffold_diagnostics
+            ),
+            funding_adjustment_sample_aggregate_diagnostics=(
+                funding_adjustment_sample_aggregate_diagnostics
             ),
         )
     else:
