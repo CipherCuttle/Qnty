@@ -326,61 +326,72 @@ benchmark, or live-readiness outputs.
 `forbidden_output_keys` **must mirror the forbidden calculation-key scanner**
 (`FORBIDDEN_CALCULATION_KEYS`, `_assert_no_forbidden_calculation_keys`). "Mirror" means
 *mirror the code as it actually is* — not an aspirational list. Below is the scanner's
-**actual enforced set as of the base commit**, which is what `forbidden_output_keys` must
-reflect today.
+**actual enforced set**, which is what `forbidden_output_keys` must reflect today.
 
-**Enforced today — exact dict-key match, at any nesting depth (22 keys):**
+The previously reserved names have now been **appended** to the scanner by a single-purpose
+append-only PR. The enforced set moved from **22 keys to 42 keys**. No key was removed or
+renamed; the scanner is strictly stronger.
+
+**Enforced today — exact dict-key match, at any nesting depth (42 keys):**
 
 ```
-pnl
-sharpe
-edge
-strategy_performance
-return
-returns
-gross_observational_return
-gross_return_value
-net_return_value
-cost_adjusted_return
-funding_adjusted_return
-price_change
-trade
-trades
-signal
-signals
-position
-positions
-portfolio
-live_ready
-deploy_ready
-profitable
+pnl                 sharpe              edge                strategy_performance
+return              returns             gross_observational_return
+gross_return_value  net_return_value    cost_adjusted_return
+funding_adjusted_return                 price_change
+trade               trades              signal              signals
+position            positions           portfolio
+live_ready          deploy_ready        profitable
+drawdown            risk                baseline_result     benchmark_result
+OFFLINE_EDGE_CANDIDATE                  EDGE_CANDIDATE
+p_value             confidence_interval score
+metric              performance         profit
+order               orders              fill                fills
+execution           executions          equity              equity_curve
 ```
+
+`OFFLINE_EDGE_CANDIDATE` and `EDGE_CANDIDATE` are forbidden **dict keys** only. This is
+defense-in-depth against verdict-named maps (e.g. a `{"OFFLINE_EDGE_CANDIDATE": {...}}`
+block smuggled into a receipt). It is **not** verdict enforcement: verdict control remains
+owned by `ALLOWED_FINAL_VERDICTS` / `_SKELETON_ALLOWED_VERDICTS` and the verdict
+validators, which are untouched.
 
 Additionally, `FORBIDDEN_TOP_LEVEL_KEYS` (`pnl`, `sharpe`, `edge`,
 `strategy_performance`) are rejected at the receipt root.
 
+**Matching is exact dict-key equality only** — no substring, prefix, regex, or
+case-insensitive matching. Sibling names that merely *contain* a forbidden name are
+accepted by design and remain valid contract field names (e.g. `max_drawdown`,
+`drawdown_policy`, `order_timing_policy`, `fill_policy`, `equity_curve_policy`,
+`risk_measure_policy`, `sharpe_or_risk_metric`).
+
 **One narrow exemption exists in code:** the key `gross_observational_return` is permitted
 **only** under the receipt path prefix `$.gross_observational_returns`. Everywhere else it
-is forbidden. A contract field must not rely on or widen this exemption.
+is forbidden. **This exemption is unchanged by the append** — its behavior is byte-for-byte
+the same, and it remains key-scoped, not section-wide (a `pnl` key nested inside
+`gross_observational_returns` is still rejected). A contract field must not rely on or
+widen this exemption.
 
-**Reserved names — NOT currently enforced by the scanner:**
+**Known gap, deliberately deferred:** the exemption is implemented with a `startswith`
+path check, so a sibling section whose path merely *begins with* the exempt prefix could
+inherit the exemption. Tightening this prefix-hole is **intentionally out of scope here**
+and is deferred to a separate single-purpose PR, so that this change stays purely
+append-only and no existing semantics shift underneath it.
 
-The following names are semantically forbidden by this spec's output boundary, but a
-reader must not believe the scanner rejects them today, **because it does not**. They are
-recorded as reserved so that no contract field is ever named one of them, and so that a
-future single-purpose PR may append them to the scanner:
+**Reserved names — none outstanding:**
+
+The reserved block is retained as the designated home for any *future* semantically
+forbidden name that is not yet enforced. **After this append, no additional reserved names
+are listed** — the reserved set is empty, and the spec's output boundary and the scanner's
+enforced set are in agreement.
 
 ```
-drawdown            risk              baseline_result     benchmark_result
-OFFLINE_EDGE_CANDIDATE                EDGE_CANDIDATE
-p_value             confidence_interval                   score
-metric              performance       profit
-order               orders            fill                fills
-execution           executions        equity              equity_curve
+(none)
 ```
 
-Stating that these are enforced when they are not would itself be a false receipt claim.
-Widening the scanner to cover them is **append-only** work for a separate PR.
+Any future name added here must be recorded as reserved **until** a single-purpose PR
+appends it to the scanner. Stating that a name is enforced when it is not would itself be
+a false receipt claim. Widening the scanner is **append-only** work for a separate PR.
 
 **`receipt_key_naming_constraint`:** contract field names must **survive recursive
 exact-key scanning**. The scanner is **append-only and must never be weakened to

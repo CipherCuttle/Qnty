@@ -1968,6 +1968,110 @@ class TestForbiddenKeysNested:
         receipt = _base_receipt()
         validate_real_validation_receipt(receipt)
 
+    # ── Appended reserved keys (scanner 22 → 42) ──────────────────────────
+
+    APPENDED_FORBIDDEN_KEYS = [
+        "drawdown",
+        "risk",
+        "baseline_result",
+        "benchmark_result",
+        "OFFLINE_EDGE_CANDIDATE",
+        "EDGE_CANDIDATE",
+        "p_value",
+        "confidence_interval",
+        "score",
+        "metric",
+        "performance",
+        "profit",
+        "order",
+        "orders",
+        "fill",
+        "fills",
+        "execution",
+        "executions",
+        "equity",
+        "equity_curve",
+    ]
+
+    ORIGINAL_22_FORBIDDEN_KEYS = frozenset(
+        {
+            "pnl",
+            "sharpe",
+            "edge",
+            "strategy_performance",
+            "return",
+            "returns",
+            "gross_observational_return",
+            "gross_return_value",
+            "net_return_value",
+            "cost_adjusted_return",
+            "funding_adjusted_return",
+            "price_change",
+            "trade",
+            "trades",
+            "signal",
+            "signals",
+            "position",
+            "positions",
+            "portfolio",
+            "live_ready",
+            "deploy_ready",
+            "profitable",
+        }
+    )
+
+    @pytest.mark.parametrize("key", APPENDED_FORBIDDEN_KEYS)
+    def test_appended_forbidden_key_rejected_when_nested(self, key):
+        receipt = self._receipt_with_nested_key(key, "forbidden")
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    @pytest.mark.parametrize("key", ["drawdown", "equity", "score", "profit"])
+    def test_appended_forbidden_key_rejected_at_top_level(self, key):
+        receipt = _base_receipt()
+        receipt[key] = 1.23
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_append_only_original_keys_still_enforced(self):
+        """The append must not remove or rename any pre-existing forbidden key."""
+        assert self.ORIGINAL_22_FORBIDDEN_KEYS <= real_validation.FORBIDDEN_CALCULATION_KEYS
+        assert len(self.ORIGINAL_22_FORBIDDEN_KEYS) == 22
+        assert set(self.APPENDED_FORBIDDEN_KEYS) <= real_validation.FORBIDDEN_CALCULATION_KEYS
+        assert len(real_validation.FORBIDDEN_CALCULATION_KEYS) == 42
+
+    def test_near_miss_keys_still_accepted_exact_match_semantics(self):
+        """Legitimate policy/limit keys that merely *contain* a forbidden name must pass.
+
+        Proves the scanner is exact-dict-key match: no substring, prefix, regex,
+        or case-insensitive matching.
+        """
+        receipt = _base_receipt()
+        receipt["policy_section"] = {
+            "max_drawdown": 0.2,
+            "drawdown_policy": "documented",
+            "drawdown_policy_defined": True,
+            "order_timing_policy": "next_bar_open",
+            "order_timing_policy_defined": True,
+            "fill_policy": "close",
+            "fill_policy_defined": True,
+            "equity_curve_policy": "not_computed",
+            "equity_curve_policy_defined": True,
+            "risk_measure_policy": "not_computed",
+            "sharpe_or_risk_metric": "not_computed",
+        }
+        # Should not raise.
+        validate_real_validation_receipt(receipt)
+
+    def test_pnl_inside_gross_observational_returns_still_rejected(self):
+        """The gross_observational_return exemption is key-scoped, not section-wide."""
+        receipt = _base_receipt()
+        receipt["gross_observational_returns"] = {
+            "observations": [{"gross_observational_return": 0.01, "pnl": 1000.0}]
+        }
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
 
 # ── New: CLI with dirs tests ────────────────────────────────────────────
 

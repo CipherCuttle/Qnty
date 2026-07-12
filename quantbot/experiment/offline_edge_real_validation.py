@@ -100,6 +100,10 @@ _SKELETON_ALLOWED_VERDICTS = frozenset({BLOCKED_BY_VALIDATION_IMPLEMENTATION})
 FORBIDDEN_TOP_LEVEL_KEYS = frozenset({"pnl", "sharpe", "edge", "strategy_performance"})
 
 # Keys that must never appear at any nesting level in a receipt.
+# Matched by exact dict-key equality only (no substring/prefix/regex/case folding).
+# OFFLINE_EDGE_CANDIDATE / EDGE_CANDIDATE are listed as forbidden *dict keys* only --
+# defense-in-depth against verdict-named maps. Verdict control itself is owned by
+# ALLOWED_FINAL_VERDICTS / _SKELETON_ALLOWED_VERDICTS, not by this set.
 FORBIDDEN_CALCULATION_KEYS = frozenset(
     {
         "pnl",
@@ -124,6 +128,26 @@ FORBIDDEN_CALCULATION_KEYS = frozenset(
         "live_ready",
         "deploy_ready",
         "profitable",
+        "drawdown",
+        "risk",
+        "baseline_result",
+        "benchmark_result",
+        "OFFLINE_EDGE_CANDIDATE",
+        "EDGE_CANDIDATE",
+        "p_value",
+        "confidence_interval",
+        "score",
+        "metric",
+        "performance",
+        "profit",
+        "order",
+        "orders",
+        "fill",
+        "fills",
+        "execution",
+        "executions",
+        "equity",
+        "equity_curve",
     }
 )
 
@@ -6800,12 +6824,17 @@ _REQUIRED_FORBIDDEN_CALC_KEYS = frozenset(
 def _assert_no_forbidden_calculation_keys(value: Any, path: str = "$") -> None:
     """Recursively scan *value* for any key matching a forbidden calculation pattern.
 
-    Forbidden patterns (exact dict key match):
-    ``pnl``, ``sharpe``, ``edge``, ``strategy_performance``,
-    ``return``, ``returns``, ``gross_return_value``, ``net_return_value``,
-    ``price_change``, ``trade``, ``trades``, ``signal``, ``signals``,
-    ``position``, ``positions``, ``portfolio``, ``live_ready``,
-    ``deploy_ready``, and ``profitable``.
+    The forbidden set is :data:`FORBIDDEN_CALCULATION_KEYS` (42 names covering
+    return/pnl/risk, strategy/signal/position, order/fill/execution, equity,
+    scoring/significance, and verdict-named keys).
+
+    Matching is **exact dict-key equality only**: no substring, prefix, regex,
+    or case-insensitive matching. Sibling names that merely contain a forbidden
+    name (e.g. ``max_drawdown``, ``fill_policy``, ``equity_curve_policy``) are
+    therefore accepted by design.
+
+    The sole exemption is ``gross_observational_return`` nested under the
+    ``$.gross_observational_returns`` section.
 
     Raises ``ValueError`` if any forbidden key is found at any nesting level.
     """
@@ -6837,10 +6866,8 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
     not under ``/tmp`` or that resolves under ``/srv/qnty``.
 
     Also recursively scans for forbidden calculation keys at any nesting
-    level (``pnl``, ``sharpe``, ``edge``, ``strategy_performance``,
-    ``return``, ``returns``, ``gross_return_value``, ``net_return_value``,
-    ``price_change``, ``trade``, ``trades``, ``signal``, ``signals``,
-    ``position``, and ``positions``).
+    level; see :func:`_assert_no_forbidden_calculation_keys` and
+    :data:`FORBIDDEN_CALCULATION_KEYS`.
     """
     missing = _REQUIRED_TOP_LEVEL_KEYS - set(receipt.keys())
     if missing:
