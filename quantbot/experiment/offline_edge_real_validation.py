@@ -72,6 +72,7 @@ __all__ = [
     "_build_strategy_rule_contract_diagnostics",
     "_build_trial_manifest_diagnostics",
     "_build_oos_seal_diagnostics",
+    "_build_null_benchmark_contract_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -205,6 +206,12 @@ OOS_SEAL_VERSION = "oos-seal-0.1"
 OOS_SEAL_DIAGNOSTIC_ONLY = "OOS_SEAL_DIAGNOSTIC_ONLY"
 OOS_SEAL_NOT_DEFINED = "OOS_SEAL_NOT_DEFINED"
 OOS_SEAL_BLOCKED_REASON_NOT_DEFINED = "OOS_SEAL_NOT_DEFINED"
+
+# === Null benchmark contract diagnostics constants ===
+NULL_BENCHMARK_CONTRACT_VERSION = "null-benchmark-contract-0.1"
+NULL_BENCHMARK_CONTRACT_DIAGNOSTIC_ONLY = "NULL_BENCHMARK_CONTRACT_DIAGNOSTIC_ONLY"
+NULL_BENCHMARK_CONTRACT_NOT_DEFINED = "NULL_BENCHMARK_CONTRACT_NOT_DEFINED"
+NULL_BENCHMARK_CONTRACT_BLOCKED_REASON_NOT_DEFINED = "NULL_BENCHMARK_CONTRACT_NOT_DEFINED"
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -6079,6 +6086,72 @@ def _build_oos_seal_diagnostics() -> dict[str, Any]:
     }
 
 
+def _build_null_benchmark_contract_diagnostics() -> dict[str, Any]:
+    """Build a diagnostic-only section recording that no null benchmark
+    contract exists yet and therefore scoring is blocked.
+
+    This section does **not** define a benchmark, choose a baseline, compute
+    returns, compare strategies, score anything, or authorize scoring. Every
+    contract field is either ``None``, ``NOT_DEFINED``, or ``False`` — this is
+    a diagnostic of absence, not a definition of presence.
+
+    Fail-closed rules:
+    * ``scoring_authorized`` is always ``False`` at this stage.
+    * ``null_benchmark_contract_status`` is always
+      ``NULL_BENCHMARK_CONTRACT_NOT_DEFINED``.
+    * ``scoring_blocked_reason`` is always
+      ``NULL_BENCHMARK_CONTRACT_NOT_DEFINED``.
+    * All ``null_benchmark_contract_prerequisites_present`` values are always
+      ``False``.
+    """
+    return {
+        "contract_version": NULL_BENCHMARK_CONTRACT_VERSION,
+        "calculation_status": NULL_BENCHMARK_CONTRACT_DIAGNOSTIC_ONLY,
+        "null_benchmark_contract_status": NULL_BENCHMARK_CONTRACT_NOT_DEFINED,
+        "null_benchmark_contract_present": False,
+        "null_benchmark_contract_hash": None,
+        "null_benchmark_contract_source": None,
+        "scoring_authorized": False,
+        "scoring_blocked_reason": NULL_BENCHMARK_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
+        "benchmark_family_defined": False,
+        "benchmark_family": NOT_DEFINED,
+        "benchmark_generation_policy_defined": False,
+        "benchmark_generation_policy": NOT_DEFINED,
+        "random_seed_policy_defined": False,
+        "random_seed_policy": NOT_DEFINED,
+        "shuffle_policy_defined": False,
+        "shuffle_policy": NOT_DEFINED,
+        "permutation_policy_defined": False,
+        "permutation_policy": NOT_DEFINED,
+        "cost_inclusion_policy_defined": False,
+        "cost_inclusion_policy": NOT_DEFINED,
+        "funding_inclusion_policy_defined": False,
+        "funding_inclusion_policy": NOT_DEFINED,
+        "oos_application_policy_defined": False,
+        "oos_application_policy": NOT_DEFINED,
+        "strategy_rule_contract_dependency_satisfied": False,
+        "trial_manifest_dependency_satisfied": False,
+        "oos_seal_dependency_satisfied": False,
+        "split_scoring_safe_dependency_satisfied": False,
+        "multiple_testing_policy_present": False,
+        "null_benchmark_contract_prerequisites_present": {
+            "strategy_rule_contract": False,
+            "trial_manifest": False,
+            "oos_seal": False,
+            "split_scoring_safe": False,
+            "benchmark_family": False,
+            "benchmark_generation_policy": False,
+            "random_seed_policy": False,
+            "shuffle_policy": False,
+            "permutation_policy": False,
+            "cost_inclusion_policy": False,
+            "funding_inclusion_policy": False,
+            "oos_application_policy": False,
+            "multiple_testing_policy": False,
+        },
+    }
+
+
 # ── Receipt builder ──────────────────────────────────────────────────────
 
 
@@ -6121,6 +6194,7 @@ def build_real_validation_receipt(
     strategy_rule_contract_diagnostics: dict | None = None,
     trial_manifest_diagnostics: dict | None = None,
     oos_seal_diagnostics: dict | None = None,
+    null_benchmark_contract_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -6243,6 +6317,10 @@ def build_real_validation_receipt(
         receipt["trial_manifest_diagnostics"] = trial_manifest_diagnostics
     if oos_seal_diagnostics is not None:
         receipt["oos_seal_diagnostics"] = oos_seal_diagnostics
+    if null_benchmark_contract_diagnostics is not None:
+        receipt["null_benchmark_contract_diagnostics"] = (
+            null_benchmark_contract_diagnostics
+        )
 
     return receipt
 
@@ -6623,6 +6701,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
             oos_seal_diagnostics = _build_oos_seal_diagnostics()
+            null_benchmark_contract_diagnostics = (
+                _build_null_benchmark_contract_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -6674,6 +6755,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             trial_manifest_diagnostics=trial_manifest_diagnostics,
             oos_seal_diagnostics=oos_seal_diagnostics,
+            null_benchmark_contract_diagnostics=(
+                null_benchmark_contract_diagnostics
+            ),
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
@@ -6702,6 +6786,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
             oos_seal_diagnostics = _build_oos_seal_diagnostics()
+            null_benchmark_contract_diagnostics = (
+                _build_null_benchmark_contract_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: split leakage audit failed: {exc}")
             return 4
@@ -6718,6 +6805,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             trial_manifest_diagnostics=trial_manifest_diagnostics,
             oos_seal_diagnostics=oos_seal_diagnostics,
+            null_benchmark_contract_diagnostics=(
+                null_benchmark_contract_diagnostics
+            ),
         )
 
     output_path = output_dir / "real_validation_receipt.json"
