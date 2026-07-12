@@ -70,6 +70,7 @@ __all__ = [
     "materialize_funding_adjustment_row_scaffold_diagnostics",
     "_build_split_leakage_audit_diagnostics",
     "_build_strategy_rule_contract_diagnostics",
+    "_build_trial_manifest_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -191,6 +192,12 @@ STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY = "STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY
 STRATEGY_RULE_CONTRACT_NOT_DEFINED = "CONTRACT_NOT_DEFINED"
 STRATEGY_RULE_CONTRACT_BLOCKED_REASON_NOT_DEFINED = "STRATEGY_RULE_CONTRACT_NOT_DEFINED"
 NOT_DEFINED = "NOT_DEFINED"
+
+# === Trial manifest diagnostics constants ===
+TRIAL_MANIFEST_VERSION = "trial-manifest-0.1"
+TRIAL_MANIFEST_DIAGNOSTIC_ONLY = "TRIAL_MANIFEST_DIAGNOSTIC_ONLY"
+TRIAL_MANIFEST_NOT_DEFINED = "TRIAL_MANIFEST_NOT_DEFINED"
+TRIAL_MANIFEST_BLOCKED_REASON_NOT_DEFINED = "TRIAL_MANIFEST_NOT_DEFINED"
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -5949,6 +5956,63 @@ def _build_strategy_rule_contract_diagnostics() -> dict[str, Any]:
     }
 
 
+def _build_trial_manifest_diagnostics() -> dict[str, Any]:
+    """Build a diagnostic-only section recording that no trial manifest
+    exists yet and therefore strategy scoring is blocked.
+
+    This section does **not** define a trial manifest, count trials,
+    register candidates, search for parameters, or compute any scoring
+    metric. Every trial-manifest field is either ``None``, ``NOT_DEFINED``,
+    or ``False`` — this is a diagnostic of absence, not a definition.
+
+    Fail-closed rules:
+    * ``scoring_authorized`` is always ``False`` at this stage.
+    * ``trial_manifest_status`` is always ``TRIAL_MANIFEST_NOT_DEFINED``.
+    * ``scoring_blocked_reason`` is always ``TRIAL_MANIFEST_NOT_DEFINED``.
+    * All ``trial_manifest_prerequisites_present`` values are always ``False``.
+    """
+    return {
+        "manifest_version": TRIAL_MANIFEST_VERSION,
+        "calculation_status": TRIAL_MANIFEST_DIAGNOSTIC_ONLY,
+        "trial_manifest_status": TRIAL_MANIFEST_NOT_DEFINED,
+        "trial_manifest_present": False,
+        "trial_manifest_hash": None,
+        "trial_manifest_source": None,
+        "scoring_authorized": False,
+        "scoring_blocked_reason": TRIAL_MANIFEST_BLOCKED_REASON_NOT_DEFINED,
+        "trial_count_known": False,
+        "trial_count": None,
+        "candidate_count_known": False,
+        "candidate_count": None,
+        "rejected_trial_count_known": False,
+        "rejected_trial_count": None,
+        "strategy_candidate_id": None,
+        "hypothesis_id": None,
+        "parameter_search_space_defined": False,
+        "parameter_search_space_hash": None,
+        "llm_generated_trials_recorded": False,
+        "human_generated_trials_recorded": False,
+        "manual_rejected_trials_recorded": False,
+        "symbol_universe_frozen": False,
+        "split_policy_frozen": False,
+        "oos_seal_present": False,
+        "null_benchmark_contract_present": False,
+        "multiple_testing_policy_present": False,
+        "trial_manifest_prerequisites_present": {
+            "strategy_rule_contract": False,
+            "split_scoring_safe": False,
+            "trial_count": False,
+            "candidate_registry": False,
+            "parameter_search_space": False,
+            "symbol_universe_freeze": False,
+            "split_policy_freeze": False,
+            "oos_seal": False,
+            "null_benchmark_contract": False,
+            "multiple_testing_policy": False,
+        },
+    }
+
+
 # ── Receipt builder ──────────────────────────────────────────────────────
 
 
@@ -5989,6 +6053,7 @@ def build_real_validation_receipt(
     funding_adjustment_sample_aggregate_diagnostics: dict | None = None,
     split_leakage_audit_diagnostics: dict | None = None,
     strategy_rule_contract_diagnostics: dict | None = None,
+    trial_manifest_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -6107,6 +6172,8 @@ def build_real_validation_receipt(
         receipt["strategy_rule_contract_diagnostics"] = (
             strategy_rule_contract_diagnostics
         )
+    if trial_manifest_diagnostics is not None:
+        receipt["trial_manifest_diagnostics"] = trial_manifest_diagnostics
 
     return receipt
 
@@ -6485,6 +6552,7 @@ def main(argv: list[str] | None = None) -> int:
             strategy_rule_contract_diagnostics = (
                 _build_strategy_rule_contract_diagnostics()
             )
+            trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -6534,6 +6602,7 @@ def main(argv: list[str] | None = None) -> int:
             strategy_rule_contract_diagnostics=(
                 strategy_rule_contract_diagnostics
             ),
+            trial_manifest_diagnostics=trial_manifest_diagnostics,
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
@@ -6560,6 +6629,7 @@ def main(argv: list[str] | None = None) -> int:
             strategy_rule_contract_diagnostics = (
                 _build_strategy_rule_contract_diagnostics()
             )
+            trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
         except ValueError as exc:
             print(f"FATAL: split leakage audit failed: {exc}")
             return 4
@@ -6574,6 +6644,7 @@ def main(argv: list[str] | None = None) -> int:
             strategy_rule_contract_diagnostics=(
                 strategy_rule_contract_diagnostics
             ),
+            trial_manifest_diagnostics=trial_manifest_diagnostics,
         )
 
     output_path = output_dir / "real_validation_receipt.json"
