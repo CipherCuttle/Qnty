@@ -1548,6 +1548,11 @@ class TestCrossBatchPeakDrawdownReconcile:
 
     def _run(self, tmp_path, db_path, per_bar_obs):
         obs_dir = _write_observation_log(tmp_path, per_bar_obs)
+        # The engine reads bars/funding from the patched loaders below, but the
+        # funding-source snapshot digest is computed from the CSV on disk under
+        # data_dir, so both fixtures must exist.
+        _write_ohlcv_csv(tmp_path)
+        _write_funding_csv(tmp_path)
         cfg = _make_cfg()
         cfg["forward_start_ts"] = TS[4]
         cfg["config_hash"] = config_hash(cfg)
@@ -1558,7 +1563,11 @@ class TestCrossBatchPeakDrawdownReconcile:
             "quantbot.paper.sqlite_writer.load_all_funding",
             return_value=_make_funding_df(),
         ), patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
-            return run_sqlite_accounting(db_path=db_path, forward_obs_dir=obs_dir)
+            return run_sqlite_accounting(
+                db_path=db_path,
+                forward_obs_dir=obs_dir,
+                data_dir=tmp_path / "data",
+            )
 
     def test_batch2_dip_below_prior_peak_does_not_false_corrupt(self, tmp_path: Path):
         from quantbot.paper.sqlite_verify import verify_database
