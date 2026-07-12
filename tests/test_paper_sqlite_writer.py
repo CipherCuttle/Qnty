@@ -781,6 +781,7 @@ class TestTransactionRollbackOnException:
                     status, msg = run_sqlite_accounting(
                         db_path=db_path,
                         forward_obs_dir=obs_dir,
+                        data_dir=tmp_path / "data",
                     )
 
         assert status == STATUS_CORRUPT_LEDGER
@@ -1273,7 +1274,11 @@ class TestEntryExitTradeLifecycle:
         p1, p2 = _patch_data_loaders(tmp_path)
         with p1, p2:
             with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
-                return run_sqlite_accounting(db_path=db_path, forward_obs_dir=obs_dir)
+                return run_sqlite_accounting(
+                    db_path=db_path,
+                    forward_obs_dir=obs_dir,
+                    data_dir=tmp_path / "data",
+                )
 
     def test_single_run_emits_entry_exit_trade(self, tmp_path: Path):
         db_path = _init_test_db(tmp_path, forward_start_ts=TS[4])
