@@ -2072,6 +2072,40 @@ class TestForbiddenKeysNested:
         with pytest.raises(ValueError, match="Forbidden calculation key"):
             validate_real_validation_receipt(receipt)
 
+    def test_gross_observational_return_allowed_directly_inside_exact_section(self):
+        receipt = _base_receipt()
+        receipt["gross_observational_returns"] = {"gross_observational_return": 0.01}
+        validate_real_validation_receipt(receipt)
+
+    def test_gross_observational_return_allowed_inside_exact_section_list(self):
+        receipt = _base_receipt()
+        receipt["gross_observational_returns"] = [{"gross_observational_return": 0.01}]
+        validate_real_validation_receipt(receipt)
+
+    @pytest.mark.parametrize(
+        "section",
+        [
+            "gross_observational_returns_evil",
+            "gross_observational_returns_backup",
+            "gross_observational_returns2",
+        ],
+    )
+    def test_gross_observational_return_rejected_in_sibling_prefix_section(self, section):
+        receipt = _base_receipt()
+        receipt[section] = {"observations": [{"gross_observational_return": 0.01}]}
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
+    def test_gross_observational_return_rejected_below_sibling_prefix_section(self):
+        receipt = _base_receipt()
+        receipt["custom"] = {
+            "gross_observational_returns_evil": {
+                "observations": [{"gross_observational_return": 0.01}]
+            }
+        }
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
+
 
 # ── New: CLI with dirs tests ────────────────────────────────────────────
 

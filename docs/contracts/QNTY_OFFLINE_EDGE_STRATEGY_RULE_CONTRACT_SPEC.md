@@ -372,11 +372,21 @@ the same, and it remains key-scoped, not section-wide (a `pnl` key nested inside
 `gross_observational_returns` is still rejected). A contract field must not rely on or
 widen this exemption.
 
-**Known gap, deliberately deferred:** the exemption is implemented with a `startswith`
-path check, so a sibling section whose path merely *begins with* the exempt prefix could
-inherit the exemption. Tightening this prefix-hole is **intentionally out of scope here**
-and is deferred to a separate single-purpose PR, so that this change stays purely
-append-only and no existing semantics shift underneath it.
+**Prefix-hole closed by separate PR:** the exemption now matches only the exact
+``$.gross_observational_returns`` path segment, not any sibling that merely *begins
+with* that prefix. Allowed paths are exactly:
+
+- ``$.gross_observational_returns`` (direct hit)
+- descendants via ``.`` (e.g. ``$.gross_observational_returns.observations[0]``)
+- descendants via ``[index]`` (e.g. ``$.gross_observational_returns[0]``)
+
+Sibling-prefix sections such as ``gross_observational_returns_evil``,
+``gross_observational_returns_backup``, and ``gross_observational_returns2`` are now
+rejected.
+
+The exemption remains **key-scoped**, not section-wide (a ``pnl`` key nested inside
+``gross_observational_returns`` is still rejected). No new forbidden keys were added.
+No receipt schema fields were added. No verdict, scoring, or live-readiness change.
 
 **Reserved names — none outstanding:**
 
