@@ -166,3 +166,4 @@ trial_manifest_present remains false.
 trial_count_known remains false.
 scoring_authorized remains false.
 No strategy scoring is authorized by this smoke.
+```
