@@ -94,6 +94,11 @@ from quantbot.experiment.offline_edge_real_validation import (
     MULTIPLE_TESTING_CONTROL_NOT_DEFINED,
     MULTIPLE_TESTING_CONTROL_BLOCKED_REASON_NOT_DEFINED,
     _build_multiple_testing_control_diagnostics,
+    TRADE_POSITION_SIMULATION_CONTRACT_VERSION,
+    TRADE_POSITION_SIMULATION_CONTRACT_DIAGNOSTIC_ONLY,
+    TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED,
+    TRADE_POSITION_SIMULATION_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
+    _build_trade_position_simulation_contract_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -9860,4 +9865,368 @@ class TestMultipleTestingControlDiagnostics:
         assert _MULTIPLE_TESTING_CONTROL_FORBIDDEN_KEYS.isdisjoint(all_keys), (
             f"Forbidden keys found in receipt: "
             f"{_MULTIPLE_TESTING_CONTROL_FORBIDDEN_KEYS & all_keys}"
+        )
+
+
+_TRADE_POSITION_SIMULATION_CONTRACT_FORBIDDEN_KEYS = frozenset({
+    "pnl", "returns", "return", "sharpe", "drawdown", "risk", "edge",
+    "strategy_performance", "trade", "trades", "signal", "signals",
+    "position", "positions", "portfolio", "baseline_result",
+    "benchmark_result", "profitable", "live_ready", "deploy_ready",
+    "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+    "funding_adjusted_return", "net_return_value", "price_change",
+    "p_value", "confidence_interval", "score", "metric",
+    "performance", "profit", "order", "orders", "fill", "fills",
+    "execution", "executions", "cost_adjusted_return",
+    "gross_return_value",
+})
+
+
+class TestTradePositionSimulationContractDiagnostics:
+    """Tests for _build_trade_position_simulation_contract_diagnostics() and
+    its integration into the offline-edge receipt."""
+
+    # ── Helper returns a dict ──────────────────────────────────────────────
+    def test_helper_returns_dict(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert isinstance(result, dict)
+
+    # ── Top-level field values ─────────────────────────────────────────────
+    def test_contract_version(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["contract_version"] == TRADE_POSITION_SIMULATION_CONTRACT_VERSION
+
+    def test_calculation_status(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["calculation_status"] == (
+            TRADE_POSITION_SIMULATION_CONTRACT_DIAGNOSTIC_ONLY
+        )
+
+    def test_trade_position_simulation_contract_status(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["trade_position_simulation_contract_status"] == (
+            TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED
+        )
+
+    def test_trade_position_simulation_contract_present_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["trade_position_simulation_contract_present"] is False
+
+    def test_trade_position_simulation_contract_hash_none(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["trade_position_simulation_contract_hash"] is None
+
+    def test_trade_position_simulation_contract_source_none(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["trade_position_simulation_contract_source"] is None
+
+    # ── Scoring fields ─────────────────────────────────────────────────────
+    def test_scoring_authorized_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["scoring_authorized"] is False
+
+    def test_scoring_blocked_reason(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["scoring_blocked_reason"] == (
+            TRADE_POSITION_SIMULATION_CONTRACT_BLOCKED_REASON_NOT_DEFINED
+        )
+
+    # ── Decision/order/fill/slippage/fee policy fields ─────────────────────
+    def test_decision_timestamp_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["decision_timestamp_policy_defined"] is False
+
+    def test_decision_timestamp_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["decision_timestamp_policy"] == NOT_DEFINED
+
+    def test_order_timing_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["order_timing_policy_defined"] is False
+
+    def test_order_timing_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["order_timing_policy"] == NOT_DEFINED
+
+    def test_fill_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["fill_policy_defined"] is False
+
+    def test_fill_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["fill_policy"] == NOT_DEFINED
+
+    def test_slippage_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["slippage_policy_defined"] is False
+
+    def test_slippage_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["slippage_policy"] == NOT_DEFINED
+
+    def test_fee_application_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["fee_application_policy_defined"] is False
+
+    def test_fee_application_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["fee_application_policy"] == NOT_DEFINED
+
+    def test_funding_application_dependency_satisfied_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["funding_application_dependency_satisfied"] is False
+
+    # ── Side/sizing policy fields ──────────────────────────────────────────
+    def test_side_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["side_policy_defined"] is False
+
+    def test_side_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["side_policy"] == NOT_DEFINED
+
+    def test_notional_sizing_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["notional_sizing_policy_defined"] is False
+
+    def test_notional_sizing_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["notional_sizing_policy"] == NOT_DEFINED
+
+    # ── Lifecycle policy fields ────────────────────────────────────────────
+    def test_entry_lifecycle_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["entry_lifecycle_policy_defined"] is False
+
+    def test_entry_lifecycle_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["entry_lifecycle_policy"] == NOT_DEFINED
+
+    def test_exit_lifecycle_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["exit_lifecycle_policy_defined"] is False
+
+    def test_exit_lifecycle_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["exit_lifecycle_policy"] == NOT_DEFINED
+
+    def test_holding_period_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["holding_period_policy_defined"] is False
+
+    def test_holding_period_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["holding_period_policy"] == NOT_DEFINED
+
+    def test_state_transition_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["state_transition_policy_defined"] is False
+
+    def test_state_transition_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["state_transition_policy"] == NOT_DEFINED
+
+    def test_concurrent_symbol_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["concurrent_symbol_policy_defined"] is False
+
+    def test_concurrent_symbol_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["concurrent_symbol_policy"] == NOT_DEFINED
+
+    def test_portfolio_accounting_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["portfolio_accounting_policy_defined"] is False
+
+    def test_portfolio_accounting_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["portfolio_accounting_policy"] == NOT_DEFINED
+
+    def test_invalid_state_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["invalid_state_policy_defined"] is False
+
+    def test_invalid_state_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["invalid_state_policy"] == NOT_DEFINED
+
+    def test_missing_data_policy_defined_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["missing_data_policy_defined"] is False
+
+    def test_missing_data_policy_not_defined(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["missing_data_policy"] == NOT_DEFINED
+
+    # ── Dependency fields ──────────────────────────────────────────────────
+    def test_strategy_rule_contract_dependency_satisfied_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["strategy_rule_contract_dependency_satisfied"] is False
+
+    def test_trial_manifest_dependency_satisfied_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["trial_manifest_dependency_satisfied"] is False
+
+    def test_oos_seal_dependency_satisfied_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["oos_seal_dependency_satisfied"] is False
+
+    def test_null_benchmark_contract_dependency_satisfied_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["null_benchmark_contract_dependency_satisfied"] is False
+
+    def test_multiple_testing_control_dependency_satisfied_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["multiple_testing_control_dependency_satisfied"] is False
+
+    def test_split_scoring_safe_dependency_satisfied_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        assert result["split_scoring_safe_dependency_satisfied"] is False
+
+    # ── Prerequisites all false ────────────────────────────────────────────
+    def test_prerequisites_all_false(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        prereqs = result["trade_position_simulation_contract_prerequisites_present"]
+        assert isinstance(prereqs, dict)
+        for key, value in prereqs.items():
+            assert value is False, f"{key} must be False, got {value}"
+
+    def test_prerequisites_expected_keys(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        prereqs = result["trade_position_simulation_contract_prerequisites_present"]
+        expected_keys = {
+            "strategy_rule_contract",
+            "trial_manifest",
+            "oos_seal",
+            "null_benchmark_contract",
+            "multiple_testing_control",
+            "split_scoring_safe",
+            "decision_timestamp_policy",
+            "order_timing_policy",
+            "fill_policy",
+            "slippage_policy",
+            "fee_application_policy",
+            "funding_application_policy",
+            "side_policy",
+            "notional_sizing_policy",
+            "entry_lifecycle_policy",
+            "exit_lifecycle_policy",
+            "holding_period_policy",
+            "state_transition_policy",
+            "concurrent_symbol_policy",
+            "portfolio_accounting_policy",
+            "invalid_state_policy",
+            "missing_data_policy",
+        }
+        assert prereqs.keys() == expected_keys
+
+    # ── Integration into receipt ───────────────────────────────────────────
+    def test_section_included_in_receipt(self):
+        receipt = _base_receipt(
+            trade_position_simulation_contract_diagnostics=(
+                _build_trade_position_simulation_contract_diagnostics()
+            ),
+        )
+        assert "trade_position_simulation_contract_diagnostics" in receipt
+
+    def test_section_omitted_if_not_passed(self):
+        receipt = _base_receipt()
+        assert "trade_position_simulation_contract_diagnostics" not in receipt
+
+    def test_receipt_validates_with_section(self):
+        receipt = _base_receipt(
+            trade_position_simulation_contract_diagnostics=(
+                _build_trade_position_simulation_contract_diagnostics()
+            ),
+        )
+        # validate_real_validation_receipt should not raise
+        validate_real_validation_receipt(receipt)
+
+    def test_final_offline_verdict_unchanged(self):
+        receipt = _base_receipt(
+            trade_position_simulation_contract_diagnostics=(
+                _build_trade_position_simulation_contract_diagnostics()
+            ),
+        )
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_guardrails_unchanged(self):
+        receipt = _base_receipt(
+            trade_position_simulation_contract_diagnostics=(
+                _build_trade_position_simulation_contract_diagnostics()
+            ),
+        )
+        for key, value in receipt["guardrail_status"].items():
+            assert value is True, f"guardrail {key} must be True"
+
+    # ── No forbidden keys ──────────────────────────────────────────────────
+    def test_no_forbidden_calculation_keys(self):
+        result = _build_trade_position_simulation_contract_diagnostics()
+        all_keys = _all_dict_keys(result)
+        assert _TRADE_POSITION_SIMULATION_CONTRACT_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{_TRADE_POSITION_SIMULATION_CONTRACT_FORBIDDEN_KEYS & all_keys}"
+        )
+
+    # ── CLI integration ────────────────────────────────────────────────────
+    def test_cli_inventory_path_includes_section(self, tmp_path):
+        """Inventory-based CLI path should include the section."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "trade_position_simulation_contract_diagnostics" in receipt
+
+    def test_cli_fallback_path_includes_section(self, tmp_path):
+        """Fallback CLI path (no --bars-dir) should include the section."""
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--global-min-timestamp", "2026-01-01T00:00:00Z",
+            "--global-max-timestamp", "2026-02-01T00:00:00Z",
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "trade_position_simulation_contract_diagnostics" in receipt
+
+    # ── Safety-key regression ──────────────────────────────────────────────
+    def test_no_forbidden_top_level_keys_in_receipt(self):
+        """Receipt with the section must still forbid pnl/sharpe/edge/strategy_performance."""
+        receipt = _base_receipt(
+            trade_position_simulation_contract_diagnostics=(
+                _build_trade_position_simulation_contract_diagnostics()
+            ),
+        )
+        for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
+            assert forbidden not in receipt
+
+    def test_no_forbidden_calculation_keys_in_receipt(self):
+        """Receipt with the section must still forbid all calculation keys."""
+        receipt = _base_receipt(
+            trade_position_simulation_contract_diagnostics=(
+                _build_trade_position_simulation_contract_diagnostics()
+            ),
+        )
+        all_keys = _all_dict_keys(receipt)
+        assert _TRADE_POSITION_SIMULATION_CONTRACT_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found in receipt: "
+            f"{_TRADE_POSITION_SIMULATION_CONTRACT_FORBIDDEN_KEYS & all_keys}"
         )
