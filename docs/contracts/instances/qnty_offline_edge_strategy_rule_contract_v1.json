@@ -5,16 +5,11 @@
   "allowed_input_columns": {
     "bars": [
       "timestamp",
-      "open",
-      "high",
-      "low",
-      "close",
-      "volume"
+      "close"
     ],
     "funding": [
       "fundingTime",
-      "fundingRate",
-      "markPrice"
+      "fundingRate"
     ]
   },
   "allowed_input_roles": [
@@ -71,6 +66,50 @@
     "output_receipt",
     "generated_report"
   ],
+  "forbidden_output_keys": [
+    "pnl",
+    "sharpe",
+    "edge",
+    "strategy_performance",
+    "return",
+    "returns",
+    "gross_observational_return",
+    "gross_return_value",
+    "net_return_value",
+    "cost_adjusted_return",
+    "funding_adjusted_return",
+    "price_change",
+    "trade",
+    "trades",
+    "signal",
+    "signals",
+    "position",
+    "positions",
+    "portfolio",
+    "live_ready",
+    "deploy_ready",
+    "profitable",
+    "drawdown",
+    "risk",
+    "baseline_result",
+    "benchmark_result",
+    "OFFLINE_EDGE_CANDIDATE",
+    "EDGE_CANDIDATE",
+    "p_value",
+    "confidence_interval",
+    "score",
+    "metric",
+    "performance",
+    "profit",
+    "order",
+    "orders",
+    "fill",
+    "fills",
+    "execution",
+    "executions",
+    "equity",
+    "equity_curve"
+  ],
   "funding_dependency": "NOT_DEFINED",
   "funding_interval_exposure_policy": "no_future_funding_interval_observable_may_enter_decision",
   "holding_period": "not_defined_for_scoring",
@@ -82,12 +121,25 @@
   "live_integration_authorized": false,
   "multiple_testing_dependency_satisfied": false,
   "net_pnl_equity_risk_dependency_satisfied": false,
+  "non_materialized_input_columns": {
+    "bars": [
+      "open",
+      "high",
+      "low",
+      "volume"
+    ],
+    "funding": [
+      "markPrice"
+    ]
+  },
   "notional_currency": "USDT",
   "notional_semantics": "NOT_DEFINED",
   "notional_source": "NOT_DEFINED",
   "null_benchmark_dependency_satisfied": false,
   "oos_seal_dependency_satisfied": false,
+  "output_boundary": "NO_SCORING_NO_PERFORMANCE_NO_EDGE_NO_LIVE_READINESS_OUTPUTS",
   "parameter_policy": "NO_FREE_PARAMETERS",
+  "receipt_key_naming_constraint": "CONTRACT_FIELD_NAMES_MUST_SURVIVE_RECURSIVE_EXACT_FORBIDDEN_KEY_SCAN",
   "scoring_authorization": false,
   "side_semantics": "NOT_DEFINED",
   "side_source": "NOT_DEFINED",

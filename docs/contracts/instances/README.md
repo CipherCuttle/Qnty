@@ -47,6 +47,31 @@ the file is written, and writing the hash into the file changes the bytes.
 commit SHA cannot be known before the PR is merged. After merge, this field should be
 updated to the actual merge commit SHA that contains these file bytes.
 
+## Input ceiling
+
+`allowed_input_columns` is constrained to the verified runner input ceiling:
+
+| Role | Columns |
+|---|---|
+| `bars` | `timestamp`, `close` |
+| `funding` | `fundingTime`, `fundingRate` |
+
+Unavailable columns are documented in `non_materialized_input_columns` but are
+**not** allowed inputs. No strategy implementation reads these columns, no signal
+depends on them, and no scoring uses them.
+
+## Output-boundary fields
+
+The contract includes declaration-only output-boundary fields (`output_boundary`,
+`forbidden_output_keys`, `receipt_key_naming_constraint`) as required by the spec (§11).
+
+These fields:
+- Are **declarative only** — no receipt emits them, no validator enforces them yet.
+- `forbidden_output_keys` mirrors the 42-key `FORBIDDEN_CALCULATION_KEYS` scanner
+  as string values (not dict keys), which is permitted by the scanner's exact
+  dict-key-match rule.
+- Lane C will decide the exact runtime binding and validator semantics.
+
 ## What this PR does NOT do
 
 - The runner does **not** read this contract.
