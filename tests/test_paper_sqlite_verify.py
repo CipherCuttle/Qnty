@@ -90,7 +90,11 @@ def _run_writer(tmp_path: Path, db_path: Path, forward_start_ts: str) -> None:
     p1, p2 = _patch_data_loaders(tmp_path)
     with p1, p2:
         with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
-            status, msg = run_sqlite_accounting(db_path=db_path, forward_obs_dir=obs_dir)
+            status, msg = run_sqlite_accounting(
+                db_path=db_path,
+                forward_obs_dir=obs_dir,
+                data_dir=tmp_path / "data",
+            )
     assert status == STATUS_OK, f"writer did not return OK: {status}: {msg}"
 
 
@@ -131,7 +135,11 @@ def _run_writer_obs(tmp_path: Path, db_path: Path, forward_start_ts: str,
     p1, p2 = _patch_data_loaders(tmp_path)
     with p1, p2:
         with patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
-            return run_sqlite_accounting(db_path=db_path, forward_obs_dir=obs_dir)
+            return run_sqlite_accounting(
+                db_path=db_path,
+                forward_obs_dir=obs_dir,
+                data_dir=tmp_path / "data",
+            )
 
 
 def _trade_db(tmp_path: Path) -> Path:
