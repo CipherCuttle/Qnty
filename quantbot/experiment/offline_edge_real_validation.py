@@ -68,6 +68,7 @@ __all__ = [
     "materialize_funding_adjustment_policy_contract_diagnostics",
     "materialize_funding_adjustment_arithmetic_scaffold_diagnostics",
     "materialize_funding_adjustment_row_scaffold_diagnostics",
+    "_build_split_leakage_audit_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -159,6 +160,24 @@ FUNDING_ADJUSTMENT_SAMPLE_AGGREGATE_DIAGNOSTIC_ONLY = "FUNDING_ADJUSTMENT_SAMPLE
 DIAGNOSTIC_SAMPLE_AGGREGATE_ONLY_NOT_APPLIED_TO_STRATEGY = "DIAGNOSTIC_SAMPLE_AGGREGATE_ONLY_NOT_APPLIED_TO_STRATEGY"
 MATERIALIZED_DIAGNOSTIC_SAMPLE_AGGREGATES = "MATERIALIZED_DIAGNOSTIC_SAMPLE_AGGREGATES"
 DIAGNOSTIC_CAPPED_SAMPLE_AGGREGATE_ONLY_NOT_STRATEGY = "DIAGNOSTIC_CAPPED_SAMPLE_AGGREGATE_ONLY_NOT_STRATEGY"
+
+# === Split leakage audit diagnostics constants ===
+# Diagnostic-only audit of the current split windows' leakage posture. It
+# records that the existing deterministic splits are NOT safe for strategy
+# scoring / OOS verdicts (zero purge gap, zero embargo gap, no scoring
+# prerequisites, no OOS seal / trial manifest / frozen symbol universe). It
+# implements no purge/embargo splits, no OOS seal, no trial manifest, and no
+# strategy — and computes no returns/PnL/Sharpe/risk/edge.
+SPLIT_LEAKAGE_AUDIT_VERSION = "split-leakage-audit-0.1"
+SPLIT_LEAKAGE_AUDIT_DIAGNOSTIC_ONLY = "SPLIT_LEAKAGE_AUDIT_DIAGNOSTIC_ONLY"
+SPLIT_LEAKAGE_AUDIT_INSUFFICIENT_FOR_SCORING = (
+    "SPLIT_LEAKAGE_AUDIT_INSUFFICIENT_FOR_SCORING"
+)
+SPLIT_LEAKAGE_AUDIT_BLOCKED = "SPLIT_LEAKAGE_AUDIT_BLOCKED"
+SPLIT_LEAKAGE_AUDIT_ROW_COUNT_NOT_COMPUTED = "NOT_COMPUTED_IN_SPLIT_LEAKAGE_AUDIT"
+_SPLIT_BUILDER_INVENTORY = "materialize_split_definitions_from_inventory"
+_SPLIT_BUILDER_FALLBACK = "build_deterministic_split_definitions"
+_VALID_SPLIT_BUILDERS = frozenset({_SPLIT_BUILDER_INVENTORY, _SPLIT_BUILDER_FALLBACK})
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -5680,6 +5699,189 @@ def build_cost_case_matrix() -> list[dict[str, Any]]:
     ]
 
 
+# ── Split leakage audit diagnostics ──────────────────────────────────────
+
+
+def _build_split_leakage_audit_diagnostics(
+    *,
+    split_definitions: list[dict[str, Any]],
+    split_builder_inspected: str,
+) -> dict[str, Any]:
+    """Build a diagnostic-only audit of the split windows' leakage posture.
+
+    Inspects the provided split window definitions and records whether they are
+    safe for strategy scoring / OOS verdicts. They are **not**: the current
+    deterministic splits have a zero purge gap, a zero embargo gap, and none of
+    the strategy-dependent scoring prerequisites (decision-time convention,
+    feature lookback, label horizon, holding period, funding interval exposure,
+    cost event timing) are defined. There is no independent OOS seal, no trial
+    manifest, and no frozen symbol universe. This section therefore always
+    records ``split_scoring_safe=False`` and blocks strategy scoring.
+
+    It does **not** implement purged/embargoed splits, an OOS seal, or a trial
+    manifest, and computes no returns, PnL, Sharpe, drawdown, risk, edge, trade,
+    position, signal, or portfolio quantities. Every per-split
+    ``calculation_status`` is ``NOT_EXECUTED``; validation row counts are
+    deliberately not computed here.
+
+    Fail-closed rules: any overlapping train/validation window forces
+    ``split_leakage_audit_status = SPLIT_LEAKAGE_AUDIT_BLOCKED``; otherwise the
+    zero-purge/zero-embargo, prerequisite-missing posture yields
+    ``SPLIT_LEAKAGE_AUDIT_INSUFFICIENT_FOR_SCORING``. ``split_scoring_safe`` can
+    never be ``True`` at this stage.
+    """
+    if not isinstance(split_definitions, list) or not split_definitions:
+        raise ValueError("split_definitions must be a non-empty list")
+    if split_builder_inspected not in _VALID_SPLIT_BUILDERS:
+        raise ValueError(
+            f"split_builder_inspected must be one of "
+            f"{sorted(_VALID_SPLIT_BUILDERS)}, got {split_builder_inspected!r}"
+        )
+
+    # Strategy-dependent scoring prerequisites — none are defined yet. Named
+    # ``scoring_prerequisites_present`` (not strategy_*) to avoid introducing
+    # strategy-ish key names into the receipt.
+    scoring_prerequisites_present = {
+        "decision_time_convention": False,
+        "feature_lookback": False,
+        "label_horizon": False,
+        "holding_period": False,
+        "funding_interval_exposure": False,
+        "cost_event_timing": False,
+    }
+
+    # Open leakage risks that remain until purge/embargo/OOS seal exist.
+    leakage_risk_register = {
+        "temporal_purge_leakage": True,
+        "embargo_leakage": True,
+        "same_bar_lookahead": True,
+        "future_bar_leakage": True,
+        "symbol_universe_leakage": True,
+        "no_independent_oos_seal": True,
+    }
+
+    ordered_indices = sorted(
+        range(len(split_definitions)),
+        key=lambda index: split_definitions[index].get("split_index", index),
+    )
+
+    per_split: list[dict[str, Any]] = []
+    train_validation_overlap_detected = False
+    for position, index in enumerate(ordered_indices):
+        split = split_definitions[index]
+        if not isinstance(split, dict):
+            raise ValueError("each split definition must be a dict")
+
+        train_window = split.get("train_window")
+        validation_window = split.get("validation_window")
+        if not isinstance(train_window, dict) or not isinstance(
+            validation_window, dict
+        ):
+            raise ValueError(
+                "each split definition must have train_window and "
+                "validation_window dicts"
+            )
+
+        train_start = train_window.get("start")
+        train_end = train_window.get("end")
+        validation_start = validation_window.get("start")
+        validation_end = validation_window.get("end")
+        for label, value in (
+            ("train_window.start", train_start),
+            ("train_window.end", train_end),
+            ("validation_window.start", validation_start),
+            ("validation_window.end", validation_end),
+        ):
+            if not isinstance(value, str) or not value:
+                raise ValueError(
+                    f"split {split.get('split_id')!r} has invalid {label}={value!r}"
+                )
+
+        train_start_dt = _parse_timestamp(train_start)
+        train_end_dt = _parse_timestamp(train_end)
+        validation_start_dt = _parse_timestamp(validation_start)
+        validation_end_dt = _parse_timestamp(validation_end)
+
+        # Gap between end of train and start of validation. Zero for adjacent
+        # windows; negative when train extends past the validation start.
+        boundary_gap_seconds = int(
+            (validation_start_dt - train_end_dt).total_seconds()
+        )
+
+        # Overlap when the train and validation intervals intersect on more
+        # than a single shared boundary point.
+        overlap_start = max(train_start_dt, validation_start_dt)
+        overlap_end = min(train_end_dt, validation_end_dt)
+        train_validation_overlap = overlap_start < overlap_end
+        if train_validation_overlap:
+            train_validation_overlap_detected = True
+
+        per_split.append(
+            {
+                "split_id": split.get("split_id", f"split_{position:02d}"),
+                "split_index": split.get("split_index", index),
+                "train_start": train_start,
+                "train_end": train_end,
+                "validation_start": validation_start,
+                "validation_end": validation_end,
+                "boundary_gap_seconds": boundary_gap_seconds,
+                "train_validation_overlap": train_validation_overlap,
+                "validation_row_count_status": (
+                    SPLIT_LEAKAGE_AUDIT_ROW_COUNT_NOT_COMPUTED
+                ),
+                "calculation_status": NOT_EXECUTED,
+            }
+        )
+
+    # "Adjacent" == no positive purge gap anywhere separates train from
+    # validation (touching or overlapping — never separated by a purge/embargo).
+    windows_adjacent = all(
+        entry["boundary_gap_seconds"] <= 0 for entry in per_split
+    )
+
+    # Fail closed on status: any overlap ⇒ BLOCKED; else the zero-purge /
+    # zero-embargo / prerequisites-missing posture ⇒ INSUFFICIENT_FOR_SCORING.
+    if train_validation_overlap_detected:
+        split_leakage_audit_status = SPLIT_LEAKAGE_AUDIT_BLOCKED
+    else:
+        split_leakage_audit_status = SPLIT_LEAKAGE_AUDIT_INSUFFICIENT_FOR_SCORING
+
+    oos_seal_present = False
+    trial_manifest_present = False
+    symbol_universe_frozen = False
+
+    # Scoring is safe only when every prerequisite is met, there is no overlap,
+    # and an independent OOS seal, trial manifest, and frozen symbol universe
+    # all exist. None hold today, so this is always False.
+    split_scoring_safe = (
+        all(scoring_prerequisites_present.values())
+        and not train_validation_overlap_detected
+        and oos_seal_present
+        and trial_manifest_present
+        and symbol_universe_frozen
+    )
+
+    return {
+        "audit_version": SPLIT_LEAKAGE_AUDIT_VERSION,
+        "calculation_status": SPLIT_LEAKAGE_AUDIT_DIAGNOSTIC_ONLY,
+        "split_leakage_audit_status": split_leakage_audit_status,
+        "split_builder_inspected": split_builder_inspected,
+        "split_count": len(per_split),
+        "purge_gap_seconds": 0,
+        "embargo_gap_seconds": 0,
+        "windows_adjacent": windows_adjacent,
+        "train_validation_overlap_detected": train_validation_overlap_detected,
+        "scoring_prerequisites_present": scoring_prerequisites_present,
+        "leakage_risk_register": leakage_risk_register,
+        "oos_seal_present": oos_seal_present,
+        "trial_manifest_present": trial_manifest_present,
+        "symbol_universe_frozen": symbol_universe_frozen,
+        "split_scoring_safe": split_scoring_safe,
+        "per_split": per_split,
+        "per_symbol": None,
+    }
+
+
 # ── Receipt builder ──────────────────────────────────────────────────────
 
 
@@ -5718,6 +5920,7 @@ def build_real_validation_receipt(
     funding_adjustment_arithmetic_scaffold_diagnostics: dict | None = None,
     funding_adjustment_row_scaffold_diagnostics: dict | None = None,
     funding_adjustment_sample_aggregate_diagnostics: dict | None = None,
+    split_leakage_audit_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -5830,6 +6033,8 @@ def build_real_validation_receipt(
         receipt["funding_adjustment_sample_aggregate_diagnostics"] = (
             funding_adjustment_sample_aggregate_diagnostics
         )
+    if split_leakage_audit_diagnostics is not None:
+        receipt["split_leakage_audit_diagnostics"] = split_leakage_audit_diagnostics
 
     return receipt
 
@@ -6199,6 +6404,12 @@ def main(argv: list[str] | None = None) -> int:
                 if funding_dir is not None
                 else None
             )
+            split_leakage_audit_diagnostics = (
+                _build_split_leakage_audit_diagnostics(
+                    split_definitions=split_definitions,
+                    split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+                )
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -6244,6 +6455,7 @@ def main(argv: list[str] | None = None) -> int:
             funding_adjustment_sample_aggregate_diagnostics=(
                 funding_adjustment_sample_aggregate_diagnostics
             ),
+            split_leakage_audit_diagnostics=split_leakage_audit_diagnostics,
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
@@ -6260,12 +6472,24 @@ def main(argv: list[str] | None = None) -> int:
             split_count=args.split_count,
         )
 
+        try:
+            split_leakage_audit_diagnostics = (
+                _build_split_leakage_audit_diagnostics(
+                    split_definitions=split_definitions,
+                    split_builder_inspected=_SPLIT_BUILDER_FALLBACK,
+                )
+            )
+        except ValueError as exc:
+            print(f"FATAL: split leakage audit failed: {exc}")
+            return 4
+
         receipt = build_real_validation_receipt(
             input_manifest_fingerprint=args.input_manifest_fingerprint,
             data_quality_receipt_sha256=args.data_quality_receipt_sha256,
             code_commit_sha=args.code_commit_sha,
             split_definitions=split_definitions,
             cost_cases=cost_cases,
+            split_leakage_audit_diagnostics=split_leakage_audit_diagnostics,
         )
 
     output_path = output_dir / "real_validation_receipt.json"
