@@ -69,6 +69,7 @@ __all__ = [
     "materialize_funding_adjustment_arithmetic_scaffold_diagnostics",
     "materialize_funding_adjustment_row_scaffold_diagnostics",
     "_build_split_leakage_audit_diagnostics",
+    "_build_strategy_rule_contract_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -178,6 +179,18 @@ SPLIT_LEAKAGE_AUDIT_ROW_COUNT_NOT_COMPUTED = "NOT_COMPUTED_IN_SPLIT_LEAKAGE_AUDI
 _SPLIT_BUILDER_INVENTORY = "materialize_split_definitions_from_inventory"
 _SPLIT_BUILDER_FALLBACK = "build_deterministic_split_definitions"
 _VALID_SPLIT_BUILDERS = frozenset({_SPLIT_BUILDER_INVENTORY, _SPLIT_BUILDER_FALLBACK})
+
+# === Strategy rule contract diagnostics constants ===
+# Diagnostic-only section that records that no strategy rule contract exists
+# yet and therefore strategy scoring is blocked. It does not define a strategy,
+# generate signals, or compute returns/PnL/Sharpe/risk/edge. Every field is
+# either None, NOT_DEFINED, or False — this is a diagnostic of absence, not a
+# definition of presence.
+STRATEGY_RULE_CONTRACT_VERSION = "strategy-rule-contract-0.1"
+STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY = "STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY"
+STRATEGY_RULE_CONTRACT_NOT_DEFINED = "CONTRACT_NOT_DEFINED"
+STRATEGY_RULE_CONTRACT_BLOCKED_REASON_NOT_DEFINED = "STRATEGY_RULE_CONTRACT_NOT_DEFINED"
+NOT_DEFINED = "NOT_DEFINED"
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -5882,6 +5895,60 @@ def _build_split_leakage_audit_diagnostics(
     }
 
 
+def _build_strategy_rule_contract_diagnostics() -> dict[str, Any]:
+    """Build a diagnostic-only section recording that no strategy rule contract
+    exists yet and therefore strategy scoring is blocked.
+
+    This section does **not** define a strategy, generate signals, or compute
+    returns, PnL, Sharpe, drawdown, risk, edge, trades, positions, portfolio
+    metrics, or baseline comparisons. Every contract field is either ``None``,
+    ``NOT_DEFINED``, or ``False`` — this is a diagnostic of absence, not a
+    definition of presence.
+
+    Fail-closed rules:
+    * ``scoring_authorized`` is always ``False`` at this stage.
+    * ``contract_status`` is always ``CONTRACT_NOT_DEFINED``.
+    * ``scoring_blocked_reason`` is always ``STRATEGY_RULE_CONTRACT_NOT_DEFINED``.
+    * All six ``scoring_prerequisites_present`` values are always ``False``.
+    """
+    return {
+        "contract_version": STRATEGY_RULE_CONTRACT_VERSION,
+        "calculation_status": STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY,
+        "contract_status": STRATEGY_RULE_CONTRACT_NOT_DEFINED,
+        "scoring_authorized": False,
+        "scoring_blocked_reason": STRATEGY_RULE_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
+        "allowed_input_roles": None,
+        "allowed_input_columns": None,
+        "forbidden_input_roles": None,
+        "forbidden_input_columns": None,
+        "forbidden_future_columns": None,
+        "decision_time_convention": None,
+        "decision_time_column": None,
+        "decision_time_offset": None,
+        "feature_lookback": None,
+        "feature_lookback_bars": None,
+        "label_horizon": None,
+        "label_horizon_bars": None,
+        "holding_period": None,
+        "holding_period_bars": None,
+        "side_semantics": None,
+        "side_source": None,
+        "notional_semantics": None,
+        "notional_source": None,
+        "notional_currency": None,
+        "cost_dependency": NOT_DEFINED,
+        "funding_dependency": NOT_DEFINED,
+        "scoring_prerequisites_present": {
+            "decision_time_convention": False,
+            "feature_lookback": False,
+            "label_horizon": False,
+            "holding_period": False,
+            "funding_interval_exposure": False,
+            "cost_event_timing": False,
+        },
+    }
+
+
 # ── Receipt builder ──────────────────────────────────────────────────────
 
 
@@ -5921,6 +5988,7 @@ def build_real_validation_receipt(
     funding_adjustment_row_scaffold_diagnostics: dict | None = None,
     funding_adjustment_sample_aggregate_diagnostics: dict | None = None,
     split_leakage_audit_diagnostics: dict | None = None,
+    strategy_rule_contract_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -6035,6 +6103,10 @@ def build_real_validation_receipt(
         )
     if split_leakage_audit_diagnostics is not None:
         receipt["split_leakage_audit_diagnostics"] = split_leakage_audit_diagnostics
+    if strategy_rule_contract_diagnostics is not None:
+        receipt["strategy_rule_contract_diagnostics"] = (
+            strategy_rule_contract_diagnostics
+        )
 
     return receipt
 
@@ -6410,6 +6482,9 @@ def main(argv: list[str] | None = None) -> int:
                     split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
                 )
             )
+            strategy_rule_contract_diagnostics = (
+                _build_strategy_rule_contract_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -6456,6 +6531,9 @@ def main(argv: list[str] | None = None) -> int:
                 funding_adjustment_sample_aggregate_diagnostics
             ),
             split_leakage_audit_diagnostics=split_leakage_audit_diagnostics,
+            strategy_rule_contract_diagnostics=(
+                strategy_rule_contract_diagnostics
+            ),
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
@@ -6479,6 +6557,9 @@ def main(argv: list[str] | None = None) -> int:
                     split_builder_inspected=_SPLIT_BUILDER_FALLBACK,
                 )
             )
+            strategy_rule_contract_diagnostics = (
+                _build_strategy_rule_contract_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: split leakage audit failed: {exc}")
             return 4
@@ -6490,6 +6571,9 @@ def main(argv: list[str] | None = None) -> int:
             split_definitions=split_definitions,
             cost_cases=cost_cases,
             split_leakage_audit_diagnostics=split_leakage_audit_diagnostics,
+            strategy_rule_contract_diagnostics=(
+                strategy_rule_contract_diagnostics
+            ),
         )
 
     output_path = output_dir / "real_validation_receipt.json"

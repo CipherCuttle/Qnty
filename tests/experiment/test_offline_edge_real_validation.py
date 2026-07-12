@@ -61,6 +61,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_adjustment_row_scaffold_diagnostics,
     _build_funding_adjustment_sample_aggregate_diagnostics,
     _build_split_leakage_audit_diagnostics,
+    _build_strategy_rule_contract_diagnostics,
     SPLIT_LEAKAGE_AUDIT_VERSION,
     SPLIT_LEAKAGE_AUDIT_DIAGNOSTIC_ONLY,
     SPLIT_LEAKAGE_AUDIT_INSUFFICIENT_FOR_SCORING,
@@ -68,6 +69,11 @@ from quantbot.experiment.offline_edge_real_validation import (
     SPLIT_LEAKAGE_AUDIT_ROW_COUNT_NOT_COMPUTED,
     _SPLIT_BUILDER_INVENTORY,
     _SPLIT_BUILDER_FALLBACK,
+    STRATEGY_RULE_CONTRACT_VERSION,
+    STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY,
+    STRATEGY_RULE_CONTRACT_NOT_DEFINED,
+    STRATEGY_RULE_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
+    NOT_DEFINED,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -8473,3 +8479,272 @@ class TestSplitLeakageAuditDiagnostics:
                 split_definitions=[],
                 split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
             )
+
+
+# ── Strategy rule contract diagnostics tests ──────────────────────────────
+
+
+_STRATEGY_RULE_CONTRACT_FORBIDDEN_KEYS = {
+    "returns", "return", "pnl", "PnL", "sharpe", "Sharpe", "drawdown",
+    "risk", "edge", "strategy_performance", "trade", "trades",
+    "position", "positions", "signal", "signals", "portfolio",
+    "funding_adjusted_return", "net_return_value", "price_change",
+    "gross_return_value", "cost_adjusted_return", "live_ready",
+    "deploy_ready", "profitable", "baseline", "benchmark_result",
+    "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+}
+
+
+class TestStrategyRuleContractDiagnostics:
+    """Tests for _build_strategy_rule_contract_diagnostics() and its
+    integration into the offline-edge receipt."""
+
+    # ── Helper returns a dict ──────────────────────────────────────────────
+    def test_helper_returns_dict(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert isinstance(result, dict)
+
+    # ── Top-level field values ─────────────────────────────────────────────
+    def test_contract_version(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["contract_version"] == STRATEGY_RULE_CONTRACT_VERSION
+
+    def test_calculation_status(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["calculation_status"] == STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY
+
+    def test_contract_status_not_defined(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["contract_status"] == STRATEGY_RULE_CONTRACT_NOT_DEFINED
+
+    def test_scoring_authorized_false(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["scoring_authorized"] is False
+
+    def test_scoring_blocked_reason(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["scoring_blocked_reason"] == (
+            STRATEGY_RULE_CONTRACT_BLOCKED_REASON_NOT_DEFINED
+        )
+
+    # ── Allowed input fields are None ──────────────────────────────────────
+    def test_allowed_input_roles_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["allowed_input_roles"] is None
+
+    def test_allowed_input_columns_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["allowed_input_columns"] is None
+
+    # ── Forbidden input fields are None ────────────────────────────────────
+    def test_forbidden_input_roles_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["forbidden_input_roles"] is None
+
+    def test_forbidden_input_columns_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["forbidden_input_columns"] is None
+
+    def test_forbidden_future_columns_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["forbidden_future_columns"] is None
+
+    # ── Decision-time fields are None ──────────────────────────────────────
+    def test_decision_time_convention_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["decision_time_convention"] is None
+
+    def test_decision_time_column_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["decision_time_column"] is None
+
+    def test_decision_time_offset_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["decision_time_offset"] is None
+
+    # ── Feature lookback fields are None ───────────────────────────────────
+    def test_feature_lookback_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["feature_lookback"] is None
+
+    def test_feature_lookback_bars_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["feature_lookback_bars"] is None
+
+    # ── Label horizon fields are None ──────────────────────────────────────
+    def test_label_horizon_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["label_horizon"] is None
+
+    def test_label_horizon_bars_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["label_horizon_bars"] is None
+
+    # ── Holding period fields are None ─────────────────────────────────────
+    def test_holding_period_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["holding_period"] is None
+
+    def test_holding_period_bars_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["holding_period_bars"] is None
+
+    # ── Side fields are None ───────────────────────────────────────────────
+    def test_side_semantics_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["side_semantics"] is None
+
+    def test_side_source_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["side_source"] is None
+
+    # ── Notional fields are None ───────────────────────────────────────────
+    def test_notional_semantics_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["notional_semantics"] is None
+
+    def test_notional_source_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["notional_source"] is None
+
+    def test_notional_currency_none(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["notional_currency"] is None
+
+    # ── Cost/funding dependency ────────────────────────────────────────────
+    def test_cost_dependency_not_defined(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["cost_dependency"] == NOT_DEFINED
+
+    def test_funding_dependency_not_defined(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        assert result["funding_dependency"] == NOT_DEFINED
+
+    # ── Scoring prerequisites all false ────────────────────────────────────
+    def test_scoring_prerequisites_all_false(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        prereqs = result["scoring_prerequisites_present"]
+        assert isinstance(prereqs, dict)
+        for key, value in prereqs.items():
+            assert value is False, f"{key} must be False, got {value}"
+
+    def test_scoring_prerequisites_have_expected_keys(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        prereqs = result["scoring_prerequisites_present"]
+        expected_keys = {
+            "decision_time_convention",
+            "feature_lookback",
+            "label_horizon",
+            "holding_period",
+            "funding_interval_exposure",
+            "cost_event_timing",
+        }
+        assert prereqs.keys() == expected_keys
+
+    # ── Integration into receipt ───────────────────────────────────────────
+    def test_section_included_in_receipt(self):
+        receipt = _base_receipt(
+            strategy_rule_contract_diagnostics=(
+                _build_strategy_rule_contract_diagnostics()
+            ),
+        )
+        assert "strategy_rule_contract_diagnostics" in receipt
+
+    def test_receipt_validates_with_section(self):
+        receipt = _base_receipt(
+            strategy_rule_contract_diagnostics=(
+                _build_strategy_rule_contract_diagnostics()
+            ),
+        )
+        # validate_real_validation_receipt should not raise
+        validate_real_validation_receipt(receipt)
+
+    def test_final_offline_verdict_unchanged(self):
+        receipt = _base_receipt(
+            strategy_rule_contract_diagnostics=(
+                _build_strategy_rule_contract_diagnostics()
+            ),
+        )
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_guardrails_unchanged(self):
+        receipt = _base_receipt(
+            strategy_rule_contract_diagnostics=(
+                _build_strategy_rule_contract_diagnostics()
+            ),
+        )
+        for key, value in receipt["guardrail_status"].items():
+            assert value is True, f"guardrail {key} must be True"
+
+    # ── No forbidden keys ──────────────────────────────────────────────────
+    def test_no_forbidden_calculation_keys(self):
+        result = _build_strategy_rule_contract_diagnostics()
+        all_keys = _all_dict_keys(result)
+        assert _STRATEGY_RULE_CONTRACT_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{_STRATEGY_RULE_CONTRACT_FORBIDDEN_KEYS & all_keys}"
+        )
+
+    # ── CLI integration ────────────────────────────────────────────────────
+    def test_cli_inventory_path_includes_section(self, tmp_path):
+        """Inventory-based CLI path should include the section."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "strategy_rule_contract_diagnostics" in receipt
+
+    def test_cli_fallback_path_includes_section(self, tmp_path):
+        """Fallback CLI path (no --bars-dir) should include the section."""
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--global-min-timestamp", "2026-01-01T00:00:00Z",
+            "--global-max-timestamp", "2026-02-01T00:00:00Z",
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "strategy_rule_contract_diagnostics" in receipt
+
+    # ── Safety-key regression ──────────────────────────────────────────────
+    def test_no_forbidden_top_level_keys_in_receipt(self):
+        """Receipt with the section must still forbid pnl/sharpe/edge/strategy_performance."""
+        receipt = _base_receipt(
+            strategy_rule_contract_diagnostics=(
+                _build_strategy_rule_contract_diagnostics()
+            ),
+        )
+        for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
+            assert forbidden not in receipt
+
+    def test_no_forbidden_calculation_keys_in_receipt(self):
+        """Receipt with the section must still forbid all calculation keys."""
+        receipt = _base_receipt(
+            strategy_rule_contract_diagnostics=(
+                _build_strategy_rule_contract_diagnostics()
+            ),
+        )
+        all_keys = _all_dict_keys(receipt)
+        forbidden = _STRATEGY_RULE_CONTRACT_FORBIDDEN_KEYS | {
+            "gross_return_value", "cost_adjusted_return",
+        }
+        overlap = forbidden & all_keys
+        assert not overlap, f"Forbidden keys found in receipt: {overlap}"
