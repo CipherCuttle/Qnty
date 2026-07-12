@@ -75,6 +75,7 @@ __all__ = [
     "_build_null_benchmark_contract_diagnostics",
     "_build_multiple_testing_control_diagnostics",
     "_build_trade_position_simulation_contract_diagnostics",
+    "_build_net_pnl_equity_risk_contract_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -233,6 +234,18 @@ TRADE_POSITION_SIMULATION_CONTRACT_VERSION = "trade-position-simulation-contract
 TRADE_POSITION_SIMULATION_CONTRACT_DIAGNOSTIC_ONLY = "TRADE_POSITION_SIMULATION_CONTRACT_DIAGNOSTIC_ONLY"
 TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED = "TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED"
 TRADE_POSITION_SIMULATION_CONTRACT_BLOCKED_REASON_NOT_DEFINED = "TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED"
+
+# === Net PnL / equity / risk contract diagnostics constants ===
+# Diagnostic-only section that records that no net PnL/equity/risk contract
+# exists yet, no accounting/risk policies are defined, and scoring remains
+# unauthorized. It does not define a capital base, accounting policy, equity
+# curve policy, drawdown policy, risk measure, or any computed metric. Every
+# field is either None, NOT_DEFINED, or False — this is a diagnostic of
+# absence, not a definition of presence.
+NET_PNL_EQUITY_RISK_CONTRACT_VERSION = "net-pnl-equity-risk-contract-0.1"
+NET_PNL_EQUITY_RISK_CONTRACT_DIAGNOSTIC_ONLY = "NET_PNL_EQUITY_RISK_CONTRACT_DIAGNOSTIC_ONLY"
+NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED = "NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED"
+NET_PNL_EQUITY_RISK_CONTRACT_BLOCKED_REASON_NOT_DEFINED = "NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED"
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -6366,6 +6379,104 @@ def _build_trade_position_simulation_contract_diagnostics() -> dict[str, Any]:
     }
 
 
+def _build_net_pnl_equity_risk_contract_diagnostics() -> dict[str, Any]:
+    """Build a diagnostic-only section recording that no net PnL/equity/risk
+    contract exists yet, no accounting/risk policies are defined, and scoring
+    remains unauthorized.
+
+    This section does **not** define a capital base, accounting policy, equity
+    curve policy, drawdown policy, risk measure, or any computed metric. It
+    does not compute PnL, returns, equity curves, drawdown, risk, Sharpe,
+    volatility, exposure, benchmark comparison, edge, score, performance,
+    profit, trades, positions, orders, fills, signals, or strategy outputs.
+    Every field is either ``None``, ``NOT_DEFINED``, or ``False`` — this is a
+    diagnostic of absence, not a definition of presence.
+
+    Fail-closed rules:
+    * ``net_pnl_equity_risk_contract_status`` is always
+      ``NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED``.
+    * ``net_pnl_equity_risk_contract_present`` is always ``False``.
+    * ``scoring_authorized`` is always ``False`` at this stage.
+    * ``scoring_blocked_reason`` is always
+      ``NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED``.
+    * All ``net_pnl_equity_risk_contract_prerequisites_present`` values are
+      always ``False``.
+    * All policy fields are always ``NOT_DEFINED``.
+    """
+    return {
+        "contract_version": NET_PNL_EQUITY_RISK_CONTRACT_VERSION,
+        "calculation_status": NET_PNL_EQUITY_RISK_CONTRACT_DIAGNOSTIC_ONLY,
+        "net_pnl_equity_risk_contract_status": (
+            NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED
+        ),
+        "net_pnl_equity_risk_contract_present": False,
+        "net_pnl_equity_risk_contract_hash": None,
+        "net_pnl_equity_risk_contract_source": None,
+
+        "scoring_authorized": False,
+        "scoring_blocked_reason": (
+            NET_PNL_EQUITY_RISK_CONTRACT_BLOCKED_REASON_NOT_DEFINED
+        ),
+
+        "capital_base_policy_defined": False,
+        "capital_base_policy": NOT_DEFINED,
+        "net_accounting_policy_defined": False,
+        "net_accounting_policy": NOT_DEFINED,
+        "realized_unrealized_policy_defined": False,
+        "realized_unrealized_policy": NOT_DEFINED,
+        "cost_inclusion_dependency_satisfied": False,
+        "funding_inclusion_dependency_satisfied": False,
+        "simulator_dependency_satisfied": False,
+
+        "mark_to_market_policy_defined": False,
+        "mark_to_market_policy": NOT_DEFINED,
+        "equity_curve_policy_defined": False,
+        "equity_curve_policy": NOT_DEFINED,
+        "aggregation_policy_defined": False,
+        "aggregation_policy": NOT_DEFINED,
+        "drawdown_policy_defined": False,
+        "drawdown_policy": NOT_DEFINED,
+        "exposure_policy_defined": False,
+        "exposure_policy": NOT_DEFINED,
+        "risk_measure_policy_defined": False,
+        "risk_measure_policy": NOT_DEFINED,
+
+        "benchmark_comparison_dependency_satisfied": False,
+        "final_verdict_scoring_dependency_satisfied": False,
+
+        "strategy_rule_contract_dependency_satisfied": False,
+        "trial_manifest_dependency_satisfied": False,
+        "oos_seal_dependency_satisfied": False,
+        "null_benchmark_contract_dependency_satisfied": False,
+        "multiple_testing_control_dependency_satisfied": False,
+        "trade_position_simulation_contract_dependency_satisfied": False,
+        "split_scoring_safe_dependency_satisfied": False,
+
+        "net_pnl_equity_risk_contract_prerequisites_present": {
+            "strategy_rule_contract": False,
+            "trial_manifest": False,
+            "oos_seal": False,
+            "null_benchmark_contract": False,
+            "multiple_testing_control": False,
+            "trade_position_simulation_contract": False,
+            "split_scoring_safe": False,
+            "capital_base_policy": False,
+            "net_accounting_policy": False,
+            "realized_unrealized_policy": False,
+            "cost_inclusion_policy": False,
+            "funding_inclusion_policy": False,
+            "mark_to_market_policy": False,
+            "equity_curve_policy": False,
+            "aggregation_policy": False,
+            "drawdown_policy": False,
+            "exposure_policy": False,
+            "risk_measure_policy": False,
+            "benchmark_comparison_policy": False,
+            "final_verdict_scoring_policy": False,
+        },
+    }
+
+
 # ── Receipt builder ──────────────────────────────────────────────────────
 
 
@@ -6411,6 +6522,7 @@ def build_real_validation_receipt(
     null_benchmark_contract_diagnostics: dict | None = None,
     multiple_testing_control_diagnostics: dict | None = None,
     trade_position_simulation_contract_diagnostics: dict | None = None,
+    net_pnl_equity_risk_contract_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -6544,6 +6656,10 @@ def build_real_validation_receipt(
     if trade_position_simulation_contract_diagnostics is not None:
         receipt["trade_position_simulation_contract_diagnostics"] = (
             trade_position_simulation_contract_diagnostics
+        )
+    if net_pnl_equity_risk_contract_diagnostics is not None:
+        receipt["net_pnl_equity_risk_contract_diagnostics"] = (
+            net_pnl_equity_risk_contract_diagnostics
         )
 
     return receipt
@@ -6934,6 +7050,9 @@ def main(argv: list[str] | None = None) -> int:
             trade_position_simulation_contract_diagnostics = (
                 _build_trade_position_simulation_contract_diagnostics()
             )
+            net_pnl_equity_risk_contract_diagnostics = (
+                _build_net_pnl_equity_risk_contract_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -6994,6 +7113,9 @@ def main(argv: list[str] | None = None) -> int:
             trade_position_simulation_contract_diagnostics=(
                 trade_position_simulation_contract_diagnostics
             ),
+            net_pnl_equity_risk_contract_diagnostics=(
+                net_pnl_equity_risk_contract_diagnostics
+            ),
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
@@ -7031,6 +7153,9 @@ def main(argv: list[str] | None = None) -> int:
             trade_position_simulation_contract_diagnostics = (
                 _build_trade_position_simulation_contract_diagnostics()
             )
+            net_pnl_equity_risk_contract_diagnostics = (
+                _build_net_pnl_equity_risk_contract_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: split leakage audit failed: {exc}")
             return 4
@@ -7055,6 +7180,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             trade_position_simulation_contract_diagnostics=(
                 trade_position_simulation_contract_diagnostics
+            ),
+            net_pnl_equity_risk_contract_diagnostics=(
+                net_pnl_equity_risk_contract_diagnostics
             ),
         )
 
