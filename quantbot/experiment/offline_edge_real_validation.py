@@ -6821,6 +6821,17 @@ _REQUIRED_FORBIDDEN_CALC_KEYS = frozenset(
 )
 
 
+_GROSS_OBSERVATIONAL_RETURNS_EXEMPT_PATH = "$.gross_observational_returns"
+
+
+def _is_under_gross_observational_returns_exempt_path(path: str) -> bool:
+    return (
+        path == _GROSS_OBSERVATIONAL_RETURNS_EXEMPT_PATH
+        or path.startswith(_GROSS_OBSERVATIONAL_RETURNS_EXEMPT_PATH + ".")
+        or path.startswith(_GROSS_OBSERVATIONAL_RETURNS_EXEMPT_PATH + "[")
+    )
+
+
 def _assert_no_forbidden_calculation_keys(value: Any, path: str = "$") -> None:
     """Recursively scan *value* for any key matching a forbidden calculation pattern.
 
@@ -6842,7 +6853,7 @@ def _assert_no_forbidden_calculation_keys(value: Any, path: str = "$") -> None:
         for key, v in value.items():
             gross_observation_key_allowed = (
                 key == "gross_observational_return"
-                and path.startswith("$.gross_observational_returns")
+                and _is_under_gross_observational_returns_exempt_path(path)
             )
             if key in FORBIDDEN_CALCULATION_KEYS and not gross_observation_key_allowed:
                 raise ValueError(
