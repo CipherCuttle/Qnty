@@ -99,6 +99,11 @@ from quantbot.experiment.offline_edge_real_validation import (
     TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED,
     TRADE_POSITION_SIMULATION_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
     _build_trade_position_simulation_contract_diagnostics,
+    NET_PNL_EQUITY_RISK_CONTRACT_VERSION,
+    NET_PNL_EQUITY_RISK_CONTRACT_DIAGNOSTIC_ONLY,
+    NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED,
+    NET_PNL_EQUITY_RISK_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
+    _build_net_pnl_equity_risk_contract_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -10230,3 +10235,335 @@ class TestTradePositionSimulationContractDiagnostics:
             f"Forbidden keys found in receipt: "
             f"{_TRADE_POSITION_SIMULATION_CONTRACT_FORBIDDEN_KEYS & all_keys}"
         )
+
+
+_NET_PNL_EQUITY_RISK_CONTRACT_FORBIDDEN_KEYS = frozenset({
+    "pnl", "returns", "return", "sharpe", "drawdown", "risk", "edge",
+    "strategy_performance", "trade", "trades", "signal", "signals",
+    "position", "positions", "portfolio", "baseline_result",
+    "benchmark_result", "profitable", "live_ready", "deploy_ready",
+    "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+    "funding_adjusted_return", "net_return_value", "price_change",
+    "p_value", "confidence_interval", "score", "metric",
+    "performance", "profit", "order", "orders", "fill", "fills",
+    "execution", "executions", "cost_adjusted_return",
+    "gross_return_value", "equity", "equity_curve",
+})
+
+
+class TestNetPnlEquityRiskContractDiagnostics:
+    """Tests for _build_net_pnl_equity_risk_contract_diagnostics() and
+    its integration into the offline-edge receipt."""
+
+    # ── Helper contract ────────────────────────────────────────────────────
+    def test_helper_returns_dict(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert isinstance(result, dict)
+
+    def test_contract_version(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["contract_version"] == NET_PNL_EQUITY_RISK_CONTRACT_VERSION
+
+    def test_calculation_status(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["calculation_status"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_DIAGNOSTIC_ONLY
+        )
+
+    def test_net_pnl_equity_risk_contract_status(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["net_pnl_equity_risk_contract_status"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED
+        )
+
+    def test_net_pnl_equity_risk_contract_present_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["net_pnl_equity_risk_contract_present"] is False
+
+    def test_net_pnl_equity_risk_contract_hash_none(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["net_pnl_equity_risk_contract_hash"] is None
+
+    def test_net_pnl_equity_risk_contract_source_none(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["net_pnl_equity_risk_contract_source"] is None
+
+    # ── Scoring lock ───────────────────────────────────────────────────────
+    def test_scoring_authorized_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["scoring_authorized"] is False
+
+    def test_scoring_blocked_reason(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["scoring_blocked_reason"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_BLOCKED_REASON_NOT_DEFINED
+        )
+
+    # ── Capital base / accounting / realized-unrealized ────────────────────
+    def test_capital_base_policy_defined_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["capital_base_policy_defined"] is False
+
+    def test_capital_base_policy_not_defined(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["capital_base_policy"] == NOT_DEFINED
+
+    def test_net_accounting_policy_defined_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["net_accounting_policy_defined"] is False
+
+    def test_net_accounting_policy_not_defined(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["net_accounting_policy"] == NOT_DEFINED
+
+    def test_realized_unrealized_policy_defined_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["realized_unrealized_policy_defined"] is False
+
+    def test_realized_unrealized_policy_not_defined(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["realized_unrealized_policy"] == NOT_DEFINED
+
+    # ── Cost / funding / simulator dependencies ────────────────────────────
+    def test_cost_inclusion_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["cost_inclusion_dependency_satisfied"] is False
+
+    def test_funding_inclusion_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["funding_inclusion_dependency_satisfied"] is False
+
+    def test_simulator_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["simulator_dependency_satisfied"] is False
+
+    # ── Mark-to-market / equity curve / aggregation ────────────────────────
+    def test_mark_to_market_policy_defined_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["mark_to_market_policy_defined"] is False
+
+    def test_mark_to_market_policy_not_defined(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["mark_to_market_policy"] == NOT_DEFINED
+
+    def test_equity_curve_policy_defined_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["equity_curve_policy_defined"] is False
+
+    def test_equity_curve_policy_not_defined(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["equity_curve_policy"] == NOT_DEFINED
+
+    def test_aggregation_policy_defined_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["aggregation_policy_defined"] is False
+
+    def test_aggregation_policy_not_defined(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["aggregation_policy"] == NOT_DEFINED
+
+    # ── Drawdown / exposure / risk measure ─────────────────────────────────
+    def test_drawdown_policy_defined_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["drawdown_policy_defined"] is False
+
+    def test_drawdown_policy_not_defined(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["drawdown_policy"] == NOT_DEFINED
+
+    def test_exposure_policy_defined_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["exposure_policy_defined"] is False
+
+    def test_exposure_policy_not_defined(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["exposure_policy"] == NOT_DEFINED
+
+    def test_risk_measure_policy_defined_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["risk_measure_policy_defined"] is False
+
+    def test_risk_measure_policy_not_defined(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["risk_measure_policy"] == NOT_DEFINED
+
+    # ── Benchmark comparison / final verdict scoring ───────────────────────
+    def test_benchmark_comparison_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["benchmark_comparison_dependency_satisfied"] is False
+
+    def test_final_verdict_scoring_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["final_verdict_scoring_dependency_satisfied"] is False
+
+    # ── Upstream gate dependencies ─────────────────────────────────────────
+    def test_strategy_rule_contract_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["strategy_rule_contract_dependency_satisfied"] is False
+
+    def test_trial_manifest_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["trial_manifest_dependency_satisfied"] is False
+
+    def test_oos_seal_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["oos_seal_dependency_satisfied"] is False
+
+    def test_null_benchmark_contract_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["null_benchmark_contract_dependency_satisfied"] is False
+
+    def test_multiple_testing_control_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["multiple_testing_control_dependency_satisfied"] is False
+
+    def test_trade_position_simulation_contract_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["trade_position_simulation_contract_dependency_satisfied"] is False
+
+    def test_split_scoring_safe_dependency_satisfied_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["split_scoring_safe_dependency_satisfied"] is False
+
+    # ── Prerequisites dict ─────────────────────────────────────────────────
+    def test_prerequisites_all_false(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        prereqs = result["net_pnl_equity_risk_contract_prerequisites_present"]
+        assert isinstance(prereqs, dict)
+        for key, value in prereqs.items():
+            assert value is False, f"Prerequisite {key!r} is not False: {value!r}"
+
+    def test_prerequisites_expected_keys(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        prereqs = result["net_pnl_equity_risk_contract_prerequisites_present"]
+        expected_keys = {
+            "strategy_rule_contract",
+            "trial_manifest",
+            "oos_seal",
+            "null_benchmark_contract",
+            "multiple_testing_control",
+            "trade_position_simulation_contract",
+            "split_scoring_safe",
+            "capital_base_policy",
+            "net_accounting_policy",
+            "realized_unrealized_policy",
+            "cost_inclusion_policy",
+            "funding_inclusion_policy",
+            "mark_to_market_policy",
+            "equity_curve_policy",
+            "aggregation_policy",
+            "drawdown_policy",
+            "exposure_policy",
+            "risk_measure_policy",
+            "benchmark_comparison_policy",
+            "final_verdict_scoring_policy",
+        }
+        assert set(prereqs.keys()) == expected_keys, (
+            f"Prerequisite keys mismatch. Extra: {set(prereqs.keys()) - expected_keys}. "
+            f"Missing: {expected_keys - set(prereqs.keys())}"
+        )
+
+    # ── Receipt integration ────────────────────────────────────────────────
+    def test_integration_in_receipt_when_provided(self):
+        receipt = _base_receipt(
+            net_pnl_equity_risk_contract_diagnostics=(
+                _build_net_pnl_equity_risk_contract_diagnostics()
+            ),
+        )
+        assert "net_pnl_equity_risk_contract_diagnostics" in receipt
+
+    def test_not_in_receipt_when_omitted(self):
+        receipt = _base_receipt()
+        assert "net_pnl_equity_risk_contract_diagnostics" not in receipt
+
+    def test_receipt_validates(self):
+        receipt = _base_receipt(
+            net_pnl_equity_risk_contract_diagnostics=(
+                _build_net_pnl_equity_risk_contract_diagnostics()
+            ),
+        )
+        real_validation.validate_real_validation_receipt(receipt)
+
+    def test_final_offline_verdict_unchanged(self):
+        receipt = _base_receipt(
+            net_pnl_equity_risk_contract_diagnostics=(
+                _build_net_pnl_equity_risk_contract_diagnostics()
+            ),
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_guardrails_unchanged(self):
+        receipt = _base_receipt(
+            net_pnl_equity_risk_contract_diagnostics=(
+                _build_net_pnl_equity_risk_contract_diagnostics()
+            ),
+        )
+        assert receipt["guardrail_status"]["edge_unproven"] is True
+        assert receipt["guardrail_status"]["block_live_integration"] is True
+        assert receipt["guardrail_status"]["no_report_promotion"] is True
+        assert receipt["guardrail_status"]["output_under_tmp_only"] is True
+
+    # ── Forbidden key safety ───────────────────────────────────────────────
+    def test_no_forbidden_calculation_keys(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        all_keys = _all_dict_keys(result)
+        assert _NET_PNL_EQUITY_RISK_CONTRACT_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{_NET_PNL_EQUITY_RISK_CONTRACT_FORBIDDEN_KEYS & all_keys}"
+        )
+
+    def test_no_forbidden_top_level_keys_in_receipt(self):
+        receipt = _base_receipt(
+            net_pnl_equity_risk_contract_diagnostics=(
+                _build_net_pnl_equity_risk_contract_diagnostics()
+            ),
+        )
+        for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
+            assert forbidden not in receipt
+
+    def test_no_forbidden_calculation_keys_in_receipt(self):
+        receipt = _base_receipt(
+            net_pnl_equity_risk_contract_diagnostics=(
+                _build_net_pnl_equity_risk_contract_diagnostics()
+            ),
+        )
+        all_keys = _all_dict_keys(receipt)
+        assert _NET_PNL_EQUITY_RISK_CONTRACT_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found in receipt: "
+            f"{_NET_PNL_EQUITY_RISK_CONTRACT_FORBIDDEN_KEYS & all_keys}"
+        )
+
+    # ── CLI integration ────────────────────────────────────────────────────
+    def test_cli_inventory_path_includes_section(self, tmp_path):
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "net_pnl_equity_risk_contract_diagnostics" in receipt
+
+    def test_cli_fallback_path_includes_section(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--global-min-timestamp", "2026-01-01T00:00:00Z",
+            "--global-max-timestamp", "2026-02-01T00:00:00Z",
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "net_pnl_equity_risk_contract_diagnostics" in receipt
