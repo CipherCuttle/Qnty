@@ -73,6 +73,7 @@ __all__ = [
     "_build_trial_manifest_diagnostics",
     "_build_oos_seal_diagnostics",
     "_build_null_benchmark_contract_diagnostics",
+    "_build_multiple_testing_control_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -212,6 +213,12 @@ NULL_BENCHMARK_CONTRACT_VERSION = "null-benchmark-contract-0.1"
 NULL_BENCHMARK_CONTRACT_DIAGNOSTIC_ONLY = "NULL_BENCHMARK_CONTRACT_DIAGNOSTIC_ONLY"
 NULL_BENCHMARK_CONTRACT_NOT_DEFINED = "NULL_BENCHMARK_CONTRACT_NOT_DEFINED"
 NULL_BENCHMARK_CONTRACT_BLOCKED_REASON_NOT_DEFINED = "NULL_BENCHMARK_CONTRACT_NOT_DEFINED"
+
+# === Multiple testing control diagnostics constants ===
+MULTIPLE_TESTING_CONTROL_VERSION = "multiple-testing-control-0.1"
+MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY = "MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY"
+MULTIPLE_TESTING_CONTROL_NOT_DEFINED = "MULTIPLE_TESTING_CONTROL_NOT_DEFINED"
+MULTIPLE_TESTING_CONTROL_BLOCKED_REASON_NOT_DEFINED = "MULTIPLE_TESTING_CONTROL_NOT_DEFINED"
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -6148,6 +6155,95 @@ def _build_null_benchmark_contract_diagnostics() -> dict[str, Any]:
             "funding_inclusion_policy": False,
             "oos_application_policy": False,
             "multiple_testing_policy": False,
+            },
+    }
+
+
+def _build_multiple_testing_control_diagnostics() -> dict[str, Any]:
+    """Build a diagnostic-only section recording that no multiple-testing
+    control exists yet, no trial-adjustment policy exists, no
+    DSR/PBO/CSCV/SPA/Reality Check/FDR control exists, no
+    model/parameter-selection lock exists, and scoring remains unauthorized.
+
+    This section does **not** implement any multiple-testing control, compute
+    p-values, define thresholds, calculate confidence intervals, define
+    statistical decision rules, scores, metrics, performance fields, or
+    profit fields. It does not choose a benchmark, define a benchmark family,
+    define a random seed/shuffle/permutation policy, define OOS dates or
+    split selection, nor compute returns, PnL, Sharpe, drawdown, risk, edge,
+    portfolio, baseline result, benchmark result, or benchmark comparison.
+
+    Fail-closed rules:
+    * ``multiple_testing_control_status`` is always
+      ``MULTIPLE_TESTING_CONTROL_NOT_DEFINED``.
+    * ``scoring_authorized`` is always ``False`` at this stage.
+    * ``scoring_blocked_reason`` is always
+      ``MULTIPLE_TESTING_CONTROL_NOT_DEFINED``.
+    * All ``multiple_testing_control_prerequisites_present`` values are always
+      ``False``.
+    * All control-policy fields are always ``NOT_DEFINED``.
+    """
+    return {
+        "control_version": MULTIPLE_TESTING_CONTROL_VERSION,
+        "calculation_status": MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY,
+        "multiple_testing_control_status": MULTIPLE_TESTING_CONTROL_NOT_DEFINED,
+        "multiple_testing_control_present": False,
+        "multiple_testing_control_hash": None,
+        "multiple_testing_control_source": None,
+
+        "scoring_authorized": False,
+        "scoring_blocked_reason": MULTIPLE_TESTING_CONTROL_BLOCKED_REASON_NOT_DEFINED,
+
+        "trial_adjustment_policy_defined": False,
+        "trial_adjustment_policy": NOT_DEFINED,
+        "rejected_trial_accounting_policy_defined": False,
+        "rejected_trial_accounting_policy": NOT_DEFINED,
+        "family_definition_policy_defined": False,
+        "family_definition_policy": NOT_DEFINED,
+
+        "dsr_control_defined": False,
+        "dsr_control_policy": NOT_DEFINED,
+        "pbo_control_defined": False,
+        "pbo_control_policy": NOT_DEFINED,
+        "cscv_control_defined": False,
+        "cscv_control_policy": NOT_DEFINED,
+        "spa_control_defined": False,
+        "spa_control_policy": NOT_DEFINED,
+        "reality_check_control_defined": False,
+        "reality_check_control_policy": NOT_DEFINED,
+        "false_discovery_control_defined": False,
+        "false_discovery_control_policy": NOT_DEFINED,
+
+        "model_selection_lock_defined": False,
+        "model_selection_lock": NOT_DEFINED,
+        "parameter_selection_lock_defined": False,
+        "parameter_selection_lock": NOT_DEFINED,
+
+        "strategy_rule_contract_dependency_satisfied": False,
+        "trial_manifest_dependency_satisfied": False,
+        "oos_seal_dependency_satisfied": False,
+        "null_benchmark_contract_dependency_satisfied": False,
+        "split_scoring_safe_dependency_satisfied": False,
+
+        "multiple_testing_control_prerequisites_present": {
+            "strategy_rule_contract": False,
+            "trial_manifest": False,
+            "trial_count": False,
+            "rejected_trial_accounting": False,
+            "candidate_registry": False,
+            "oos_seal": False,
+            "null_benchmark_contract": False,
+            "split_scoring_safe": False,
+            "trial_adjustment_policy": False,
+            "family_definition_policy": False,
+            "dsr_control": False,
+            "pbo_control": False,
+            "cscv_control": False,
+            "spa_control": False,
+            "reality_check_control": False,
+            "false_discovery_control": False,
+            "model_selection_lock": False,
+            "parameter_selection_lock": False,
         },
     }
 
@@ -6195,6 +6291,7 @@ def build_real_validation_receipt(
     trial_manifest_diagnostics: dict | None = None,
     oos_seal_diagnostics: dict | None = None,
     null_benchmark_contract_diagnostics: dict | None = None,
+    multiple_testing_control_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -6320,6 +6417,10 @@ def build_real_validation_receipt(
     if null_benchmark_contract_diagnostics is not None:
         receipt["null_benchmark_contract_diagnostics"] = (
             null_benchmark_contract_diagnostics
+        )
+    if multiple_testing_control_diagnostics is not None:
+        receipt["multiple_testing_control_diagnostics"] = (
+            multiple_testing_control_diagnostics
         )
 
     return receipt
@@ -6704,6 +6805,9 @@ def main(argv: list[str] | None = None) -> int:
             null_benchmark_contract_diagnostics = (
                 _build_null_benchmark_contract_diagnostics()
             )
+            multiple_testing_control_diagnostics = (
+                _build_multiple_testing_control_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -6758,6 +6862,9 @@ def main(argv: list[str] | None = None) -> int:
             null_benchmark_contract_diagnostics=(
                 null_benchmark_contract_diagnostics
             ),
+            multiple_testing_control_diagnostics=(
+                multiple_testing_control_diagnostics
+            ),
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
@@ -6789,6 +6896,9 @@ def main(argv: list[str] | None = None) -> int:
             null_benchmark_contract_diagnostics = (
                 _build_null_benchmark_contract_diagnostics()
             )
+            multiple_testing_control_diagnostics = (
+                _build_multiple_testing_control_diagnostics()
+            )
         except ValueError as exc:
             print(f"FATAL: split leakage audit failed: {exc}")
             return 4
@@ -6807,6 +6917,9 @@ def main(argv: list[str] | None = None) -> int:
             oos_seal_diagnostics=oos_seal_diagnostics,
             null_benchmark_contract_diagnostics=(
                 null_benchmark_contract_diagnostics
+            ),
+            multiple_testing_control_diagnostics=(
+                multiple_testing_control_diagnostics
             ),
         )
 

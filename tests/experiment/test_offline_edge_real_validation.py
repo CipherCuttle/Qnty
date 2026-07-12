@@ -89,6 +89,11 @@ from quantbot.experiment.offline_edge_real_validation import (
     NULL_BENCHMARK_CONTRACT_NOT_DEFINED,
     NULL_BENCHMARK_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
     _build_null_benchmark_contract_diagnostics,
+    MULTIPLE_TESTING_CONTROL_VERSION,
+    MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY,
+    MULTIPLE_TESTING_CONTROL_NOT_DEFINED,
+    MULTIPLE_TESTING_CONTROL_BLOCKED_REASON_NOT_DEFINED,
+    _build_multiple_testing_control_diagnostics,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -9275,6 +9280,16 @@ _NULL_BENCHMARK_CONTRACT_FORBIDDEN_KEYS = frozenset({
     "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
     "funding_adjusted_return", "net_return_value", "price_change",
 })
+_MULTIPLE_TESTING_CONTROL_FORBIDDEN_KEYS = frozenset({
+    "pnl", "returns", "return", "sharpe", "drawdown", "risk", "edge",
+    "strategy_performance", "trade", "trades", "signal", "signals",
+    "position", "positions", "portfolio", "baseline_result",
+    "benchmark_result", "profitable", "live_ready", "deploy_ready",
+    "OFFLINE_EDGE_CANDIDATE", "EDGE_CANDIDATE",
+    "funding_adjusted_return", "net_return_value", "price_change",
+    "p_value", "confidence_interval", "score", "metric",
+    "performance", "profit",
+})
 
 
 class TestNullBenchmarkContractDiagnostics:
@@ -9543,4 +9558,306 @@ class TestNullBenchmarkContractDiagnostics:
         assert _NULL_BENCHMARK_CONTRACT_FORBIDDEN_KEYS.isdisjoint(all_keys), (
             f"Forbidden keys found in receipt: "
             f"{_NULL_BENCHMARK_CONTRACT_FORBIDDEN_KEYS & all_keys}"
+        )
+
+
+class TestMultipleTestingControlDiagnostics:
+    """Tests for _build_multiple_testing_control_diagnostics() and its
+    integration into the offline-edge receipt."""
+
+    # ── Helper returns a dict ──────────────────────────────────────────────
+    def test_helper_returns_dict(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert isinstance(result, dict)
+
+    # ── Top-level field values ─────────────────────────────────────────────
+    def test_control_version(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["control_version"] == MULTIPLE_TESTING_CONTROL_VERSION
+
+    def test_calculation_status(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["calculation_status"] == MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY
+
+    def test_multiple_testing_control_status(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["multiple_testing_control_status"] == MULTIPLE_TESTING_CONTROL_NOT_DEFINED
+
+    def test_multiple_testing_control_present_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["multiple_testing_control_present"] is False
+
+    def test_multiple_testing_control_hash_none(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["multiple_testing_control_hash"] is None
+
+    def test_multiple_testing_control_source_none(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["multiple_testing_control_source"] is None
+
+    # ── Scoring fields ─────────────────────────────────────────────────────
+    def test_scoring_authorized_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["scoring_authorized"] is False
+
+    def test_scoring_blocked_reason(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["scoring_blocked_reason"] == (
+            MULTIPLE_TESTING_CONTROL_BLOCKED_REASON_NOT_DEFINED
+        )
+
+    # ── Trial adjustment policy fields ─────────────────────────────────────
+    def test_trial_adjustment_policy_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["trial_adjustment_policy_defined"] is False
+
+    def test_trial_adjustment_policy_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["trial_adjustment_policy"] == NOT_DEFINED
+
+    def test_rejected_trial_accounting_policy_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["rejected_trial_accounting_policy_defined"] is False
+
+    def test_rejected_trial_accounting_policy_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["rejected_trial_accounting_policy"] == NOT_DEFINED
+
+    def test_family_definition_policy_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["family_definition_policy_defined"] is False
+
+    def test_family_definition_policy_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["family_definition_policy"] == NOT_DEFINED
+
+    # ── Multiple-testing control fields ────────────────────────────────────
+    def test_dsr_control_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["dsr_control_defined"] is False
+
+    def test_dsr_control_policy_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["dsr_control_policy"] == NOT_DEFINED
+
+    def test_pbo_control_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["pbo_control_defined"] is False
+
+    def test_pbo_control_policy_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["pbo_control_policy"] == NOT_DEFINED
+
+    def test_cscv_control_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["cscv_control_defined"] is False
+
+    def test_cscv_control_policy_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["cscv_control_policy"] == NOT_DEFINED
+
+    def test_spa_control_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["spa_control_defined"] is False
+
+    def test_spa_control_policy_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["spa_control_policy"] == NOT_DEFINED
+
+    def test_reality_check_control_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["reality_check_control_defined"] is False
+
+    def test_reality_check_control_policy_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["reality_check_control_policy"] == NOT_DEFINED
+
+    def test_false_discovery_control_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["false_discovery_control_defined"] is False
+
+    def test_false_discovery_control_policy_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["false_discovery_control_policy"] == NOT_DEFINED
+
+    # ── Model/parameter selection lock fields ──────────────────────────────
+    def test_model_selection_lock_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["model_selection_lock_defined"] is False
+
+    def test_model_selection_lock_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["model_selection_lock"] == NOT_DEFINED
+
+    def test_parameter_selection_lock_defined_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["parameter_selection_lock_defined"] is False
+
+    def test_parameter_selection_lock_not_defined(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["parameter_selection_lock"] == NOT_DEFINED
+
+    # ── Dependency fields ──────────────────────────────────────────────────
+    def test_strategy_rule_contract_dependency_satisfied_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["strategy_rule_contract_dependency_satisfied"] is False
+
+    def test_trial_manifest_dependency_satisfied_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["trial_manifest_dependency_satisfied"] is False
+
+    def test_oos_seal_dependency_satisfied_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["oos_seal_dependency_satisfied"] is False
+
+    def test_null_benchmark_contract_dependency_satisfied_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["null_benchmark_contract_dependency_satisfied"] is False
+
+    def test_split_scoring_safe_dependency_satisfied_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        assert result["split_scoring_safe_dependency_satisfied"] is False
+
+    # ── Prerequisites all false ────────────────────────────────────────────
+    def test_prerequisites_all_false(self):
+        result = _build_multiple_testing_control_diagnostics()
+        prereqs = result["multiple_testing_control_prerequisites_present"]
+        assert isinstance(prereqs, dict)
+        for key, value in prereqs.items():
+            assert value is False, f"{key} must be False, got {value}"
+
+    def test_prerequisites_expected_keys(self):
+        result = _build_multiple_testing_control_diagnostics()
+        prereqs = result["multiple_testing_control_prerequisites_present"]
+        expected_keys = {
+            "strategy_rule_contract",
+            "trial_manifest",
+            "trial_count",
+            "rejected_trial_accounting",
+            "candidate_registry",
+            "oos_seal",
+            "null_benchmark_contract",
+            "split_scoring_safe",
+            "trial_adjustment_policy",
+            "family_definition_policy",
+            "dsr_control",
+            "pbo_control",
+            "cscv_control",
+            "spa_control",
+            "reality_check_control",
+            "false_discovery_control",
+            "model_selection_lock",
+            "parameter_selection_lock",
+        }
+        assert prereqs.keys() == expected_keys
+
+    # ── Integration into receipt ───────────────────────────────────────────
+    def test_section_included_in_receipt(self):
+        receipt = _base_receipt(
+            multiple_testing_control_diagnostics=(
+                _build_multiple_testing_control_diagnostics()
+            ),
+        )
+        assert "multiple_testing_control_diagnostics" in receipt
+
+    def test_section_omitted_if_not_passed(self):
+        receipt = _base_receipt()
+        assert "multiple_testing_control_diagnostics" not in receipt
+
+    def test_receipt_validates_with_section(self):
+        receipt = _base_receipt(
+            multiple_testing_control_diagnostics=(
+                _build_multiple_testing_control_diagnostics()
+            ),
+        )
+        # validate_real_validation_receipt should not raise
+        validate_real_validation_receipt(receipt)
+
+    def test_final_offline_verdict_unchanged(self):
+        receipt = _base_receipt(
+            multiple_testing_control_diagnostics=(
+                _build_multiple_testing_control_diagnostics()
+            ),
+        )
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_guardrails_unchanged(self):
+        receipt = _base_receipt(
+            multiple_testing_control_diagnostics=(
+                _build_multiple_testing_control_diagnostics()
+            ),
+        )
+        for key, value in receipt["guardrail_status"].items():
+            assert value is True, f"guardrail {key} must be True"
+
+    # ── No forbidden keys ──────────────────────────────────────────────────
+    def test_no_forbidden_calculation_keys(self):
+        result = _build_multiple_testing_control_diagnostics()
+        all_keys = _all_dict_keys(result)
+        assert _MULTIPLE_TESTING_CONTROL_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{_MULTIPLE_TESTING_CONTROL_FORBIDDEN_KEYS & all_keys}"
+        )
+
+    # ── CLI integration ────────────────────────────────────────────────────
+    def test_cli_inventory_path_includes_section(self, tmp_path):
+        """Inventory-based CLI path should include the section."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "multiple_testing_control_diagnostics" in receipt
+
+    def test_cli_fallback_path_includes_section(self, tmp_path):
+        """Fallback CLI path (no --bars-dir) should include the section."""
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--global-min-timestamp", "2026-01-01T00:00:00Z",
+            "--global-max-timestamp", "2026-02-01T00:00:00Z",
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "multiple_testing_control_diagnostics" in receipt
+
+    # ── Safety-key regression ──────────────────────────────────────────────
+    def test_no_forbidden_top_level_keys_in_receipt(self):
+        """Receipt with the section must still forbid pnl/sharpe/edge/strategy_performance."""
+        receipt = _base_receipt(
+            multiple_testing_control_diagnostics=(
+                _build_multiple_testing_control_diagnostics()
+            ),
+        )
+        for forbidden in ("pnl", "sharpe", "edge", "strategy_performance"):
+            assert forbidden not in receipt
+
+    def test_no_forbidden_calculation_keys_in_receipt(self):
+        """Receipt with the section must still forbid all calculation keys."""
+        receipt = _base_receipt(
+            multiple_testing_control_diagnostics=(
+                _build_multiple_testing_control_diagnostics()
+            ),
+        )
+        all_keys = _all_dict_keys(receipt)
+        assert _MULTIPLE_TESTING_CONTROL_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found in receipt: "
+            f"{_MULTIPLE_TESTING_CONTROL_FORBIDDEN_KEYS & all_keys}"
         )
