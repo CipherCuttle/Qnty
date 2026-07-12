@@ -16,16 +16,16 @@ posture is unchanged:
 
 The current offline-edge ladder consists of steps 1–10:
 
-1. Input inventory & split smoke
-2. Row materialization & split assignment smoke
-3. Timestamp convention & offset precision smoke
-4. Funding-to-bars temporal joinability smoke
-5. Funding adjustment arithmetic scaffold smoke
-6. Funding adjustment row scaffold smoke
-7. Funding application readiness gate smoke
-8. Split leakage audit diagnostics
-9. Strategy rule contract diagnostics
-10. Real-data preflight ready receipt
+1. Raw CSV inventory / hashes — done
+2. Deterministic splits — done
+3. Row assignment — done
+4. Gross observational returns scaffold — done
+5. Cost drag scaffold — done
+6. Funding diagnostics / adjustment scaffolding — diagnostic-complete
+7. Strategy rule contract diagnostics — diagnostic-only, CONTRACT_NOT_DEFINED
+8. Trade / position simulation — not started
+9. Net PnL / equity / risk — not started
+10. Final offline edge verdict — not started
 
 Recent merged PRs:
 
@@ -130,33 +130,33 @@ The future auditor may only:
 
 The future auditor may **NOT**:
 
-- remove blockers
-- change verdicts
-- promote `final_offline_verdict`
-- propose strategy parameters
-- propose entry rules
-- propose exit rules
-- propose position sizing
-- suggest optimization
-- suggest tuning
-- inspect or interpret PnL
-- inspect or interpret Sharpe
-- inspect or interpret drawdown
-- inspect or interpret risk metrics
-- claim edge
-- claim paper-readiness
-- claim live-readiness
-- recommend exchange integration
-- recommend paper-engine integration
-- recommend live integration
-- call an LLM API from the canonical runner
-- mutate source CSVs
-- mutate DBs
-- mutate receipts
-- mutate generated outputs
-- import or depend on `quantbot/experiment/pbo.py`
-- be imported by `quantbot/experiment/offline_edge_real_validation.py`
-- become part of the verdict path
+- may not remove blockers
+- may not change verdicts
+- may not promote `final_offline_verdict`
+- may not propose strategy parameters
+- may not propose entry rules
+- may not propose exit rules
+- may not propose position sizing
+- may not suggest optimization
+- may not suggest tuning
+- may not inspect or interpret PnL
+- may not inspect or interpret Sharpe
+- may not inspect or interpret drawdown
+- may not inspect or interpret risk metrics
+- may not claim edge
+- may not claim paper-readiness
+- may not claim live-readiness
+- may not recommend exchange integration
+- may not recommend paper-engine integration
+- may not recommend live integration
+- may not call an LLM API from the canonical runner
+- may not mutate source CSVs
+- may not mutate DBs
+- may not mutate receipts
+- may not mutate generated outputs
+- may not import or depend on `quantbot/experiment/pbo.py`
+- may not be imported by `quantbot/experiment/offline_edge_real_validation.py`
+- may not become part of the verdict path
 
 ---
 
