@@ -71,6 +71,7 @@ __all__ = [
     "_build_split_leakage_audit_diagnostics",
     "_build_strategy_rule_contract_diagnostics",
     "_build_trial_manifest_diagnostics",
+    "_build_oos_seal_diagnostics",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -198,6 +199,12 @@ TRIAL_MANIFEST_VERSION = "trial-manifest-0.1"
 TRIAL_MANIFEST_DIAGNOSTIC_ONLY = "TRIAL_MANIFEST_DIAGNOSTIC_ONLY"
 TRIAL_MANIFEST_NOT_DEFINED = "TRIAL_MANIFEST_NOT_DEFINED"
 TRIAL_MANIFEST_BLOCKED_REASON_NOT_DEFINED = "TRIAL_MANIFEST_NOT_DEFINED"
+
+# === OOS seal diagnostics constants ===
+OOS_SEAL_VERSION = "oos-seal-0.1"
+OOS_SEAL_DIAGNOSTIC_ONLY = "OOS_SEAL_DIAGNOSTIC_ONLY"
+OOS_SEAL_NOT_DEFINED = "OOS_SEAL_NOT_DEFINED"
+OOS_SEAL_BLOCKED_REASON_NOT_DEFINED = "OOS_SEAL_NOT_DEFINED"
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -6013,6 +6020,65 @@ def _build_trial_manifest_diagnostics() -> dict[str, Any]:
     }
 
 
+def _build_oos_seal_diagnostics() -> dict[str, Any]:
+    """Build a diagnostic-only section recording that no OOS seal exists yet
+    and therefore OOS scoring is blocked.
+
+    This section does **not** define an OOS period, choose dates, choose
+    splits, hash data, freeze the symbol universe, score anything, inspect
+    performance, compare variants, or authorize scoring. Every seal field is
+    either ``None``, ``False``, or ``NOT_DEFINED`` — this is a diagnostic of
+    absence, not a definition of presence.
+
+    Fail-closed rules:
+    * ``scoring_authorized`` is always ``False`` at this stage.
+    * ``oos_seal_status`` is always ``OOS_SEAL_NOT_DEFINED``.
+    * ``scoring_blocked_reason`` is always ``OOS_SEAL_NOT_DEFINED``.
+    * All ``oos_seal_prerequisites_present`` values are always ``False``.
+    """
+    return {
+        "seal_version": OOS_SEAL_VERSION,
+        "calculation_status": OOS_SEAL_DIAGNOSTIC_ONLY,
+        "oos_seal_status": OOS_SEAL_NOT_DEFINED,
+        "oos_seal_present": False,
+        "oos_seal_hash": None,
+        "oos_seal_source": None,
+        "scoring_authorized": False,
+        "scoring_blocked_reason": OOS_SEAL_BLOCKED_REASON_NOT_DEFINED,
+        "oos_split_id": None,
+        "oos_period_start": None,
+        "oos_period_end": None,
+        "oos_period_frozen": False,
+        "oos_symbol_universe_frozen": False,
+        "oos_symbol_universe_hash": None,
+        "oos_data_hash_present": False,
+        "oos_data_hash": None,
+        "sealed_before_scoring": False,
+        "seal_timestamp_utc": None,
+        "seal_commit_sha": None,
+        "holdout_access_policy_defined": False,
+        "holdout_access_policy": "NOT_DEFINED",
+        "strategy_rule_contract_dependency_satisfied": False,
+        "trial_manifest_dependency_satisfied": False,
+        "split_scoring_safe_dependency_satisfied": False,
+        "null_benchmark_contract_present": False,
+        "multiple_testing_policy_present": False,
+        "oos_seal_prerequisites_present": {
+            "strategy_rule_contract": False,
+            "trial_manifest": False,
+            "trial_count": False,
+            "candidate_registry": False,
+            "symbol_universe_freeze": False,
+            "split_policy_freeze": False,
+            "holdout_access_policy": False,
+            "oos_period": False,
+            "oos_data_hash": False,
+            "null_benchmark_contract": False,
+            "multiple_testing_policy": False,
+        },
+    }
+
+
 # ── Receipt builder ──────────────────────────────────────────────────────
 
 
@@ -6054,6 +6120,7 @@ def build_real_validation_receipt(
     split_leakage_audit_diagnostics: dict | None = None,
     strategy_rule_contract_diagnostics: dict | None = None,
     trial_manifest_diagnostics: dict | None = None,
+    oos_seal_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -6174,6 +6241,8 @@ def build_real_validation_receipt(
         )
     if trial_manifest_diagnostics is not None:
         receipt["trial_manifest_diagnostics"] = trial_manifest_diagnostics
+    if oos_seal_diagnostics is not None:
+        receipt["oos_seal_diagnostics"] = oos_seal_diagnostics
 
     return receipt
 
@@ -6553,6 +6622,7 @@ def main(argv: list[str] | None = None) -> int:
                 _build_strategy_rule_contract_diagnostics()
             )
             trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
+            oos_seal_diagnostics = _build_oos_seal_diagnostics()
         except ValueError as exc:
             print(f"FATAL: offline materialization failed: {exc}")
             return 4
@@ -6603,6 +6673,7 @@ def main(argv: list[str] | None = None) -> int:
                 strategy_rule_contract_diagnostics
             ),
             trial_manifest_diagnostics=trial_manifest_diagnostics,
+            oos_seal_diagnostics=oos_seal_diagnostics,
         )
     else:
         # Legacy path: use CLI-provided timestamp bounds.
@@ -6630,6 +6701,7 @@ def main(argv: list[str] | None = None) -> int:
                 _build_strategy_rule_contract_diagnostics()
             )
             trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
+            oos_seal_diagnostics = _build_oos_seal_diagnostics()
         except ValueError as exc:
             print(f"FATAL: split leakage audit failed: {exc}")
             return 4
@@ -6645,6 +6717,7 @@ def main(argv: list[str] | None = None) -> int:
                 strategy_rule_contract_diagnostics
             ),
             trial_manifest_diagnostics=trial_manifest_diagnostics,
+            oos_seal_diagnostics=oos_seal_diagnostics,
         )
 
     output_path = output_dir / "real_validation_receipt.json"
