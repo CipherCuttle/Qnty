@@ -60,6 +60,14 @@ from quantbot.experiment.offline_edge_real_validation import (
     materialize_funding_adjustment_arithmetic_scaffold_diagnostics,
     materialize_funding_adjustment_row_scaffold_diagnostics,
     _build_funding_adjustment_sample_aggregate_diagnostics,
+    _build_split_leakage_audit_diagnostics,
+    SPLIT_LEAKAGE_AUDIT_VERSION,
+    SPLIT_LEAKAGE_AUDIT_DIAGNOSTIC_ONLY,
+    SPLIT_LEAKAGE_AUDIT_INSUFFICIENT_FOR_SCORING,
+    SPLIT_LEAKAGE_AUDIT_BLOCKED,
+    SPLIT_LEAKAGE_AUDIT_ROW_COUNT_NOT_COMPUTED,
+    _SPLIT_BUILDER_INVENTORY,
+    _SPLIT_BUILDER_FALLBACK,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -8026,3 +8034,442 @@ class TestFundingAdjustmentSampleAggregateDiagnostics:
         assert forbidden.isdisjoint(all_keys), (
             f"Forbidden keys found: {forbidden & all_keys}"
         )
+
+
+# ── Split leakage audit diagnostics ──────────────────────────────────────
+
+
+def _inventory_splits(tmp_path: Path, split_count: int = 3) -> list[dict]:
+    """Build real-data inventory split definitions (adjacent windows)."""
+    _write_tiny_bars_csv(tmp_path)
+    inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
+    return materialize_split_definitions_from_inventory(
+        inventory=inventory, split_count=split_count
+    )
+
+
+def _fallback_splits(split_count: int = 3) -> list[dict]:
+    """Build fallback deterministic split definitions (full overlap windows)."""
+    return build_deterministic_split_definitions(
+        global_min_timestamp="2026-01-01T00:00:00Z",
+        global_max_timestamp="2026-02-01T00:00:00Z",
+        split_count=split_count,
+    )
+
+
+_SPLIT_LEAKAGE_FORBIDDEN_KEYS = {
+    "returns", "return", "pnl", "PnL", "sharpe", "Sharpe", "drawdown",
+    "risk", "edge", "strategy_performance", "trade", "trades",
+    "position", "positions", "signal", "signals", "portfolio",
+    "funding_adjusted_return", "net_return_value", "price_change",
+    "gross_return_value", "cost_adjusted_return",
+}
+
+
+class TestSplitLeakageAuditDiagnostics:
+    """Coverage for _build_split_leakage_audit_diagnostics: a diagnostic-only,
+    fail-closed audit that blocks strategy scoring and computes no returns/
+    PnL/Sharpe/risk/edge."""
+
+    # ── Test 1: happy path (inventory builder) emits section ───────────────
+    def test_inventory_builder_emits_section(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        assert isinstance(result, dict)
+        assert result["audit_version"] == SPLIT_LEAKAGE_AUDIT_VERSION
+        assert result["audit_version"] == "split-leakage-audit-0.1"
+        assert result["split_builder_inspected"] == _SPLIT_BUILDER_INVENTORY
+        assert result["split_builder_inspected"] == (
+            "materialize_split_definitions_from_inventory"
+        )
+
+    # ── Test 2: calculation_status ─────────────────────────────────────────
+    def test_calculation_status_diagnostic_only(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        assert result["calculation_status"] == SPLIT_LEAKAGE_AUDIT_DIAGNOSTIC_ONLY
+        assert result["calculation_status"] == "SPLIT_LEAKAGE_AUDIT_DIAGNOSTIC_ONLY"
+
+    # ── Test 3: inventory audit status ─────────────────────────────────────
+    def test_inventory_status_insufficient_for_scoring(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        assert result["split_leakage_audit_status"] == (
+            SPLIT_LEAKAGE_AUDIT_INSUFFICIENT_FOR_SCORING
+        )
+        assert result["split_leakage_audit_status"] == (
+            "SPLIT_LEAKAGE_AUDIT_INSUFFICIENT_FOR_SCORING"
+        )
+
+    # ── Test 4/5: purge/embargo gaps are zero ──────────────────────────────
+    def test_purge_and_embargo_gaps_zero(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        assert result["purge_gap_seconds"] == 0
+        assert result["embargo_gap_seconds"] == 0
+
+    # ── Test 6: windows adjacent ───────────────────────────────────────────
+    def test_windows_adjacent_true(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        assert result["windows_adjacent"] is True
+
+    # ── Test 7: all scoring prerequisites false ────────────────────────────
+    def test_scoring_prerequisites_all_false(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        prereqs = result["scoring_prerequisites_present"]
+        assert set(prereqs.keys()) == {
+            "decision_time_convention",
+            "feature_lookback",
+            "label_horizon",
+            "holding_period",
+            "funding_interval_exposure",
+            "cost_event_timing",
+        }
+        assert all(value is False for value in prereqs.values())
+        # No strategy-ish alias key is introduced.
+        assert "strategy_dependent_prerequisites_present" not in result
+
+    # ── Test 8: all leakage risks true ─────────────────────────────────────
+    def test_leakage_risk_register_all_true(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        register = result["leakage_risk_register"]
+        assert set(register.keys()) == {
+            "temporal_purge_leakage",
+            "embargo_leakage",
+            "same_bar_lookahead",
+            "future_bar_leakage",
+            "symbol_universe_leakage",
+            "no_independent_oos_seal",
+        }
+        assert all(value is True for value in register.values())
+
+    # ── Test 9/10/11: seals/manifest/universe absent ───────────────────────
+    def test_seal_manifest_universe_absent(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        assert result["oos_seal_present"] is False
+        assert result["trial_manifest_present"] is False
+        assert result["symbol_universe_frozen"] is False
+
+    # ── Test 12: split scoring not safe ────────────────────────────────────
+    def test_split_scoring_safe_false(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        assert result["split_scoring_safe"] is False
+
+    # ── Test 13: one per_split entry per split ──────────────────────────────
+    def test_one_per_split_entry_per_split(self, tmp_path):
+        splits = _inventory_splits(tmp_path, split_count=3)
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=splits,
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        assert result["split_count"] == len(splits)
+        assert len(result["per_split"]) == len(splits)
+        expected_keys = {
+            "split_id",
+            "split_index",
+            "train_start",
+            "train_end",
+            "validation_start",
+            "validation_end",
+            "boundary_gap_seconds",
+            "train_validation_overlap",
+            "validation_row_count_status",
+            "calculation_status",
+        }
+        for entry in result["per_split"]:
+            assert set(entry.keys()) == expected_keys
+            assert entry["calculation_status"] == NOT_EXECUTED
+            assert entry["validation_row_count_status"] == (
+                SPLIT_LEAKAGE_AUDIT_ROW_COUNT_NOT_COMPUTED
+            )
+
+    # ── Test 14: adjacent real splits have zero boundary gap ───────────────
+    def test_inventory_boundary_gap_seconds_zero(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        for entry in result["per_split"]:
+            assert entry["boundary_gap_seconds"] == 0
+
+    # ── Test 15: adjacent real splits have no overlap ──────────────────────
+    def test_inventory_no_train_validation_overlap(self, tmp_path):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        assert result["train_validation_overlap_detected"] is False
+        assert all(
+            entry["train_validation_overlap"] is False
+            for entry in result["per_split"]
+        )
+
+    # ── Test 16: fallback marks overlap detected ───────────────────────────
+    def test_fallback_overlap_detected_true(self):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_fallback_splits(),
+            split_builder_inspected=_SPLIT_BUILDER_FALLBACK,
+        )
+        assert result["train_validation_overlap_detected"] is True
+        assert result["split_builder_inspected"] == _SPLIT_BUILDER_FALLBACK
+        assert result["split_builder_inspected"] == (
+            "build_deterministic_split_definitions"
+        )
+
+    # ── Test 17: fallback status is blocked ────────────────────────────────
+    def test_fallback_status_blocked(self):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_fallback_splits(),
+            split_builder_inspected=_SPLIT_BUILDER_FALLBACK,
+        )
+        assert result["split_leakage_audit_status"] == SPLIT_LEAKAGE_AUDIT_BLOCKED
+        assert result["split_leakage_audit_status"] == (
+            "SPLIT_LEAKAGE_AUDIT_BLOCKED"
+        )
+        assert result["split_scoring_safe"] is False
+
+    # ── Test 18: fallback per-split entries overlap ────────────────────────
+    def test_fallback_per_split_overlap_true(self):
+        result = _build_split_leakage_audit_diagnostics(
+            split_definitions=_fallback_splits(),
+            split_builder_inspected=_SPLIT_BUILDER_FALLBACK,
+        )
+        assert all(
+            entry["train_validation_overlap"] is True
+            for entry in result["per_split"]
+        )
+
+    # ── Test 19: per_symbol is None ────────────────────────────────────────
+    def test_per_symbol_is_none(self, tmp_path):
+        inv = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        fb = _build_split_leakage_audit_diagnostics(
+            split_definitions=_fallback_splits(),
+            split_builder_inspected=_SPLIT_BUILDER_FALLBACK,
+        )
+        assert inv["per_symbol"] is None
+        assert fb["per_symbol"] is None
+
+    # ── Test 20: no forbidden calculation/performance keys ─────────────────
+    def test_no_forbidden_calculation_keys(self, tmp_path):
+        for splits, builder in (
+            (_inventory_splits(tmp_path), _SPLIT_BUILDER_INVENTORY),
+            (_fallback_splits(), _SPLIT_BUILDER_FALLBACK),
+        ):
+            result = _build_split_leakage_audit_diagnostics(
+                split_definitions=splits, split_builder_inspected=builder
+            )
+            all_keys = _all_dict_keys(result)
+            assert _SPLIT_LEAKAGE_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+                f"Forbidden keys found: "
+                f"{_SPLIT_LEAKAGE_FORBIDDEN_KEYS & all_keys}"
+            )
+            # Never emit pass/safe/candidate wording in any status value.
+            for status in (
+                result["split_leakage_audit_status"],
+                result["calculation_status"],
+            ):
+                upper = status.upper()
+                assert "SAFE" not in upper
+                assert "PASS" not in upper
+                assert "CANDIDATE" not in upper
+
+    # ── Test 21: receipt final verdict remains BLOCKED ─────────────────────
+    def test_receipt_final_verdict_unchanged(self, tmp_path):
+        section = _build_split_leakage_audit_diagnostics(
+            split_definitions=_inventory_splits(tmp_path),
+            split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+        )
+        receipt = _base_receipt(split_leakage_audit_diagnostics=section)
+        # Must survive the recursive forbidden-key / verdict validator.
+        validate_real_validation_receipt(receipt)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        assert receipt["split_leakage_audit_diagnostics"] == section
+
+    # ── Test 22: CLI with bars inventory includes the section ──────────────
+    def test_cli_bars_inventory_includes_section(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+
+        out_dir = Path("/tmp") / f"qnty_sla_cli_inv_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--bars-dir",
+                    str(bars_dir),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "split_leakage_audit_diagnostics" in written
+            section = written["split_leakage_audit_diagnostics"]
+            assert section["split_builder_inspected"] == _SPLIT_BUILDER_INVENTORY
+            assert section["split_leakage_audit_status"] == (
+                SPLIT_LEAKAGE_AUDIT_INSUFFICIENT_FOR_SCORING
+            )
+            assert section["split_scoring_safe"] is False
+            assert written["final_offline_verdict"] == (
+                BLOCKED_BY_VALIDATION_IMPLEMENTATION
+            )
+            assert "EDGE_CANDIDATE" not in json.dumps(written)
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 23: legacy fallback path includes the section, blocked ────────
+    def test_cli_legacy_fallback_includes_section_blocked(self):
+        out_dir = Path("/tmp") / f"qnty_sla_cli_fb_{uuid.uuid4().hex}"
+        receipt_path = out_dir / "real_validation_receipt.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "quantbot.experiment.offline_edge_real_validation",
+                    "--read-only",
+                    "--output-dir",
+                    str(out_dir),
+                    "--input-manifest-fingerprint",
+                    "a" * 64,
+                    "--data-quality-receipt-sha256",
+                    "b" * 64,
+                    "--code-commit-sha",
+                    "c" * 40,
+                    "--global-min-timestamp",
+                    "2026-01-01T00:00:00Z",
+                    "--global-max-timestamp",
+                    "2026-02-01T00:00:00Z",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+            with open(receipt_path) as f:
+                written = json.load(f)
+            assert "split_leakage_audit_diagnostics" in written
+            section = written["split_leakage_audit_diagnostics"]
+            assert section["split_builder_inspected"] == _SPLIT_BUILDER_FALLBACK
+            assert section["split_leakage_audit_status"] == (
+                SPLIT_LEAKAGE_AUDIT_BLOCKED
+            )
+            assert section["train_validation_overlap_detected"] is True
+            assert section["split_scoring_safe"] is False
+            assert written["final_offline_verdict"] == (
+                BLOCKED_BY_VALIDATION_IMPLEMENTATION
+            )
+        finally:
+            if receipt_path.exists():
+                receipt_path.unlink()
+            if out_dir.exists():
+                out_dir.rmdir()
+
+    # ── Test 24: no pbo/walkforward imports ────────────────────────────────
+    def test_no_pbo_or_walkforward_imports(self):
+        module_path = (
+            Path(__file__).resolve().parents[2]
+            / "quantbot"
+            / "experiment"
+            / "offline_edge_real_validation.py"
+        )
+        tree = ast.parse(module_path.read_text())
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+        forbidden_substrings = (
+            "pbo",
+            "walkforward",
+            "walkforward_runner",
+            "offline_edge_walkforward",
+        )
+        for name in imported:
+            for sub in forbidden_substrings:
+                assert sub not in name, f"forbidden import: {name}"
+
+    # ── Test 25: safety-key regression across both builders ────────────────
+    def test_safety_key_regression(self, tmp_path):
+        for splits, builder in (
+            (_inventory_splits(tmp_path), _SPLIT_BUILDER_INVENTORY),
+            (_fallback_splits(), _SPLIT_BUILDER_FALLBACK),
+        ):
+            result = _build_split_leakage_audit_diagnostics(
+                split_definitions=splits, split_builder_inspected=builder
+            )
+            blob = json.dumps(result)
+            for token in (
+                "OFFLINE_EDGE_CANDIDATE",
+                "EDGE_CANDIDATE",
+                "sharpe",
+                "Sharpe",
+                "drawdown",
+                "funding_adjusted_return",
+                "net_return_value",
+                "price_change",
+                "portfolio",
+            ):
+                assert token not in blob, f"forbidden token in section: {token}"
+            all_keys = _all_dict_keys(result)
+            assert _SPLIT_LEAKAGE_FORBIDDEN_KEYS.isdisjoint(all_keys)
+
+    # ── Fail-closed guards ─────────────────────────────────────────────────
+    def test_bad_builder_name_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="split_builder_inspected"):
+            _build_split_leakage_audit_diagnostics(
+                split_definitions=_inventory_splits(tmp_path),
+                split_builder_inspected="some_unknown_builder",
+            )
+
+    def test_empty_split_definitions_rejected(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            _build_split_leakage_audit_diagnostics(
+                split_definitions=[],
+                split_builder_inspected=_SPLIT_BUILDER_INVENTORY,
+            )
