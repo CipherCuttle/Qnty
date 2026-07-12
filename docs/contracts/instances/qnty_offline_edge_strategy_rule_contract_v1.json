@@ -29,7 +29,7 @@
   "contract_commit_sha": "TO_BE_FILLED_AFTER_MERGE",
   "contract_frozen": true,
   "contract_frozen_at_utc": "2026-07-12T23:30:00Z",
-  "contract_hash": "9164d63488085833334108a2e49bd8c2e90428d7dafbb468ecc5607dcadefd28",
+  "contract_hash": "FROZEN_IN_SIDECAR",
   "contract_hash_algorithm": "sha256",
   "contract_hash_scope": "exact committed JSON bytes, excluding sidecar",
   "contract_hash_status": "FROZEN_IN_SIDECAR",

@@ -22,9 +22,9 @@ The contract payload is frozen by **file bytes + sidecar hash**:
 1. The JSON file is written with deterministic formatting (`sort_keys=True`, `indent=2`,
    trailing newline).
 2. The SHA-256 of the exact file bytes is computed and stored in the `.sha256` sidecar.
-3. The `contract_hash` field inside the JSON carries the same value as the sidecar,
-   but the sidecar is the authoritative reference (the hash cannot be self-verifying
-   inside the hashed payload without a fixed-point construction).
+3. The JSON `contract_hash` field is set to the literal marker `"FROZEN_IN_SIDECAR"`.
+   Embedding the digest of the same JSON bytes would create a self-referential loop;
+   the authoritative digest is the `.sha256` sidecar.
 
 ### Self-hash limitation
 
@@ -34,12 +34,12 @@ the file is written, and writing the hash into the file changes the bytes.
 
 **Resolution:** The contract uses a two-part packet:
 
+- `contract_hash` is set to the literal marker `"FROZEN_IN_SIDECAR"` because embedding
+  the digest of the same JSON bytes would create a self-referential loop.
 - `contract_hash_status = "FROZEN_IN_SIDECAR"` — the authoritative hash lives in the
   sidecar file.
 - `contract_hash_scope = "exact committed JSON bytes, excluding sidecar"` — the scope
   is unambiguous.
-- The `contract_hash` value in the JSON matches the sidecar for convenience, but the
-  sidecar is the verification anchor.
 
 ### Merge-commit limitation
 
