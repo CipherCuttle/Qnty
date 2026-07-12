@@ -1617,3 +1617,76 @@ class TestCrossBatchPeakDrawdownReconcile:
         )
         # The read-only authoritative verifier (which walks ALL equity rows) must also agree.
         assert verify_database(db_path).status == "OK"
+
+
+# ---------------------------------------------------------------------------
+# Guardrail: a genuinely absent funding source CSV must still fail closed
+# ---------------------------------------------------------------------------
+
+class TestMissingFundingCsvFailsClosed:
+    """The funding-source snapshot digest is read from the CSV on disk.
+
+    The fixtures above pass data_dir so that read resolves; this test proves the
+    writer still aborts before any ledger mutation when the funding CSV is truly
+    absent. It must not be "fixed" by wiring a data_dir at it — the mocked
+    load_all_funding deliberately still returns rows, so the only thing missing
+    is the on-disk source the snapshot digest attests to.
+    """
+
+    def test_missing_funding_csv_aborts_before_ledger_mutation(self, tmp_path: Path):
+        db_path = _init_test_db(tmp_path, forward_start_ts=TS[4])
+        per_bar_obs = [_make_obs(ts, [SYMBOL], i) for i, ts in enumerate(TS)]
+        obs_dir = _write_observation_log(tmp_path, per_bar_obs)
+        cfg = _make_cfg()
+        cfg["forward_start_ts"] = TS[4]
+        cfg["config_hash"] = config_hash(cfg)
+
+        # OHLCV CSV only: data_dir exists and is populated, but the funding CSV
+        # the snapshot digest needs is never written.
+        _write_ohlcv_csv(tmp_path)
+        funding_csv = tmp_path / "data" / f"{SYMBOL}_8h_funding.csv"
+        assert not funding_csv.exists()
+
+        with patch(
+            "quantbot.paper.sqlite_writer.load_all_ohlcv",
+            return_value={SYMBOL: _make_bars()},
+        ), patch(
+            "quantbot.paper.sqlite_writer.load_all_funding",
+            return_value=_make_funding_df(),
+        ), patch("quantbot.paper.sqlite_writer.load_config", return_value=cfg):
+            status, msg = run_sqlite_accounting(
+                db_path=db_path,
+                forward_obs_dir=obs_dir,
+                data_dir=tmp_path / "data",
+            )
+
+        assert status == STATUS_ABORTED, f"expected ABORTED, got {status}: {msg}"
+        assert "FUNDING_SOURCE_SNAPSHOT_EMISSION_FAILED" in msg, msg
+        assert str(funding_csv) in msg, msg
+
+        # No snapshot artifact, and the ledger is byte-for-byte untouched.
+        snapshot_dir = db_path.parent / "funding_source_snapshots"
+        assert list(snapshot_dir.glob("*.json")) == []
+
+        conn = connect_readonly(db_path)
+        try:
+            for table in (
+                "ledger_batches",
+                "ledger_events",
+                "fills",
+                "trades",
+                "funding",
+                "equity_snapshots",
+                "open_positions",
+            ):
+                count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                assert count == 0, f"{table} retained rows after fail-closed abort"
+            state = conn.execute(
+                """
+                SELECT watermark_bar_ts, realized_gross, fees_cum, funding_cum
+                FROM ledger_state WHERE id = 1
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+        assert tuple(state) == (None, 0.0, 0.0, 0.0)
