@@ -9707,6 +9707,24 @@ class TestStrategyRuleContractCommitBindingDiagnostics:
             )
 
 
+    def test_materialized_contract_diagnostics_preserve_contract_id(self):
+        """Prove real contract diagnostics preserve identity fields for E1.
+
+        Regression: materialize_strategy_rule_contract_instance_diagnostics()
+        must include contract_id/version/status so trial manifest binding
+        does not fail with 'contract diagnostic says None'.
+        """
+        diagnostics = _build_strategy_rule_contract_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        assert diagnostics["contract_id"] == "qnty_offline_edge_strategy_rule_contract_v1"
+        assert diagnostics["contract_version"] == "1.0.0"
+        assert diagnostics["contract_status"] == "FROZEN_DECLARATION_ONLY"
+        assert diagnostics["contract_packet_gate"]["gate_passed"] is True
+
+
 class TestStrategyRuleContractPacketGate:
     """Tests for _derive_strategy_rule_contract_packet_gate() — Lane D1.
 
@@ -12701,6 +12719,95 @@ class TestTrialManifestPreregistrationReceiptIntegration:
         assert gate.get("gate_passed") is False
         assert gate.get("gate_status") == "TRIAL_MANIFEST_NOT_LOADED"
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
+class TestTrialManifestRealPathIntegration:
+    """Full-path integration: real committed contract + trial manifest files.
+
+    Proves the E1 trial manifest pre-registration can bind to real materialized
+    strategy-rule contract diagnostics (not just hand-built mocks), so the
+    ``contract diagnostic says None`` failure no longer occurs.
+    """
+
+    @staticmethod
+    def _contract_json_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+        )
+
+    @staticmethod
+    def _contract_sidecar_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256"
+        )
+
+    @staticmethod
+    def _commit_binding_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json"
+        )
+
+    @staticmethod
+    def _trial_manifest_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.json"
+        )
+
+    @staticmethod
+    def _trial_manifest_sidecar_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.sha256"
+        )
+
+    def test_contract_diagnostics_preserve_identity(self):
+        """Real materialized contract diagnostics include identity fields."""
+        diagnostics = _build_strategy_rule_contract_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._contract_sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        assert diagnostics["contract_id"] == "qnty_offline_edge_strategy_rule_contract_v1"
+        assert diagnostics["contract_version"] == "1.0.0"
+        assert diagnostics["contract_status"] == "FROZEN_DECLARATION_ONLY"
+        assert diagnostics["contract_packet_gate"]["gate_passed"] is True
+
+    def test_trial_manifest_full_real_path_binds_contract(self):
+        """Real trial manifest binds to real contract diagnostics without None error.
+
+        Full end-to-end: real contract JSON + sidecar + commit binding ->
+        _build_strategy_rule_contract_diagnostics ->
+        materialize_trial_manifest_preregistration_diagnostics.
+
+        This is the regression for the P1: the real path must not fail with
+        ``contract diagnostic says None``.
+        """
+        contract_diagnostics = _build_strategy_rule_contract_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._contract_sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+
+        trial_diagnostics = _build_trial_manifest_diagnostics(
+            manifest_path=self._trial_manifest_path(),
+            sidecar_path=self._trial_manifest_sidecar_path(),
+            strategy_rule_contract_diagnostics=contract_diagnostics,
+        )
+
+        assert trial_diagnostics["bound_contract_id"] == (
+            "qnty_offline_edge_strategy_rule_contract_v1"
+        )
+        assert trial_diagnostics["bound_contract_digest_matches"] is True
+        assert trial_diagnostics["contract_packet_gate_passed"] is True
+        gate = trial_diagnostics["trial_manifest_preregistration_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == "TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY"
+        assert trial_diagnostics["trial_scoring_ready"] is False
+        assert trial_diagnostics["trial_execution_authorized"] is False
 
     def test_cli_fallback_path_includes_section(self, tmp_path):
         output_dir = tmp_path / "output"
