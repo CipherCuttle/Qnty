@@ -80,6 +80,8 @@ __all__ = [
     "materialize_null_benchmark_preregistration_diagnostics",
     "_derive_null_benchmark_preregistration_gate",
     "_build_multiple_testing_control_diagnostics",
+    "materialize_multiple_testing_control_preregistration_diagnostics",
+    "_derive_multiple_testing_control_preregistration_gate",
     "_build_trade_position_simulation_contract_diagnostics",
     "_build_net_pnl_equity_risk_contract_diagnostics",
     "_build_final_offline_edge_verdict_logic_diagnostics",
@@ -326,6 +328,53 @@ MULTIPLE_TESTING_CONTROL_VERSION = "multiple-testing-control-0.1"
 MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY = "MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY"
 MULTIPLE_TESTING_CONTROL_NOT_DEFINED = "MULTIPLE_TESTING_CONTROL_NOT_DEFINED"
 MULTIPLE_TESTING_CONTROL_BLOCKED_REASON_NOT_DEFINED = "MULTIPLE_TESTING_CONTROL_NOT_DEFINED"
+MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY = (
+    "MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY"
+)
+
+# The frozen test-family / multiplicity declaration. A regenerated sidecar makes
+# the packet bytes self-consistent again, so these values are pinned in code:
+# they are the only multiplicity policy the pre-registration lane will ever
+# accept. Declaring the family *before* any statistic exists is what stops a
+# post-hoc "we only ran one test" claim.
+TESTING_FAMILY_POLICY_FROZEN = (
+    "SINGLE_PRE_REGISTERED_TRIAL_AND_SINGLE_NULL_REFERENCE_ONLY"
+)
+SEARCH_PROCEDURE_POLICY_FROZEN = "NO_SEARCH_NO_POST_HOC_SELECTION"
+MULTIPLICITY_CONTROL_POLICY_FROZEN = (
+    "NO_ADJUSTMENT_DECLARED_FOR_SINGLE_TRIAL_SINGLE_NULL_REFERENCE_PRE_SCORING"
+)
+STATISTICAL_EVALUATION_POLICY_FROZEN = (
+    "NO_STATISTICAL_VALUES_COMPUTED_IN_THIS_LANE"
+)
+
+_FROZEN_MULTIPLE_TESTING_CONTROL_DECLARATION: tuple[tuple[str, str], ...] = (
+    ("testing_family_policy", TESTING_FAMILY_POLICY_FROZEN),
+    ("search_procedure_policy", SEARCH_PROCEDURE_POLICY_FROZEN),
+    ("multiplicity_control_policy", MULTIPLICITY_CONTROL_POLICY_FROZEN),
+    ("statistical_evaluation_policy", STATISTICAL_EVALUATION_POLICY_FROZEN),
+)
+
+# Declaration counts that must be frozen and exactly 1: one candidate, one null
+# reference. Any other count silently widens the test family.
+_FROZEN_MULTIPLE_TESTING_CONTROL_COUNTS: tuple[str, ...] = (
+    "candidate_declaration_count",
+    "null_reference_declaration_count",
+)
+
+_REQUIRED_FALSE_MULTIPLE_TESTING_CONTROL_FIELDS: tuple[str, ...] = (
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "trial_execution_authorized",
+    "oos_scoring_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+    "trade_position_simulation_dependency_satisfied",
+    "net_pnl_equity_risk_dependency_satisfied",
+)
 
 # === Trade position simulation contract diagnostics constants ===
 # Diagnostic-only section that records that no trade/position simulation
@@ -7821,6 +7870,552 @@ def _derive_null_benchmark_preregistration_gate(
     }
 
 
+def materialize_multiple_testing_control_preregistration_diagnostics(
+    *,
+    multiple_testing_control_path: str,
+    sidecar_path: str,
+    null_benchmark_diagnostics: dict[str, Any],
+    oos_seal_diagnostics: dict[str, Any],
+    trial_manifest_diagnostics: dict[str, Any],
+    strategy_rule_contract_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Read, parse, hash-check, and audit the frozen multiple-testing control
+    pre-scoring declaration packet, returning a diagnostic-only dict.
+
+    This function performs **no** statistical evaluation, p-value computation,
+    confidence-interval computation, multiplicity adjustment, null generation,
+    candidate-vs-null comparison, scoring, strategy definition, signal
+    calculation, PnL, edge, or live-readiness. The returned diagnostic records
+    only the packet's load status, hash integrity, forbidden-key survival, bound
+    contract / trial-manifest / OOS-seal / null-benchmark digest checking,
+    null-benchmark gate verification, test-family and multiplicity policy freeze,
+    and authorization posture. It does **not** authorize scoring or advance any
+    gate.
+
+    Raises ``ValueError`` on any fail-closed condition:
+    - missing / malformed JSON or sidecar
+    - sidecar digest mismatch
+    - forbidden dict key found
+    - required field missing
+    - multiple_testing_control_hash not ``FROZEN_IN_SIDECAR``
+    - multiple_testing_control_hash_status not ``FROZEN_IN_SIDECAR``
+    - multiple_testing_control_hash_algorithm not ``sha256``
+    - bound contract / trial manifest / OOS seal / null benchmark digest or id
+      mismatch
+    - null benchmark gate missing or not passed
+    - test family / search procedure / multiplicity control / statistical
+      evaluation policy not exactly the frozen declared values
+    - any declaration count not frozen, not a JSON integer, or != 1
+    - any authorization boolean not exactly False
+    - any downstream dependency boolean not exactly False
+    """
+    # --- Read multiple testing control JSON bytes ---
+    try:
+        packet_bytes = Path(multiple_testing_control_path).read_bytes()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Multiple testing control JSON not found: "
+            f"{multiple_testing_control_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Multiple testing control JSON read error "
+            f"{multiple_testing_control_path}: {exc}"
+        )
+
+    json_sha256 = hashlib.sha256(packet_bytes).hexdigest()
+
+    # --- Parse JSON ---
+    try:
+        packet: dict = json.loads(packet_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Multiple testing control JSON parse error: {exc}"
+        )
+
+    if not isinstance(packet, dict):
+        raise ValueError(
+            "Multiple testing control JSON root must be a dict"
+        )
+
+    # --- Read sidecar ---
+    try:
+        sidecar_text = Path(sidecar_path).read_text().strip()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Multiple testing control sidecar not found: {sidecar_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Multiple testing control sidecar read error {sidecar_path}: {exc}"
+        )
+
+    # Parse sidecar: expected format "<sha256>  <filename>"
+    parts = sidecar_text.split(None, 1)
+    if not parts or len(parts) != 2:
+        raise ValueError(
+            f"Multiple testing control sidecar format invalid: "
+            f"expected '<sha256>  <filename>', got {sidecar_text!r}"
+        )
+    sidecar_sha256 = parts[0]
+
+    if len(sidecar_sha256) != 64:
+        raise ValueError(
+            f"Multiple testing control sidecar SHA-256 digest length invalid: "
+            f"expected 64 hex chars, got {len(sidecar_sha256)}"
+        )
+
+    try:
+        int(sidecar_sha256, 16)
+    except ValueError:
+        raise ValueError(
+            f"Multiple testing control sidecar SHA-256 digest is not valid hex: "
+            f"{sidecar_sha256!r}"
+        )
+
+    if sidecar_sha256 != json_sha256:
+        raise ValueError(
+            f"Multiple testing control sidecar digest mismatch: "
+            f"sidecar={sidecar_sha256}, computed={json_sha256}"
+        )
+
+    # --- Check required field presence ---
+    _REQUIRED_MULTIPLE_TESTING_CONTROL_KEYS: set[str] = {
+        "multiple_testing_control_id",
+        "multiple_testing_control_version",
+        "multiple_testing_control_kind",
+        "multiple_testing_control_status",
+        "multiple_testing_control_hash",
+        "multiple_testing_control_hash_algorithm",
+        "multiple_testing_control_hash_scope",
+        "multiple_testing_control_hash_status",
+        "bound_contract_id",
+        "bound_contract_sha256",
+        "bound_trial_manifest_id",
+        "bound_trial_manifest_sha256",
+        "bound_oos_seal_id",
+        "bound_oos_seal_sha256",
+        "bound_null_benchmark_id",
+        "bound_null_benchmark_sha256",
+        "required_null_benchmark_gate_status",
+        "testing_family_policy_frozen",
+        "candidate_declaration_count_frozen",
+        "null_reference_declaration_count_frozen",
+        "search_procedure_policy_frozen",
+        "multiplicity_control_policy_frozen",
+        *_FROZEN_MULTIPLE_TESTING_CONTROL_COUNTS,
+        *(field for field, _ in _FROZEN_MULTIPLE_TESTING_CONTROL_DECLARATION),
+        *_REQUIRED_FALSE_MULTIPLE_TESTING_CONTROL_FIELDS,
+    }
+    missing_fields = _REQUIRED_MULTIPLE_TESTING_CONTROL_KEYS - set(packet.keys())
+    if missing_fields:
+        raise ValueError(
+            f"Multiple testing control missing required fields: "
+            f"{sorted(missing_fields)}"
+        )
+
+    # --- Check forbidden dict keys (strict, no exemptions) ---
+    forbidden_collisions = _find_forbidden_contract_dict_keys(packet)
+    if forbidden_collisions:
+        collision_repr = ", ".join(
+            f"{c['key']!r} at {c['path']}" for c in forbidden_collisions
+        )
+        raise ValueError(
+            f"Multiple testing control contains forbidden dict keys: "
+            f"{collision_repr}"
+        )
+
+    # --- Verify multiple testing control hash fields ---
+    if packet.get("multiple_testing_control_hash") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"Multiple testing control multiple_testing_control_hash must be "
+            f"'FROZEN_IN_SIDECAR', "
+            f"got {packet.get('multiple_testing_control_hash')!r}"
+        )
+    if packet.get("multiple_testing_control_hash_status") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"Multiple testing control multiple_testing_control_hash_status "
+            f"must be 'FROZEN_IN_SIDECAR', "
+            f"got {packet.get('multiple_testing_control_hash_status')!r}"
+        )
+    if packet.get("multiple_testing_control_hash_algorithm") != "sha256":
+        raise ValueError(
+            f"Multiple testing control multiple_testing_control_hash_algorithm "
+            f"must be 'sha256', "
+            f"got {packet.get('multiple_testing_control_hash_algorithm')!r}"
+        )
+
+    # --- Verify bound contract identity + digest ---
+    contract_diag = strategy_rule_contract_diagnostics
+    contract_json_sha256 = contract_diag.get("json_sha256")
+    contract_id = contract_diag.get("contract_id")
+    bound_contract_sha256 = packet.get("bound_contract_sha256")
+    bound_contract_id = packet.get("bound_contract_id")
+
+    if bound_contract_sha256 != contract_json_sha256:
+        raise ValueError(
+            f"Multiple testing control bound_contract_sha256 mismatch: "
+            f"packet says {bound_contract_sha256}, "
+            f"contract diagnostic says {contract_json_sha256}"
+        )
+    if bound_contract_id != contract_id:
+        raise ValueError(
+            f"Multiple testing control bound_contract_id mismatch: "
+            f"packet says {bound_contract_id}, "
+            f"contract diagnostic says {contract_id}"
+        )
+
+    # --- Verify bound trial manifest identity + digest ---
+    tmd = trial_manifest_diagnostics
+    manifest_json_sha256 = tmd.get("manifest_json_sha256")
+    manifest_id = tmd.get("manifest_id")
+    bound_trial_manifest_sha256 = packet.get("bound_trial_manifest_sha256")
+    bound_trial_manifest_id = packet.get("bound_trial_manifest_id")
+
+    if bound_trial_manifest_sha256 != manifest_json_sha256:
+        raise ValueError(
+            f"Multiple testing control bound_trial_manifest_sha256 mismatch: "
+            f"packet says {bound_trial_manifest_sha256}, "
+            f"trial manifest diagnostic says {manifest_json_sha256}"
+        )
+    if bound_trial_manifest_id != manifest_id:
+        raise ValueError(
+            f"Multiple testing control bound_trial_manifest_id mismatch: "
+            f"packet says {bound_trial_manifest_id}, "
+            f"trial manifest diagnostic says {manifest_id}"
+        )
+
+    # --- Verify bound OOS seal identity + digest ---
+    osd = oos_seal_diagnostics
+    seal_json_sha256 = osd.get("seal_json_sha256")
+    seal_id = osd.get("seal_id")
+    bound_oos_seal_sha256 = packet.get("bound_oos_seal_sha256")
+    bound_oos_seal_id = packet.get("bound_oos_seal_id")
+
+    if bound_oos_seal_sha256 != seal_json_sha256:
+        raise ValueError(
+            f"Multiple testing control bound_oos_seal_sha256 mismatch: "
+            f"packet says {bound_oos_seal_sha256}, "
+            f"OOS seal diagnostic says {seal_json_sha256}"
+        )
+    if bound_oos_seal_id != seal_id:
+        raise ValueError(
+            f"Multiple testing control bound_oos_seal_id mismatch: "
+            f"packet says {bound_oos_seal_id}, "
+            f"OOS seal diagnostic says {seal_id}"
+        )
+
+    # --- Verify null benchmark gate (fail closed before any null digest trust) ---
+    nbd = null_benchmark_diagnostics
+    null_benchmark_gate = nbd.get("null_benchmark_preregistration_gate", {})
+    if not isinstance(null_benchmark_gate, dict):
+        raise ValueError(
+            "Null benchmark gate is not a dict"
+        )
+    if not null_benchmark_gate.get("gate_passed"):
+        raise ValueError(
+            "Null benchmark gate not passed: "
+            "multiple testing control pre-registration cannot proceed without "
+            "the null benchmark gate"
+        )
+    null_benchmark_gate_status = null_benchmark_gate.get("gate_status")
+    if null_benchmark_gate_status != NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY:
+        raise ValueError(
+            f"Null benchmark gate status must be "
+            f"{NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY!r}, "
+            f"got {null_benchmark_gate_status!r}"
+        )
+    required_null_benchmark_gate_status = packet.get(
+        "required_null_benchmark_gate_status"
+    )
+    if required_null_benchmark_gate_status != null_benchmark_gate_status:
+        raise ValueError(
+            f"Multiple testing control required_null_benchmark_gate_status "
+            f"mismatch: packet says {required_null_benchmark_gate_status!r}, "
+            f"null benchmark gate says {null_benchmark_gate_status!r}"
+        )
+
+    # --- Verify bound null benchmark identity + digest (after gate check) ---
+    null_benchmark_json_sha256 = nbd.get("null_benchmark_json_sha256")
+    null_benchmark_id = nbd.get("null_benchmark_id")
+    bound_null_benchmark_sha256 = packet.get("bound_null_benchmark_sha256")
+    bound_null_benchmark_id = packet.get("bound_null_benchmark_id")
+
+    if bound_null_benchmark_sha256 != null_benchmark_json_sha256:
+        raise ValueError(
+            f"Multiple testing control bound_null_benchmark_sha256 mismatch: "
+            f"packet says {bound_null_benchmark_sha256}, "
+            f"null benchmark diagnostic says {null_benchmark_json_sha256}"
+        )
+    if bound_null_benchmark_id != null_benchmark_id:
+        raise ValueError(
+            f"Multiple testing control bound_null_benchmark_id mismatch: "
+            f"packet says {bound_null_benchmark_id}, "
+            f"null benchmark diagnostic says {null_benchmark_id}"
+        )
+
+    # --- Verify the frozen test-family / multiplicity declaration exactly ---
+    for field, frozen_value in _FROZEN_MULTIPLE_TESTING_CONTROL_DECLARATION:
+        actual = packet.get(field)
+        if actual != frozen_value:
+            raise ValueError(
+                f"Multiple testing control {field} must be exactly "
+                f"{frozen_value!r}, got {actual!r}"
+            )
+
+    # --- Verify policy freeze flags ---
+    for field in (
+        "testing_family_policy_frozen",
+        "search_procedure_policy_frozen",
+        "multiplicity_control_policy_frozen",
+        "candidate_declaration_count_frozen",
+        "null_reference_declaration_count_frozen",
+    ):
+        if packet.get(field) is not True:
+            raise ValueError(
+                f"Multiple testing control {field} must be True, "
+                f"got {packet.get(field)!r}"
+            )
+
+    # --- Verify declaration counts are JSON integers exactly equal to 1 ---
+    declaration_counts: dict[str, int] = {}
+    for field in _FROZEN_MULTIPLE_TESTING_CONTROL_COUNTS:
+        count = packet.get(field)
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise ValueError(
+                f"Multiple testing control {field} must be a JSON integer, "
+                f"got {count!r}"
+            )
+        if count != 1:
+            raise ValueError(
+                f"Multiple testing control {field} must be exactly 1, "
+                f"got {count!r}"
+            )
+        declaration_counts[field] = count
+
+    # --- Verify authorization booleans are exactly False ---
+    bad_false_fields: dict[str, Any] = {
+        field: packet.get(field)
+        for field in _REQUIRED_FALSE_MULTIPLE_TESTING_CONTROL_FIELDS
+        if packet.get(field) is not False
+    }
+    if bad_false_fields:
+        raise ValueError(
+            "Multiple testing control fields must be exactly false: "
+            + ", ".join(
+                f"{k}={v!r}" for k, v in bad_false_fields.items()
+            )
+        )
+
+    return {
+        "diagnostic_kind": "multiple_testing_control_preregistration",
+        "multiple_testing_control_source_path": multiple_testing_control_path,
+        "multiple_testing_control_sidecar_path": sidecar_path,
+        "multiple_testing_control_id": str(
+            packet.get("multiple_testing_control_id", "")
+        ),
+        "multiple_testing_control_packet_version": str(
+            packet.get("multiple_testing_control_version", "")
+        ),
+        "multiple_testing_control_packet_status": str(
+            packet.get("multiple_testing_control_status", "")
+        ),
+        "multiple_testing_control_packet_read": True,
+        "multiple_testing_control_json_parse_ok": True,
+        "multiple_testing_control_sidecar_parse_ok": True,
+        "multiple_testing_control_json_sha256": json_sha256,
+        "multiple_testing_control_sidecar_sha256": sidecar_sha256,
+        "multiple_testing_control_sidecar_digest_matches_json_bytes": True,
+        "multiple_testing_control_hash_authority": "SIDECAR",
+        "multiple_testing_control_hash_field_value": "FROZEN_IN_SIDECAR",
+        "multiple_testing_control_hash_status": "FROZEN_IN_SIDECAR",
+        "multiple_testing_control_required_fields_present": True,
+        "multiple_testing_control_forbidden_dict_key_scan_passed": True,
+        "bound_contract_id": str(bound_contract_id),
+        "bound_contract_sha256": str(bound_contract_sha256),
+        "bound_contract_digest_matches": True,
+        "bound_trial_manifest_id": str(bound_trial_manifest_id),
+        "bound_trial_manifest_sha256": str(bound_trial_manifest_sha256),
+        "bound_trial_manifest_digest_matches": True,
+        "bound_oos_seal_id": str(bound_oos_seal_id),
+        "bound_oos_seal_sha256": str(bound_oos_seal_sha256),
+        "bound_oos_seal_digest_matches": True,
+        "bound_null_benchmark_id": str(bound_null_benchmark_id),
+        "bound_null_benchmark_sha256": str(bound_null_benchmark_sha256),
+        "bound_null_benchmark_digest_matches": True,
+        "null_benchmark_gate_required": True,
+        "null_benchmark_gate_passed": True,
+        "null_benchmark_gate_status": str(null_benchmark_gate_status),
+        "testing_family_policy": TESTING_FAMILY_POLICY_FROZEN,
+        "testing_family_policy_frozen": True,
+        "candidate_declaration_count": declaration_counts[
+            "candidate_declaration_count"
+        ],
+        "candidate_declaration_count_frozen": True,
+        "null_reference_declaration_count": declaration_counts[
+            "null_reference_declaration_count"
+        ],
+        "null_reference_declaration_count_frozen": True,
+        "search_procedure_policy": SEARCH_PROCEDURE_POLICY_FROZEN,
+        "search_procedure_policy_frozen": True,
+        "multiplicity_control_policy": MULTIPLICITY_CONTROL_POLICY_FROZEN,
+        "multiplicity_control_policy_frozen": True,
+        "statistical_evaluation_policy": STATISTICAL_EVALUATION_POLICY_FROZEN,
+        "multiple_testing_control_readiness": False,
+        "statistical_value_generation_authorized": False,
+        "candidate_comparison_authorized": False,
+        "null_generation_authorized": False,
+        "scoring_authorized": False,
+        "multiple_testing_control_validation_status": (
+            MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY
+        ),
+    }
+
+
+def _derive_multiple_testing_control_preregistration_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive a multiple-testing control pre-registration gate from diagnostics.
+
+    Pure projection — no I/O, no scoring, no statistical evaluation, no
+    multiplicity adjustment, no null generation, no candidate-vs-null
+    comparison. The gate passes only when all of the following hold:
+    - multiple testing control packet read
+    - sidecar digest matches the JSON bytes
+    - strict forbidden-key scan passed
+    - bound contract digest matches
+    - bound trial manifest digest matches
+    - bound OOS seal digest matches
+    - bound null benchmark digest matches
+    - null benchmark gate passed
+    - test family / search procedure / multiplicity control / statistical
+      evaluation policy match the frozen declared values exactly
+    - test family, search, multiplicity, and count policies frozen
+    - candidate declaration count is exactly 1
+    - null reference declaration count is exactly 1
+    - all authorization booleans false
+    - all downstream dependency booleans false
+
+    A missing / failed null benchmark gate blocks this gate: multiple-testing
+    control pre-registration can never pass without it.
+    """
+    evidence: dict[str, Any] = {
+        "multiple_testing_control_sidecar_digest_matches_json_bytes": (
+            diagnostics.get(
+                "multiple_testing_control_sidecar_digest_matches_json_bytes"
+            )
+            is True
+        ),
+        "bound_contract_digest_matches": (
+            diagnostics.get("bound_contract_digest_matches") is True
+        ),
+        "bound_trial_manifest_digest_matches": (
+            diagnostics.get("bound_trial_manifest_digest_matches") is True
+        ),
+        "bound_oos_seal_digest_matches": (
+            diagnostics.get("bound_oos_seal_digest_matches") is True
+        ),
+        "bound_null_benchmark_digest_matches": (
+            diagnostics.get("bound_null_benchmark_digest_matches") is True
+        ),
+        "null_benchmark_gate_passed": (
+            diagnostics.get("null_benchmark_gate_passed") is True
+        ),
+        "testing_family_policy_frozen": (
+            diagnostics.get("testing_family_policy_frozen") is True
+        ),
+        "search_procedure_policy_frozen": (
+            diagnostics.get("search_procedure_policy_frozen") is True
+        ),
+        "multiplicity_control_policy_frozen": (
+            diagnostics.get("multiplicity_control_policy_frozen") is True
+        ),
+        "candidate_declaration_count_frozen": (
+            diagnostics.get("candidate_declaration_count_frozen") is True
+        ),
+        "null_reference_declaration_count_frozen": (
+            diagnostics.get("null_reference_declaration_count_frozen") is True
+        ),
+        **{
+            f"{field}_matches_frozen_value": (
+                diagnostics.get(field) == frozen_value
+            )
+            for field, frozen_value in _FROZEN_MULTIPLE_TESTING_CONTROL_DECLARATION
+        },
+        **{
+            field: diagnostics.get(field)
+            for field in _FROZEN_MULTIPLE_TESTING_CONTROL_COUNTS
+        },
+    }
+
+    evidence_pass = all(
+        value is True
+        for key, value in evidence.items()
+        if key not in _FROZEN_MULTIPLE_TESTING_CONTROL_COUNTS
+    ) and all(
+        evidence[field] == 1
+        for field in _FROZEN_MULTIPLE_TESTING_CONTROL_COUNTS
+    )
+
+    extra_pass = (
+        diagnostics.get("diagnostic_kind")
+        == "multiple_testing_control_preregistration"
+        and diagnostics.get("multiple_testing_control_packet_read") is True
+        and diagnostics.get("multiple_testing_control_json_parse_ok") is True
+        and diagnostics.get("multiple_testing_control_sidecar_parse_ok") is True
+        and diagnostics.get("multiple_testing_control_hash_authority")
+        == "SIDECAR"
+        and diagnostics.get("multiple_testing_control_hash_field_value")
+        == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("multiple_testing_control_hash_status")
+        == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("multiple_testing_control_required_fields_present")
+        is True
+        and diagnostics.get(
+            "multiple_testing_control_forbidden_dict_key_scan_passed"
+        )
+        is True
+        and diagnostics.get("null_benchmark_gate_status")
+        == NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY
+        and diagnostics.get("statistical_value_generation_authorized") is False
+        and diagnostics.get("candidate_comparison_authorized") is False
+        and diagnostics.get("null_generation_authorized") is False
+        and diagnostics.get("scoring_authorized") is False
+        and diagnostics.get("multiple_testing_control_readiness") is False
+    )
+
+    all_pass = evidence_pass and extra_pass
+
+    if all_pass:
+        gate_status = MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY
+        blocked_reason = None
+    elif (
+        diagnostics.get("diagnostic_kind")
+        != "multiple_testing_control_preregistration"
+    ):
+        gate_status = "MULTIPLE_TESTING_CONTROL_NOT_LOADED"
+        blocked_reason = "MULTIPLE_TESTING_CONTROL_NOT_PROVIDED"
+    elif diagnostics.get("null_benchmark_gate_passed") is not True:
+        gate_status = "BLOCKED_BY_NULL_BENCHMARK_GATE"
+        blocked_reason = "NULL_BENCHMARK_GATE_NOT_PASSED"
+    else:
+        gate_status = "BLOCKED_BY_INCOMPLETE_MULTIPLE_TESTING_CONTROL_EVIDENCE"
+        blocked_reason = "MULTIPLE_TESTING_CONTROL_GATE_EVIDENCE_INCOMPLETE"
+
+    return {
+        "gate_kind": "multiple_testing_control_preregistration_gate",
+        "gate_scope": "TEST_FAMILY_AND_NULL_BENCHMARK_BINDING_ONLY",
+        "gate_status": gate_status,
+        "gate_passed": all_pass,
+        "gate_scoring_authorization": False,
+        "gate_live_authorization": False,
+        "gate_final_verdict_authorization": False,
+        "gate_downstream_unlocks": [],
+        "evidence": evidence,
+        "blocked_reason": blocked_reason,
+    }
+
+
 def _build_strategy_rule_contract_diagnostics(
     contract_path: str | None = None,
     sidecar_path: str | None = None,
@@ -8342,29 +8937,87 @@ def _null_benchmark_contract_absence_diagnostics() -> dict[str, Any]:
     }
 
 
-def _build_multiple_testing_control_diagnostics() -> dict[str, Any]:
-    """Build a diagnostic-only section recording that no multiple-testing
-    control exists yet, no trial-adjustment policy exists, no
-    DSR/PBO/CSCV/SPA/Reality Check/FDR control exists, no
-    model/parameter-selection lock exists, and scoring remains unauthorized.
+def _build_multiple_testing_control_diagnostics(
+    *,
+    multiple_testing_control_path: str | None = None,
+    sidecar_path: str | None = None,
+    null_benchmark_diagnostics: dict[str, Any] | None = None,
+    oos_seal_diagnostics: dict[str, Any] | None = None,
+    trial_manifest_diagnostics: dict[str, Any] | None = None,
+    strategy_rule_contract_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a diagnostic-only section for the multiple-testing control.
+
+    If *multiple_testing_control_path*, *sidecar_path*,
+    *null_benchmark_diagnostics*, *oos_seal_diagnostics*,
+    *trial_manifest_diagnostics*, and *strategy_rule_contract_diagnostics* are
+    all provided, the frozen multiple-testing control pre-scoring declaration
+    packet is loaded, hash-checked, and audited via
+    :func:`materialize_multiple_testing_control_preregistration_diagnostics`.
+
+    Otherwise a hardcoded ``MULTIPLE_TESTING_CONTROL_NOT_DEFINED`` diagnostic is
+    returned with a failing gate.
 
     This section does **not** implement any multiple-testing control, compute
-    p-values, define thresholds, calculate confidence intervals, define
-    statistical decision rules, scores, metrics, performance fields, or
-    profit fields. It does not choose a benchmark, define a benchmark family,
-    define a random seed/shuffle/permutation policy, define OOS dates or
-    split selection, nor compute returns, PnL, Sharpe, drawdown, risk, edge,
-    portfolio, baseline result, benchmark result, or benchmark comparison.
+    p-values, define thresholds, calculate confidence intervals, apply a
+    multiplicity adjustment, define statistical decision rules, scores, metrics,
+    performance fields, or profit fields. It does not choose a benchmark, define
+    a benchmark family, define a random seed/shuffle/permutation policy, define
+    OOS dates or split selection, nor compute returns, PnL, Sharpe, drawdown,
+    risk, edge, portfolio, baseline result, benchmark result, or benchmark
+    comparison. Loading the packet only records that a test-family and
+    multiplicity policy was declared and hash-bound *before* any statistical
+    evaluation exists.
 
     Fail-closed rules:
-    * ``multiple_testing_control_status`` is always
-      ``MULTIPLE_TESTING_CONTROL_NOT_DEFINED``.
     * ``scoring_authorized`` is always ``False`` at this stage.
-    * ``scoring_blocked_reason`` is always
-      ``MULTIPLE_TESTING_CONTROL_NOT_DEFINED``.
-    * All ``multiple_testing_control_prerequisites_present`` values are always
-      ``False``.
-    * All control-policy fields are always ``NOT_DEFINED``.
+    * ``statistical_value_generation_authorized`` /
+      ``candidate_comparison_authorized`` are always ``False`` at this stage.
+    * A missing or failed null benchmark gate blocks the multiple-testing
+      control gate.
+
+    Raises ``ValueError`` if multiple-testing control paths are provided but the
+    packet is corrupted or its prerequisites are unmet (delegated to the
+    materializer).
+    """
+    if (
+        multiple_testing_control_path is not None
+        and sidecar_path is not None
+        and null_benchmark_diagnostics is not None
+        and oos_seal_diagnostics is not None
+        and trial_manifest_diagnostics is not None
+        and strategy_rule_contract_diagnostics is not None
+    ):
+        diagnostics = (
+            materialize_multiple_testing_control_preregistration_diagnostics(
+                multiple_testing_control_path=multiple_testing_control_path,
+                sidecar_path=sidecar_path,
+                null_benchmark_diagnostics=null_benchmark_diagnostics,
+                oos_seal_diagnostics=oos_seal_diagnostics,
+                trial_manifest_diagnostics=trial_manifest_diagnostics,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
+        )
+    else:
+        diagnostics = _multiple_testing_control_absence_diagnostics()
+
+    # Derive the pre-registration gate from diagnostics (pure, no I/O).
+    diagnostics["multiple_testing_control_preregistration_gate"] = (
+        _derive_multiple_testing_control_preregistration_gate(diagnostics)
+    )
+    return diagnostics
+
+
+def _multiple_testing_control_absence_diagnostics() -> dict[str, Any]:
+    """Diagnostic-only section recording that no multiple-testing control is
+    loaded: no trial-adjustment policy exists, no DSR/PBO/CSCV/SPA/Reality
+    Check/FDR control exists, no model/parameter-selection lock exists, and
+    scoring remains unauthorized.
+
+    Every control field is either ``None``, ``NOT_DEFINED``, or ``False`` —
+    this is a diagnostic of absence, not a definition of presence.
     """
     return {
         "control_version": MULTIPLE_TESTING_CONTROL_VERSION,
@@ -9204,6 +9857,32 @@ def build_parser() -> argparse.ArgumentParser:
             "Required if --null-benchmark-path is provided."
         ),
     )
+    parser.add_argument(
+        "--multiple-testing-control-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to frozen multiple-testing control pre-scoring declaration "
+            "JSON. If provided, the packet is loaded and hash-checked "
+            "(diagnostic only, no scoring, no statistical values, no "
+            "multiplicity adjustment, no candidate comparison). Requires "
+            "--multiple-testing-control-sha256-path, --null-benchmark-path/"
+            "--null-benchmark-sha256-path, --oos-seal-path/"
+            "--oos-seal-sha256-path, --trial-manifest-path/"
+            "--trial-manifest-sha256-path, and --strategy-contract-path/"
+            "--strategy-contract-sha256-path."
+        ),
+    )
+    parser.add_argument(
+        "--multiple-testing-control-sha256-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to the SHA-256 sidecar for the frozen multiple-testing "
+            "control packet. Required if --multiple-testing-control-path is "
+            "provided."
+        ),
+    )
     return parser
 
 
@@ -9409,7 +10088,20 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             multiple_testing_control_diagnostics = (
-                _build_multiple_testing_control_diagnostics()
+                _build_multiple_testing_control_diagnostics(
+                    multiple_testing_control_path=(
+                        args.multiple_testing_control_path
+                    ),
+                    sidecar_path=args.multiple_testing_control_sha256_path,
+                    null_benchmark_diagnostics=(
+                        null_benchmark_contract_diagnostics
+                    ),
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                )
             )
             trade_position_simulation_contract_diagnostics = (
                 _build_trade_position_simulation_contract_diagnostics()
@@ -9543,7 +10235,20 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             multiple_testing_control_diagnostics = (
-                _build_multiple_testing_control_diagnostics()
+                _build_multiple_testing_control_diagnostics(
+                    multiple_testing_control_path=(
+                        args.multiple_testing_control_path
+                    ),
+                    sidecar_path=args.multiple_testing_control_sha256_path,
+                    null_benchmark_diagnostics=(
+                        null_benchmark_contract_diagnostics
+                    ),
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                )
             )
             trade_position_simulation_contract_diagnostics = (
                 _build_trade_position_simulation_contract_diagnostics()
