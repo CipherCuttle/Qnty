@@ -282,6 +282,31 @@ NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY = (
     "NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY"
 )
 
+# The frozen null reference declaration. A regenerated sidecar makes the packet
+# bytes self-consistent again, so these values are pinned in code: they are the
+# only reference family the pre-registration lane will ever accept.
+NULL_REFERENCE_POLICY_FROZEN = "PREDECLARE_NO_SKILL_REFERENCE_FAMILY_ONLY"
+NULL_REFERENCE_FAMILY_FROZEN = "NO_SKILL_TIME_ORDER_PRESERVING_REFERENCE"
+NULL_REFERENCE_COMPUTATION_POLICY_FROZEN = (
+    "NO_NULL_REFERENCE_VALUES_COMPUTED_IN_THIS_LANE"
+)
+NULL_REFERENCE_COMPARISON_POLICY_FROZEN = (
+    "NO_CANDIDATE_VERSUS_NULL_COMPARISON_IN_THIS_LANE"
+)
+
+_FROZEN_NULL_REFERENCE_DECLARATION: tuple[tuple[str, str], ...] = (
+    ("null_reference_policy", NULL_REFERENCE_POLICY_FROZEN),
+    ("null_reference_family", NULL_REFERENCE_FAMILY_FROZEN),
+    (
+        "null_reference_computation_policy",
+        NULL_REFERENCE_COMPUTATION_POLICY_FROZEN,
+    ),
+    (
+        "null_reference_comparison_policy",
+        NULL_REFERENCE_COMPARISON_POLICY_FROZEN,
+    ),
+)
+
 _REQUIRED_FALSE_NULL_BENCHMARK_FIELDS: tuple[str, ...] = (
     "null_generation_authorized",
     "candidate_comparison_authorized",
@@ -7359,6 +7384,8 @@ def materialize_null_benchmark_preregistration_diagnostics(
     - null_benchmark_hash_algorithm not ``sha256``
     - bound contract / trial manifest / OOS seal digest or id mismatch
     - OOS seal gate missing or not passed
+    - null reference policy / family / computation policy / comparison policy
+      not exactly the frozen declared values
     - null reference selection or count not frozen
     - null reference count != 1
     - any authorization boolean not exactly False
@@ -7449,11 +7476,10 @@ def materialize_null_benchmark_preregistration_diagnostics(
         "bound_oos_seal_id",
         "bound_oos_seal_sha256",
         "required_oos_seal_gate_status",
-        "null_reference_policy",
-        "null_reference_family",
         "null_reference_selection_frozen",
         "null_reference_count",
         "null_reference_count_frozen",
+        *(field for field, _ in _FROZEN_NULL_REFERENCE_DECLARATION),
         *_REQUIRED_FALSE_NULL_BENCHMARK_FIELDS,
     }
     missing_fields = _REQUIRED_NULL_BENCHMARK_KEYS - set(packet.keys())
@@ -7577,6 +7603,15 @@ def materialize_null_benchmark_preregistration_diagnostics(
             f"OOS seal diagnostic says {seal_id}"
         )
 
+    # --- Verify null reference declaration matches the frozen values exactly ---
+    for field, frozen_value in _FROZEN_NULL_REFERENCE_DECLARATION:
+        actual = packet.get(field)
+        if actual != frozen_value:
+            raise ValueError(
+                f"Null benchmark {field} must be exactly {frozen_value!r}, "
+                f"got {actual!r}"
+            )
+
     # --- Verify null reference policy freeze ---
     if packet.get("null_reference_selection_frozen") is not True:
         raise ValueError(
@@ -7650,8 +7685,14 @@ def materialize_null_benchmark_preregistration_diagnostics(
         "oos_seal_gate_required": True,
         "oos_seal_gate_passed": True,
         "oos_seal_gate_status": str(oos_seal_gate_status),
-        "null_reference_policy": str(packet.get("null_reference_policy", "")),
-        "null_reference_family": str(packet.get("null_reference_family", "")),
+        "null_reference_policy": NULL_REFERENCE_POLICY_FROZEN,
+        "null_reference_family": NULL_REFERENCE_FAMILY_FROZEN,
+        "null_reference_computation_policy": (
+            NULL_REFERENCE_COMPUTATION_POLICY_FROZEN
+        ),
+        "null_reference_comparison_policy": (
+            NULL_REFERENCE_COMPARISON_POLICY_FROZEN
+        ),
         "null_reference_selection_frozen": True,
         "null_reference_count": null_reference_count,
         "null_reference_count_frozen": True,
@@ -7680,6 +7721,8 @@ def _derive_null_benchmark_preregistration_gate(
     - bound trial manifest digest matches
     - bound OOS seal digest matches
     - OOS seal gate passed
+    - null reference policy / family / computation policy / comparison policy
+      match the frozen declared values exactly
     - null reference policy frozen (selection + count)
     - null reference count is exactly 1
     - all authorization booleans false
@@ -7711,6 +7754,12 @@ def _derive_null_benchmark_preregistration_gate(
         "null_reference_count_frozen": (
             diagnostics.get("null_reference_count_frozen") is True
         ),
+        **{
+            f"{field}_matches_frozen_value": (
+                diagnostics.get(field) == frozen_value
+            )
+            for field, frozen_value in _FROZEN_NULL_REFERENCE_DECLARATION
+        },
         "null_reference_count": diagnostics.get("null_reference_count"),
     }
 

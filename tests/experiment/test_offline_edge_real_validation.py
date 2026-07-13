@@ -94,6 +94,10 @@ from quantbot.experiment.offline_edge_real_validation import (
     NULL_BENCHMARK_CONTRACT_NOT_DEFINED,
     NULL_BENCHMARK_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
     NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY,
+    NULL_REFERENCE_POLICY_FROZEN,
+    NULL_REFERENCE_FAMILY_FROZEN,
+    NULL_REFERENCE_COMPUTATION_POLICY_FROZEN,
+    NULL_REFERENCE_COMPARISON_POLICY_FROZEN,
     _build_null_benchmark_contract_diagnostics,
     _derive_null_benchmark_preregistration_gate,
     materialize_null_benchmark_preregistration_diagnostics,
@@ -13648,6 +13652,96 @@ class TestNullBenchmarkPreregistrationG1:
         ):
             self._materialize_tampered(tmp_path, mutate)
 
+    # -- 15b. Frozen null reference declaration values ------------------------
+    #
+    # A tampered packet is re-hashed into a matching sidecar, so digest checks
+    # alone cannot catch a swapped reference family. The frozen string values
+    # are the only thing standing between the lane and a leaky / post-hoc null.
+
+    @pytest.mark.parametrize(
+        "field,mutated",
+        [
+            ("null_reference_policy", "POST_HOC_SELECTED_REFERENCE"),
+            (
+                "null_reference_family",
+                "LEAKY_REFERENCE_USING_OUTCOME_INFORMATION",
+            ),
+            (
+                "null_reference_computation_policy",
+                "COMPUTE_NULL_VALUES_NOW",
+            ),
+            (
+                "null_reference_comparison_policy",
+                "COMPARE_CANDIDATE_TO_NULL_NOW",
+            ),
+        ],
+    )
+    def test_mutated_null_reference_declaration_fails_closed(
+        self, tmp_path, field, mutated
+    ):
+        def mutate(packet):
+            packet[field] = mutated
+
+        with pytest.raises(
+            ValueError, match=f"{field} must be exactly"
+        ):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_frozen_null_reference_values_in_diagnostic(self):
+        result = self._null_benchmark_diag()
+        assert result["null_reference_policy"] == NULL_REFERENCE_POLICY_FROZEN
+        assert result["null_reference_family"] == NULL_REFERENCE_FAMILY_FROZEN
+        assert result["null_reference_computation_policy"] == (
+            NULL_REFERENCE_COMPUTATION_POLICY_FROZEN
+        )
+        assert result["null_reference_comparison_policy"] == (
+            NULL_REFERENCE_COMPARISON_POLICY_FROZEN
+        )
+
+    def test_frozen_null_reference_values_in_gate_evidence(self):
+        evidence = self._null_benchmark_diag()[
+            "null_benchmark_preregistration_gate"
+        ]["evidence"]
+        assert evidence["null_reference_policy_matches_frozen_value"] is True
+        assert evidence["null_reference_family_matches_frozen_value"] is True
+        assert evidence[
+            "null_reference_computation_policy_matches_frozen_value"
+        ] is True
+        assert evidence[
+            "null_reference_comparison_policy_matches_frozen_value"
+        ] is True
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "null_reference_policy",
+            "null_reference_family",
+            "null_reference_computation_policy",
+            "null_reference_comparison_policy",
+        ],
+    )
+    def test_gate_projection_blocked_by_wrong_frozen_value(self, field):
+        """Pure gate helper: a diagnostic carrying a mutated reference
+        declaration is blocked, never passed."""
+        diagnostics = dict(self._null_benchmark_diag())
+        diagnostics.pop("null_benchmark_preregistration_gate")
+        diagnostics[field] = "LEAKY_REFERENCE_USING_OUTCOME_INFORMATION"
+        gate = real_validation._derive_null_benchmark_preregistration_gate(
+            diagnostics
+        )
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_NULL_BENCHMARK_EVIDENCE"
+        )
+        assert gate["blocked_reason"] == (
+            "NULL_BENCHMARK_GATE_EVIDENCE_INCOMPLETE"
+        )
+        assert gate["evidence"][f"{field}_matches_frozen_value"] is False
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
     # -- 16. Authorization boolean type hardening ----------------------------
 
     @pytest.mark.parametrize(
@@ -13661,9 +13755,18 @@ class TestNullBenchmarkPreregistrationG1:
         with pytest.raises(ValueError, match="fields must be exactly false"):
             self._materialize_tampered(tmp_path, mutate)
 
-    def test_required_field_missing_fails_closed(self, tmp_path):
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "null_reference_policy",
+            "null_reference_family",
+            "null_reference_computation_policy",
+            "null_reference_comparison_policy",
+        ],
+    )
+    def test_required_field_missing_fails_closed(self, tmp_path, field):
         def mutate(packet):
-            del packet["null_reference_policy"]
+            del packet[field]
 
         with pytest.raises(ValueError, match="missing required fields"):
             self._materialize_tampered(tmp_path, mutate)
