@@ -1,0 +1,155 @@
+{
+  "allowed_data_sources": [
+    "csv_replay_inputs_declared_by_validation_lane"
+  ],
+  "allowed_input_columns": {
+    "bars": [
+      "timestamp",
+      "close"
+    ],
+    "funding": [
+      "fundingTime",
+      "fundingRate"
+    ]
+  },
+  "allowed_input_roles": [
+    "bars",
+    "funding"
+  ],
+  "complexity_budget": {
+    "declared_parameter_names": [],
+    "free_parameter_count": 0,
+    "max_free_parameters": 0
+  },
+  "contract_commit_sha": "TO_BE_FILLED_AFTER_MERGE",
+  "contract_frozen": true,
+  "contract_frozen_at_utc": "2026-07-12T23:30:00Z",
+  "contract_hash": "FROZEN_IN_SIDECAR",
+  "contract_hash_algorithm": "sha256",
+  "contract_hash_scope": "exact committed JSON bytes, excluding sidecar",
+  "contract_hash_status": "FROZEN_IN_SIDECAR",
+  "contract_id": "qnty_offline_edge_strategy_rule_contract_v1",
+  "contract_source_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json",
+  "contract_status": "FROZEN_DECLARATION_ONLY",
+  "contract_version": "1.0.0",
+  "cost_dependency": "NOT_DEFINED",
+  "decision_cadence": "8h",
+  "decision_time_column": "timestamp",
+  "decision_time_convention": "bar_timestamp_utc",
+  "decision_time_offset": "next_decision_after_observed_bar_close",
+  "feature_lookback": "bars_only_before_or_at_decision_time",
+  "feature_lookback_bars": 90,
+  "forbidden_data_sources": [
+    "paper_ledger",
+    "live_exchange",
+    "output_directory",
+    "generated_receipts",
+    "report_outputs",
+    "undeclared_sources"
+  ],
+  "forbidden_future_columns": [
+    "future_return",
+    "future_pnl",
+    "label",
+    "target"
+  ],
+  "forbidden_input_columns": [
+    "pnl",
+    "sharpe",
+    "edge",
+    "strategy_performance",
+    "score"
+  ],
+  "forbidden_input_roles": [
+    "paper_ledger",
+    "live_exchange",
+    "output_receipt",
+    "generated_report"
+  ],
+  "forbidden_output_keys": [
+    "pnl",
+    "sharpe",
+    "edge",
+    "strategy_performance",
+    "return",
+    "returns",
+    "gross_observational_return",
+    "gross_return_value",
+    "net_return_value",
+    "cost_adjusted_return",
+    "funding_adjusted_return",
+    "price_change",
+    "trade",
+    "trades",
+    "signal",
+    "signals",
+    "position",
+    "positions",
+    "portfolio",
+    "live_ready",
+    "deploy_ready",
+    "profitable",
+    "drawdown",
+    "risk",
+    "baseline_result",
+    "benchmark_result",
+    "OFFLINE_EDGE_CANDIDATE",
+    "EDGE_CANDIDATE",
+    "p_value",
+    "confidence_interval",
+    "score",
+    "metric",
+    "performance",
+    "profit",
+    "order",
+    "orders",
+    "fill",
+    "fills",
+    "execution",
+    "executions",
+    "equity",
+    "equity_curve"
+  ],
+  "funding_dependency": "NOT_DEFINED",
+  "funding_interval_exposure_policy": "no_future_funding_interval_observable_may_enter_decision",
+  "holding_period": "not_defined_for_scoring",
+  "holding_period_bars": 0,
+  "hyperparameter_search_policy": "NO_SEARCH",
+  "hypothesis_id": "funding_carry_v1_pre_scoring",
+  "label_horizon": "not_defined_for_scoring",
+  "label_horizon_bars": 0,
+  "live_integration_authorized": false,
+  "multiple_testing_dependency_satisfied": false,
+  "net_pnl_equity_risk_dependency_satisfied": false,
+  "non_materialized_input_columns": {
+    "bars": [
+      "open",
+      "high",
+      "low",
+      "volume"
+    ],
+    "funding": [
+      "markPrice"
+    ]
+  },
+  "notional_currency": "USDT",
+  "notional_semantics": "NOT_DEFINED",
+  "notional_source": "NOT_DEFINED",
+  "null_benchmark_dependency_satisfied": false,
+  "oos_seal_dependency_satisfied": false,
+  "output_boundary": "NO_SCORING_NO_PERFORMANCE_NO_EDGE_NO_LIVE_READINESS_OUTPUTS",
+  "parameter_policy": "NO_FREE_PARAMETERS",
+  "receipt_key_naming_constraint": "CONTRACT_FIELD_NAMES_MUST_SURVIVE_RECURSIVE_EXACT_FORBIDDEN_KEY_SCAN",
+  "scoring_authorization": false,
+  "side_semantics": "NOT_DEFINED",
+  "side_source": "NOT_DEFINED",
+  "split_scoring_safe_dependency_satisfied": false,
+  "strategy_candidate_id": "funding_carry_v1_declaration_only",
+  "strategy_family": "funding_carry_declaration_only",
+  "symbol_universe_frozen": false,
+  "symbol_universe_policy": "frozen_by_future_trial_manifest_not_this_contract",
+  "trade_position_simulation_dependency_satisfied": false,
+  "trial_count_policy": "NO_TRIALS_AUTHORIZED",
+  "trial_manifest_dependency_satisfied": false,
+  "warmup_bars": 90
+}
