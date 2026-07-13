@@ -9626,6 +9626,82 @@ class TestStrategyRuleContractCommitBindingDiagnostics:
         assert loaded.get("contract_containing_commit_digest_matches") is True
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
+    # ── Cwd-outside-repo regression test ────────────────────────────────────
+    def test_commit_binding_works_when_cwd_outside_repo(self, tmp_path):
+        """Commit binding works when caller cwd is outside the repository.
+
+        Uses the real committed contract path, sidecar path, and binding path
+        as absolute paths. Changes cwd to a temp directory outside the repo,
+        then verifies that commit-binding verification still succeeds.
+        """
+        import os
+
+        contract_path = self._contract_json_path()
+        sidecar_path = self._sidecar_path()
+        binding_path = self._commit_binding_path()
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            result = materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=contract_path,
+                sidecar_path=sidecar_path,
+                commit_binding_path=binding_path,
+            )
+        finally:
+            os.chdir(original_cwd)
+
+        assert result["contract_commit_sha_bound"] is True
+        assert result["contract_commit_sha_binding_status"] == (
+            "BOUND_BY_PRIOR_COMMIT_CONTAINMENT_SIDECAR"
+        )
+        assert result["contract_scoring_ready"] is False
+        assert result["contract_instance_readiness"] is False
+
+    # ── Missing git root fails closed ───────────────────────────────────────
+    def test_commit_binding_missing_git_root_fails_closed(self, tmp_path):
+        """Commit binding raises ValueError when contract path is outside a git
+        repo. This test copies the contract JSON, sidecar, and binding JSON to a
+        temp directory outside any git repository."""
+        contract_bytes = Path(self._contract_json_path()).read_bytes()
+        contract = json.loads(contract_bytes)
+
+        binding = {
+            "binding_id": "test",
+            "binding_version": "1.0.0",
+            "binding_kind": "test",
+            "contract_id": contract["contract_id"],
+            "contract_source_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json",
+            "contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "contract_sha256": hashlib.sha256(contract_bytes).hexdigest(),
+            "contract_containing_commit_sha": "f6e2c27ccc9271ca3587895fddd165f76eda784d",
+            "contract_containing_commit_role": "test",
+            "contract_commit_binding_model": "test",
+            "self_reference_avoidance": "test",
+            "contract_commit_sha_field_policy": "test",
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "contract_scoring_ready": False,
+            "contract_instance_readiness": False,
+        }
+
+        # Write files to tmp_path (outside any git repo).
+        contract_outside = tmp_path / "contract.json"
+        contract_outside.write_bytes(contract_bytes)
+
+        sidecar_outside = tmp_path / "contract.sha256"
+        sha256_hex = hashlib.sha256(contract_bytes).hexdigest()
+        sidecar_outside.write_text(f"{sha256_hex}  contract.json")
+
+        binding_path = tmp_path / "binding.json"
+        binding_path.write_text(json.dumps(binding, indent=2, sort_keys=True))
+
+        with pytest.raises(ValueError, match="git repository root"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(contract_outside),
+                sidecar_path=str(sidecar_outside),
+                commit_binding_path=str(binding_path),
+            )
+
 
 _TRIAL_MANIFEST_FORBIDDEN_KEYS = frozenset({
     "pnl", "returns", "return", "sharpe", "drawdown", "risk", "edge",

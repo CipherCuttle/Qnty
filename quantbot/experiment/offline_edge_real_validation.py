@@ -6070,19 +6070,41 @@ _REQUIRED_COMMIT_BINDING_KEYS: frozenset[str] = frozenset({
 })
 
 
+def _find_git_repo_root_for_path(path: str | Path) -> Path:
+    """Find the nearest ancestor containing .git for a supplied file path.
+
+    The contract path is expected to live inside the repository. This avoids
+    relying on the caller's current working directory.
+    """
+    current = Path(path).resolve()
+    if current.is_file():
+        current = current.parent
+
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+
+    raise ValueError(
+        f"Could not find git repository root for path: {path}"
+    )
+
+
 def _read_git_blob_bytes_at_commit(
     *,
     commit_sha: str,
     repo_relative_path: str,
+    repo_root: str | Path,
 ) -> bytes:
     """Read the bytes of a file at a given git commit.
 
-    Uses ``git show <commit_sha>:<repo_relative_path>`` via subprocess.
-    Fails closed with ``ValueError`` on any nonzero exit.
+    Uses ``git show <commit_sha>:<repo_relative_path>`` via subprocess,
+    running from *repo_root* to avoid depending on the caller's current
+    working directory. Fails closed with ``ValueError`` on any nonzero exit.
 
     *commit_sha* must be a valid git commit SHA (40 hex chars).
     *repo_relative_path* must be a path relative to the repo root as git
     would resolve it (forward slashes, no leading ``./``).
+    *repo_root* must be the absolute path to the git repository root.
     """
     if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
         raise ValueError(
@@ -6094,6 +6116,7 @@ def _read_git_blob_bytes_at_commit(
             ["git", "show", f"{commit_sha}:{repo_relative_path}"],
             capture_output=True,
             check=False,
+            cwd=str(repo_root),
             timeout=30,
         )
     except FileNotFoundError:
@@ -6426,11 +6449,17 @@ def materialize_strategy_rule_contract_instance_diagnostics(
                 f"40-hex-char SHA: {containing_commit_sha!r}"
             )
 
+        # Resolve repo root from the contract path (not from process cwd)
+        # so that commit-binding verification works when the CLI is invoked
+        # from outside the repository.
+        repo_root = _find_git_repo_root_for_path(contract_path)
+
         # Verify that the prior commit contains the contract source path
         # with exact bytes matching the expected SHA-256.
         prior_blob_bytes = _read_git_blob_bytes_at_commit(
             commit_sha=containing_commit_sha,
             repo_relative_path=binding_source_path,
+            repo_root=repo_root,
         )
         prior_blob_sha256 = hashlib.sha256(prior_blob_bytes).hexdigest()
         prior_digest_matches = prior_blob_sha256 == binding_sha256
