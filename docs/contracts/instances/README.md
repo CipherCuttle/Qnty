@@ -629,3 +629,77 @@ executions, or scoring exists."*
 python3 -m json.tool docs/contracts/instances/qnty_offline_edge_economic_accounting_policy_v1.json >/dev/null
 cd docs/contracts/instances && sha256sum -c qnty_offline_edge_economic_accounting_policy_v1.sha256
 ```
+
+### Lane K1 — Prerequisite Closure Matrix / Implementation Readiness Lock
+
+**Lane K1 is not a scoring lane.** It adds no new frozen packet or sidecar. It
+is a **derived, diagnostic-only projection** over the seven pre-registration
+gates built by Lanes B through J1 — a pure function of the diagnostics those
+lanes already produce, with no file reads, no hashing, no git calls, and no
+economic/statistical computation.
+
+It answers exactly one question:
+
+> Are all pre-registration gates present and passing, as a chain? Yes or no.
+
+It does **not** answer, and cannot answer:
+
+> Does that authorize scoring, simulation, economic values, statistics, live
+> integration, or final verdict advancement? **No — never.**
+
+#### What Lane K1 does
+
+- Adds `_build_prerequisite_closure_diagnostics(...)` — a pure builder that
+  collects the seven required gates:
+  `contract_packet_gate`, `trial_manifest_preregistration_gate`,
+  `oos_seal_preregistration_gate`, `null_benchmark_preregistration_gate`,
+  `multiple_testing_control_preregistration_gate`,
+  `simulation_policy_preregistration_gate`, and
+  `economic_accounting_policy_preregistration_gate` (read from the top-level
+  key on `net_pnl_equity_risk_contract_diagnostics` when present, falling
+  back to the nested `economic_accounting_policy_diagnostics` key from Lane
+  J1's absence-shape path).
+- Adds `_derive_prerequisite_closure_gate(...)` — a pure gate projection that
+  fails closed, in priority order: any authorization field unexpectedly
+  `true` -> `BLOCKED_BY_UNEXPECTED_AUTHORIZATION`; a required gate missing ->
+  `BLOCKED_BY_MISSING_PREREGISTRATION_GATE`; a required gate present but not
+  passed -> `BLOCKED_BY_FAILED_PREREGISTRATION_GATE`; otherwise
+  `PREREGISTRATION_CHAIN_CLOSED_DIAGNOSTIC_ONLY` with `gate_passed = true`.
+- Wires both into `build_real_validation_receipt(...)` under
+  `prerequisite_closure_diagnostics` and into `main()`'s build order (after
+  the net-PnL/equity-risk contract diagnostics, before the final verdict
+  logic diagnostics).
+
+Even when all seven gates pass and `closure_all_required_gates_passed` is
+`true`, every authorization field remains `false`:
+`closure_scoring_authorization`, `closure_live_authorization`,
+`closure_final_verdict_authorization`, `implementation_authorized`,
+`simulation_authorized`, `economic_value_generation_authorized`,
+`statistical_value_generation_authorized`, `candidate_comparison_authorized`,
+`null_generation_authorized`, `final_verdict_advancement_authorized`, and
+`gate_downstream_unlocks` is always `[]`. `final_offline_verdict_remains` is
+always `BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+
+#### What Lane K1 does NOT do
+
+- No scoring, strategy implementation, signal calculation, simulated events,
+  orders, fills, positions, executions, PnL, returns, Sharpe, edge, equity
+  curve, risk metrics, drawdown, economic values, p-values, confidence
+  intervals, null benchmark computation, candidate-vs-null comparison, or
+  multiple-testing math.
+- No live/paper/exchange integration.
+- Does not advance `final_offline_verdict`; it remains
+  `BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+- Does not change `FORBIDDEN_CALCULATION_KEYS` or `ALLOWED_FINAL_VERDICTS`.
+- Does not edit any frozen upstream JSON or sidecar (contract, trial
+  manifest, OOS seal, null benchmark, multiple-testing control, simulation
+  policy, economic accounting policy).
+- `EDGE_UNPROVEN` and `BLOCK_LIVE_INTEGRATION` remain.
+
+**Next after K1** can be implementation planning — but not in this PR.
+
+#### Verification
+
+```bash
+.venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k PrerequisiteClosureK1 -q
+```

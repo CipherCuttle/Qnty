@@ -88,6 +88,8 @@ __all__ = [
     "materialize_economic_accounting_policy_preregistration_diagnostics",
     "_derive_economic_accounting_policy_preregistration_gate",
     "_build_net_pnl_equity_risk_contract_diagnostics",
+    "_build_prerequisite_closure_diagnostics",
+    "_derive_prerequisite_closure_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -544,6 +546,24 @@ FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED = "FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLO
 FINAL_VERDICT_ADVANCEMENT_BLOCKED_REASON = "UPSTREAM_VALIDATION_CONTRACTS_NOT_DEFINED"
 FINAL_VERDICT_SPLIT_SCORING_NOT_SAFE = "SPLIT_SCORING_NOT_SAFE"
 UPSTREAM_REDUCTION_MODE_STATIC = "STATIC_ABSENCE_RECORD_NO_UPSTREAM_INTROSPECTION"
+
+# === Lane K1: prerequisite closure matrix constants ===
+# A pure, derived diagnostic that projects the seven pre-registration gates
+# (contract packet through economic accounting policy) into a single closure
+# record and a single gate. It performs no I/O, no hashing, no git calls, and
+# no scoring/simulation/economic/statistical computation. It never authorizes
+# implementation, simulation, economic values, statistics, candidate
+# comparison, null generation, live integration, or final verdict advancement.
+PREREQUISITE_CLOSURE_VERSION = "prerequisite-closure-0.1"
+PREREQUISITE_CLOSURE_REQUIRED_GATE_NAMES = (
+    "contract_packet_gate",
+    "trial_manifest_preregistration_gate",
+    "oos_seal_preregistration_gate",
+    "null_benchmark_preregistration_gate",
+    "multiple_testing_control_preregistration_gate",
+    "simulation_policy_preregistration_gate",
+    "economic_accounting_policy_preregistration_gate",
+)
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -10749,6 +10769,268 @@ def _build_net_pnl_equity_risk_contract_diagnostics(
     return diagnostics
 
 
+def _build_prerequisite_closure_diagnostics(
+    *,
+    strategy_rule_contract_diagnostics: dict[str, Any],
+    trial_manifest_diagnostics: dict[str, Any],
+    oos_seal_diagnostics: dict[str, Any],
+    null_benchmark_contract_diagnostics: dict[str, Any],
+    multiple_testing_control_diagnostics: dict[str, Any],
+    trade_position_simulation_contract_diagnostics: dict[str, Any],
+    net_pnl_equity_risk_contract_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a derived, diagnostic-only prerequisite closure matrix.
+
+    This is a **pure projection** over the seven upstream pre-registration
+    gates (contract packet through economic accounting policy). It performs
+    no file reads, no hashing, no git calls, no scoring, and no mutation of
+    its inputs, and it computes no economic or statistical value.
+
+    It answers exactly one question: are all seven pre-registration gates
+    present and passing? It never authorizes implementation, simulation,
+    economic value generation, statistical value generation, candidate
+    comparison, null generation, live integration, or final verdict
+    advancement — those flags are always ``False`` regardless of closure
+    state.
+
+    The economic-accounting-policy gate may live either at the top level of
+    *net_pnl_equity_risk_contract_diagnostics* (Lane J1 full path) or nested
+    under its ``economic_accounting_policy_diagnostics`` key (Lane J1
+    absence path); the top-level gate is preferred when both are present.
+    """
+    economic_accounting_policy_preregistration_gate = (
+        net_pnl_equity_risk_contract_diagnostics.get(
+            "economic_accounting_policy_preregistration_gate"
+        )
+    )
+    if economic_accounting_policy_preregistration_gate is None:
+        nested_eap_diagnostics = net_pnl_equity_risk_contract_diagnostics.get(
+            "economic_accounting_policy_diagnostics"
+        )
+        if isinstance(nested_eap_diagnostics, dict):
+            economic_accounting_policy_preregistration_gate = (
+                nested_eap_diagnostics.get(
+                    "economic_accounting_policy_preregistration_gate"
+                )
+            )
+
+    gates_by_name: dict[str, Any] = {
+        "contract_packet_gate": strategy_rule_contract_diagnostics.get(
+            "contract_packet_gate"
+        ),
+        "trial_manifest_preregistration_gate": trial_manifest_diagnostics.get(
+            "trial_manifest_preregistration_gate"
+        ),
+        "oos_seal_preregistration_gate": oos_seal_diagnostics.get(
+            "oos_seal_preregistration_gate"
+        ),
+        "null_benchmark_preregistration_gate": (
+            null_benchmark_contract_diagnostics.get(
+                "null_benchmark_preregistration_gate"
+            )
+        ),
+        "multiple_testing_control_preregistration_gate": (
+            multiple_testing_control_diagnostics.get(
+                "multiple_testing_control_preregistration_gate"
+            )
+        ),
+        "simulation_policy_preregistration_gate": (
+            trade_position_simulation_contract_diagnostics.get(
+                "simulation_policy_preregistration_gate"
+            )
+        ),
+        "economic_accounting_policy_preregistration_gate": (
+            economic_accounting_policy_preregistration_gate
+        ),
+    }
+
+    required_gate_names = list(PREREQUISITE_CLOSURE_REQUIRED_GATE_NAMES)
+
+    missing_required_gate_names = [
+        name for name in required_gate_names if gates_by_name.get(name) is None
+    ]
+    failed_required_gate_names = [
+        name
+        for name in required_gate_names
+        if gates_by_name.get(name) is not None
+        and gates_by_name[name].get("gate_passed") is not True
+    ]
+
+    closure_gate_passed_count = sum(
+        1
+        for name in required_gate_names
+        if name not in missing_required_gate_names
+        and name not in failed_required_gate_names
+    )
+    closure_all_required_gates_passed = (
+        not missing_required_gate_names and not failed_required_gate_names
+    )
+
+    closure_gate_evidence = {
+        name: {
+            "gate_present": gates_by_name.get(name) is not None,
+            "gate_passed": bool(
+                gates_by_name.get(name) is not None
+                and gates_by_name[name].get("gate_passed") is True
+            ),
+            "gate_status": (
+                gates_by_name[name].get("gate_status")
+                if gates_by_name.get(name) is not None
+                else None
+            ),
+        }
+        for name in required_gate_names
+    }
+
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "prerequisite_closure_matrix",
+        "closure_version": PREREQUISITE_CLOSURE_VERSION,
+        "closure_scope": "PREREGISTRATION_CHAIN_ONLY",
+        "closure_status": (
+            "PREREGISTRATION_CHAIN_CLOSED_DIAGNOSTIC_ONLY"
+            if closure_all_required_gates_passed
+            else "PREREGISTRATION_CHAIN_NOT_CLOSED_DIAGNOSTIC_ONLY"
+        ),
+        "closure_gate_count": len(required_gate_names),
+        "closure_required_gate_names": required_gate_names,
+        "closure_gate_passed_count": closure_gate_passed_count,
+        "closure_all_required_gates_passed": closure_all_required_gates_passed,
+        "closure_missing_required_gate_names": missing_required_gate_names,
+        "closure_failed_required_gate_names": failed_required_gate_names,
+        "closure_downstream_unlocks": [],
+        "closure_scoring_authorization": False,
+        "closure_live_authorization": False,
+        "closure_final_verdict_authorization": False,
+        "implementation_authorized": False,
+        "simulation_authorized": False,
+        "economic_value_generation_authorized": False,
+        "statistical_value_generation_authorized": False,
+        "candidate_comparison_authorized": False,
+        "null_generation_authorized": False,
+        "final_verdict_advancement_authorized": False,
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+        "closure_gate_evidence": closure_gate_evidence,
+    }
+
+    # Derive the prerequisite-closure gate from diagnostics (pure, no I/O).
+    diagnostics["prerequisite_closure_gate"] = _derive_prerequisite_closure_gate(
+        diagnostics
+    )
+    return diagnostics
+
+
+_PREREQUISITE_CLOSURE_AUTHORIZATION_FIELDS = (
+    "closure_scoring_authorization",
+    "closure_live_authorization",
+    "closure_final_verdict_authorization",
+    "implementation_authorized",
+    "simulation_authorized",
+    "economic_value_generation_authorized",
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "final_verdict_advancement_authorized",
+)
+
+
+def _derive_prerequisite_closure_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive a narrow prerequisite-closure gate projection from *diagnostics*.
+
+    This is a pure function: it never reads files, never calls git, never
+    mutates *diagnostics*, and is fully deterministic.
+
+    The gate does **not** authorize scoring, strategy execution, simulation,
+    economic values, statistics, live readiness, or final verdict
+    advancement — even when ``gate_passed`` is ``True``, every authorization
+    field and ``gate_downstream_unlocks`` remain empty/``False``.
+
+    Fails closed, in priority order:
+    * any authorization field unexpectedly ``True`` ->
+      ``BLOCKED_BY_UNEXPECTED_AUTHORIZATION``
+    * a required gate missing -> ``BLOCKED_BY_MISSING_PREREGISTRATION_GATE``
+    * a required gate present but not passed ->
+      ``BLOCKED_BY_FAILED_PREREGISTRATION_GATE``
+    """
+    evidence = {
+        "closure_gate_count": diagnostics.get("closure_gate_count"),
+        "closure_gate_passed_count": diagnostics.get("closure_gate_passed_count"),
+        "closure_all_required_gates_passed": diagnostics.get(
+            "closure_all_required_gates_passed"
+        ),
+        "implementation_authorized": diagnostics.get(
+            "implementation_authorized", False
+        ),
+        "simulation_authorized": diagnostics.get("simulation_authorized", False),
+        "economic_value_generation_authorized": diagnostics.get(
+            "economic_value_generation_authorized", False
+        ),
+        "statistical_value_generation_authorized": diagnostics.get(
+            "statistical_value_generation_authorized", False
+        ),
+        "candidate_comparison_authorized": diagnostics.get(
+            "candidate_comparison_authorized", False
+        ),
+        "null_generation_authorized": diagnostics.get(
+            "null_generation_authorized", False
+        ),
+        "final_verdict_advancement_authorized": diagnostics.get(
+            "final_verdict_advancement_authorized", False
+        ),
+    }
+
+    def _base_gate(gate_status: str, blocked_reason: str | None) -> dict[str, Any]:
+        return {
+            "gate_kind": "prerequisite_closure_gate",
+            "gate_scope": "PREREGISTRATION_CHAIN_ONLY",
+            "gate_status": gate_status,
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": evidence,
+            "blocked_reason": blocked_reason,
+        }
+
+    offending_authorizations = [
+        field
+        for field in _PREREQUISITE_CLOSURE_AUTHORIZATION_FIELDS
+        if diagnostics.get(field) is True
+    ]
+    if offending_authorizations:
+        return _base_gate(
+            "BLOCKED_BY_UNEXPECTED_AUTHORIZATION",
+            "UNEXPECTED_AUTHORIZATION_FIELDS_TRUE: "
+            + ", ".join(sorted(offending_authorizations)),
+        )
+
+    missing_required_gate_names = (
+        diagnostics.get("closure_missing_required_gate_names") or []
+    )
+    if missing_required_gate_names:
+        return _base_gate(
+            "BLOCKED_BY_MISSING_PREREGISTRATION_GATE",
+            "MISSING_REQUIRED_GATES: "
+            + ", ".join(sorted(missing_required_gate_names)),
+        )
+
+    failed_required_gate_names = (
+        diagnostics.get("closure_failed_required_gate_names") or []
+    )
+    if failed_required_gate_names:
+        return _base_gate(
+            "BLOCKED_BY_FAILED_PREREGISTRATION_GATE",
+            "FAILED_REQUIRED_GATES: "
+            + ", ".join(sorted(failed_required_gate_names)),
+        )
+
+    gate = _base_gate("PREREGISTRATION_CHAIN_CLOSED_DIAGNOSTIC_ONLY", None)
+    gate["gate_passed"] = True
+    return gate
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -10866,6 +11148,7 @@ def build_real_validation_receipt(
     trade_position_simulation_contract_diagnostics: dict | None = None,
     net_pnl_equity_risk_contract_diagnostics: dict | None = None,
     economic_accounting_policy_diagnostics: dict | None = None,
+    prerequisite_closure_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -11008,6 +11291,10 @@ def build_real_validation_receipt(
     if economic_accounting_policy_diagnostics is not None:
         receipt["economic_accounting_policy_diagnostics"] = (
             economic_accounting_policy_diagnostics
+        )
+    if prerequisite_closure_diagnostics is not None:
+        receipt["prerequisite_closure_diagnostics"] = (
+            prerequisite_closure_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -11664,6 +11951,27 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
             )
+            prerequisite_closure_diagnostics = (
+                _build_prerequisite_closure_diagnostics(
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    null_benchmark_contract_diagnostics=(
+                        null_benchmark_contract_diagnostics
+                    ),
+                    multiple_testing_control_diagnostics=(
+                        multiple_testing_control_diagnostics
+                    ),
+                    trade_position_simulation_contract_diagnostics=(
+                        trade_position_simulation_contract_diagnostics
+                    ),
+                    net_pnl_equity_risk_contract_diagnostics=(
+                        net_pnl_equity_risk_contract_diagnostics
+                    ),
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -11735,6 +12043,7 @@ def main(argv: list[str] | None = None) -> int:
                     "economic_accounting_policy_diagnostics"
                 )
             ),
+            prerequisite_closure_diagnostics=prerequisite_closure_diagnostics,
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
             ),
@@ -11851,6 +12160,27 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
             )
+            prerequisite_closure_diagnostics = (
+                _build_prerequisite_closure_diagnostics(
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    null_benchmark_contract_diagnostics=(
+                        null_benchmark_contract_diagnostics
+                    ),
+                    multiple_testing_control_diagnostics=(
+                        multiple_testing_control_diagnostics
+                    ),
+                    trade_position_simulation_contract_diagnostics=(
+                        trade_position_simulation_contract_diagnostics
+                    ),
+                    net_pnl_equity_risk_contract_diagnostics=(
+                        net_pnl_equity_risk_contract_diagnostics
+                    ),
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -11887,6 +12217,7 @@ def main(argv: list[str] | None = None) -> int:
                     "economic_accounting_policy_diagnostics"
                 )
             ),
+            prerequisite_closure_diagnostics=prerequisite_closure_diagnostics,
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
             ),
