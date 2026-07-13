@@ -93,7 +93,10 @@ from quantbot.experiment.offline_edge_real_validation import (
     NULL_BENCHMARK_CONTRACT_DIAGNOSTIC_ONLY,
     NULL_BENCHMARK_CONTRACT_NOT_DEFINED,
     NULL_BENCHMARK_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
+    NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY,
     _build_null_benchmark_contract_diagnostics,
+    _derive_null_benchmark_preregistration_gate,
+    materialize_null_benchmark_preregistration_diagnostics,
     MULTIPLE_TESTING_CONTROL_VERSION,
     MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY,
     MULTIPLE_TESTING_CONTROL_NOT_DEFINED,
@@ -13301,3 +13304,485 @@ class TestOosSealPreregistrationF1:
                 trial_manifest_diagnostics=manifest_diag_no_gate,
                 strategy_rule_contract_diagnostics=contract_diag,
             )
+
+
+class TestNullBenchmarkPreregistrationG1:
+    """Lane G1: null benchmark pre-scoring declaration packet + diagnostic gate.
+
+    Proves the declared null reference policy is frozen and hash-bound to the
+    frozen OOS seal, trial manifest, and strategy contract *before* any scoring,
+    null generation, or candidate-vs-null comparison exists. Nothing here
+    computes a null, compares anything, or authorizes scoring.
+    """
+
+    NULL_BENCHMARK_PATH = "docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.json"
+    NULL_BENCHMARK_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.sha256"
+    SEAL_PATH = "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.json"
+    SEAL_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.sha256"
+    CONTRACT_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+    CONTRACT_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256"
+    CONTRACT_BINDING_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json"
+    MANIFEST_PATH = "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.json"
+    MANIFEST_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.sha256"
+
+    def _contract_diag(self):
+        return real_validation._build_strategy_rule_contract_diagnostics(
+            contract_path=self.CONTRACT_PATH,
+            sidecar_path=self.CONTRACT_SIDECAR_PATH,
+            commit_binding_path=self.CONTRACT_BINDING_PATH,
+        )
+
+    def _manifest_diag(self, contract_diag):
+        return real_validation._build_trial_manifest_diagnostics(
+            manifest_path=self.MANIFEST_PATH,
+            sidecar_path=self.MANIFEST_SIDECAR_PATH,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+    def _seal_diag(self, contract_diag, manifest_diag):
+        return real_validation._build_oos_seal_diagnostics(
+            seal_path=self.SEAL_PATH,
+            sidecar_path=self.SEAL_SIDECAR_PATH,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+    def _upstream_diags(self):
+        contract_diag = self._contract_diag()
+        manifest_diag = self._manifest_diag(contract_diag)
+        seal_diag = self._seal_diag(contract_diag, manifest_diag)
+        return contract_diag, manifest_diag, seal_diag
+
+    def _null_benchmark_diag(self):
+        contract_diag, manifest_diag, seal_diag = self._upstream_diags()
+        return real_validation._build_null_benchmark_contract_diagnostics(
+            null_benchmark_path=self.NULL_BENCHMARK_PATH,
+            sidecar_path=self.NULL_BENCHMARK_SIDECAR_PATH,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+    def _tampered_packet(self, tmp_path, mutate):
+        """Write a mutated null benchmark packet + a *matching* sidecar.
+
+        The sidecar is regenerated so the digest check passes and the specific
+        semantic check under test is the one that fails.
+        """
+        packet = json.loads(Path(self.NULL_BENCHMARK_PATH).read_bytes())
+        mutate(packet)
+        packet_bytes = json.dumps(packet, indent=2, sort_keys=True).encode() + b"\n"
+        packet_path = tmp_path / "null_benchmark.json"
+        packet_path.write_bytes(packet_bytes)
+        sidecar_path = tmp_path / "null_benchmark.sha256"
+        digest = hashlib.sha256(packet_bytes).hexdigest()
+        sidecar_path.write_text(f"{digest}  {packet_path.name}\n")
+        return str(packet_path), str(sidecar_path)
+
+    def _materialize_tampered(self, tmp_path, mutate):
+        contract_diag, manifest_diag, seal_diag = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_packet(tmp_path, mutate)
+        return real_validation.materialize_null_benchmark_preregistration_diagnostics(
+            null_benchmark_path=packet_path,
+            sidecar_path=sidecar_path,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+    # -- 1. Packet JSON + sidecar happy path ---------------------------------
+
+    def test_null_benchmark_json_and_sidecar_valid(self):
+        packet_bytes = Path(self.NULL_BENCHMARK_PATH).read_bytes()
+        computed = hashlib.sha256(packet_bytes).hexdigest()
+        sidecar = Path(self.NULL_BENCHMARK_SIDECAR_PATH).read_text().strip()
+        assert sidecar.split()[0] == computed
+
+        packet = json.loads(packet_bytes)
+        assert packet["null_benchmark_hash"] == "FROZEN_IN_SIDECAR"
+        assert packet["null_benchmark_hash_status"] == "FROZEN_IN_SIDECAR"
+        assert packet["null_benchmark_hash_algorithm"] == "sha256"
+        collisions = real_validation._find_forbidden_contract_dict_keys(packet)
+        assert collisions == [], f"Forbidden keys found: {collisions}"
+
+    # -- 2. Null benchmark diagnostic happy path -----------------------------
+
+    def test_null_benchmark_diagnostic_happy_path(self):
+        result = self._null_benchmark_diag()
+        assert result["null_benchmark_sidecar_digest_matches_json_bytes"] is True
+        assert result["bound_contract_digest_matches"] is True
+        assert result["bound_trial_manifest_digest_matches"] is True
+        assert result["bound_oos_seal_digest_matches"] is True
+        assert result["oos_seal_gate_passed"] is True
+        assert result["oos_seal_gate_status"] == (
+            "OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY"
+        )
+        assert result["null_reference_selection_frozen"] is True
+        assert result["null_reference_count"] == 1
+        assert result["null_reference_count_frozen"] is True
+        assert result["null_benchmark_readiness"] is False
+        assert result["null_generation_authorized"] is False
+        assert result["candidate_comparison_authorized"] is False
+        assert result["scoring_authorized"] is False
+        assert result["null_benchmark_validation_status"] == (
+            NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY
+        )
+
+    def test_null_benchmark_diagnostic_has_no_forbidden_keys(self):
+        result = self._null_benchmark_diag()
+        collisions = real_validation._find_forbidden_contract_dict_keys(result)
+        assert collisions == [], f"Forbidden keys found: {collisions}"
+
+    # -- 3. Gate happy path --------------------------------------------------
+
+    def test_null_benchmark_gate_happy_path(self):
+        gate = self._null_benchmark_diag()["null_benchmark_preregistration_gate"]
+        assert gate["gate_kind"] == "null_benchmark_preregistration_gate"
+        assert gate["gate_scope"] == (
+            "NULL_REFERENCE_POLICY_AND_OOS_SEAL_BINDING_ONLY"
+        )
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+        assert gate["blocked_reason"] is None
+        assert gate["evidence"]["oos_seal_gate_passed"] is True
+        assert gate["evidence"]["null_reference_count"] == 1
+
+    # -- 4. Packet missing fails closed --------------------------------------
+
+    def test_null_benchmark_absent_gate_not_loaded(self):
+        result = real_validation._build_null_benchmark_contract_diagnostics()
+        gate = result["null_benchmark_preregistration_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "NULL_BENCHMARK_NOT_LOADED"
+        assert gate["blocked_reason"] == "NULL_BENCHMARK_NOT_PROVIDED"
+
+    def test_null_benchmark_packet_missing_fails_closed(self):
+        contract_diag, manifest_diag, seal_diag = self._upstream_diags()
+        with pytest.raises(ValueError, match="Null benchmark JSON not found"):
+            real_validation.materialize_null_benchmark_preregistration_diagnostics(
+                null_benchmark_path="/tmp/nonexistent_null_benchmark_g1.json",
+                sidecar_path=self.NULL_BENCHMARK_SIDECAR_PATH,
+                oos_seal_diagnostics=seal_diag,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # -- 5. Sidecar missing fails closed -------------------------------------
+
+    def test_null_benchmark_sidecar_missing_fails_closed(self):
+        contract_diag, manifest_diag, seal_diag = self._upstream_diags()
+        with pytest.raises(ValueError, match="Null benchmark sidecar not found"):
+            real_validation.materialize_null_benchmark_preregistration_diagnostics(
+                null_benchmark_path=self.NULL_BENCHMARK_PATH,
+                sidecar_path="/tmp/nonexistent_null_benchmark_g1.sha256",
+                oos_seal_diagnostics=seal_diag,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # -- 6. Digest mismatch fails closed -------------------------------------
+
+    def test_null_benchmark_digest_mismatch_fails_closed(self, tmp_path):
+        contract_diag, manifest_diag, seal_diag = self._upstream_diags()
+        packet_bytes = Path(self.NULL_BENCHMARK_PATH).read_bytes()
+        packet_path = tmp_path / "null_benchmark.json"
+        packet_path.write_bytes(packet_bytes)
+        wrong_digest = hashlib.sha256(packet_bytes + b"tamper").hexdigest()
+        sidecar_path = tmp_path / "null_benchmark.sha256"
+        sidecar_path.write_text(f"{wrong_digest}  {packet_path.name}\n")
+        with pytest.raises(ValueError, match="sidecar digest mismatch"):
+            real_validation.materialize_null_benchmark_preregistration_diagnostics(
+                null_benchmark_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                oos_seal_diagnostics=seal_diag,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # -- 7. Malformed JSON fails closed --------------------------------------
+
+    def test_null_benchmark_malformed_json_fails_closed(self, tmp_path):
+        contract_diag, manifest_diag, seal_diag = self._upstream_diags()
+        bad_bytes = b"{invalid json"
+        packet_path = tmp_path / "null_benchmark.json"
+        packet_path.write_bytes(bad_bytes)
+        sidecar_path = tmp_path / "null_benchmark.sha256"
+        digest = hashlib.sha256(bad_bytes).hexdigest()
+        sidecar_path.write_text(f"{digest}  {packet_path.name}\n")
+        with pytest.raises(ValueError, match="Null benchmark JSON parse error"):
+            real_validation.materialize_null_benchmark_preregistration_diagnostics(
+                null_benchmark_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                oos_seal_diagnostics=seal_diag,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # -- 8. Forbidden dict key fails closed ----------------------------------
+
+    def test_null_benchmark_forbidden_key_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["pnl"] = 1
+
+        with pytest.raises(ValueError, match="forbidden dict keys"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    # -- 9-11. Bound digest mismatches fail closed ---------------------------
+
+    def test_null_benchmark_contract_digest_mismatch_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["bound_contract_sha256"] = "0" * 64
+
+        with pytest.raises(ValueError, match="bound_contract_sha256 mismatch"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_null_benchmark_trial_manifest_digest_mismatch_fails_closed(
+        self, tmp_path
+    ):
+        def mutate(packet):
+            packet["bound_trial_manifest_sha256"] = "0" * 64
+
+        with pytest.raises(
+            ValueError, match="bound_trial_manifest_sha256 mismatch"
+        ):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_null_benchmark_oos_seal_digest_mismatch_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["bound_oos_seal_sha256"] = "0" * 64
+
+        with pytest.raises(ValueError, match="bound_oos_seal_sha256 mismatch"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_null_benchmark_oos_seal_id_mismatch_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["bound_oos_seal_id"] = "some_other_seal"
+
+        with pytest.raises(ValueError, match="bound_oos_seal_id mismatch"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    # -- 12. Missing / failed OOS seal gate blocks the null benchmark --------
+
+    def test_null_benchmark_blocked_when_oos_seal_gate_missing(self):
+        contract_diag = self._contract_diag()
+        manifest_diag = self._manifest_diag(contract_diag)
+        seal_diag_no_gate = real_validation._build_oos_seal_diagnostics()
+        with pytest.raises(ValueError, match="OOS seal gate not passed"):
+            real_validation._build_null_benchmark_contract_diagnostics(
+                null_benchmark_path=self.NULL_BENCHMARK_PATH,
+                sidecar_path=self.NULL_BENCHMARK_SIDECAR_PATH,
+                oos_seal_diagnostics=seal_diag_no_gate,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_gate_projection_blocked_by_oos_seal_gate(self):
+        """Pure gate helper: a loaded packet with a failed OOS seal gate is
+        blocked, never passed."""
+        diagnostics = dict(self._null_benchmark_diag())
+        diagnostics.pop("null_benchmark_preregistration_gate")
+        diagnostics["oos_seal_gate_passed"] = False
+        gate = real_validation._derive_null_benchmark_preregistration_gate(
+            diagnostics
+        )
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_OOS_SEAL_GATE"
+        assert gate["blocked_reason"] == "OOS_SEAL_GATE_NOT_PASSED"
+
+    def test_gate_projection_blocked_by_incomplete_evidence(self):
+        diagnostics = dict(self._null_benchmark_diag())
+        diagnostics.pop("null_benchmark_preregistration_gate")
+        diagnostics["bound_contract_digest_matches"] = False
+        gate = real_validation._derive_null_benchmark_preregistration_gate(
+            diagnostics
+        )
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_NULL_BENCHMARK_EVIDENCE"
+        )
+        assert gate["blocked_reason"] == (
+            "NULL_BENCHMARK_GATE_EVIDENCE_INCOMPLETE"
+        )
+
+    # -- 13-15. Null reference policy freeze ---------------------------------
+
+    def test_null_reference_selection_not_frozen_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["null_reference_selection_frozen"] = False
+
+        with pytest.raises(
+            ValueError, match="null_reference_selection_frozen must be True"
+        ):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_null_reference_count_frozen_false_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["null_reference_count_frozen"] = False
+
+        with pytest.raises(
+            ValueError, match="null_reference_count_frozen must be True"
+        ):
+            self._materialize_tampered(tmp_path, mutate)
+
+    @pytest.mark.parametrize("count", [0, 2, 7])
+    def test_null_reference_count_not_one_fails_closed(self, tmp_path, count):
+        def mutate(packet):
+            packet["null_reference_count"] = count
+
+        with pytest.raises(
+            ValueError, match="null_reference_count must be exactly 1"
+        ):
+            self._materialize_tampered(tmp_path, mutate)
+
+    @pytest.mark.parametrize("count", ["1", True, None, 1.0])
+    def test_null_reference_count_wrong_type_fails_closed(self, tmp_path, count):
+        def mutate(packet):
+            packet["null_reference_count"] = count
+
+        with pytest.raises(
+            ValueError, match="null_reference_count must be a JSON integer"
+        ):
+            self._materialize_tampered(tmp_path, mutate)
+
+    # -- 16. Authorization boolean type hardening ----------------------------
+
+    @pytest.mark.parametrize(
+        "field", list(real_validation._REQUIRED_FALSE_NULL_BENCHMARK_FIELDS)
+    )
+    @pytest.mark.parametrize("value", [0, "false", "true", True, None])
+    def test_null_benchmark_auth_boolean_hardening(self, tmp_path, field, value):
+        def mutate(packet):
+            packet[field] = value
+
+        with pytest.raises(ValueError, match="fields must be exactly false"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_required_field_missing_fails_closed(self, tmp_path):
+        def mutate(packet):
+            del packet["null_reference_policy"]
+
+        with pytest.raises(ValueError, match="missing required fields"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    # -- 17. Receipt integration ---------------------------------------------
+
+    def test_receipt_integration_full_path(self):
+        contract_diag, manifest_diag, seal_diag = self._upstream_diags()
+        null_benchmark_diag = self._null_benchmark_diag()
+        receipt = real_validation.build_real_validation_receipt(
+            input_manifest_fingerprint="test",
+            data_quality_receipt_sha256="test",
+            code_commit_sha="test",
+            split_definitions=[{"split_id": 0}],
+            cost_cases=[],
+            strategy_rule_contract_diagnostics=contract_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            oos_seal_diagnostics=seal_diag,
+            null_benchmark_contract_diagnostics=null_benchmark_diag,
+        )
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+        section = receipt["null_benchmark_contract_diagnostics"]
+        gate = section["null_benchmark_preregistration_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+
+    # -- 18-20. CLI ----------------------------------------------------------
+
+    def _cli_base_args(self, output_dir):
+        return [
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--global-min-timestamp", "2026-01-01T00:00:00Z",
+            "--global-max-timestamp", "2026-02-01T00:00:00Z",
+        ]
+
+    def _cli_upstream_args(self):
+        return [
+            "--strategy-contract-path", self.CONTRACT_PATH,
+            "--strategy-contract-sha256-path", self.CONTRACT_SIDECAR_PATH,
+            "--strategy-contract-commit-binding-path", self.CONTRACT_BINDING_PATH,
+            "--trial-manifest-path", self.MANIFEST_PATH,
+            "--trial-manifest-sha256-path", self.MANIFEST_SIDECAR_PATH,
+            "--oos-seal-path", self.SEAL_PATH,
+            "--oos-seal-sha256-path", self.SEAL_SIDECAR_PATH,
+        ]
+
+    def test_cli_no_null_benchmark_args_gate_not_loaded(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(self._cli_base_args(output_dir))
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        gate = receipt["null_benchmark_contract_diagnostics"][
+            "null_benchmark_preregistration_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "NULL_BENCHMARK_NOT_LOADED"
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_cli_null_benchmark_without_oos_seal_fails_closed(self, tmp_path):
+        """Null benchmark args without the OOS seal gate must not pass."""
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(
+            self._cli_base_args(output_dir)
+            + [
+                "--null-benchmark-path", self.NULL_BENCHMARK_PATH,
+                "--null-benchmark-sha256-path", self.NULL_BENCHMARK_SIDECAR_PATH,
+            ]
+        )
+        assert exit_code == 4
+        assert not (output_dir / "real_validation_receipt.json").exists()
+
+    def test_cli_full_path_all_gates_pass_verdict_blocked(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(
+            self._cli_base_args(output_dir)
+            + self._cli_upstream_args()
+            + [
+                "--null-benchmark-path", self.NULL_BENCHMARK_PATH,
+                "--null-benchmark-sha256-path", self.NULL_BENCHMARK_SIDECAR_PATH,
+            ]
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        contract_gate = receipt["strategy_rule_contract_diagnostics"][
+            "contract_packet_gate"
+        ]
+        manifest_gate = receipt["trial_manifest_diagnostics"][
+            "trial_manifest_preregistration_gate"
+        ]
+        seal_gate = receipt["oos_seal_diagnostics"][
+            "oos_seal_preregistration_gate"
+        ]
+        null_gate = receipt["null_benchmark_contract_diagnostics"][
+            "null_benchmark_preregistration_gate"
+        ]
+        assert contract_gate["gate_passed"] is True
+        assert manifest_gate["gate_passed"] is True
+        assert seal_gate["gate_passed"] is True
+        assert null_gate["gate_passed"] is True
+        assert null_gate["gate_status"] == (
+            NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY
+        )
+        assert null_gate["gate_downstream_unlocks"] == []
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )

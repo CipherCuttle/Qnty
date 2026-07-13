@@ -77,6 +77,8 @@ __all__ = [
     "materialize_oos_seal_preregistration_diagnostics",
     "_derive_oos_seal_preregistration_gate",
     "_build_null_benchmark_contract_diagnostics",
+    "materialize_null_benchmark_preregistration_diagnostics",
+    "_derive_null_benchmark_preregistration_gate",
     "_build_multiple_testing_control_diagnostics",
     "_build_trade_position_simulation_contract_diagnostics",
     "_build_net_pnl_equity_risk_contract_diagnostics",
@@ -276,6 +278,23 @@ NULL_BENCHMARK_CONTRACT_VERSION = "null-benchmark-contract-0.1"
 NULL_BENCHMARK_CONTRACT_DIAGNOSTIC_ONLY = "NULL_BENCHMARK_CONTRACT_DIAGNOSTIC_ONLY"
 NULL_BENCHMARK_CONTRACT_NOT_DEFINED = "NULL_BENCHMARK_CONTRACT_NOT_DEFINED"
 NULL_BENCHMARK_CONTRACT_BLOCKED_REASON_NOT_DEFINED = "NULL_BENCHMARK_CONTRACT_NOT_DEFINED"
+NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY = (
+    "NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY"
+)
+
+_REQUIRED_FALSE_NULL_BENCHMARK_FIELDS: tuple[str, ...] = (
+    "null_generation_authorized",
+    "candidate_comparison_authorized",
+    "trial_execution_authorized",
+    "oos_scoring_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+    "multiple_testing_dependency_satisfied",
+    "trade_position_simulation_dependency_satisfied",
+    "net_pnl_equity_risk_dependency_satisfied",
+)
 
 # === Multiple testing control diagnostics constants ===
 MULTIPLE_TESTING_CONTROL_VERSION = "multiple-testing-control-0.1"
@@ -7192,6 +7211,9 @@ def materialize_oos_seal_preregistration_diagnostics(
         "diagnostic_kind": "oos_seal_preregistration",
         "seal_source_path": seal_path,
         "seal_sidecar_path": sidecar_path,
+        "seal_id": str(seal.get("seal_id", "")),
+        "seal_version": str(seal.get("seal_version", "")),
+        "seal_status": str(seal.get("seal_status", "")),
         "seal_packet_read": True,
         "seal_json_parse_ok": True,
         "seal_sidecar_parse_ok": True,
@@ -7296,6 +7318,448 @@ def _derive_oos_seal_preregistration_gate(
         "gate_kind": "oos_seal_preregistration_gate",
         "gate_scope": (
             "OOS_BOUNDARY_AND_TRIAL_MANIFEST_BINDING_ONLY"
+        ),
+        "gate_status": gate_status,
+        "gate_passed": all_pass,
+        "gate_scoring_authorization": False,
+        "gate_live_authorization": False,
+        "gate_final_verdict_authorization": False,
+        "gate_downstream_unlocks": [],
+        "evidence": evidence,
+        "blocked_reason": blocked_reason,
+    }
+
+
+def materialize_null_benchmark_preregistration_diagnostics(
+    *,
+    null_benchmark_path: str,
+    sidecar_path: str,
+    oos_seal_diagnostics: dict[str, Any],
+    trial_manifest_diagnostics: dict[str, Any],
+    strategy_rule_contract_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Read, parse, hash-check, and audit the frozen null benchmark pre-scoring
+    declaration packet, returning a diagnostic-only dict.
+
+    This function performs **no** null generation, candidate-vs-null comparison,
+    scoring, strategy definition, signal calculation, PnL, edge, or
+    live-readiness. The returned diagnostic records only the packet's load
+    status, hash integrity, forbidden-key survival, bound
+    contract/trial-manifest/OOS-seal digest checking, OOS-seal gate
+    verification, null reference policy freeze, and authorization posture. It
+    does **not** authorize scoring or advance any gate.
+
+    Raises ``ValueError`` on any fail-closed condition:
+    - missing / malformed JSON or sidecar
+    - sidecar digest mismatch
+    - forbidden dict key found
+    - required field missing
+    - null_benchmark_hash not ``FROZEN_IN_SIDECAR``
+    - null_benchmark_hash_status not ``FROZEN_IN_SIDECAR``
+    - null_benchmark_hash_algorithm not ``sha256``
+    - bound contract / trial manifest / OOS seal digest or id mismatch
+    - OOS seal gate missing or not passed
+    - null reference selection or count not frozen
+    - null reference count != 1
+    - any authorization boolean not exactly False
+    - any downstream dependency boolean not exactly False
+    """
+    # --- Read null benchmark JSON bytes ---
+    try:
+        packet_bytes = Path(null_benchmark_path).read_bytes()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Null benchmark JSON not found: {null_benchmark_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Null benchmark JSON read error {null_benchmark_path}: {exc}"
+        )
+
+    json_sha256 = hashlib.sha256(packet_bytes).hexdigest()
+
+    # --- Parse JSON ---
+    try:
+        packet: dict = json.loads(packet_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Null benchmark JSON parse error: {exc}"
+        )
+
+    if not isinstance(packet, dict):
+        raise ValueError(
+            "Null benchmark JSON root must be a dict"
+        )
+
+    # --- Read sidecar ---
+    try:
+        sidecar_text = Path(sidecar_path).read_text().strip()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Null benchmark sidecar not found: {sidecar_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Null benchmark sidecar read error {sidecar_path}: {exc}"
+        )
+
+    # Parse sidecar: expected format "<sha256>  <filename>"
+    parts = sidecar_text.split(None, 1)
+    if not parts or len(parts) != 2:
+        raise ValueError(
+            f"Null benchmark sidecar format invalid: "
+            f"expected '<sha256>  <filename>', got {sidecar_text!r}"
+        )
+    sidecar_sha256 = parts[0]
+
+    if len(sidecar_sha256) != 64:
+        raise ValueError(
+            f"Null benchmark sidecar SHA-256 digest length invalid: "
+            f"expected 64 hex chars, got {len(sidecar_sha256)}"
+        )
+
+    try:
+        int(sidecar_sha256, 16)
+    except ValueError:
+        raise ValueError(
+            f"Null benchmark sidecar SHA-256 digest is not valid hex: "
+            f"{sidecar_sha256!r}"
+        )
+
+    if sidecar_sha256 != json_sha256:
+        raise ValueError(
+            f"Null benchmark sidecar digest mismatch: "
+            f"sidecar={sidecar_sha256}, computed={json_sha256}"
+        )
+
+    # --- Check required field presence ---
+    _REQUIRED_NULL_BENCHMARK_KEYS: set[str] = {
+        "null_benchmark_id",
+        "null_benchmark_version",
+        "null_benchmark_kind",
+        "null_benchmark_status",
+        "null_benchmark_hash",
+        "null_benchmark_hash_algorithm",
+        "null_benchmark_hash_scope",
+        "null_benchmark_hash_status",
+        "bound_contract_id",
+        "bound_contract_sha256",
+        "bound_trial_manifest_id",
+        "bound_trial_manifest_sha256",
+        "bound_oos_seal_id",
+        "bound_oos_seal_sha256",
+        "required_oos_seal_gate_status",
+        "null_reference_policy",
+        "null_reference_family",
+        "null_reference_selection_frozen",
+        "null_reference_count",
+        "null_reference_count_frozen",
+        *_REQUIRED_FALSE_NULL_BENCHMARK_FIELDS,
+    }
+    missing_fields = _REQUIRED_NULL_BENCHMARK_KEYS - set(packet.keys())
+    if missing_fields:
+        raise ValueError(
+            f"Null benchmark missing required fields: {sorted(missing_fields)}"
+        )
+
+    # --- Check forbidden dict keys (strict, no exemptions) ---
+    forbidden_collisions = _find_forbidden_contract_dict_keys(packet)
+    if forbidden_collisions:
+        collision_repr = ", ".join(
+            f"{c['key']!r} at {c['path']}" for c in forbidden_collisions
+        )
+        raise ValueError(
+            f"Null benchmark contains forbidden dict keys: {collision_repr}"
+        )
+
+    # --- Verify null benchmark hash fields ---
+    if packet.get("null_benchmark_hash") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"Null benchmark null_benchmark_hash must be 'FROZEN_IN_SIDECAR', "
+            f"got {packet.get('null_benchmark_hash')!r}"
+        )
+    if packet.get("null_benchmark_hash_status") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"Null benchmark null_benchmark_hash_status must be "
+            f"'FROZEN_IN_SIDECAR', "
+            f"got {packet.get('null_benchmark_hash_status')!r}"
+        )
+    if packet.get("null_benchmark_hash_algorithm") != "sha256":
+        raise ValueError(
+            f"Null benchmark null_benchmark_hash_algorithm must be 'sha256', "
+            f"got {packet.get('null_benchmark_hash_algorithm')!r}"
+        )
+
+    # --- Verify bound contract identity + digest ---
+    contract_diag = strategy_rule_contract_diagnostics
+    contract_json_sha256 = contract_diag.get("json_sha256")
+    contract_id = contract_diag.get("contract_id")
+    bound_contract_sha256 = packet.get("bound_contract_sha256")
+    bound_contract_id = packet.get("bound_contract_id")
+
+    if bound_contract_sha256 != contract_json_sha256:
+        raise ValueError(
+            f"Null benchmark bound_contract_sha256 mismatch: "
+            f"packet says {bound_contract_sha256}, "
+            f"contract diagnostic says {contract_json_sha256}"
+        )
+    if bound_contract_id != contract_id:
+        raise ValueError(
+            f"Null benchmark bound_contract_id mismatch: "
+            f"packet says {bound_contract_id}, "
+            f"contract diagnostic says {contract_id}"
+        )
+
+    # --- Verify bound trial manifest identity + digest ---
+    tmd = trial_manifest_diagnostics
+    manifest_json_sha256 = tmd.get("manifest_json_sha256")
+    manifest_id = tmd.get("manifest_id")
+    bound_trial_manifest_sha256 = packet.get("bound_trial_manifest_sha256")
+    bound_trial_manifest_id = packet.get("bound_trial_manifest_id")
+
+    if bound_trial_manifest_sha256 != manifest_json_sha256:
+        raise ValueError(
+            f"Null benchmark bound_trial_manifest_sha256 mismatch: "
+            f"packet says {bound_trial_manifest_sha256}, "
+            f"trial manifest diagnostic says {manifest_json_sha256}"
+        )
+    if bound_trial_manifest_id != manifest_id:
+        raise ValueError(
+            f"Null benchmark bound_trial_manifest_id mismatch: "
+            f"packet says {bound_trial_manifest_id}, "
+            f"trial manifest diagnostic says {manifest_id}"
+        )
+
+    # --- Verify OOS seal gate (fail closed before any seal digest trust) ---
+    osd = oos_seal_diagnostics
+    oos_seal_gate = osd.get("oos_seal_preregistration_gate", {})
+    if not isinstance(oos_seal_gate, dict):
+        raise ValueError(
+            "OOS seal gate is not a dict"
+        )
+    if not oos_seal_gate.get("gate_passed"):
+        raise ValueError(
+            "OOS seal gate not passed: "
+            "null benchmark pre-registration cannot proceed without the "
+            "OOS seal gate"
+        )
+    oos_seal_gate_status = oos_seal_gate.get("gate_status")
+    if oos_seal_gate_status != OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY:
+        raise ValueError(
+            f"OOS seal gate status must be "
+            f"{OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY!r}, "
+            f"got {oos_seal_gate_status!r}"
+        )
+    required_oos_seal_gate_status = packet.get("required_oos_seal_gate_status")
+    if required_oos_seal_gate_status != oos_seal_gate_status:
+        raise ValueError(
+            f"Null benchmark required_oos_seal_gate_status mismatch: "
+            f"packet says {required_oos_seal_gate_status!r}, "
+            f"OOS seal gate says {oos_seal_gate_status!r}"
+        )
+
+    # --- Verify bound OOS seal identity + digest (after gate check) ---
+    seal_json_sha256 = osd.get("seal_json_sha256")
+    seal_id = osd.get("seal_id")
+    bound_oos_seal_sha256 = packet.get("bound_oos_seal_sha256")
+    bound_oos_seal_id = packet.get("bound_oos_seal_id")
+
+    if bound_oos_seal_sha256 != seal_json_sha256:
+        raise ValueError(
+            f"Null benchmark bound_oos_seal_sha256 mismatch: "
+            f"packet says {bound_oos_seal_sha256}, "
+            f"OOS seal diagnostic says {seal_json_sha256}"
+        )
+    if bound_oos_seal_id != seal_id:
+        raise ValueError(
+            f"Null benchmark bound_oos_seal_id mismatch: "
+            f"packet says {bound_oos_seal_id}, "
+            f"OOS seal diagnostic says {seal_id}"
+        )
+
+    # --- Verify null reference policy freeze ---
+    if packet.get("null_reference_selection_frozen") is not True:
+        raise ValueError(
+            f"Null benchmark null_reference_selection_frozen must be True, "
+            f"got {packet.get('null_reference_selection_frozen')!r}"
+        )
+    if packet.get("null_reference_count_frozen") is not True:
+        raise ValueError(
+            f"Null benchmark null_reference_count_frozen must be True, "
+            f"got {packet.get('null_reference_count_frozen')!r}"
+        )
+    null_reference_count = packet.get("null_reference_count")
+    if isinstance(null_reference_count, bool) or not isinstance(
+        null_reference_count, int
+    ):
+        raise ValueError(
+            f"Null benchmark null_reference_count must be a JSON integer, "
+            f"got {null_reference_count!r}"
+        )
+    if null_reference_count != 1:
+        raise ValueError(
+            f"Null benchmark null_reference_count must be exactly 1, "
+            f"got {null_reference_count!r}"
+        )
+
+    # --- Verify authorization booleans are exactly False ---
+    bad_false_fields: dict[str, Any] = {
+        field: packet.get(field)
+        for field in _REQUIRED_FALSE_NULL_BENCHMARK_FIELDS
+        if packet.get(field) is not False
+    }
+    if bad_false_fields:
+        raise ValueError(
+            "Null benchmark fields must be exactly false: "
+            + ", ".join(
+                f"{k}={v!r}" for k, v in bad_false_fields.items()
+            )
+        )
+
+    return {
+        "diagnostic_kind": "null_benchmark_preregistration",
+        "null_benchmark_source_path": null_benchmark_path,
+        "null_benchmark_sidecar_path": sidecar_path,
+        "null_benchmark_id": str(packet.get("null_benchmark_id", "")),
+        "null_benchmark_packet_version": str(
+            packet.get("null_benchmark_version", "")
+        ),
+        "null_benchmark_packet_status": str(
+            packet.get("null_benchmark_status", "")
+        ),
+        "null_benchmark_packet_read": True,
+        "null_benchmark_json_parse_ok": True,
+        "null_benchmark_sidecar_parse_ok": True,
+        "null_benchmark_json_sha256": json_sha256,
+        "null_benchmark_sidecar_sha256": sidecar_sha256,
+        "null_benchmark_sidecar_digest_matches_json_bytes": True,
+        "null_benchmark_hash_authority": "SIDECAR",
+        "null_benchmark_hash_field_value": "FROZEN_IN_SIDECAR",
+        "null_benchmark_hash_status": "FROZEN_IN_SIDECAR",
+        "null_benchmark_required_fields_present": True,
+        "null_benchmark_forbidden_dict_key_scan_passed": True,
+        "bound_contract_id": str(bound_contract_id),
+        "bound_contract_sha256": str(bound_contract_sha256),
+        "bound_contract_digest_matches": True,
+        "bound_trial_manifest_id": str(bound_trial_manifest_id),
+        "bound_trial_manifest_sha256": str(bound_trial_manifest_sha256),
+        "bound_trial_manifest_digest_matches": True,
+        "bound_oos_seal_id": str(bound_oos_seal_id),
+        "bound_oos_seal_sha256": str(bound_oos_seal_sha256),
+        "bound_oos_seal_digest_matches": True,
+        "oos_seal_gate_required": True,
+        "oos_seal_gate_passed": True,
+        "oos_seal_gate_status": str(oos_seal_gate_status),
+        "null_reference_policy": str(packet.get("null_reference_policy", "")),
+        "null_reference_family": str(packet.get("null_reference_family", "")),
+        "null_reference_selection_frozen": True,
+        "null_reference_count": null_reference_count,
+        "null_reference_count_frozen": True,
+        "null_benchmark_readiness": False,
+        "null_generation_authorized": False,
+        "candidate_comparison_authorized": False,
+        "scoring_authorized": False,
+        "null_benchmark_validation_status": (
+            NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY
+        ),
+    }
+
+
+def _derive_null_benchmark_preregistration_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive a null benchmark pre-registration gate from diagnostics.
+
+    Pure projection — no I/O, no scoring, no null generation, no
+    candidate-vs-null comparison. The gate passes only when all of the
+    following hold:
+    - null benchmark packet read
+    - null benchmark sidecar digest matches the JSON bytes
+    - strict forbidden-key scan passed
+    - bound contract digest matches
+    - bound trial manifest digest matches
+    - bound OOS seal digest matches
+    - OOS seal gate passed
+    - null reference policy frozen (selection + count)
+    - null reference count is exactly 1
+    - all authorization booleans false
+    - all downstream dependency booleans false
+
+    A missing / failed OOS seal gate blocks this gate: null benchmark
+    pre-registration can never pass without it.
+    """
+    evidence: dict[str, Any] = {
+        "null_benchmark_sidecar_digest_matches_json_bytes": (
+            diagnostics.get("null_benchmark_sidecar_digest_matches_json_bytes")
+            is True
+        ),
+        "bound_contract_digest_matches": (
+            diagnostics.get("bound_contract_digest_matches") is True
+        ),
+        "bound_trial_manifest_digest_matches": (
+            diagnostics.get("bound_trial_manifest_digest_matches") is True
+        ),
+        "bound_oos_seal_digest_matches": (
+            diagnostics.get("bound_oos_seal_digest_matches") is True
+        ),
+        "oos_seal_gate_passed": (
+            diagnostics.get("oos_seal_gate_passed") is True
+        ),
+        "null_reference_selection_frozen": (
+            diagnostics.get("null_reference_selection_frozen") is True
+        ),
+        "null_reference_count_frozen": (
+            diagnostics.get("null_reference_count_frozen") is True
+        ),
+        "null_reference_count": diagnostics.get("null_reference_count"),
+    }
+
+    evidence_pass = all(
+        value is True
+        for key, value in evidence.items()
+        if key != "null_reference_count"
+    ) and evidence["null_reference_count"] == 1
+
+    extra_pass = (
+        diagnostics.get("diagnostic_kind")
+        == "null_benchmark_preregistration"
+        and diagnostics.get("null_benchmark_packet_read") is True
+        and diagnostics.get("null_benchmark_json_parse_ok") is True
+        and diagnostics.get("null_benchmark_sidecar_parse_ok") is True
+        and diagnostics.get("null_benchmark_hash_authority") == "SIDECAR"
+        and diagnostics.get("null_benchmark_hash_field_value")
+        == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("null_benchmark_hash_status") == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("null_benchmark_required_fields_present") is True
+        and diagnostics.get("null_benchmark_forbidden_dict_key_scan_passed")
+        is True
+        and diagnostics.get("oos_seal_gate_status")
+        == OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY
+        and diagnostics.get("null_generation_authorized") is False
+        and diagnostics.get("candidate_comparison_authorized") is False
+        and diagnostics.get("scoring_authorized") is False
+        and diagnostics.get("null_benchmark_readiness") is False
+    )
+
+    all_pass = evidence_pass and extra_pass
+
+    if all_pass:
+        gate_status = NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY
+        blocked_reason = None
+    elif diagnostics.get("diagnostic_kind") != "null_benchmark_preregistration":
+        gate_status = "NULL_BENCHMARK_NOT_LOADED"
+        blocked_reason = "NULL_BENCHMARK_NOT_PROVIDED"
+    elif diagnostics.get("oos_seal_gate_passed") is not True:
+        gate_status = "BLOCKED_BY_OOS_SEAL_GATE"
+        blocked_reason = "OOS_SEAL_GATE_NOT_PASSED"
+    else:
+        gate_status = "BLOCKED_BY_INCOMPLETE_NULL_BENCHMARK_EVIDENCE"
+        blocked_reason = "NULL_BENCHMARK_GATE_EVIDENCE_INCOMPLETE"
+
+    return {
+        "gate_kind": "null_benchmark_preregistration_gate",
+        "gate_scope": (
+            "NULL_REFERENCE_POLICY_AND_OOS_SEAL_BINDING_ONLY"
         ),
         "gate_status": gate_status,
         "gate_passed": all_pass,
@@ -7712,23 +8176,74 @@ def _build_oos_seal_diagnostics(
     return diagnostics
 
 
-def _build_null_benchmark_contract_diagnostics() -> dict[str, Any]:
-    """Build a diagnostic-only section recording that no null benchmark
-    contract exists yet and therefore scoring is blocked.
+def _build_null_benchmark_contract_diagnostics(
+    *,
+    null_benchmark_path: str | None = None,
+    sidecar_path: str | None = None,
+    oos_seal_diagnostics: dict[str, Any] | None = None,
+    trial_manifest_diagnostics: dict[str, Any] | None = None,
+    strategy_rule_contract_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a diagnostic-only section for the null benchmark.
 
-    This section does **not** define a benchmark, choose a baseline, compute
-    returns, compare strategies, score anything, or authorize scoring. Every
-    contract field is either ``None``, ``NOT_DEFINED``, or ``False`` — this is
-    a diagnostic of absence, not a definition of presence.
+    If *null_benchmark_path*, *sidecar_path*, *oos_seal_diagnostics*,
+    *trial_manifest_diagnostics*, and *strategy_rule_contract_diagnostics* are
+    all provided, the frozen null benchmark pre-scoring declaration packet is
+    loaded, hash-checked, and audited via
+    :func:`materialize_null_benchmark_preregistration_diagnostics`.
+
+    Otherwise a hardcoded ``NULL_BENCHMARK_CONTRACT_NOT_DEFINED`` diagnostic is
+    returned with a failing gate.
+
+    This section does **not** define a benchmark, choose a baseline, generate a
+    null reference, compute returns, compare a candidate against a null, score
+    anything, or authorize scoring. Loading the packet only records that a
+    reference policy was declared and hash-bound *before* any outcome math
+    exists.
 
     Fail-closed rules:
     * ``scoring_authorized`` is always ``False`` at this stage.
-    * ``null_benchmark_contract_status`` is always
-      ``NULL_BENCHMARK_CONTRACT_NOT_DEFINED``.
-    * ``scoring_blocked_reason`` is always
-      ``NULL_BENCHMARK_CONTRACT_NOT_DEFINED``.
-    * All ``null_benchmark_contract_prerequisites_present`` values are always
-      ``False``.
+    * ``null_generation_authorized`` /  ``candidate_comparison_authorized``
+      are always ``False`` at this stage.
+    * A missing or failed OOS seal gate blocks the null benchmark gate.
+
+    Raises ``ValueError`` if null benchmark paths are provided but the packet is
+    corrupted or its prerequisites are unmet (delegated to the materializer).
+    """
+    if (
+        null_benchmark_path is not None
+        and sidecar_path is not None
+        and oos_seal_diagnostics is not None
+        and trial_manifest_diagnostics is not None
+        and strategy_rule_contract_diagnostics is not None
+    ):
+        diagnostics = (
+            materialize_null_benchmark_preregistration_diagnostics(
+                null_benchmark_path=null_benchmark_path,
+                sidecar_path=sidecar_path,
+                oos_seal_diagnostics=oos_seal_diagnostics,
+                trial_manifest_diagnostics=trial_manifest_diagnostics,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
+        )
+    else:
+        diagnostics = _null_benchmark_contract_absence_diagnostics()
+
+    # Derive null benchmark pre-registration gate from diagnostics (pure, no I/O).
+    diagnostics["null_benchmark_preregistration_gate"] = (
+        _derive_null_benchmark_preregistration_gate(diagnostics)
+    )
+    return diagnostics
+
+
+def _null_benchmark_contract_absence_diagnostics() -> dict[str, Any]:
+    """Diagnostic-only section recording that no null benchmark contract is
+    loaded and therefore scoring is blocked.
+
+    Every contract field is either ``None``, ``NOT_DEFINED``, or ``False`` —
+    this is a diagnostic of absence, not a definition of presence.
     """
     return {
         "contract_version": NULL_BENCHMARK_CONTRACT_VERSION,
@@ -8617,6 +9132,29 @@ def build_parser() -> argparse.ArgumentParser:
             "Required if --oos-seal-path is provided."
         ),
     )
+    parser.add_argument(
+        "--null-benchmark-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to frozen null benchmark pre-scoring declaration JSON. "
+            "If provided, the packet is loaded and hash-checked (diagnostic "
+            "only, no scoring, no null generation, no candidate comparison). "
+            "Requires --null-benchmark-sha256-path, --oos-seal-path/"
+            "--oos-seal-sha256-path, --trial-manifest-path/"
+            "--trial-manifest-sha256-path, and --strategy-contract-path/"
+            "--strategy-contract-sha256-path."
+        ),
+    )
+    parser.add_argument(
+        "--null-benchmark-sha256-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to the SHA-256 sidecar for the frozen null benchmark packet. "
+            "Required if --null-benchmark-path is provided."
+        ),
+    )
     return parser
 
 
@@ -8811,7 +9349,15 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             null_benchmark_contract_diagnostics = (
-                _build_null_benchmark_contract_diagnostics()
+                _build_null_benchmark_contract_diagnostics(
+                    null_benchmark_path=args.null_benchmark_path,
+                    sidecar_path=args.null_benchmark_sha256_path,
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                )
             )
             multiple_testing_control_diagnostics = (
                 _build_multiple_testing_control_diagnostics()
@@ -8937,7 +9483,15 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             null_benchmark_contract_diagnostics = (
-                _build_null_benchmark_contract_diagnostics()
+                _build_null_benchmark_contract_diagnostics(
+                    null_benchmark_path=args.null_benchmark_path,
+                    sidecar_path=args.null_benchmark_sha256_path,
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                )
             )
             multiple_testing_control_diagnostics = (
                 _build_multiple_testing_control_diagnostics()

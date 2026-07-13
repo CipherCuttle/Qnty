@@ -363,3 +363,72 @@ exists."*
 - Null/multiple-testing/simulation/net-PnL gates remain false.
 - Does not edit the contract JSON, contract SHA-256 sidecar, contract
   commit-binding sidecar, trial manifest JSON, or trial manifest SHA-256 sidecar.
+---
+
+### Lane G1 — Null Benchmark Pre-Scoring Declaration Packet
+
+**Status:** frozen, diagnostic-only, pre-scoring.
+**Verdict impact:** none — `final_offline_verdict` stays
+`BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+
+**Lane G1** pre-registers the null/reference policy *before* any scoring,
+outcome math, or candidate evaluation exists. It proves that the strategy
+contract, trial manifest, and OOS seal are all pre-registered and
+diagnostic-bound, and that a null reference policy is declared and hash-bound
+before anything can be compared against it.
+
+#### Files
+
+| File | Purpose |
+|---|---|
+| `qnty_offline_edge_null_benchmark_v1.json` | Null benchmark payload (pre-scoring declaration only) |
+| `qnty_offline_edge_null_benchmark_v1.sha256` | SHA-256 sidecar of the exact JSON bytes |
+
+#### What Lane G1 does
+
+- Freezes the null reference policy: `PREDECLARE_NO_SKILL_REFERENCE_FAMILY_ONLY`.
+- Freezes the null reference family: `NO_SKILL_TIME_ORDER_PRESERVING_REFERENCE`.
+- Freezes the reference selection and the reference count (exactly `1`), so the
+  null cannot be shopped for after outcomes exist.
+- Binds to the frozen strategy contract digest (`bound_contract_sha256`).
+- Binds to the frozen trial manifest digest (`bound_trial_manifest_sha256`).
+- Binds to the frozen OOS seal digest (`bound_oos_seal_sha256`).
+- Requires the OOS seal gate to pass (gate status
+  `OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY`). A missing or failed OOS seal gate
+  fails closed: the null benchmark gate can never pass without it
+  (`BLOCKED_BY_OOS_SEAL_GATE`).
+- Emits the diagnostic-only `null_benchmark_preregistration_gate`
+  (scope `NULL_REFERENCE_POLICY_AND_OOS_SEAL_BINDING_ONLY`, downstream unlocks
+  empty).
+- All authorization booleans are `false`:
+  `null_generation_authorized`, `candidate_comparison_authorized`,
+  `trial_execution_authorized`, `oos_scoring_authorized`,
+  `scoring_authorization`, `live_integration_authorized`,
+  `paper_integration_authorized`, `final_verdict_authorization`.
+- All downstream dependency booleans are `false`:
+  `multiple_testing_dependency_satisfied`,
+  `trade_position_simulation_dependency_satisfied`,
+  `net_pnl_equity_risk_dependency_satisfied`.
+
+#### What Lane G1 does NOT do
+
+- Does **not** compute the null benchmark — no null reference values are
+  generated in this lane (`null_generation_authorized` remains `false`).
+- Does **not** compare a candidate against a null
+  (`candidate_comparison_authorized` remains `false`).
+- No scoring, PnL, returns, Sharpe, edge, outcomes, strategy execution, signal
+  generation, live/paper/exchange integration, or verdict advancement.
+- `null_benchmark_readiness` remains `false`. Even when the packet validates and
+  the gate passes, this is pre-scoring declaration evidence only.
+- `EDGE_UNPROVEN`, `BLOCK_LIVE_INTEGRATION`, and
+  `BLOCKED_BY_VALIDATION_IMPLEMENTATION` remain.
+- Multiple-testing / simulation / net-PnL gates remain false.
+- Does not edit the contract JSON, contract SHA-256 sidecar, contract
+  commit-binding sidecar, trial manifest JSON/sidecar, or OOS seal JSON/sidecar.
+
+#### Verification
+
+```bash
+python3 -m json.tool docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.json >/dev/null
+cd docs/contracts/instances && sha256sum -c qnty_offline_edge_null_benchmark_v1.sha256
+```
