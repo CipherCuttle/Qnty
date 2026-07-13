@@ -83,6 +83,8 @@ __all__ = [
     "materialize_multiple_testing_control_preregistration_diagnostics",
     "_derive_multiple_testing_control_preregistration_gate",
     "_build_trade_position_simulation_contract_diagnostics",
+    "materialize_simulation_policy_preregistration_diagnostics",
+    "_derive_simulation_policy_preregistration_gate",
     "_build_net_pnl_equity_risk_contract_diagnostics",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
@@ -373,6 +375,61 @@ _REQUIRED_FALSE_MULTIPLE_TESTING_CONTROL_FIELDS: tuple[str, ...] = (
     "paper_integration_authorized",
     "final_verdict_authorization",
     "trade_position_simulation_dependency_satisfied",
+    "net_pnl_equity_risk_dependency_satisfied",
+)
+
+# === Trade position simulation contract diagnostics constants ===
+# Simulation policy pre-registration constants.
+# A frozen simulation policy declaration packet that pre-registers the future
+# hypothetical path-construction policy before any simulated events, returns,
+# PnL, orders, fills, positions, or execution logic exists.
+SIMULATION_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY = (
+    "SIMULATION_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY"
+)
+SIMULATION_POLICY_NOT_LOADED = "SIMULATION_POLICY_NOT_LOADED"
+BLOCKED_BY_MULTIPLE_TESTING_CONTROL_GATE = (
+    "BLOCKED_BY_MULTIPLE_TESTING_CONTROL_GATE"
+)
+BLOCKED_BY_INCOMPLETE_SIMULATION_POLICY_EVIDENCE = (
+    "BLOCKED_BY_INCOMPLETE_SIMULATION_POLICY_EVIDENCE"
+)
+
+# Frozen simulation policy string values. These are the only accepted values:
+# no deviation is allowed in this lane.
+SIMULATION_FAMILY_POLICY_FROZEN = (
+    "PREDECLARE_HYPOTHETICAL_PATH_CONSTRUCTION_POLICY_ONLY"
+)
+SIMULATION_TIMING_POLICY_FROZEN = (
+    "NO_INTRABAR_ASSUMPTIONS_BEYOND_FROZEN_CONTRACT_DECISION_TIME"
+)
+SIMULATION_COST_POLICY_FROZEN = "NO_COST_VALUES_COMPUTED_IN_THIS_LANE"
+SIMULATION_FUNDING_POLICY_FROZEN = "NO_FUNDING_VALUES_COMPUTED_IN_THIS_LANE"
+SIMULATION_QUANTITY_POLICY_FROZEN = (
+    "NO_QUANTITY_OR_NOTIONAL_VALUES_COMPUTED_IN_THIS_LANE"
+)
+SIMULATION_OUTPUT_POLICY_FROZEN = (
+    "NO_EVENTS_OR_ECONOMIC_VALUES_EMITTED_IN_THIS_LANE"
+)
+
+_FROZEN_SIMULATION_POLICY_DECLARATION: tuple[tuple[str, str], ...] = (
+    ("simulation_family_policy", SIMULATION_FAMILY_POLICY_FROZEN),
+    ("simulation_timing_policy", SIMULATION_TIMING_POLICY_FROZEN),
+    ("simulation_cost_policy", SIMULATION_COST_POLICY_FROZEN),
+    ("simulation_funding_policy", SIMULATION_FUNDING_POLICY_FROZEN),
+    ("simulation_quantity_policy", SIMULATION_QUANTITY_POLICY_FROZEN),
+    ("simulation_output_policy", SIMULATION_OUTPUT_POLICY_FROZEN),
+)
+
+_REQUIRED_FALSE_SIMULATION_POLICY_FIELDS: tuple[str, ...] = (
+    "simulated_event_generation_authorized",
+    "economic_value_generation_authorized",
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
     "net_pnl_equity_risk_dependency_satisfied",
 )
 
@@ -8416,6 +8473,563 @@ def _derive_multiple_testing_control_preregistration_gate(
     }
 
 
+
+def materialize_simulation_policy_preregistration_diagnostics(
+    *,
+    simulation_policy_path: str,
+    sidecar_path: str,
+    multiple_testing_control_diagnostics: dict[str, Any],
+    null_benchmark_diagnostics: dict[str, Any],
+    oos_seal_diagnostics: dict[str, Any],
+    trial_manifest_diagnostics: dict[str, Any],
+    strategy_rule_contract_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Read, parse, hash-check, and audit the frozen simulation policy
+    pre-scoring declaration packet, returning a diagnostic-only dict.
+
+    This function performs **no** simulation, event generation, economic value
+    computation, scoring, strategy definition, signal calculation, PnL, edge,
+    or live-readiness. The returned diagnostic records only the packet's load
+    status, hash integrity, forbidden-key survival, bound contract / trial
+    manifest / OOS seal / null benchmark / multiple-testing control digest
+    checking, multiple-testing control gate verification, simulation policy
+    freeze, and authorization posture. It does **not** authorize scoring or
+    advance any gate.
+
+    Raises ``ValueError`` on any fail-closed condition:
+    - missing / malformed JSON or sidecar
+    - sidecar digest mismatch
+    - forbidden dict key found
+    - required field missing
+    - simulation_policy_hash not ``FROZEN_IN_SIDECAR``
+    - simulation_policy_hash_status not ``FROZEN_IN_SIDECAR``
+    - simulation_policy_hash_algorithm not ``sha256``
+    - bound contract / trial manifest / OOS seal / null benchmark /
+      multiple-testing control digest or id mismatch
+    - multiple-testing control gate missing or not passed
+    - any simulation policy string not exactly the frozen declared values
+    - any policy freeze boolean not exactly True
+    - any authorization boolean not exactly False
+    - any downstream dependency boolean not exactly False
+    """
+    # --- Read simulation policy JSON bytes ---
+    try:
+        packet_bytes = Path(simulation_policy_path).read_bytes()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Simulation policy JSON not found: {simulation_policy_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Simulation policy JSON read error {simulation_policy_path}: {exc}"
+        )
+
+    json_sha256 = hashlib.sha256(packet_bytes).hexdigest()
+
+    # --- Parse JSON ---
+    try:
+        packet: dict = json.loads(packet_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Simulation policy JSON parse error: {exc}"
+        )
+
+    if not isinstance(packet, dict):
+        raise ValueError(
+            "Simulation policy JSON root must be a dict"
+        )
+
+    # --- Read sidecar ---
+    try:
+        sidecar_text = Path(sidecar_path).read_text().strip()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Simulation policy sidecar not found: {sidecar_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Simulation policy sidecar read error {sidecar_path}: {exc}"
+        )
+
+    parts = sidecar_text.split(None, 1)
+    if not parts or len(parts) != 2:
+        raise ValueError(
+            f"Simulation policy sidecar format invalid: "
+            f"expected '<sha256>  <filename>', got {sidecar_text!r}"
+        )
+    sidecar_sha256 = parts[0]
+
+    if len(sidecar_sha256) != 64:
+        raise ValueError(
+            f"Simulation policy sidecar SHA-256 digest length invalid: "
+            f"expected 64 hex chars, got {len(sidecar_sha256)}"
+        )
+
+    try:
+        int(sidecar_sha256, 16)
+    except ValueError:
+        raise ValueError(
+            f"Simulation policy sidecar SHA-256 digest is not valid hex: "
+            f"{sidecar_sha256!r}"
+        )
+
+    if sidecar_sha256 != json_sha256:
+        raise ValueError(
+            f"Simulation policy sidecar digest mismatch: "
+            f"sidecar={sidecar_sha256}, computed={json_sha256}"
+        )
+
+    # --- Check required field presence ---
+    _REQUIRED_SIMULATION_POLICY_KEYS: set[str] = {
+        "simulation_policy_id",
+        "simulation_policy_version",
+        "simulation_policy_kind",
+        "simulation_policy_status",
+        "simulation_policy_hash",
+        "simulation_policy_hash_algorithm",
+        "simulation_policy_hash_scope",
+        "simulation_policy_hash_status",
+        "bound_contract_id",
+        "bound_contract_sha256",
+        "bound_trial_manifest_id",
+        "bound_trial_manifest_sha256",
+        "bound_oos_seal_id",
+        "bound_oos_seal_sha256",
+        "bound_null_benchmark_id",
+        "bound_null_benchmark_sha256",
+        "bound_multiple_testing_control_id",
+        "bound_multiple_testing_control_sha256",
+        "required_multiple_testing_control_gate_status",
+        "required_multiple_testing_control_gate_scope",
+        *(field for field, _ in _FROZEN_SIMULATION_POLICY_DECLARATION),
+        *_REQUIRED_FALSE_SIMULATION_POLICY_FIELDS,
+    }
+    missing_fields = _REQUIRED_SIMULATION_POLICY_KEYS - set(packet.keys())
+    if missing_fields:
+        raise ValueError(
+            f"Simulation policy missing required fields: "
+            f"{sorted(missing_fields)}"
+        )
+
+    # --- Check forbidden dict keys (strict, no exemptions) ---
+    forbidden_collisions = _find_forbidden_contract_dict_keys(packet)
+    if forbidden_collisions:
+        collision_repr = ", ".join(
+            f"{c['key']!r} at {c['path']}" for c in forbidden_collisions
+        )
+        raise ValueError(
+            f"Simulation policy contains forbidden dict keys: "
+            f"{collision_repr}"
+        )
+
+    # --- Verify simulation policy hash fields ---
+    if packet.get("simulation_policy_hash") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"Simulation policy simulation_policy_hash must be "
+            f"'FROZEN_IN_SIDECAR', "
+            f"got {packet.get('simulation_policy_hash')!r}"
+        )
+    if packet.get("simulation_policy_hash_status") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"Simulation policy simulation_policy_hash_status "
+            f"must be 'FROZEN_IN_SIDECAR', "
+            f"got {packet.get('simulation_policy_hash_status')!r}"
+        )
+    if packet.get("simulation_policy_hash_algorithm") != "sha256":
+        raise ValueError(
+            f"Simulation policy simulation_policy_hash_algorithm "
+            f"must be 'sha256', "
+            f"got {packet.get('simulation_policy_hash_algorithm')!r}"
+        )
+
+    # --- Verify bound contract identity + digest ---
+    contract_diag = strategy_rule_contract_diagnostics
+    contract_json_sha256 = contract_diag.get("json_sha256")
+    contract_id = contract_diag.get("contract_id")
+    bound_contract_sha256 = packet.get("bound_contract_sha256")
+    bound_contract_id = packet.get("bound_contract_id")
+
+    if bound_contract_sha256 != contract_json_sha256:
+        raise ValueError(
+            f"Simulation policy bound_contract_sha256 mismatch: "
+            f"packet says {bound_contract_sha256}, "
+            f"contract diagnostic says {contract_json_sha256}"
+        )
+    if bound_contract_id != contract_id:
+        raise ValueError(
+            f"Simulation policy bound_contract_id mismatch: "
+            f"packet says {bound_contract_id}, "
+            f"contract diagnostic says {contract_id}"
+        )
+
+    # --- Verify bound trial manifest identity + digest ---
+    tmd = trial_manifest_diagnostics
+    manifest_json_sha256 = tmd.get("manifest_json_sha256")
+    manifest_id = tmd.get("manifest_id")
+    bound_trial_manifest_sha256 = packet.get("bound_trial_manifest_sha256")
+    bound_trial_manifest_id = packet.get("bound_trial_manifest_id")
+
+    if bound_trial_manifest_sha256 != manifest_json_sha256:
+        raise ValueError(
+            f"Simulation policy bound_trial_manifest_sha256 mismatch: "
+            f"packet says {bound_trial_manifest_sha256}, "
+            f"trial manifest diagnostic says {manifest_json_sha256}"
+        )
+    if bound_trial_manifest_id != manifest_id:
+        raise ValueError(
+            f"Simulation policy bound_trial_manifest_id mismatch: "
+            f"packet says {bound_trial_manifest_id}, "
+            f"trial manifest diagnostic says {manifest_id}"
+        )
+
+    # --- Verify bound OOS seal identity + digest ---
+    osd = oos_seal_diagnostics
+    seal_json_sha256 = osd.get("seal_json_sha256")
+    seal_id = osd.get("seal_id")
+    bound_oos_seal_sha256 = packet.get("bound_oos_seal_sha256")
+    bound_oos_seal_id = packet.get("bound_oos_seal_id")
+
+    if bound_oos_seal_sha256 != seal_json_sha256:
+        raise ValueError(
+            f"Simulation policy bound_oos_seal_sha256 mismatch: "
+            f"packet says {bound_oos_seal_sha256}, "
+            f"OOS seal diagnostic says {seal_json_sha256}"
+        )
+    if bound_oos_seal_id != seal_id:
+        raise ValueError(
+            f"Simulation policy bound_oos_seal_id mismatch: "
+            f"packet says {bound_oos_seal_id}, "
+            f"OOS seal diagnostic says {seal_id}"
+        )
+
+    # --- Verify null benchmark identity + digest ---
+    nbd = null_benchmark_diagnostics
+    null_benchmark_json_sha256 = nbd.get("null_benchmark_json_sha256")
+    null_benchmark_id = nbd.get("null_benchmark_id")
+    bound_null_benchmark_sha256 = packet.get("bound_null_benchmark_sha256")
+    bound_null_benchmark_id = packet.get("bound_null_benchmark_id")
+
+    if bound_null_benchmark_sha256 != null_benchmark_json_sha256:
+        raise ValueError(
+            f"Simulation policy bound_null_benchmark_sha256 mismatch: "
+            f"packet says {bound_null_benchmark_sha256}, "
+            f"null benchmark diagnostic says {null_benchmark_json_sha256}"
+        )
+    if bound_null_benchmark_id != null_benchmark_id:
+        raise ValueError(
+            f"Simulation policy bound_null_benchmark_id mismatch: "
+            f"packet says {bound_null_benchmark_id}, "
+            f"null benchmark diagnostic says {null_benchmark_id}"
+        )
+
+    # --- Verify multiple-testing control gate (fail closed before any MT digest trust) ---
+    mtd = multiple_testing_control_diagnostics
+    mt_gate = mtd.get("multiple_testing_control_preregistration_gate", {})
+    if not isinstance(mt_gate, dict):
+        raise ValueError(
+            "Multiple-testing control gate is not a dict"
+        )
+    if not mt_gate.get("gate_passed"):
+        raise ValueError(
+            "Multiple-testing control gate not passed: "
+            "simulation policy pre-registration cannot proceed without "
+            "the multiple-testing control gate"
+        )
+    mt_gate_status = mt_gate.get("gate_status")
+    if mt_gate_status != MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY:
+        raise ValueError(
+            f"Multiple-testing control gate status must be "
+            f"{MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY!r}, "
+            f"got {mt_gate_status!r}"
+        )
+    required_mt_gate_status = packet.get(
+        "required_multiple_testing_control_gate_status"
+    )
+    if required_mt_gate_status != mt_gate_status:
+        raise ValueError(
+            f"Simulation policy required_multiple_testing_control_gate_status "
+            f"mismatch: packet says {required_mt_gate_status!r}, "
+            f"multiple-testing control gate says {mt_gate_status!r}"
+        )
+
+    # --- Verify bound multiple-testing control identity + digest (after gate check) ---
+    mt_json_sha256 = mtd.get("multiple_testing_control_json_sha256")
+    mt_id = mtd.get("multiple_testing_control_id")
+    bound_mt_sha256 = packet.get("bound_multiple_testing_control_sha256")
+    bound_mt_id = packet.get("bound_multiple_testing_control_id")
+
+    if bound_mt_sha256 != mt_json_sha256:
+        raise ValueError(
+            f"Simulation policy bound_multiple_testing_control_sha256 mismatch: "
+            f"packet says {bound_mt_sha256}, "
+            f"multiple-testing control diagnostic says {mt_json_sha256}"
+        )
+    if bound_mt_id != mt_id:
+        raise ValueError(
+            f"Simulation policy bound_multiple_testing_control_id mismatch: "
+            f"packet says {bound_mt_id}, "
+            f"multiple-testing control diagnostic says {mt_id}"
+        )
+
+    # --- Verify the frozen simulation policy declaration exactly ---
+    for field, frozen_value in _FROZEN_SIMULATION_POLICY_DECLARATION:
+        actual = packet.get(field)
+        if actual != frozen_value:
+            raise ValueError(
+                f"Simulation policy {field} must be exactly "
+                f"{frozen_value!r}, got {actual!r}"
+            )
+
+    # --- Verify policy freeze flags ---
+    for field, _ in _FROZEN_SIMULATION_POLICY_DECLARATION:
+        freeze_field = f"{field}_frozen"
+        if packet.get(freeze_field) is not True:
+            raise ValueError(
+                f"Simulation policy {freeze_field} must be True, "
+                f"got {packet.get(freeze_field)!r}"
+            )
+
+    # --- Verify authorization booleans are exactly False ---
+    bad_false_fields: dict[str, Any] = {
+        field: packet.get(field)
+        for field in _REQUIRED_FALSE_SIMULATION_POLICY_FIELDS
+        if packet.get(field) is not False
+    }
+    if bad_false_fields:
+        raise ValueError(
+            "Simulation policy fields must be exactly false: "
+            + ", ".join(
+                f"{k}={v!r}" for k, v in bad_false_fields.items()
+            )
+        )
+
+    return {
+        "diagnostic_kind": "simulation_policy_preregistration",
+        "simulation_policy_source_path": simulation_policy_path,
+        "simulation_policy_sidecar_path": sidecar_path,
+        "simulation_policy_packet_read": True,
+        "simulation_policy_json_parse_ok": True,
+        "simulation_policy_sidecar_parse_ok": True,
+        "simulation_policy_json_sha256": json_sha256,
+        "simulation_policy_sidecar_sha256": sidecar_sha256,
+        "simulation_policy_sidecar_digest_matches_json_bytes": True,
+        "simulation_policy_hash_authority": "SIDECAR",
+        "simulation_policy_hash_field_value": "FROZEN_IN_SIDECAR",
+        "simulation_policy_hash_status": "FROZEN_IN_SIDECAR",
+        "simulation_policy_required_fields_present": True,
+        "simulation_policy_forbidden_dict_key_scan_passed": True,
+        "bound_contract_id": str(bound_contract_id),
+        "bound_contract_sha256": str(bound_contract_sha256),
+        "bound_contract_digest_matches": True,
+        "bound_trial_manifest_id": str(bound_trial_manifest_id),
+        "bound_trial_manifest_sha256": str(bound_trial_manifest_sha256),
+        "bound_trial_manifest_digest_matches": True,
+        "bound_oos_seal_id": str(bound_oos_seal_id),
+        "bound_oos_seal_sha256": str(bound_oos_seal_sha256),
+        "bound_oos_seal_digest_matches": True,
+        "bound_null_benchmark_id": str(bound_null_benchmark_id),
+        "bound_null_benchmark_sha256": str(bound_null_benchmark_sha256),
+        "bound_null_benchmark_digest_matches": True,
+        "bound_multiple_testing_control_id": str(bound_mt_id),
+        "bound_multiple_testing_control_sha256": str(bound_mt_sha256),
+        "bound_multiple_testing_control_digest_matches": True,
+        "multiple_testing_control_gate_required": True,
+        "multiple_testing_control_gate_passed": True,
+        "multiple_testing_control_gate_status": str(mt_gate_status),
+        "simulation_family_policy": SIMULATION_FAMILY_POLICY_FROZEN,
+        "simulation_family_policy_frozen": True,
+        "simulation_timing_policy": SIMULATION_TIMING_POLICY_FROZEN,
+        "simulation_timing_policy_frozen": True,
+        "simulation_cost_policy": SIMULATION_COST_POLICY_FROZEN,
+        "simulation_cost_policy_frozen": True,
+        "simulation_funding_policy": SIMULATION_FUNDING_POLICY_FROZEN,
+        "simulation_funding_policy_frozen": True,
+        "simulation_quantity_policy": SIMULATION_QUANTITY_POLICY_FROZEN,
+        "simulation_quantity_policy_frozen": True,
+        "simulation_output_policy": SIMULATION_OUTPUT_POLICY_FROZEN,
+        "simulation_output_policy_frozen": True,
+        "simulation_policy_readiness": False,
+        "simulated_event_generation_authorized": False,
+        "economic_value_generation_authorized": False,
+        "simulation_policy_validation_status": (
+            SIMULATION_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY
+        ),
+    }
+
+
+def _derive_simulation_policy_preregistration_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive a simulation policy pre-registration gate from diagnostics.
+
+    Pure projection — no I/O, no scoring, no simulation, no event generation,
+    no economic value computation. The gate passes only when all of the
+    following hold:
+    - simulation policy packet read
+    - sidecar digest matches the JSON bytes
+    - strict forbidden-key scan passed
+    - bound contract digest matches
+    - bound trial manifest digest matches
+    - bound OOS seal digest matches
+    - bound null benchmark digest matches
+    - bound multiple-testing control digest matches
+    - multiple-testing control gate passed
+    - all simulation policy strings match frozen declared values exactly
+    - all simulation policy freeze booleans are True
+    - all authorization booleans false
+    - all downstream dependency booleans false
+
+    A missing / failed multiple-testing control gate blocks this gate:
+    simulation policy pre-registration can never pass without it.
+    """
+    evidence: dict[str, Any] = {
+        "simulation_policy_sidecar_digest_matches_json_bytes": (
+            diagnostics.get(
+                "simulation_policy_sidecar_digest_matches_json_bytes"
+            )
+            is True
+        ),
+        "bound_contract_digest_matches": (
+            diagnostics.get("bound_contract_digest_matches") is True
+        ),
+        "bound_trial_manifest_digest_matches": (
+            diagnostics.get("bound_trial_manifest_digest_matches") is True
+        ),
+        "bound_oos_seal_digest_matches": (
+            diagnostics.get("bound_oos_seal_digest_matches") is True
+        ),
+        "bound_null_benchmark_digest_matches": (
+            diagnostics.get("bound_null_benchmark_digest_matches") is True
+        ),
+        "bound_multiple_testing_control_digest_matches": (
+            diagnostics.get("bound_multiple_testing_control_digest_matches")
+            is True
+        ),
+        "multiple_testing_control_gate_passed": (
+            diagnostics.get("multiple_testing_control_gate_passed") is True
+        ),
+        **{
+            f"{field}_matches_frozen_value": (
+                diagnostics.get(field) == frozen_value
+            )
+            for field, frozen_value in _FROZEN_SIMULATION_POLICY_DECLARATION
+        },
+    }
+
+    evidence_pass = all(
+        value is True
+        for key, value in evidence.items()
+    )
+
+    extra_pass = (
+        diagnostics.get("diagnostic_kind")
+        == "simulation_policy_preregistration"
+        and diagnostics.get("simulation_policy_packet_read") is True
+        and diagnostics.get("simulation_policy_json_parse_ok") is True
+        and diagnostics.get("simulation_policy_sidecar_parse_ok") is True
+        and diagnostics.get("simulation_policy_hash_authority") == "SIDECAR"
+        and diagnostics.get("simulation_policy_hash_field_value")
+        == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("simulation_policy_hash_status")
+        == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("simulation_policy_required_fields_present")
+        is True
+        and diagnostics.get(
+            "simulation_policy_forbidden_dict_key_scan_passed"
+        )
+        is True
+        and diagnostics.get("multiple_testing_control_gate_status")
+        == MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY
+        and diagnostics.get("simulated_event_generation_authorized") is False
+        and diagnostics.get("economic_value_generation_authorized") is False
+        and diagnostics.get("simulation_policy_readiness") is False
+    )
+
+    all_pass = evidence_pass and extra_pass
+
+    if all_pass:
+        gate_status = SIMULATION_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY
+        blocked_reason = None
+    elif (
+        diagnostics.get("diagnostic_kind")
+        != "simulation_policy_preregistration"
+    ):
+        gate_status = SIMULATION_POLICY_NOT_LOADED
+        blocked_reason = "SIMULATION_POLICY_NOT_PROVIDED"
+    elif diagnostics.get("multiple_testing_control_gate_passed") is not True:
+        gate_status = BLOCKED_BY_MULTIPLE_TESTING_CONTROL_GATE
+        blocked_reason = "MULTIPLE_TESTING_CONTROL_GATE_NOT_PASSED"
+    else:
+        gate_status = BLOCKED_BY_INCOMPLETE_SIMULATION_POLICY_EVIDENCE
+        blocked_reason = "SIMULATION_POLICY_GATE_EVIDENCE_INCOMPLETE"
+
+    return {
+        "gate_kind": "simulation_policy_preregistration_gate",
+        "gate_scope": "SIMULATION_POLICY_AND_MULTIPLE_TESTING_BINDING_ONLY",
+        "gate_status": gate_status,
+        "gate_passed": all_pass,
+        "gate_scoring_authorization": False,
+        "gate_live_authorization": False,
+        "gate_final_verdict_authorization": False,
+        "gate_downstream_unlocks": [],
+        "evidence": evidence,
+        "blocked_reason": blocked_reason,
+    }
+
+
+def _simulation_policy_absence_diagnostics() -> dict[str, Any]:
+    """Diagnostic-only section recording that no simulation policy is loaded:
+    no hypothetical path-construction policy exists, no simulation timing
+    policy, no cost/funding/quantity/output policy, and scoring remains
+    unauthorized.
+
+    Every field is either ``None``, ``NOT_DEFINED``, or ``False`` — this is
+    a diagnostic of absence, not a definition of presence.
+    """
+    return {
+        "simulation_policy_version": "simulation-policy-0.1",
+        "calculation_status": "SIMULATION_POLICY_DIAGNOSTIC_ONLY",
+        "simulation_policy_status": "SIMULATION_POLICY_NOT_DEFINED",
+        "simulation_policy_present": False,
+        "simulation_policy_hash": None,
+        "simulation_policy_source": None,
+        "scoring_authorized": False,
+        "scoring_blocked_reason": "SIMULATION_POLICY_NOT_DEFINED",
+        "simulation_family_policy_defined": False,
+        "simulation_family_policy": "NOT_DEFINED",
+        "simulation_timing_policy_defined": False,
+        "simulation_timing_policy": "NOT_DEFINED",
+        "simulation_cost_policy_defined": False,
+        "simulation_cost_policy": "NOT_DEFINED",
+        "simulation_funding_policy_defined": False,
+        "simulation_funding_policy": "NOT_DEFINED",
+        "simulation_quantity_policy_defined": False,
+        "simulation_quantity_policy": "NOT_DEFINED",
+        "simulation_output_policy_defined": False,
+        "simulation_output_policy": "NOT_DEFINED",
+        "strategy_rule_contract_dependency_satisfied": False,
+        "trial_manifest_dependency_satisfied": False,
+        "oos_seal_dependency_satisfied": False,
+        "null_benchmark_contract_dependency_satisfied": False,
+        "multiple_testing_control_dependency_satisfied": False,
+        "split_scoring_safe_dependency_satisfied": False,
+        "simulation_policy_prerequisites_present": {
+            "strategy_rule_contract": False,
+            "trial_manifest": False,
+            "oos_seal": False,
+            "null_benchmark_contract": False,
+            "multiple_testing_control": False,
+            "split_scoring_safe": False,
+            "simulation_family_policy": False,
+            "simulation_timing_policy": False,
+            "simulation_cost_policy": False,
+            "simulation_funding_policy": False,
+            "simulation_quantity_policy": False,
+            "simulation_output_policy": False,
+        },
+    }
+
+
 def _build_strategy_rule_contract_diagnostics(
     contract_path: str | None = None,
     sidecar_path: str | None = None,
@@ -9083,10 +9697,25 @@ def _multiple_testing_control_absence_diagnostics() -> dict[str, Any]:
         },
     }
 
-def _build_trade_position_simulation_contract_diagnostics() -> dict[str, Any]:
-    """Build a diagnostic-only section recording that no trade/position
-    simulation contract exists yet, no simulator policies are defined, and
-    simulation-based scoring remains unauthorized.
+def _build_trade_position_simulation_contract_diagnostics(
+    *,
+    simulation_policy_path: str | None = None,
+    sidecar_path: str | None = None,
+    multiple_testing_control_diagnostics: dict[str, Any] | None = None,
+    null_benchmark_diagnostics: dict[str, Any] | None = None,
+    oos_seal_diagnostics: dict[str, Any] | None = None,
+    trial_manifest_diagnostics: dict[str, Any] | None = None,
+    strategy_rule_contract_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a diagnostic-only section for the trade/position simulation
+    contract.
+
+    If *simulation_policy_path*, *sidecar_path*, and all upstream diagnostics
+    are provided, the frozen simulation policy pre-scoring declaration packet
+    is loaded, hash-checked, and audited via
+    :func:`materialize_simulation_policy_preregistration_diagnostics`.
+
+    Otherwise a hardcoded absence diagnostic is returned with a failing gate.
 
     This section does **not** implement a simulator, generate signals,
     implement trades/positions/orders/fills/execution, or compute
@@ -9095,17 +9724,53 @@ def _build_trade_position_simulation_contract_diagnostics() -> dict[str, Any]:
     rules, exit rules, benchmark family, OOS dates, random seed, shuffle
     policy, or permutation policy.
 
+    When the simulation policy packet is loaded, the returned diagnostic
+    records only the packet's load status, hash integrity, forbidden-key
+    survival, bound digests, multiple-testing control gate, and frozen
+    simulation policy declarations. It does **not** authorize scoring or
+    advance any gate.
+
     Fail-closed rules:
-    * ``trade_position_simulation_contract_status`` is always
-      ``TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED``.
-    * ``trade_position_simulation_contract_present`` is always ``False``.
     * ``scoring_authorized`` is always ``False`` at this stage.
-    * ``scoring_blocked_reason`` is always
-      ``TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED``.
-    * All ``trade_position_simulation_contract_prerequisites_present`` values
-      are always ``False``.
-    * All policy fields are always ``NOT_DEFINED``.
+    * ``simulated_event_generation_authorized`` /
+      ``economic_value_generation_authorized`` are always ``False``.
+    * A missing or failed multiple-testing control gate blocks the
+      simulation policy gate.
+
+    Raises ``ValueError`` if simulation policy paths are provided but the
+    packet is corrupted or its prerequisites are unmet (delegated to the
+    materializer).
     """
+    if (
+        simulation_policy_path is not None
+        and sidecar_path is not None
+        and multiple_testing_control_diagnostics is not None
+        and null_benchmark_diagnostics is not None
+        and oos_seal_diagnostics is not None
+        and trial_manifest_diagnostics is not None
+        and strategy_rule_contract_diagnostics is not None
+    ):
+        diagnostics = (
+            materialize_simulation_policy_preregistration_diagnostics(
+                simulation_policy_path=simulation_policy_path,
+                sidecar_path=sidecar_path,
+                multiple_testing_control_diagnostics=(
+                    multiple_testing_control_diagnostics
+                ),
+                null_benchmark_diagnostics=null_benchmark_diagnostics,
+                oos_seal_diagnostics=oos_seal_diagnostics,
+                trial_manifest_diagnostics=trial_manifest_diagnostics,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
+        )
+        diagnostics["simulation_policy_preregistration_gate"] = (
+            _derive_simulation_policy_preregistration_gate(diagnostics)
+        )
+        return diagnostics
+
+    # No-args / absence path: preserve backward-compatible absence shape.
     return {
         "contract_version": TRADE_POSITION_SIMULATION_CONTRACT_VERSION,
         "calculation_status": TRADE_POSITION_SIMULATION_CONTRACT_DIAGNOSTIC_ONLY,
@@ -9115,12 +9780,10 @@ def _build_trade_position_simulation_contract_diagnostics() -> dict[str, Any]:
         "trade_position_simulation_contract_present": False,
         "trade_position_simulation_contract_hash": None,
         "trade_position_simulation_contract_source": None,
-
         "scoring_authorized": False,
         "scoring_blocked_reason": (
             TRADE_POSITION_SIMULATION_CONTRACT_BLOCKED_REASON_NOT_DEFINED
         ),
-
         "decision_timestamp_policy_defined": False,
         "decision_timestamp_policy": NOT_DEFINED,
         "order_timing_policy_defined": False,
@@ -9132,7 +9795,6 @@ def _build_trade_position_simulation_contract_diagnostics() -> dict[str, Any]:
         "fee_application_policy_defined": False,
         "fee_application_policy": NOT_DEFINED,
         "funding_application_dependency_satisfied": False,
-
         "side_policy_defined": False,
         "side_policy": NOT_DEFINED,
         "notional_sizing_policy_defined": False,
@@ -9153,14 +9815,12 @@ def _build_trade_position_simulation_contract_diagnostics() -> dict[str, Any]:
         "invalid_state_policy": NOT_DEFINED,
         "missing_data_policy_defined": False,
         "missing_data_policy": NOT_DEFINED,
-
         "strategy_rule_contract_dependency_satisfied": False,
         "trial_manifest_dependency_satisfied": False,
         "oos_seal_dependency_satisfied": False,
         "null_benchmark_contract_dependency_satisfied": False,
         "multiple_testing_control_dependency_satisfied": False,
         "split_scoring_safe_dependency_satisfied": False,
-
         "trade_position_simulation_contract_prerequisites_present": {
             "strategy_rule_contract": False,
             "trial_manifest": False,
@@ -9883,6 +10543,31 @@ def build_parser() -> argparse.ArgumentParser:
             "provided."
         ),
     )
+    parser.add_argument(
+        "--simulation-policy-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to frozen simulation policy pre-scoring declaration JSON. "
+            "If provided, the packet is loaded and hash-checked (diagnostic "
+            "only, no simulation, no events, no economic values, no scoring). "
+            "Requires --simulation-policy-sha256-path, "
+            "--multiple-testing-control-path/--multiple-testing-control-sha256-path, "
+            "--null-benchmark-path/--null-benchmark-sha256-path, "
+            "--oos-seal-path/--oos-seal-sha256-path, "
+            "--trial-manifest-path/--trial-manifest-sha256-path, and "
+            "--strategy-contract-path/--strategy-contract-sha256-path."
+        ),
+    )
+    parser.add_argument(
+        "--simulation-policy-sha256-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to the SHA-256 sidecar for the frozen simulation policy "
+            "packet. Required if --simulation-policy-path is provided."
+        ),
+    )
     return parser
 
 
@@ -10104,7 +10789,21 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             trade_position_simulation_contract_diagnostics = (
-                _build_trade_position_simulation_contract_diagnostics()
+                _build_trade_position_simulation_contract_diagnostics(
+                    simulation_policy_path=args.simulation_policy_path,
+                    sidecar_path=args.simulation_policy_sha256_path,
+                    multiple_testing_control_diagnostics=(
+                        multiple_testing_control_diagnostics
+                    ),
+                    null_benchmark_diagnostics=(
+                        null_benchmark_contract_diagnostics
+                    ),
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                )
             )
             net_pnl_equity_risk_contract_diagnostics = (
                 _build_net_pnl_equity_risk_contract_diagnostics()
@@ -10251,7 +10950,21 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             trade_position_simulation_contract_diagnostics = (
-                _build_trade_position_simulation_contract_diagnostics()
+                _build_trade_position_simulation_contract_diagnostics(
+                    simulation_policy_path=args.simulation_policy_path,
+                    sidecar_path=args.simulation_policy_sha256_path,
+                    multiple_testing_control_diagnostics=(
+                        multiple_testing_control_diagnostics
+                    ),
+                    null_benchmark_diagnostics=(
+                        null_benchmark_contract_diagnostics
+                    ),
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                )
             )
             net_pnl_equity_risk_contract_diagnostics = (
                 _build_net_pnl_equity_risk_contract_diagnostics()
