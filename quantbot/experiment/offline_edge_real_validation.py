@@ -235,6 +235,19 @@ TRIAL_MANIFEST_DIAGNOSTIC_ONLY = "TRIAL_MANIFEST_DIAGNOSTIC_ONLY"
 TRIAL_MANIFEST_NOT_DEFINED = "TRIAL_MANIFEST_NOT_DEFINED"
 TRIAL_MANIFEST_BLOCKED_REASON_NOT_DEFINED = "TRIAL_MANIFEST_NOT_DEFINED"
 
+_REQUIRED_FALSE_TRIAL_MANIFEST_FIELDS: tuple[str, ...] = (
+    "trial_execution_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+    "oos_seal_dependency_satisfied",
+    "null_benchmark_dependency_satisfied",
+    "multiple_testing_dependency_satisfied",
+    "trade_position_simulation_dependency_satisfied",
+    "net_pnl_equity_risk_dependency_satisfied",
+)
+
 # === OOS seal diagnostics constants ===
 OOS_SEAL_VERSION = "oos-seal-0.1"
 OOS_SEAL_DIAGNOSTIC_ONLY = "OOS_SEAL_DIAGNOSTIC_ONLY"
@@ -6532,6 +6545,373 @@ def materialize_strategy_rule_contract_instance_diagnostics(
     }
 
 
+def materialize_trial_manifest_preregistration_diagnostics(
+    *,
+    manifest_path: str,
+    sidecar_path: str,
+    strategy_rule_contract_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Read, parse, hash-check, and audit the frozen trial manifest
+    pre-registration packet, returning a diagnostic-only dict.
+
+    This function performs **no** scoring, strategy definition, signal
+    calculation, PnL, edge, or live-readiness. The returned diagnostic is
+    explicitly diagnostic-only — it records the manifest's load status,
+    hash integrity, forbidden-key survival, contract binding, and
+    authorization posture, but does **not** authorize scoring or advance
+    any gate.
+
+    Raises ``ValueError`` on any fail-closed condition:
+    - missing / malformed JSON or sidecar
+    - sidecar digest mismatch
+    - forbidden dict key found
+    - required field missing
+    - manifest_hash not ``FROZEN_IN_SIDECAR``
+    - bound contract digest mismatch
+    - contract packet gate missing or false
+    - authorized_trial_count != 1
+    - trial_count_frozen is not True
+    - hyperparameter_search_policy != ``NO_SEARCH``
+    - free_parameter_count != 0
+    - declared_parameter_names non-empty
+    - any authorization boolean not exactly False
+    - any downstream dependency boolean not exactly False
+    """
+    # --- Read manifest JSON bytes ---
+    try:
+        manifest_bytes = Path(manifest_path).read_bytes()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Trial manifest JSON not found: {manifest_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Trial manifest JSON read error {manifest_path}: {exc}"
+        )
+
+    json_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+
+    # --- Parse JSON ---
+    try:
+        manifest: dict = json.loads(manifest_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Trial manifest JSON parse error: {exc}"
+        )
+
+    if not isinstance(manifest, dict):
+        raise ValueError(
+            "Trial manifest JSON root must be a dict"
+        )
+
+    # --- Read sidecar ---
+    try:
+        sidecar_text = Path(sidecar_path).read_text().strip()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Trial manifest sidecar not found: {sidecar_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Trial manifest sidecar read error {sidecar_path}: {exc}"
+        )
+
+    # Parse sidecar: expected format "<sha256>  <filename>"
+    parts = sidecar_text.split(None, 1)
+    if not parts or len(parts) != 2:
+        raise ValueError(
+            f"Trial manifest sidecar format invalid: "
+            f"expected '<sha256>  <filename>', got {sidecar_text!r}"
+        )
+    sidecar_sha256 = parts[0]
+    sidecar_filename = parts[1]
+
+    if len(sidecar_sha256) != 64:
+        raise ValueError(
+            f"Trial manifest sidecar SHA-256 digest length invalid: "
+            f"expected 64 hex chars, got {len(sidecar_sha256)}"
+        )
+
+    try:
+        int(sidecar_sha256, 16)
+    except ValueError:
+        raise ValueError(
+            f"Trial manifest sidecar SHA-256 digest is not valid hex: "
+            f"{sidecar_sha256!r}"
+        )
+
+    sidecar_digest_matches = sidecar_sha256 == json_sha256
+    if not sidecar_digest_matches:
+        raise ValueError(
+            f"Trial manifest sidecar digest mismatch: "
+            f"sidecar={sidecar_sha256}, computed={json_sha256}"
+        )
+
+    # --- Check required field presence ---
+    _REQUIRED_TRIAL_MANIFEST_KEYS: set[str] = {
+        "manifest_id",
+        "manifest_version",
+        "manifest_kind",
+        "manifest_status",
+        "manifest_hash",
+        "manifest_hash_algorithm",
+        "manifest_hash_scope",
+        "manifest_hash_status",
+        "bound_contract_id",
+        "bound_contract_sha256",
+        "candidate_id",
+        "hypothesis_id",
+        "trial_policy",
+        "authorized_trial_count",
+        "trial_count_frozen",
+        "hyperparameter_search_policy",
+        "free_parameter_count",
+        "declared_parameter_names",
+        "trial_execution_authorized",
+        "scoring_authorization",
+        "live_integration_authorized",
+        "paper_integration_authorized",
+        "final_verdict_authorization",
+        "oos_seal_dependency_satisfied",
+        "null_benchmark_dependency_satisfied",
+        "multiple_testing_dependency_satisfied",
+        "trade_position_simulation_dependency_satisfied",
+        "net_pnl_equity_risk_dependency_satisfied",
+    }
+    missing_fields = _REQUIRED_TRIAL_MANIFEST_KEYS - set(manifest.keys())
+    if missing_fields:
+        raise ValueError(
+            f"Trial manifest missing required fields: {sorted(missing_fields)}"
+        )
+
+    # --- Check forbidden dict keys (strict, no exemptions) ---
+    forbidden_collisions = _find_forbidden_contract_dict_keys(manifest)
+    if forbidden_collisions:
+        collision_repr = ", ".join(
+            f"{c['key']!r} at {c['path']}" for c in forbidden_collisions
+        )
+        raise ValueError(
+            f"Trial manifest contains forbidden dict keys: {collision_repr}"
+        )
+
+    # --- Verify manifest hash fields ---
+    if manifest.get("manifest_hash") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"Trial manifest manifest_hash must be 'FROZEN_IN_SIDECAR', "
+            f"got {manifest.get('manifest_hash')!r}"
+        )
+    if manifest.get("manifest_hash_status") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"Trial manifest manifest_hash_status must be 'FROZEN_IN_SIDECAR', "
+            f"got {manifest.get('manifest_hash_status')!r}"
+        )
+    if manifest.get("manifest_hash_algorithm") != "sha256":
+        raise ValueError(
+            f"Trial manifest manifest_hash_algorithm must be 'sha256', "
+            f"got {manifest.get('manifest_hash_algorithm')!r}"
+        )
+
+    # --- Verify bound contract digest ---
+    contract_diag = strategy_rule_contract_diagnostics
+    contract_json_sha256 = contract_diag.get("json_sha256")
+    contract_id = contract_diag.get("contract_id")
+    bound_contract_sha256 = manifest.get("bound_contract_sha256")
+    bound_contract_id = manifest.get("bound_contract_id")
+
+    if bound_contract_sha256 != contract_json_sha256:
+        raise ValueError(
+            f"Trial manifest bound_contract_sha256 mismatch: "
+            f"manifest says {bound_contract_sha256}, "
+            f"contract diagnostic says {contract_json_sha256}"
+        )
+    if bound_contract_id != contract_id:
+        raise ValueError(
+            f"Trial manifest bound_contract_id mismatch: "
+            f"manifest says {bound_contract_id}, "
+            f"contract diagnostic says {contract_id}"
+        )
+
+    # --- Verify contract packet gate ---
+    contract_packet_gate = contract_diag.get("contract_packet_gate", {})
+    if not isinstance(contract_packet_gate, dict):
+        raise ValueError(
+            "Contract packet gate is not a dict"
+        )
+    if not contract_packet_gate.get("gate_passed"):
+        raise ValueError(
+            "Contract packet gate not passed: "
+            f"trial manifest cannot proceed without contract packet gate"
+        )
+    gate_status = contract_packet_gate.get("gate_status")
+    if gate_status != "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY":
+        raise ValueError(
+            f"Contract packet gate status must be "
+            f"'CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY', got {gate_status!r}"
+        )
+
+    # --- Verify trial count and search policy ---
+    if manifest.get("authorized_trial_count") != 1:
+        raise ValueError(
+            f"Trial manifest authorized_trial_count must be 1, "
+            f"got {manifest.get('authorized_trial_count')!r}"
+        )
+    if manifest.get("trial_count_frozen") is not True:
+        raise ValueError(
+            f"Trial manifest trial_count_frozen must be True, "
+            f"got {manifest.get('trial_count_frozen')!r}"
+        )
+    if manifest.get("hyperparameter_search_policy") != "NO_SEARCH":
+        raise ValueError(
+            f"Trial manifest hyperparameter_search_policy must be 'NO_SEARCH', "
+            f"got {manifest.get('hyperparameter_search_policy')!r}"
+        )
+    if manifest.get("free_parameter_count") != 0:
+        raise ValueError(
+            f"Trial manifest free_parameter_count must be 0, "
+            f"got {manifest.get('free_parameter_count')!r}"
+        )
+    declared_params = manifest.get("declared_parameter_names", [])
+    if not isinstance(declared_params, list) or len(declared_params) > 0:
+        raise ValueError(
+            f"Trial manifest declared_parameter_names must be empty, "
+            f"got {declared_params!r}"
+        )
+
+    # --- Verify authorization booleans are exactly False ---
+    bad_false_fields: dict[str, Any] = {
+        field: manifest.get(field)
+        for field in _REQUIRED_FALSE_TRIAL_MANIFEST_FIELDS
+        if manifest.get(field) is not False
+    }
+    if bad_false_fields:
+        raise ValueError(
+            f"Trial manifest fields must be exactly false: "
+            + ", ".join(
+                f"{k}={v!r}" for k, v in bad_false_fields.items()
+            )
+        )
+
+    return {
+        "diagnostic_kind": "trial_manifest_preregistration",
+        "manifest_source_path": manifest_path,
+        "manifest_sidecar_path": sidecar_path,
+        "manifest_packet_read": True,
+        "manifest_json_parse_ok": True,
+        "manifest_sidecar_parse_ok": True,
+        "manifest_json_sha256": json_sha256,
+        "manifest_sidecar_sha256": sidecar_sha256,
+        "manifest_sidecar_digest_matches_json_bytes": True,
+        "manifest_hash_authority": "SIDECAR",
+        "manifest_hash_field_value": "FROZEN_IN_SIDECAR",
+        "manifest_hash_status": "FROZEN_IN_SIDECAR",
+        "manifest_required_fields_present": True,
+        "manifest_forbidden_dict_key_scan_passed": True,
+        "bound_contract_id": str(bound_contract_id),
+        "bound_contract_sha256": str(bound_contract_sha256),
+        "bound_contract_digest_matches": True,
+        "contract_packet_gate_required": True,
+        "contract_packet_gate_passed": True,
+        "contract_packet_gate_status": str(gate_status),
+        "authorized_trial_count": 1,
+        "trial_count_frozen": True,
+        "hyperparameter_search_policy": "NO_SEARCH",
+        "free_parameter_count": 0,
+        "declared_parameter_names": [],
+        "trial_manifest_readiness": False,
+        "trial_execution_authorized": False,
+        "trial_scoring_ready": False,
+        "trial_manifest_validation_status": (
+            "TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY"
+        ),
+    }
+
+
+def _derive_trial_manifest_preregistration_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive a trial-manifest pre-registration gate from diagnostics.
+
+    The gate passes only when all of the following hold:
+    - manifest packet read
+    - manifest sidecar matches
+    - manifest strict forbidden-key scan passed
+    - bound contract digest matches
+    - contract packet gate passed
+    - trial count is exactly 1
+    - no-search policy
+    - zero free params
+    - all authorization booleans false
+    - all downstream dependency booleans false
+    """
+    evidence: dict[str, Any] = {
+        "manifest_sidecar_digest_matches_json_bytes": (
+            diagnostics.get("manifest_sidecar_digest_matches_json_bytes")
+            is True
+        ),
+        "bound_contract_digest_matches": (
+            diagnostics.get("bound_contract_digest_matches") is True
+        ),
+        "contract_packet_gate_passed": (
+            diagnostics.get("contract_packet_gate_passed") is True
+        ),
+        "authorized_trial_count": (
+            diagnostics.get("authorized_trial_count") == 1
+        ),
+        "trial_count_frozen": (
+            diagnostics.get("trial_count_frozen") is True
+        ),
+        "hyperparameter_search_policy": (
+            diagnostics.get("hyperparameter_search_policy") == "NO_SEARCH"
+        ),
+        "free_parameter_count": (
+            diagnostics.get("free_parameter_count") == 0
+        ),
+    }
+
+    extra_pass = (
+        diagnostics.get("diagnostic_kind")
+        == "trial_manifest_preregistration"
+        and diagnostics.get("manifest_packet_read") is True
+        and diagnostics.get("manifest_json_parse_ok") is True
+        and diagnostics.get("manifest_sidecar_parse_ok") is True
+        and diagnostics.get("manifest_hash_authority") == "SIDECAR"
+        and diagnostics.get("manifest_hash_field_value") == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("manifest_hash_status") == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("manifest_required_fields_present") is True
+        and diagnostics.get("manifest_forbidden_dict_key_scan_passed") is True
+        and diagnostics.get("trial_execution_authorized") is False
+        and diagnostics.get("trial_scoring_ready") is False
+        and diagnostics.get("trial_manifest_readiness") is False
+    )
+
+    all_pass = all(evidence.values()) and extra_pass
+
+    if all_pass:
+        gate_status = "TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY"
+        blocked_reason = None
+    elif diagnostics.get("diagnostic_kind") != "trial_manifest_preregistration":
+        gate_status = "TRIAL_MANIFEST_NOT_LOADED"
+        blocked_reason = "TRIAL_MANIFEST_NOT_PROVIDED"
+    else:
+        gate_status = "BLOCKED_BY_INCOMPLETE_TRIAL_MANIFEST_EVIDENCE"
+        blocked_reason = "TRIAL_MANIFEST_GATE_EVIDENCE_INCOMPLETE"
+
+    return {
+        "gate_kind": "trial_manifest_preregistration_gate",
+        "gate_scope": (
+            "TRIAL_COUNT_CANDIDATE_AND_CONTRACT_BINDING_ONLY"
+        ),
+        "gate_status": gate_status,
+        "gate_passed": all_pass,
+        "gate_scoring_authorization": False,
+        "gate_live_authorization": False,
+        "gate_final_verdict_authorization": False,
+        "gate_downstream_unlocks": [],
+        "evidence": evidence,
+        "blocked_reason": blocked_reason,
+    }
+
+
 def _build_strategy_rule_contract_diagnostics(
     contract_path: str | None = None,
     sidecar_path: str | None = None,
@@ -6747,9 +7127,22 @@ def _derive_strategy_rule_contract_packet_gate(
     }
 
 
-def _build_trial_manifest_diagnostics() -> dict[str, Any]:
-    """Build a diagnostic-only section recording that no trial manifest
-    exists yet and therefore strategy scoring is blocked.
+def _build_trial_manifest_diagnostics(
+    *,
+    manifest_path: str | None = None,
+    sidecar_path: str | None = None,
+    strategy_rule_contract_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a diagnostic-only section for the trial manifest.
+
+    If *manifest_path* and *sidecar_path* are both provided and
+    *strategy_rule_contract_diagnostics* is provided with a passing
+    contract packet gate, the frozen trial manifest pre-registration
+    packet is loaded, hash-checked, and audited via
+    :func:`materialize_trial_manifest_preregistration_diagnostics`.
+
+    Otherwise a hardcoded ``TRIAL_MANIFEST_NOT_DEFINED`` diagnostic is
+    returned with a failing gate.
 
     This section does **not** define a trial manifest, count trials,
     register candidates, search for parameters, or compute any scoring
@@ -6758,50 +7151,75 @@ def _build_trial_manifest_diagnostics() -> dict[str, Any]:
 
     Fail-closed rules:
     * ``scoring_authorized`` is always ``False`` at this stage.
-    * ``trial_manifest_status`` is always ``TRIAL_MANIFEST_NOT_DEFINED``.
+    * ``trial_manifest_status`` is always ``TRIAL_MANIFEST_NOT_DEFINED``
+      when no manifest is loaded.
     * ``scoring_blocked_reason`` is always ``TRIAL_MANIFEST_NOT_DEFINED``.
     * All ``trial_manifest_prerequisites_present`` values are always ``False``.
+
+    Raises ``ValueError`` if manifest paths are provided but the packet is
+    corrupted (delegated to the materializer).
     """
-    return {
-        "manifest_version": TRIAL_MANIFEST_VERSION,
-        "calculation_status": TRIAL_MANIFEST_DIAGNOSTIC_ONLY,
-        "trial_manifest_status": TRIAL_MANIFEST_NOT_DEFINED,
-        "trial_manifest_present": False,
-        "trial_manifest_hash": None,
-        "trial_manifest_source": None,
-        "scoring_authorized": False,
-        "scoring_blocked_reason": TRIAL_MANIFEST_BLOCKED_REASON_NOT_DEFINED,
-        "trial_count_known": False,
-        "trial_count": None,
-        "candidate_count_known": False,
-        "candidate_count": None,
-        "rejected_trial_count_known": False,
-        "rejected_trial_count": None,
-        "strategy_candidate_id": None,
-        "hypothesis_id": None,
-        "parameter_search_space_defined": False,
-        "parameter_search_space_hash": None,
-        "llm_generated_trials_recorded": False,
-        "human_generated_trials_recorded": False,
-        "manual_rejected_trials_recorded": False,
-        "symbol_universe_frozen": False,
-        "split_policy_frozen": False,
-        "oos_seal_present": False,
-        "null_benchmark_contract_present": False,
-        "multiple_testing_policy_present": False,
-        "trial_manifest_prerequisites_present": {
-            "strategy_rule_contract": False,
-            "split_scoring_safe": False,
-            "trial_count": False,
-            "candidate_registry": False,
-            "parameter_search_space": False,
-            "symbol_universe_freeze": False,
-            "split_policy_freeze": False,
-            "oos_seal": False,
-            "null_benchmark_contract": False,
-            "multiple_testing_policy": False,
-        },
-    }
+    if (
+        manifest_path is not None
+        and sidecar_path is not None
+        and strategy_rule_contract_diagnostics is not None
+    ):
+        diagnostics = (
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=manifest_path,
+                sidecar_path=sidecar_path,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
+        )
+    else:
+        diagnostics = {
+            "manifest_version": TRIAL_MANIFEST_VERSION,
+            "calculation_status": TRIAL_MANIFEST_DIAGNOSTIC_ONLY,
+            "trial_manifest_status": TRIAL_MANIFEST_NOT_DEFINED,
+            "trial_manifest_present": False,
+            "trial_manifest_hash": None,
+            "trial_manifest_source": None,
+            "scoring_authorized": False,
+            "scoring_blocked_reason": TRIAL_MANIFEST_BLOCKED_REASON_NOT_DEFINED,
+            "trial_count_known": False,
+            "trial_count": None,
+            "candidate_count_known": False,
+            "candidate_count": None,
+            "rejected_trial_count_known": False,
+            "rejected_trial_count": None,
+            "strategy_candidate_id": None,
+            "hypothesis_id": None,
+            "parameter_search_space_defined": False,
+            "parameter_search_space_hash": None,
+            "llm_generated_trials_recorded": False,
+            "human_generated_trials_recorded": False,
+            "manual_rejected_trials_recorded": False,
+            "symbol_universe_frozen": False,
+            "split_policy_frozen": False,
+            "oos_seal_present": False,
+            "null_benchmark_contract_present": False,
+            "multiple_testing_policy_present": False,
+            "trial_manifest_prerequisites_present": {
+                "strategy_rule_contract": False,
+                "split_scoring_safe": False,
+                "trial_count": False,
+                "candidate_registry": False,
+                "parameter_search_space": False,
+                "symbol_universe_freeze": False,
+                "split_policy_freeze": False,
+                "oos_seal": False,
+                "null_benchmark_contract": False,
+                "multiple_testing_policy": False,
+            },
+        }
+
+    # Derive trial-manifest pre-registration gate from diagnostics (pure, no I/O).
+    diagnostics["trial_manifest_preregistration_gate"] = (
+        _derive_trial_manifest_preregistration_gate(diagnostics)
+    )
+    return diagnostics
 
 
 def _build_oos_seal_diagnostics() -> dict[str, Any]:
@@ -7727,6 +8145,26 @@ def build_parser() -> argparse.ArgumentParser:
             "Requires --strategy-contract-path and --strategy-contract-sha256-path."
         ),
     )
+    parser.add_argument(
+        "--trial-manifest-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to frozen trial manifest pre-registration JSON. "
+            "If provided, the manifest is loaded and hash-checked (diagnostic only, "
+            "no scoring). Requires --trial-manifest-sha256-path and "
+            "--strategy-contract-path/--strategy-contract-sha256-path."
+        ),
+    )
+    parser.add_argument(
+        "--trial-manifest-sha256-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to the SHA-256 sidecar for the frozen trial manifest. "
+            "Required if --trial-manifest-path is provided."
+        ),
+    )
     return parser
 
 
@@ -7905,7 +8343,13 @@ def main(argv: list[str] | None = None) -> int:
                     commit_binding_path=args.strategy_contract_commit_binding_path,
                 )
             )
-            trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
+            trial_manifest_diagnostics = _build_trial_manifest_diagnostics(
+                manifest_path=args.trial_manifest_path,
+                sidecar_path=args.trial_manifest_sha256_path,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
             oos_seal_diagnostics = _build_oos_seal_diagnostics()
             null_benchmark_contract_diagnostics = (
                 _build_null_benchmark_contract_diagnostics()
@@ -8018,7 +8462,13 @@ def main(argv: list[str] | None = None) -> int:
                     commit_binding_path=args.strategy_contract_commit_binding_path,
                 )
             )
-            trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
+            trial_manifest_diagnostics = _build_trial_manifest_diagnostics(
+                manifest_path=args.trial_manifest_path,
+                sidecar_path=args.trial_manifest_sha256_path,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
             oos_seal_diagnostics = _build_oos_seal_diagnostics()
             null_benchmark_contract_diagnostics = (
                 _build_null_benchmark_contract_diagnostics()
