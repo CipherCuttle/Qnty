@@ -703,3 +703,73 @@ always `BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
 ```bash
 .venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k PrerequisiteClosureK1 -q
 ```
+
+### Lane L1 — Implementation Boundary Plan / Runner Contract Shell
+
+**Lane L1 is not implementation.** It adds no new frozen packet or sidecar. It
+is a **derived, diagnostic-only projection** over the Lane K1 prerequisite
+closure gate and the contract-packet / trial-manifest gates it depends on —
+a pure function of diagnostics already produced upstream, with no file
+reads, no hashing, no git calls, and no decision/simulated-event/economic/
+statistical computation.
+
+It answers exactly one question:
+
+> Given the preregistration chain is closed, what is the implementation
+> boundary for a future runner?
+
+It does **not** implement the runner, materialize rule outputs, or compute
+decisions, signals, simulated events, economic values, or statistics — and it
+does **not** authorize scoring.
+
+#### What Lane L1 does
+
+- Adds `_build_implementation_boundary_diagnostics(...)` — a pure builder
+  that reads the K1 `prerequisite_closure_gate`, the strategy contract's
+  `contract_packet_gate`, and the trial manifest's
+  `trial_manifest_preregistration_gate`, and declares the future runner's
+  allowed input roles/columns (`bars`/`funding`, `timestamp`/`close`,
+  `fundingTime`/`fundingRate`) and forbidden output/materialization policies.
+- Adds `_derive_implementation_boundary_gate(...)` — a pure gate projection
+  that fails closed, in priority order: any authorization field unexpectedly
+  `true` -> `BLOCKED_BY_UNEXPECTED_AUTHORIZATION`; the prerequisite closure
+  gate missing or not passed -> `BLOCKED_BY_PREREQUISITE_CLOSURE_GATE`; the
+  contract-packet or trial-manifest gate missing or not passed ->
+  `BLOCKED_BY_REQUIRED_UPSTREAM_GATE`; otherwise
+  `IMPLEMENTATION_BOUNDARY_DECLARED_DIAGNOSTIC_ONLY` with `gate_passed = true`.
+- Wires both into `build_real_validation_receipt(...)` under
+  `implementation_boundary_diagnostics` and into `main()`'s build order
+  (after the prerequisite closure diagnostics, before the final verdict
+  logic diagnostics).
+
+Even when the gate passes, every authorization field remains `false`:
+`implementation_authorized`, `rule_materialization_authorized`,
+`decision_row_generation_authorized`, `simulated_event_generation_authorized`,
+`economic_value_generation_authorized`, `statistical_value_generation_authorized`,
+`candidate_comparison_authorized`, `null_generation_authorized`,
+`scoring_authorization`, `live_integration_authorized`,
+`paper_integration_authorized`, `final_verdict_authorization`, and
+`gate_downstream_unlocks` is always `[]`. `final_offline_verdict_remains` is
+always `BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+
+#### What Lane L1 does NOT do
+
+- Does not implement a runner, materialize rule outputs, or compute
+  decisions, signals, simulated events, orders, fills, positions,
+  executions, PnL, returns, Sharpe, edge, equity curve, risk metrics,
+  drawdown, economic values, p-values, confidence intervals, null benchmark
+  computation, candidate-vs-null comparison, or multiple-testing math.
+- No live/paper/exchange integration.
+- Does not authorize scoring/implementation/simulation/economic/statistical
+  values or final verdict advancement.
+- Does not advance `final_offline_verdict`; it remains
+  `BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+- Does not change `FORBIDDEN_CALCULATION_KEYS` or `ALLOWED_FINAL_VERDICTS`.
+- Does not edit any frozen upstream JSON or sidecar.
+- `EDGE_UNPROVEN` and `BLOCK_LIVE_INTEGRATION` remain.
+
+#### Verification
+
+```bash
+.venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k ImplementationBoundaryL1 -q
+```

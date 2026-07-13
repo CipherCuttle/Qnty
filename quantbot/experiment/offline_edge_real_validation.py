@@ -90,6 +90,8 @@ __all__ = [
     "_build_net_pnl_equity_risk_contract_diagnostics",
     "_build_prerequisite_closure_diagnostics",
     "_derive_prerequisite_closure_gate",
+    "_build_implementation_boundary_diagnostics",
+    "_derive_implementation_boundary_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -563,6 +565,41 @@ PREREQUISITE_CLOSURE_REQUIRED_GATE_NAMES = (
     "multiple_testing_control_preregistration_gate",
     "simulation_policy_preregistration_gate",
     "economic_accounting_policy_preregistration_gate",
+)
+
+# === Lane L1: implementation boundary plan constants ===
+# A pure, derived diagnostic that projects the K1 prerequisite closure gate
+# (together with the contract-packet and trial-manifest gates it depends on)
+# into a declaration of what a *future* strategy-rule implementation runner
+# would be allowed to inspect and what it remains forbidden to emit. It
+# performs no I/O, no hashing, no git calls, and computes no decision rows,
+# simulated events, economic values, or statistics. It never authorizes
+# implementation, rule materialization, decision-row generation, simulated
+# events, economic/statistical value generation, candidate comparison, null
+# generation, live/paper integration, scoring, or final verdict advancement.
+IMPLEMENTATION_BOUNDARY_VERSION = "implementation-boundary-0.1"
+IMPLEMENTATION_BOUNDARY_SCOPE = "FUTURE_RUNNER_ALLOWED_INPUTS_AND_FORBIDDEN_OUTPUTS_ONLY"
+IMPLEMENTATION_BOUNDARY_DECLARED_DIAGNOSTIC_ONLY = (
+    "IMPLEMENTATION_BOUNDARY_DECLARED_DIAGNOSTIC_ONLY"
+)
+_IMPLEMENTATION_BOUNDARY_FORBIDDEN_BAR_COLUMNS: tuple[str, ...] = (
+    "open",
+    "high",
+    "low",
+    "volume",
+)
+_IMPLEMENTATION_BOUNDARY_FORBIDDEN_FUNDING_COLUMNS: tuple[str, ...] = (
+    "markPrice",
+)
+FUTURE_RUNNER_OUTPUT_POLICY_FROZEN = "NO_OUTPUT_ROWS_EMITTED_IN_THIS_LANE"
+FUTURE_RUNNER_MATERIALIZATION_POLICY_FROZEN = (
+    "NO_RULE_MATERIALIZATION_IN_THIS_LANE"
+)
+FUTURE_RUNNER_DECISION_TIME_POLICY_FROZEN = (
+    "USE_ONLY_FROZEN_CONTRACT_DECISION_TIME_CONVENTION"
+)
+BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE = (
+    "BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE"
 )
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
@@ -11031,6 +11068,263 @@ def _derive_prerequisite_closure_gate(
     return gate
 
 
+_IMPLEMENTATION_BOUNDARY_AUTHORIZATION_FIELDS = (
+    "implementation_authorized",
+    "rule_materialization_authorized",
+    "decision_row_generation_authorized",
+    "simulated_event_generation_authorized",
+    "economic_value_generation_authorized",
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+)
+
+
+def _build_implementation_boundary_diagnostics(
+    *,
+    strategy_rule_contract_diagnostics: dict[str, Any],
+    trial_manifest_diagnostics: dict[str, Any],
+    prerequisite_closure_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a derived, diagnostic-only implementation boundary plan.
+
+    This is a **pure projection** over the K1 prerequisite closure gate and
+    the contract-packet / trial-manifest gates it depends on. It performs no
+    file reads, no hashing, no git calls, no scoring, and no mutation of its
+    inputs, and it computes no decision rows, simulated events, or
+    economic/statistical value.
+
+    It answers exactly one question: given the preregistration chain is
+    closed, what is the implementation boundary for a future runner? It
+    declares the future runner's allowed input roles/columns and forbidden
+    output/materialization policies, but does not implement the runner,
+    materialize rule outputs, or authorize implementation, simulation,
+    scoring, live/paper integration, or final verdict advancement — those
+    flags are always ``False`` regardless of closure state.
+    """
+    contract_packet_gate = strategy_rule_contract_diagnostics.get(
+        "contract_packet_gate"
+    )
+    trial_manifest_preregistration_gate = trial_manifest_diagnostics.get(
+        "trial_manifest_preregistration_gate"
+    )
+    prerequisite_closure_gate = prerequisite_closure_diagnostics.get(
+        "prerequisite_closure_gate"
+    )
+
+    prerequisite_closure_gate_passed = bool(
+        prerequisite_closure_gate is not None
+        and prerequisite_closure_gate.get("gate_passed") is True
+    )
+    contract_packet_gate_passed = bool(
+        contract_packet_gate is not None
+        and contract_packet_gate.get("gate_passed") is True
+    )
+    trial_manifest_gate_passed = bool(
+        trial_manifest_preregistration_gate is not None
+        and trial_manifest_preregistration_gate.get("gate_passed") is True
+    )
+
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "implementation_boundary_plan",
+        "implementation_boundary_version": IMPLEMENTATION_BOUNDARY_VERSION,
+        "implementation_boundary_scope": IMPLEMENTATION_BOUNDARY_SCOPE,
+        "implementation_boundary_status": (
+            IMPLEMENTATION_BOUNDARY_DECLARED_DIAGNOSTIC_ONLY
+        ),
+        "prerequisite_closure_gate_required": True,
+        "prerequisite_closure_gate_passed": prerequisite_closure_gate_passed,
+        "contract_packet_gate_required": True,
+        "contract_packet_gate_passed": contract_packet_gate_passed,
+        "trial_manifest_gate_required": True,
+        "trial_manifest_gate_passed": trial_manifest_gate_passed,
+        "future_runner_allowed_input_roles": ["bars", "funding"],
+        "future_runner_allowed_bar_columns": sorted(_CONTRACT_BARS_ALLOWED),
+        "future_runner_allowed_funding_columns": sorted(
+            _CONTRACT_FUNDING_ALLOWED
+        ),
+        "future_runner_forbidden_bar_columns": list(
+            _IMPLEMENTATION_BOUNDARY_FORBIDDEN_BAR_COLUMNS
+        ),
+        "future_runner_forbidden_funding_columns": list(
+            _IMPLEMENTATION_BOUNDARY_FORBIDDEN_FUNDING_COLUMNS
+        ),
+        "future_runner_decision_time_policy": (
+            FUTURE_RUNNER_DECISION_TIME_POLICY_FROZEN
+        ),
+        "future_runner_output_policy": FUTURE_RUNNER_OUTPUT_POLICY_FROZEN,
+        "future_runner_materialization_policy": (
+            FUTURE_RUNNER_MATERIALIZATION_POLICY_FROZEN
+        ),
+        "implementation_boundary_readiness": False,
+        "implementation_authorized": False,
+        "rule_materialization_authorized": False,
+        "decision_row_generation_authorized": False,
+        "simulated_event_generation_authorized": False,
+        "economic_value_generation_authorized": False,
+        "statistical_value_generation_authorized": False,
+        "candidate_comparison_authorized": False,
+        "null_generation_authorized": False,
+        "scoring_authorization": False,
+        "live_integration_authorized": False,
+        "paper_integration_authorized": False,
+        "final_verdict_authorization": False,
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+
+    diagnostics["implementation_boundary_gate"] = (
+        _derive_implementation_boundary_gate(diagnostics)
+    )
+    return diagnostics
+
+
+def _derive_implementation_boundary_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive a narrow implementation-boundary gate projection from *diagnostics*.
+
+    This is a pure function: it never reads files, never calls git, never
+    mutates *diagnostics*, and is fully deterministic.
+
+    The gate does **not** authorize implementation, rule materialization,
+    decision-row generation, simulated events, economic/statistical values,
+    candidate comparison, null generation, scoring, live/paper integration,
+    or final verdict advancement — even when ``gate_passed`` is ``True``,
+    every authorization field and ``gate_downstream_unlocks`` remain
+    empty/``False``.
+
+    Fails closed, in priority order:
+    * any authorization field unexpectedly ``True`` ->
+      ``BLOCKED_BY_UNEXPECTED_AUTHORIZATION``
+    * prerequisite closure gate missing/not passed ->
+      ``BLOCKED_BY_PREREQUISITE_CLOSURE_GATE``
+    * contract-packet or trial-manifest gate missing/not passed ->
+      ``BLOCKED_BY_REQUIRED_UPSTREAM_GATE``
+    * future-runner allowed-input-role/column or forbidden-input-column
+      declarations, or output/materialization/decision-time policy
+      declarations, missing/empty/mutated relative to their frozen values ->
+      ``BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE``
+    """
+    evidence = {
+        "prerequisite_closure_gate_passed": diagnostics.get(
+            "prerequisite_closure_gate_passed"
+        ),
+        "contract_packet_gate_passed": diagnostics.get(
+            "contract_packet_gate_passed"
+        ),
+        "trial_manifest_gate_passed": diagnostics.get(
+            "trial_manifest_gate_passed"
+        ),
+        "future_runner_allowed_input_roles_declared": (
+            diagnostics.get("future_runner_allowed_input_roles")
+            == ["bars", "funding"]
+        ),
+        "future_runner_allowed_bar_columns_declared": (
+            diagnostics.get("future_runner_allowed_bar_columns")
+            == ["close", "timestamp"]
+        ),
+        "future_runner_allowed_funding_columns_declared": (
+            diagnostics.get("future_runner_allowed_funding_columns")
+            == ["fundingRate", "fundingTime"]
+        ),
+        "future_runner_forbidden_input_columns_declared": bool(
+            diagnostics.get("future_runner_forbidden_bar_columns")
+            and diagnostics.get("future_runner_forbidden_funding_columns")
+        ),
+        "future_runner_output_policy_matches_frozen_value": (
+            diagnostics.get("future_runner_output_policy")
+            == FUTURE_RUNNER_OUTPUT_POLICY_FROZEN
+        ),
+        "future_runner_materialization_policy_matches_frozen_value": (
+            diagnostics.get("future_runner_materialization_policy")
+            == FUTURE_RUNNER_MATERIALIZATION_POLICY_FROZEN
+        ),
+        "future_runner_decision_time_policy_matches_frozen_value": (
+            diagnostics.get("future_runner_decision_time_policy")
+            == FUTURE_RUNNER_DECISION_TIME_POLICY_FROZEN
+        ),
+        "implementation_authorized": diagnostics.get(
+            "implementation_authorized", False
+        ),
+        "rule_materialization_authorized": diagnostics.get(
+            "rule_materialization_authorized", False
+        ),
+        "decision_row_generation_authorized": diagnostics.get(
+            "decision_row_generation_authorized", False
+        ),
+    }
+
+    boundary_evidence_passed = all(
+        value is True
+        for key, value in evidence.items()
+        if key.endswith("_declared") or key.endswith("_matches_frozen_value")
+    )
+
+    def _base_gate(gate_status: str, blocked_reason: str | None) -> dict[str, Any]:
+        return {
+            "gate_kind": "implementation_boundary_gate",
+            "gate_scope": "FUTURE_RUNNER_BOUNDARY_ONLY",
+            "gate_status": gate_status,
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": evidence,
+            "blocked_reason": blocked_reason,
+        }
+
+    offending_authorizations = [
+        field
+        for field in _IMPLEMENTATION_BOUNDARY_AUTHORIZATION_FIELDS
+        if diagnostics.get(field) is True
+    ]
+    if offending_authorizations:
+        return _base_gate(
+            "BLOCKED_BY_UNEXPECTED_AUTHORIZATION",
+            "UNEXPECTED_AUTHORIZATION_FIELDS_TRUE: "
+            + ", ".join(sorted(offending_authorizations)),
+        )
+
+    if not diagnostics.get("prerequisite_closure_gate_passed"):
+        return _base_gate(
+            "BLOCKED_BY_PREREQUISITE_CLOSURE_GATE",
+            "PREREQUISITE_CLOSURE_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    missing_or_failed_upstream_gates = [
+        name
+        for name, passed in (
+            ("contract_packet_gate", diagnostics.get("contract_packet_gate_passed")),
+            (
+                "trial_manifest_preregistration_gate",
+                diagnostics.get("trial_manifest_gate_passed"),
+            ),
+        )
+        if not passed
+    ]
+    if missing_or_failed_upstream_gates:
+        return _base_gate(
+            "BLOCKED_BY_REQUIRED_UPSTREAM_GATE",
+            "MISSING_OR_FAILED_UPSTREAM_GATES: "
+            + ", ".join(sorted(missing_or_failed_upstream_gates)),
+        )
+
+    if not boundary_evidence_passed:
+        return _base_gate(
+            BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE,
+            "IMPLEMENTATION_BOUNDARY_EVIDENCE_INCOMPLETE_OR_MUTATED",
+        )
+
+    gate = _base_gate(IMPLEMENTATION_BOUNDARY_DECLARED_DIAGNOSTIC_ONLY, None)
+    gate["gate_passed"] = True
+    return gate
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -11149,6 +11443,7 @@ def build_real_validation_receipt(
     net_pnl_equity_risk_contract_diagnostics: dict | None = None,
     economic_accounting_policy_diagnostics: dict | None = None,
     prerequisite_closure_diagnostics: dict | None = None,
+    implementation_boundary_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -11295,6 +11590,10 @@ def build_real_validation_receipt(
     if prerequisite_closure_diagnostics is not None:
         receipt["prerequisite_closure_diagnostics"] = (
             prerequisite_closure_diagnostics
+        )
+    if implementation_boundary_diagnostics is not None:
+        receipt["implementation_boundary_diagnostics"] = (
+            implementation_boundary_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -11972,6 +12271,17 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
             )
+            implementation_boundary_diagnostics = (
+                _build_implementation_boundary_diagnostics(
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    prerequisite_closure_diagnostics=(
+                        prerequisite_closure_diagnostics
+                    ),
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -12044,6 +12354,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             ),
             prerequisite_closure_diagnostics=prerequisite_closure_diagnostics,
+            implementation_boundary_diagnostics=(
+                implementation_boundary_diagnostics
+            ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
             ),
@@ -12181,6 +12494,17 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
             )
+            implementation_boundary_diagnostics = (
+                _build_implementation_boundary_diagnostics(
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    prerequisite_closure_diagnostics=(
+                        prerequisite_closure_diagnostics
+                    ),
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -12218,6 +12542,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             ),
             prerequisite_closure_diagnostics=prerequisite_closure_diagnostics,
+            implementation_boundary_diagnostics=(
+                implementation_boundary_diagnostics
+            ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
             ),
