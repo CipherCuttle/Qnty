@@ -585,3 +585,47 @@ the existing absence diagnostic is emitted (unchanged).
 python3 -m json.tool docs/contracts/instances/qnty_offline_edge_simulation_policy_v1.json >/dev/null
 cd docs/contracts/instances && sha256sum -c qnty_offline_edge_simulation_policy_v1.sha256
 ```
+
+### Lane J1 — Economic Accounting Policy Pre-registration Packet
+
+**Lane J1** per the spec: *"Economic accounting policy pre-registration declared
+and hash-bound before any economic value, PnL, return, equity curve, risk,
+drawdown, cost-adjusted value, funding-adjusted value, orders, fills, positions,
+executions, or scoring exists."*
+
+#### Files
+
+| File | Purpose |
+|---|---|
+| `qnty_offline_edge_economic_accounting_policy_v1.json` | Economic accounting policy payload (declaration-only) |
+| `qnty_offline_edge_economic_accounting_policy_v1.sha256` | SHA-256 sidecar of the exact JSON bytes |
+
+#### What it does
+
+- Freezes the future economic accounting policy boundary before economic values exist.
+- Binds to the frozen strategy contract, trial manifest, OOS seal, null benchmark,
+  multiple-testing control, and simulation policy digests.
+- Requires the simulation policy gate to have passed.
+- Declares that no economic values, PnL, returns, equity curves, risk metrics,
+  drawdown, cost values, funding values, aggregate series, capital paths,
+  dispersion summaries, or accounting outputs are computed in this lane.
+- All authorization booleans are `false`: no scoring, no economic value generation,
+  no simulation, no statistical values, no candidate comparison, no null generation,
+  no live/paper integration, no final verdict.
+
+#### What it does NOT do
+
+- Does **not** compute any economic values.
+- Does **not** create PnL, returns, Sharpe, equity curve, risk metrics, drawdown,
+  orders, fills, positions, executions, costs, funding values, or final verdict.
+- Does **not** authorize scoring.
+- Does **not** advance `final_offline_verdict`.
+- Does not edit any upstream JSON or sidecar (contract, trial manifest, OOS seal,
+  null benchmark, multiple-testing control, simulation policy).
+
+#### Verification
+
+```bash
+python3 -m json.tool docs/contracts/instances/qnty_offline_edge_economic_accounting_policy_v1.json >/dev/null
+cd docs/contracts/instances && sha256sum -c qnty_offline_edge_economic_accounting_policy_v1.sha256
+```

@@ -85,6 +85,8 @@ __all__ = [
     "_build_trade_position_simulation_contract_diagnostics",
     "materialize_simulation_policy_preregistration_diagnostics",
     "_derive_simulation_policy_preregistration_gate",
+    "materialize_economic_accounting_policy_preregistration_diagnostics",
+    "_derive_economic_accounting_policy_preregistration_gate",
     "_build_net_pnl_equity_risk_contract_diagnostics",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
@@ -431,6 +433,74 @@ _REQUIRED_FALSE_SIMULATION_POLICY_FIELDS: tuple[str, ...] = (
     "paper_integration_authorized",
     "final_verdict_authorization",
     "net_pnl_equity_risk_dependency_satisfied",
+)
+
+# === Economic accounting policy pre-registration constants ===
+# A frozen economic accounting policy declaration packet that pre-registers
+# how future economic-value accounting would be bounded before any economic
+# value, PnL, return, equity curve, risk, drawdown, cost-adjusted value,
+# funding-adjusted value, orders, fills, positions, executions, or scoring
+# exists.
+ECONOMIC_ACCOUNTING_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY = (
+    "ECONOMIC_ACCOUNTING_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY"
+)
+ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED = (
+    "ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED"
+)
+BLOCKED_BY_SIMULATION_POLICY_GATE = (
+    "BLOCKED_BY_SIMULATION_POLICY_GATE"
+)
+BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_POLICY_EVIDENCE = (
+    "BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_POLICY_EVIDENCE"
+)
+
+# Frozen economic accounting policy string values.
+# These are the only accepted values: no deviation is allowed in this lane.
+ECONOMIC_ACCOUNTING_FAMILY_POLICY_FROZEN = (
+    "PREDECLARE_ECONOMIC_ACCOUNTING_BOUNDARY_ONLY"
+)
+ECONOMIC_VALUE_POLICY_FROZEN = (
+    "NO_ECONOMIC_VALUES_COMPUTED_IN_THIS_LANE"
+)
+COST_VALUE_POLICY_FROZEN = "NO_COST_VALUES_COMPUTED_IN_THIS_LANE"
+FUNDING_VALUE_POLICY_FROZEN = "NO_FUNDING_VALUES_COMPUTED_IN_THIS_LANE"
+AGGREGATE_VALUE_POLICY_FROZEN = (
+    "NO_AGGREGATE_VALUE_SERIES_COMPUTED_IN_THIS_LANE"
+)
+CAPITAL_PATH_POLICY_FROZEN = (
+    "NO_CAPITAL_PATH_VALUES_COMPUTED_IN_THIS_LANE"
+)
+DISPERSION_SUMMARY_POLICY_FROZEN = (
+    "NO_DISPERSION_OR_DOWNSIDE_SUMMARIES_COMPUTED_IN_THIS_LANE"
+)
+ACCOUNTING_OUTPUT_POLICY_FROZEN = (
+    "NO_ECONOMIC_OR_CAPITAL_SERIES_EMITTED_IN_THIS_LANE"
+)
+
+_FROZEN_ECONOMIC_ACCOUNTING_POLICY_DECLARATION: tuple[tuple[str, str], ...] = (
+    (
+        "economic_accounting_family_policy",
+        ECONOMIC_ACCOUNTING_FAMILY_POLICY_FROZEN,
+    ),
+    ("economic_value_policy", ECONOMIC_VALUE_POLICY_FROZEN),
+    ("cost_value_policy", COST_VALUE_POLICY_FROZEN),
+    ("funding_value_policy", FUNDING_VALUE_POLICY_FROZEN),
+    ("aggregate_value_policy", AGGREGATE_VALUE_POLICY_FROZEN),
+    ("capital_path_policy", CAPITAL_PATH_POLICY_FROZEN),
+    ("dispersion_summary_policy", DISPERSION_SUMMARY_POLICY_FROZEN),
+    ("accounting_output_policy", ACCOUNTING_OUTPUT_POLICY_FROZEN),
+)
+
+_REQUIRED_FALSE_ECONOMIC_ACCOUNTING_POLICY_FIELDS: tuple[str, ...] = (
+    "economic_value_generation_authorized",
+    "simulated_event_generation_authorized",
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
 )
 
 # === Trade position simulation contract diagnostics constants ===
@@ -8818,6 +8888,10 @@ def materialize_simulation_policy_preregistration_diagnostics(
         "simulation_policy_hash_status": "FROZEN_IN_SIDECAR",
         "simulation_policy_required_fields_present": True,
         "simulation_policy_forbidden_dict_key_scan_passed": True,
+        "simulation_policy_id": str(packet.get("simulation_policy_id")),
+        "simulation_policy_packet_version": str(
+            packet.get("simulation_policy_version")
+        ),
         "bound_contract_id": str(bound_contract_id),
         "bound_contract_sha256": str(bound_contract_sha256),
         "bound_contract_digest_matches": True,
@@ -9027,6 +9101,668 @@ def _simulation_policy_absence_diagnostics() -> dict[str, Any]:
             "simulation_quantity_policy": False,
             "simulation_output_policy": False,
         },
+    }
+
+
+def _economic_accounting_policy_absence_diagnostics() -> dict[str, Any]:
+    """Diagnostic-only section recording that no economic accounting policy is
+    loaded: no economic value boundary, cost policy, funding policy, aggregate
+    policy, capital path policy, or accounting output policy is defined, and
+    scoring remains unauthorized.
+
+    Every field is either ``None``, ``NOT_DEFINED``, or ``False`` — this is
+    a diagnostic of absence, not a definition of presence.
+    """
+    return {
+        "diagnostic_kind": "economic_accounting_policy_absence",
+        "economic_accounting_policy_version": "economic-accounting-policy-0.1",
+        "calculation_status": (
+            "ECONOMIC_ACCOUNTING_POLICY_DIAGNOSTIC_ONLY"
+        ),
+        "economic_accounting_policy_status": (
+            "ECONOMIC_ACCOUNTING_POLICY_NOT_DEFINED"
+        ),
+        "economic_accounting_policy_present": False,
+        "economic_accounting_policy_hash": None,
+        "economic_accounting_policy_source": None,
+        "scoring_authorized": False,
+        "scoring_blocked_reason": (
+            "ECONOMIC_ACCOUNTING_POLICY_NOT_DEFINED"
+        ),
+        "economic_accounting_family_policy_defined": False,
+        "economic_accounting_family_policy": "NOT_DEFINED",
+        "economic_value_policy_defined": False,
+        "economic_value_policy": "NOT_DEFINED",
+        "cost_value_policy_defined": False,
+        "cost_value_policy": "NOT_DEFINED",
+        "funding_value_policy_defined": False,
+        "funding_value_policy": "NOT_DEFINED",
+        "aggregate_value_policy_defined": False,
+        "aggregate_value_policy": "NOT_DEFINED",
+        "capital_path_policy_defined": False,
+        "capital_path_policy": "NOT_DEFINED",
+        "dispersion_summary_policy_defined": False,
+        "dispersion_summary_policy": "NOT_DEFINED",
+        "accounting_output_policy_defined": False,
+        "accounting_output_policy": "NOT_DEFINED",
+        "strategy_rule_contract_dependency_satisfied": False,
+        "trial_manifest_dependency_satisfied": False,
+        "oos_seal_dependency_satisfied": False,
+        "null_benchmark_contract_dependency_satisfied": False,
+        "multiple_testing_control_dependency_satisfied": False,
+        "simulation_policy_dependency_satisfied": False,
+        "economic_accounting_policy_prerequisites_present": {
+            "strategy_rule_contract": False,
+            "trial_manifest": False,
+            "oos_seal": False,
+            "null_benchmark_contract": False,
+            "multiple_testing_control": False,
+            "simulation_policy": False,
+            "economic_accounting_family_policy": False,
+            "economic_value_policy": False,
+            "cost_value_policy": False,
+            "funding_value_policy": False,
+            "aggregate_value_policy": False,
+            "capital_path_policy": False,
+            "dispersion_summary_policy": False,
+            "accounting_output_policy": False,
+        },
+        "economic_accounting_policy_readiness": False,
+        "economic_value_generation_authorized": False,
+        "scoring_authorization": False,
+        "economic_accounting_policy_preregistration_gate": {
+            "gate_kind": "economic_accounting_policy_preregistration_gate",
+            "gate_scope": "ECONOMIC_ACCOUNTING_POLICY_AND_SIMULATION_BINDING_ONLY",
+            "gate_status": "ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED",
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": {},
+            "blocked_reason": "ECONOMIC_ACCOUNTING_POLICY_NOT_PROVIDED",
+        },
+    }
+
+
+def materialize_economic_accounting_policy_preregistration_diagnostics(
+    *,
+    economic_accounting_policy_path: str,
+    sidecar_path: str,
+    simulation_policy_diagnostics: dict[str, Any],
+    multiple_testing_control_diagnostics: dict[str, Any],
+    null_benchmark_diagnostics: dict[str, Any],
+    oos_seal_diagnostics: dict[str, Any],
+    trial_manifest_diagnostics: dict[str, Any],
+    strategy_rule_contract_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Read, parse, hash-check, and audit the frozen economic accounting policy
+    pre-scoring declaration packet, returning a diagnostic-only dict.
+
+    This function performs **no** economic value computation, scoring, strategy
+    definition, signal calculation, PnL, edge, or live-readiness. The returned
+    diagnostic records only the packet's load status, hash integrity,
+    forbidden-key survival, bound contract / trial manifest / OOS seal / null
+    benchmark / multiple-testing control / simulation policy digest checking,
+    simulation policy gate verification, economic accounting policy freeze, and
+    authorization posture. It does **not** authorize scoring or advance any gate.
+
+    Raises ``ValueError`` on any fail-closed condition:
+    - missing / malformed JSON or sidecar
+    - sidecar digest mismatch
+    - forbidden dict key found
+    - required field missing
+    - economic_accounting_policy_hash not ``FROZEN_IN_SIDECAR``
+    - economic_accounting_policy_hash_status not ``FROZEN_IN_SIDECAR``
+    - economic_accounting_policy_hash_algorithm not ``sha256``
+    - bound contract / trial manifest / OOS seal / null benchmark /
+      multiple-testing control / simulation policy digest or id mismatch
+    - simulation policy gate missing or not passed
+    - any economic accounting policy string not exactly the frozen values
+    - any policy freeze boolean not exactly True
+    - any authorization boolean not exactly False
+    """
+    # --- Read economic accounting policy JSON bytes ---
+    try:
+        packet_bytes = Path(economic_accounting_policy_path).read_bytes()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Economic accounting policy JSON not found: "
+            f"{economic_accounting_policy_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Economic accounting policy JSON read error "
+            f"{economic_accounting_policy_path}: {exc}"
+        )
+
+    json_sha256 = hashlib.sha256(packet_bytes).hexdigest()
+
+    # --- Parse JSON ---
+    try:
+        packet: dict = json.loads(packet_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Economic accounting policy JSON parse error: {exc}"
+        )
+
+    if not isinstance(packet, dict):
+        raise ValueError(
+            "Economic accounting policy JSON root must be a dict"
+        )
+
+    # --- Read sidecar ---
+    try:
+        sidecar_text = Path(sidecar_path).read_text().strip()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Economic accounting policy sidecar not found: {sidecar_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Economic accounting policy sidecar read error "
+            f"{sidecar_path}: {exc}"
+        )
+
+    parts = sidecar_text.split(None, 1)
+    if not parts or len(parts) != 2:
+        raise ValueError(
+            f"Economic accounting policy sidecar format invalid: "
+            f"expected '<sha256>  <filename>', got {sidecar_text!r}"
+        )
+    sidecar_sha256 = parts[0]
+
+    if len(sidecar_sha256) != 64:
+        raise ValueError(
+            f"Economic accounting policy sidecar SHA-256 digest length "
+            f"invalid: expected 64 hex chars, got {len(sidecar_sha256)}"
+        )
+
+    try:
+        int(sidecar_sha256, 16)
+    except ValueError:
+        raise ValueError(
+            f"Economic accounting policy sidecar SHA-256 digest is not "
+            f"valid hex: {sidecar_sha256!r}"
+        )
+
+    if sidecar_sha256 != json_sha256:
+        raise ValueError(
+            f"Economic accounting policy sidecar digest mismatch: "
+            f"sidecar={sidecar_sha256}, computed={json_sha256}"
+        )
+
+    # --- Check required field presence ---
+    _REQUIRED_ECONOMIC_ACCOUNTING_POLICY_KEYS: set[str] = {
+        "economic_accounting_policy_id",
+        "economic_accounting_policy_version",
+        "economic_accounting_policy_kind",
+        "economic_accounting_policy_status",
+        "economic_accounting_policy_hash",
+        "economic_accounting_policy_hash_algorithm",
+        "economic_accounting_policy_hash_scope",
+        "economic_accounting_policy_hash_status",
+        "bound_contract_id",
+        "bound_contract_sha256",
+        "bound_trial_manifest_id",
+        "bound_trial_manifest_sha256",
+        "bound_oos_seal_id",
+        "bound_oos_seal_sha256",
+        "bound_null_benchmark_id",
+        "bound_null_benchmark_sha256",
+        "bound_multiple_testing_control_id",
+        "bound_multiple_testing_control_sha256",
+        "bound_simulation_policy_id",
+        "bound_simulation_policy_sha256",
+        "required_simulation_policy_gate_status",
+        "required_simulation_policy_gate_scope",
+        *(field for field, _ in _FROZEN_ECONOMIC_ACCOUNTING_POLICY_DECLARATION),
+        *_REQUIRED_FALSE_ECONOMIC_ACCOUNTING_POLICY_FIELDS,
+    }
+    missing_fields = (
+        _REQUIRED_ECONOMIC_ACCOUNTING_POLICY_KEYS - set(packet.keys())
+    )
+    if missing_fields:
+        raise ValueError(
+            f"Economic accounting policy missing required fields: "
+            f"{sorted(missing_fields)}"
+        )
+
+    # --- Check forbidden dict keys (strict, no exemptions) ---
+    forbidden_collisions = _find_forbidden_contract_dict_keys(packet)
+    if forbidden_collisions:
+        collision_repr = ", ".join(
+            f"{c['key']!r} at {c['path']}" for c in forbidden_collisions
+        )
+        raise ValueError(
+            f"Economic accounting policy contains forbidden dict keys: "
+            f"{collision_repr}"
+        )
+
+    # --- Verify economic accounting policy hash fields ---
+    if packet.get("economic_accounting_policy_hash") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"Economic accounting policy economic_accounting_policy_hash "
+            f"must be 'FROZEN_IN_SIDECAR', "
+            f"got {packet.get('economic_accounting_policy_hash')!r}"
+        )
+    if (
+        packet.get("economic_accounting_policy_hash_status")
+        != "FROZEN_IN_SIDECAR"
+    ):
+        raise ValueError(
+            f"Economic accounting policy "
+            f"economic_accounting_policy_hash_status "
+            f"must be 'FROZEN_IN_SIDECAR', "
+            f"got {packet.get('economic_accounting_policy_hash_status')!r}"
+        )
+    if (
+        packet.get("economic_accounting_policy_hash_algorithm")
+        != "sha256"
+    ):
+        raise ValueError(
+            f"Economic accounting policy "
+            f"economic_accounting_policy_hash_algorithm "
+            f"must be 'sha256', "
+            f"got {packet.get('economic_accounting_policy_hash_algorithm')!r}"
+        )
+
+    # --- Verify bound contract identity + digest ---
+    contract_diag = strategy_rule_contract_diagnostics
+    contract_json_sha256 = contract_diag.get("json_sha256")
+    contract_id = contract_diag.get("contract_id")
+    bound_contract_sha256 = packet.get("bound_contract_sha256")
+    bound_contract_id = packet.get("bound_contract_id")
+
+    if bound_contract_sha256 != contract_json_sha256:
+        raise ValueError(
+            f"Economic accounting policy bound_contract_sha256 mismatch: "
+            f"packet says {bound_contract_sha256}, "
+            f"contract diagnostic says {contract_json_sha256}"
+        )
+    if bound_contract_id != contract_id:
+        raise ValueError(
+            f"Economic accounting policy bound_contract_id mismatch: "
+            f"packet says {bound_contract_id}, "
+            f"contract diagnostic says {contract_id}"
+        )
+
+    # --- Verify bound trial manifest identity + digest ---
+    tmd = trial_manifest_diagnostics
+    manifest_json_sha256 = tmd.get("manifest_json_sha256")
+    manifest_id = tmd.get("manifest_id")
+    bound_trial_manifest_sha256 = packet.get("bound_trial_manifest_sha256")
+    bound_trial_manifest_id = packet.get("bound_trial_manifest_id")
+
+    if bound_trial_manifest_sha256 != manifest_json_sha256:
+        raise ValueError(
+            f"Economic accounting policy "
+            f"bound_trial_manifest_sha256 mismatch: "
+            f"packet says {bound_trial_manifest_sha256}, "
+            f"trial manifest diagnostic says {manifest_json_sha256}"
+        )
+    if bound_trial_manifest_id != manifest_id:
+        raise ValueError(
+            f"Economic accounting policy bound_trial_manifest_id mismatch: "
+            f"packet says {bound_trial_manifest_id}, "
+            f"trial manifest diagnostic says {manifest_id}"
+        )
+
+    # --- Verify bound OOS seal identity + digest ---
+    osd = oos_seal_diagnostics
+    seal_json_sha256 = osd.get("seal_json_sha256")
+    seal_id = osd.get("seal_id")
+    bound_oos_seal_sha256 = packet.get("bound_oos_seal_sha256")
+    bound_oos_seal_id = packet.get("bound_oos_seal_id")
+
+    if bound_oos_seal_sha256 != seal_json_sha256:
+        raise ValueError(
+            f"Economic accounting policy bound_oos_seal_sha256 mismatch: "
+            f"packet says {bound_oos_seal_sha256}, "
+            f"OOS seal diagnostic says {seal_json_sha256}"
+        )
+    if bound_oos_seal_id != seal_id:
+        raise ValueError(
+            f"Economic accounting policy bound_oos_seal_id mismatch: "
+            f"packet says {bound_oos_seal_id}, "
+            f"OOS seal diagnostic says {seal_id}"
+        )
+
+    # --- Verify null benchmark identity + digest ---
+    nbd = null_benchmark_diagnostics
+    null_benchmark_json_sha256 = nbd.get("null_benchmark_json_sha256")
+    null_benchmark_id = nbd.get("null_benchmark_id")
+    bound_null_benchmark_sha256 = packet.get("bound_null_benchmark_sha256")
+    bound_null_benchmark_id = packet.get("bound_null_benchmark_id")
+
+    if bound_null_benchmark_sha256 != null_benchmark_json_sha256:
+        raise ValueError(
+            f"Economic accounting policy "
+            f"bound_null_benchmark_sha256 mismatch: "
+            f"packet says {bound_null_benchmark_sha256}, "
+            f"null benchmark diagnostic says "
+            f"{null_benchmark_json_sha256}"
+        )
+    if bound_null_benchmark_id != null_benchmark_id:
+        raise ValueError(
+            f"Economic accounting policy bound_null_benchmark_id mismatch: "
+            f"packet says {bound_null_benchmark_id}, "
+            f"null benchmark diagnostic says {null_benchmark_id}"
+        )
+
+    # --- Verify multiple-testing control identity + digest ---
+    mtd = multiple_testing_control_diagnostics
+    mt_json_sha256 = mtd.get("multiple_testing_control_json_sha256")
+    mt_id = mtd.get("multiple_testing_control_id")
+    bound_mt_sha256 = packet.get("bound_multiple_testing_control_sha256")
+    bound_mt_id = packet.get("bound_multiple_testing_control_id")
+
+    if bound_mt_sha256 != mt_json_sha256:
+        raise ValueError(
+            f"Economic accounting policy "
+            f"bound_multiple_testing_control_sha256 mismatch: "
+            f"packet says {bound_mt_sha256}, "
+            f"multiple-testing control diagnostic says {mt_json_sha256}"
+        )
+    if bound_mt_id != mt_id:
+        raise ValueError(
+            f"Economic accounting policy "
+            f"bound_multiple_testing_control_id mismatch: "
+            f"packet says {bound_mt_id}, "
+            f"multiple-testing control diagnostic says {mt_id}"
+        )
+
+    # --- Verify simulation policy gate (fail closed) ---
+    sp_diag = simulation_policy_diagnostics
+    sp_gate = sp_diag.get("simulation_policy_preregistration_gate", {})
+    if not isinstance(sp_gate, dict):
+        raise ValueError(
+            "Simulation policy preregistration gate is not a dict"
+        )
+    if not sp_gate.get("gate_passed"):
+        raise ValueError(
+            "Simulation policy preregistration gate not passed: "
+            "economic accounting policy pre-registration cannot proceed "
+            "without the simulation policy gate"
+        )
+    sp_gate_status = sp_gate.get("gate_status")
+    if sp_gate_status != SIMULATION_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY:
+        raise ValueError(
+            f"Simulation policy gate status must be "
+            f"{SIMULATION_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY!r}, "
+            f"got {sp_gate_status!r}"
+        )
+    required_sp_gate_status = packet.get(
+        "required_simulation_policy_gate_status"
+    )
+    if required_sp_gate_status != sp_gate_status:
+        raise ValueError(
+            f"Economic accounting policy "
+            f"required_simulation_policy_gate_status mismatch: "
+            f"packet says {required_sp_gate_status!r}, "
+            f"simulation policy gate says {sp_gate_status!r}"
+        )
+
+    # --- Verify bound simulation policy identity + digest ---
+    sp_json_sha256 = sp_diag.get("simulation_policy_json_sha256")
+    sp_id = sp_diag.get("simulation_policy_id")
+    bound_sp_sha256 = packet.get("bound_simulation_policy_sha256")
+    bound_sp_id = packet.get("bound_simulation_policy_id")
+
+    if bound_sp_sha256 != sp_json_sha256:
+        raise ValueError(
+            f"Economic accounting policy "
+            f"bound_simulation_policy_sha256 mismatch: "
+            f"packet says {bound_sp_sha256}, "
+            f"simulation policy diagnostic says {sp_json_sha256}"
+        )
+    if bound_sp_id != sp_id:
+        raise ValueError(
+            f"Economic accounting policy "
+            f"bound_simulation_policy_id mismatch: "
+            f"packet says {bound_sp_id}, "
+            f"simulation policy diagnostic says {sp_id}"
+        )
+
+    # --- Verify the frozen economic accounting policy declaration exactly ---
+    for field, frozen_value in (
+        _FROZEN_ECONOMIC_ACCOUNTING_POLICY_DECLARATION
+    ):
+        actual = packet.get(field)
+        if actual != frozen_value:
+            raise ValueError(
+                f"Economic accounting policy {field} must be exactly "
+                f"{frozen_value!r}, got {actual!r}"
+            )
+
+    # --- Verify policy freeze flags ---
+    for field, _ in _FROZEN_ECONOMIC_ACCOUNTING_POLICY_DECLARATION:
+        freeze_field = f"{field}_frozen"
+        if packet.get(freeze_field) is not True:
+            raise ValueError(
+                f"Economic accounting policy {freeze_field} must be True, "
+                f"got {packet.get(freeze_field)!r}"
+            )
+
+    # --- Verify authorization booleans are exactly False ---
+    bad_false_fields: dict[str, Any] = {
+        field: packet.get(field)
+        for field in _REQUIRED_FALSE_ECONOMIC_ACCOUNTING_POLICY_FIELDS
+        if packet.get(field) is not False
+    }
+    if bad_false_fields:
+        raise ValueError(
+            "Economic accounting policy fields must be exactly false: "
+            + ", ".join(
+                f"{k}={v!r}" for k, v in bad_false_fields.items()
+            )
+        )
+
+    return {
+        "diagnostic_kind": "economic_accounting_policy_preregistration",
+        "economic_accounting_policy_source_path": (
+            economic_accounting_policy_path
+        ),
+        "economic_accounting_policy_sidecar_path": sidecar_path,
+        "economic_accounting_policy_packet_read": True,
+        "economic_accounting_policy_json_parse_ok": True,
+        "economic_accounting_policy_sidecar_parse_ok": True,
+        "economic_accounting_policy_json_sha256": json_sha256,
+        "economic_accounting_policy_sidecar_sha256": sidecar_sha256,
+        "economic_accounting_policy_sidecar_digest_matches_json_bytes": True,
+        "economic_accounting_policy_hash_authority": "SIDECAR",
+        "economic_accounting_policy_hash_field_value": "FROZEN_IN_SIDECAR",
+        "economic_accounting_policy_hash_status": "FROZEN_IN_SIDECAR",
+        "economic_accounting_policy_required_fields_present": True,
+        "economic_accounting_policy_forbidden_dict_key_scan_passed": True,
+        "bound_contract_id": str(bound_contract_id),
+        "bound_contract_sha256": str(bound_contract_sha256),
+        "bound_contract_digest_matches": True,
+        "bound_trial_manifest_id": str(bound_trial_manifest_id),
+        "bound_trial_manifest_sha256": str(bound_trial_manifest_sha256),
+        "bound_trial_manifest_digest_matches": True,
+        "bound_oos_seal_id": str(bound_oos_seal_id),
+        "bound_oos_seal_sha256": str(bound_oos_seal_sha256),
+        "bound_oos_seal_digest_matches": True,
+        "bound_null_benchmark_id": str(bound_null_benchmark_id),
+        "bound_null_benchmark_sha256": str(bound_null_benchmark_sha256),
+        "bound_null_benchmark_digest_matches": True,
+        "bound_multiple_testing_control_id": str(bound_mt_id),
+        "bound_multiple_testing_control_sha256": str(bound_mt_sha256),
+        "bound_multiple_testing_control_digest_matches": True,
+        "bound_simulation_policy_id": str(bound_sp_id),
+        "bound_simulation_policy_sha256": str(bound_sp_sha256),
+        "bound_simulation_policy_digest_matches": True,
+        "simulation_policy_gate_required": True,
+        "simulation_policy_gate_passed": True,
+        "simulation_policy_gate_status": str(sp_gate_status),
+        "economic_accounting_family_policy": (
+            ECONOMIC_ACCOUNTING_FAMILY_POLICY_FROZEN
+        ),
+        "economic_accounting_family_policy_frozen": True,
+        "economic_value_policy": ECONOMIC_VALUE_POLICY_FROZEN,
+        "economic_value_policy_frozen": True,
+        "cost_value_policy": COST_VALUE_POLICY_FROZEN,
+        "cost_value_policy_frozen": True,
+        "funding_value_policy": FUNDING_VALUE_POLICY_FROZEN,
+        "funding_value_policy_frozen": True,
+        "aggregate_value_policy": AGGREGATE_VALUE_POLICY_FROZEN,
+        "aggregate_value_policy_frozen": True,
+        "capital_path_policy": CAPITAL_PATH_POLICY_FROZEN,
+        "capital_path_policy_frozen": True,
+        "dispersion_summary_policy": DISPERSION_SUMMARY_POLICY_FROZEN,
+        "dispersion_summary_policy_frozen": True,
+        "accounting_output_policy": ACCOUNTING_OUTPUT_POLICY_FROZEN,
+        "accounting_output_policy_frozen": True,
+        "economic_accounting_policy_readiness": False,
+        "economic_value_generation_authorized": False,
+        "economic_accounting_policy_validation_status": (
+            ECONOMIC_ACCOUNTING_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY
+        ),
+    }
+
+
+def _derive_economic_accounting_policy_preregistration_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive an economic accounting policy pre-registration gate from
+    diagnostics.
+
+    Pure projection — no I/O, no scoring, no economic value computation, no
+    simulation, no event generation. The gate passes only when all of the
+    following hold:
+    - economic accounting policy packet read
+    - sidecar digest matches the JSON bytes
+    - strict forbidden-key scan passed
+    - bound contract digest matches
+    - bound trial manifest digest matches
+    - bound OOS seal digest matches
+    - bound null benchmark digest matches
+    - bound multiple-testing control digest matches
+    - bound simulation policy digest matches
+    - simulation policy gate passed
+    - all economic accounting policy strings match frozen declared values
+    - all economic accounting policy freeze booleans are True
+    - all authorization booleans false
+
+    A missing / failed simulation policy gate blocks this gate: economic
+    accounting policy pre-registration can never pass without it.
+    """
+    evidence: dict[str, Any] = {
+        "economic_accounting_policy_sidecar_digest_matches_json_bytes": (
+            diagnostics.get(
+                "economic_accounting_policy_sidecar_digest_matches_json_bytes"
+            )
+            is True
+        ),
+        "bound_contract_digest_matches": (
+            diagnostics.get("bound_contract_digest_matches") is True
+        ),
+        "bound_trial_manifest_digest_matches": (
+            diagnostics.get("bound_trial_manifest_digest_matches") is True
+        ),
+        "bound_oos_seal_digest_matches": (
+            diagnostics.get("bound_oos_seal_digest_matches") is True
+        ),
+        "bound_null_benchmark_digest_matches": (
+            diagnostics.get("bound_null_benchmark_digest_matches") is True
+        ),
+        "bound_multiple_testing_control_digest_matches": (
+            diagnostics.get(
+                "bound_multiple_testing_control_digest_matches"
+            )
+            is True
+        ),
+        "bound_simulation_policy_digest_matches": (
+            diagnostics.get("bound_simulation_policy_digest_matches") is True
+        ),
+        "simulation_policy_gate_passed": (
+            diagnostics.get("simulation_policy_gate_passed") is True
+        ),
+        **{
+            f"{field}_matches_frozen_value": (
+                diagnostics.get(field) == frozen_value
+            )
+            for field, frozen_value
+            in _FROZEN_ECONOMIC_ACCOUNTING_POLICY_DECLARATION
+        },
+    }
+
+    evidence_pass = all(
+        value is True
+        for key, value in evidence.items()
+    )
+
+    extra_pass = (
+        diagnostics.get("diagnostic_kind")
+        == "economic_accounting_policy_preregistration"
+        and diagnostics.get("economic_accounting_policy_packet_read") is True
+        and diagnostics.get("economic_accounting_policy_json_parse_ok") is True
+        and diagnostics.get(
+            "economic_accounting_policy_sidecar_parse_ok"
+        )
+        is True
+        and diagnostics.get("economic_accounting_policy_hash_authority")
+        == "SIDECAR"
+        and diagnostics.get("economic_accounting_policy_hash_field_value")
+        == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("economic_accounting_policy_hash_status")
+        == "FROZEN_IN_SIDECAR"
+        and diagnostics.get(
+            "economic_accounting_policy_required_fields_present"
+        )
+        is True
+        and diagnostics.get(
+            "economic_accounting_policy_forbidden_dict_key_scan_passed"
+        )
+        is True
+        and diagnostics.get("simulation_policy_gate_status")
+        == SIMULATION_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY
+        and diagnostics.get("economic_value_generation_authorized") is False
+        and diagnostics.get("economic_accounting_policy_readiness") is False
+    )
+
+    all_pass = evidence_pass and extra_pass
+
+    if all_pass:
+        gate_status = (
+            ECONOMIC_ACCOUNTING_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY
+        )
+        blocked_reason = None
+    elif (
+        diagnostics.get("diagnostic_kind")
+        != "economic_accounting_policy_preregistration"
+    ):
+        gate_status = ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED
+        blocked_reason = "ECONOMIC_ACCOUNTING_POLICY_NOT_PROVIDED"
+    elif (
+        diagnostics.get("simulation_policy_gate_passed") is not True
+    ):
+        gate_status = BLOCKED_BY_SIMULATION_POLICY_GATE
+        blocked_reason = "SIMULATION_POLICY_GATE_NOT_PASSED"
+    else:
+        gate_status = (
+            BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_POLICY_EVIDENCE
+        )
+        blocked_reason = (
+            "ECONOMIC_ACCOUNTING_POLICY_GATE_EVIDENCE_INCOMPLETE"
+        )
+
+    return {
+        "gate_kind": (
+            "economic_accounting_policy_preregistration_gate"
+        ),
+        "gate_scope": (
+            "ECONOMIC_ACCOUNTING_POLICY_AND_SIMULATION_BINDING_ONLY"
+        ),
+        "gate_status": gate_status,
+        "gate_passed": all_pass,
+        "gate_scoring_authorization": False,
+        "gate_live_authorization": False,
+        "gate_final_verdict_authorization": False,
+        "gate_downstream_unlocks": [],
+        "evidence": evidence,
+        "blocked_reason": blocked_reason,
     }
 
 
@@ -9848,29 +10584,12 @@ def _build_trade_position_simulation_contract_diagnostics(
     }
 
 
-def _build_net_pnl_equity_risk_contract_diagnostics() -> dict[str, Any]:
-    """Build a diagnostic-only section recording that no net PnL/equity/risk
-    contract exists yet, no accounting/risk policies are defined, and scoring
-    remains unauthorized.
+def _net_pnl_equity_risk_absence_diagnostics() -> dict[str, Any]:
+    """Return the legacy net-PnL/equity-risk absence diagnostic shape.
 
-    This section does **not** define a capital base, accounting policy, equity
-    curve policy, drawdown policy, risk measure, or any computed metric. It
-    does not compute PnL, returns, equity curves, drawdown, risk, Sharpe,
-    volatility, exposure, benchmark comparison, edge, score, performance,
-    profit, trades, positions, orders, fills, signals, or strategy outputs.
-    Every field is either ``None``, ``NOT_DEFINED``, or ``False`` — this is a
-    diagnostic of absence, not a definition of presence.
-
-    Fail-closed rules:
-    * ``net_pnl_equity_risk_contract_status`` is always
-      ``NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED``.
-    * ``net_pnl_equity_risk_contract_present`` is always ``False``.
-    * ``scoring_authorized`` is always ``False`` at this stage.
-    * ``scoring_blocked_reason`` is always
-      ``NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED``.
-    * All ``net_pnl_equity_risk_contract_prerequisites_present`` values are
-      always ``False``.
-    * All policy fields are always ``NOT_DEFINED``.
+    This is the backward-compatible absence record that existing consumers
+    and docs rely on.  It is always returned as the top-level section;
+    economic-accounting policy diagnostics (if any) are nested underneath.
     """
     return {
         "contract_version": NET_PNL_EQUITY_RISK_CONTRACT_VERSION,
@@ -9944,6 +10663,90 @@ def _build_net_pnl_equity_risk_contract_diagnostics() -> dict[str, Any]:
             "final_verdict_scoring_policy": False,
         },
     }
+
+
+def _build_net_pnl_equity_risk_contract_diagnostics(
+    *,
+    economic_accounting_policy_path: str | None = None,
+    sidecar_path: str | None = None,
+    simulation_policy_diagnostics: dict[str, Any] | None = None,
+    multiple_testing_control_diagnostics: dict[str, Any] | None = None,
+    null_benchmark_diagnostics: dict[str, Any] | None = None,
+    oos_seal_diagnostics: dict[str, Any] | None = None,
+    trial_manifest_diagnostics: dict[str, Any] | None = None,
+    strategy_rule_contract_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a diagnostic-only section for the net PnL/equity/risk contract.
+
+    If *economic_accounting_policy_path* and *sidecar_path* are both provided
+    and all upstream diagnostics are supplied, the frozen economic accounting
+    policy packet is loaded, hash-checked, and audited via
+    :func:`materialize_economic_accounting_policy_preregistration_diagnostics`.
+
+    Otherwise a hardcoded ``NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED``
+    diagnostic is returned.
+
+    This section does **not** compute PnL, returns, equity curves, drawdown,
+    risk, Sharpe, or any economic value.
+
+    The top-level shape is always the legacy net-PnL/equity-risk absence
+    schema.  Economic-accounting policy diagnostics (if any) are nested under
+    ``economic_accounting_policy_diagnostics``.
+    """
+    if (
+        economic_accounting_policy_path is not None
+        and sidecar_path is not None
+        and simulation_policy_diagnostics is not None
+        and multiple_testing_control_diagnostics is not None
+        and null_benchmark_diagnostics is not None
+        and oos_seal_diagnostics is not None
+        and trial_manifest_diagnostics is not None
+        and strategy_rule_contract_diagnostics is not None
+    ):
+        eap_diagnostics = (
+            materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=(
+                    economic_accounting_policy_path
+                ),
+                sidecar_path=sidecar_path,
+                simulation_policy_diagnostics=(
+                    simulation_policy_diagnostics
+                ),
+                multiple_testing_control_diagnostics=(
+                    multiple_testing_control_diagnostics
+                ),
+                null_benchmark_diagnostics=null_benchmark_diagnostics,
+                oos_seal_diagnostics=oos_seal_diagnostics,
+                trial_manifest_diagnostics=trial_manifest_diagnostics,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
+        )
+        eap_diagnostics["economic_accounting_policy_preregistration_gate"] = (
+            _derive_economic_accounting_policy_preregistration_gate(
+                eap_diagnostics
+            )
+        )
+
+        diagnostics = _net_pnl_equity_risk_absence_diagnostics()
+        diagnostics["economic_accounting_policy_diagnostics"] = eap_diagnostics
+        diagnostics["economic_accounting_policy_preregistration_gate"] = (
+            eap_diagnostics["economic_accounting_policy_preregistration_gate"]
+        )
+        return diagnostics
+
+    # No-args / absence path: preserve backward-compatible absence shape.
+    diagnostics = _net_pnl_equity_risk_absence_diagnostics()
+    diagnostics["economic_accounting_policy_diagnostics"] = (
+        _economic_accounting_policy_absence_diagnostics()
+    )
+    diagnostics["economic_accounting_policy_preregistration_gate"] = (
+        diagnostics["economic_accounting_policy_diagnostics"][
+            "economic_accounting_policy_preregistration_gate"
+        ]
+    )
+    return diagnostics
 
 
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
@@ -10062,6 +10865,7 @@ def build_real_validation_receipt(
     multiple_testing_control_diagnostics: dict | None = None,
     trade_position_simulation_contract_diagnostics: dict | None = None,
     net_pnl_equity_risk_contract_diagnostics: dict | None = None,
+    economic_accounting_policy_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -10200,6 +11004,10 @@ def build_real_validation_receipt(
     if net_pnl_equity_risk_contract_diagnostics is not None:
         receipt["net_pnl_equity_risk_contract_diagnostics"] = (
             net_pnl_equity_risk_contract_diagnostics
+        )
+    if economic_accounting_policy_diagnostics is not None:
+        receipt["economic_accounting_policy_diagnostics"] = (
+            economic_accounting_policy_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -10568,6 +11376,33 @@ def build_parser() -> argparse.ArgumentParser:
             "packet. Required if --simulation-policy-path is provided."
         ),
     )
+    parser.add_argument(
+        "--economic-accounting-policy-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to frozen economic accounting policy pre-scoring declaration "
+            "JSON. If provided, the packet is loaded and hash-checked "
+            "(diagnostic only, no economic values, no scoring). Requires "
+            "--economic-accounting-policy-sha256-path, "
+            "--simulation-policy-path/--simulation-policy-sha256-path, "
+            "--multiple-testing-control-path/--multiple-testing-control-sha256-path, "
+            "--null-benchmark-path/--null-benchmark-sha256-path, "
+            "--oos-seal-path/--oos-seal-sha256-path, "
+            "--trial-manifest-path/--trial-manifest-sha256-path, and "
+            "--strategy-contract-path/--strategy-contract-sha256-path."
+        ),
+    )
+    parser.add_argument(
+        "--economic-accounting-policy-sha256-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to the SHA-256 sidecar for the frozen economic accounting "
+            "policy packet. Required if --economic-accounting-policy-path is "
+            "provided."
+        ),
+    )
     return parser
 
 
@@ -10806,7 +11641,28 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             net_pnl_equity_risk_contract_diagnostics = (
-                _build_net_pnl_equity_risk_contract_diagnostics()
+                _build_net_pnl_equity_risk_contract_diagnostics(
+                    economic_accounting_policy_path=(
+                        args.economic_accounting_policy_path
+                    ),
+                    sidecar_path=(
+                        args.economic_accounting_policy_sha256_path
+                    ),
+                    simulation_policy_diagnostics=(
+                        trade_position_simulation_contract_diagnostics
+                    ),
+                    multiple_testing_control_diagnostics=(
+                        multiple_testing_control_diagnostics
+                    ),
+                    null_benchmark_diagnostics=(
+                        null_benchmark_contract_diagnostics
+                    ),
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                )
             )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
@@ -10873,6 +11729,11 @@ def main(argv: list[str] | None = None) -> int:
             ),
             net_pnl_equity_risk_contract_diagnostics=(
                 net_pnl_equity_risk_contract_diagnostics
+            ),
+            economic_accounting_policy_diagnostics=(
+                net_pnl_equity_risk_contract_diagnostics.get(
+                    "economic_accounting_policy_diagnostics"
+                )
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -10967,7 +11828,28 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             net_pnl_equity_risk_contract_diagnostics = (
-                _build_net_pnl_equity_risk_contract_diagnostics()
+                _build_net_pnl_equity_risk_contract_diagnostics(
+                    economic_accounting_policy_path=(
+                        args.economic_accounting_policy_path
+                    ),
+                    sidecar_path=(
+                        args.economic_accounting_policy_sha256_path
+                    ),
+                    simulation_policy_diagnostics=(
+                        trade_position_simulation_contract_diagnostics
+                    ),
+                    multiple_testing_control_diagnostics=(
+                        multiple_testing_control_diagnostics
+                    ),
+                    null_benchmark_diagnostics=(
+                        null_benchmark_contract_diagnostics
+                    ),
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                )
             )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
@@ -10999,6 +11881,11 @@ def main(argv: list[str] | None = None) -> int:
             ),
             net_pnl_equity_risk_contract_diagnostics=(
                 net_pnl_equity_risk_contract_diagnostics
+            ),
+            economic_accounting_policy_diagnostics=(
+                net_pnl_equity_risk_contract_diagnostics.get(
+                    "economic_accounting_policy_diagnostics"
+                )
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
