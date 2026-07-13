@@ -62,6 +62,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     _build_funding_adjustment_sample_aggregate_diagnostics,
     _build_split_leakage_audit_diagnostics,
     _build_strategy_rule_contract_diagnostics,
+    materialize_strategy_rule_contract_instance_diagnostics,
     SPLIT_LEAKAGE_AUDIT_VERSION,
     SPLIT_LEAKAGE_AUDIT_DIAGNOSTIC_ONLY,
     SPLIT_LEAKAGE_AUDIT_INSUFFICIENT_FOR_SCORING,
@@ -8923,6 +8924,227 @@ class TestStrategyRuleContractDiagnostics:
         }
         overlap = forbidden & all_keys
         assert not overlap, f"Forbidden keys found in receipt: {overlap}"
+
+    # ── Materialize contract instance diagnostics (Lane C1) ─────────────────
+
+    @staticmethod
+    def _contract_json_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+        )
+
+    @staticmethod
+    def _sidecar_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256"
+        )
+
+    def test_happy_path_loads_contract_packet(self):
+        """Happy path: committed contract JSON + sidecar load cleanly."""
+        result = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+        )
+        assert result["diagnostic_kind"] == "strategy_rule_contract_instance"
+        assert result["contract_packet_read"] is True
+        assert result["json_parse_ok"] is True
+        assert result["sidecar_parse_ok"] is True
+        assert result["sidecar_digest_matches_json_bytes"] is True
+        assert result["contract_hash_authority"] == "SIDECAR"
+        assert result["contract_hash_field_value"] == "FROZEN_IN_SIDECAR"
+        assert result["contract_hash_status"] == "FROZEN_IN_SIDECAR"
+        assert result["required_fields_present"] is True
+        assert result["missing_required_fields"] == []
+        assert result["forbidden_dict_key_scan_passed"] is True
+        assert result["forbidden_dict_key_collisions"] == []
+        assert result["input_ceiling_check_passed"] is True
+        assert result["output_boundary_fields_present"] is True
+        assert result["scoring_authorization"] is False
+        assert result["live_integration_authorized"] is False
+        assert result["downstream_dependency_booleans_all_false"] is True
+        assert result["contract_runner_read_status"] == "DIAGNOSTIC_READ_ONLY"
+        assert result["contract_commit_sha_bound"] is False
+        assert result["contract_commit_sha_binding_status"] == (
+            "UNRESOLVED_SELF_REFERENCE_PLACEHOLDER"
+        )
+        assert result["contract_instance_readiness"] is False
+        assert result["contract_scoring_ready"] is False
+        assert result["contract_validation_status"] == (
+            "BLOCKED_BY_COMMIT_BINDING_PLACEHOLDER"
+        )
+
+    def test_missing_json_path_fails_closed(self):
+        with pytest.raises(ValueError, match="Contract JSON not found"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path="/nonexistent/contract.json",
+                sidecar_path=self._sidecar_path(),
+            )
+
+    def test_missing_sidecar_path_fails_closed(self):
+        with pytest.raises(ValueError, match="Contract sidecar not found"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=self._contract_json_path(),
+                sidecar_path="/nonexistent/contract.sha256",
+            )
+
+    def test_malformed_json_fails_closed(self, tmp_path):
+        bad_json = tmp_path / "bad.json"
+        bad_json.write_text("{invalid json}")
+        good_sidecar = tmp_path / "good.sha256"
+        good_sidecar.write_text(
+            "0000000000000000000000000000000000000000000000000000000000000000  bad.json"
+        )
+        with pytest.raises(ValueError, match="Contract JSON parse error"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(bad_json),
+                sidecar_path=str(good_sidecar),
+            )
+
+    def test_digest_mismatch_fails_closed(self, tmp_path):
+        contract = tmp_path / "mismatch.json"
+        contract.write_text('{"a": 1}')
+        sidecar = tmp_path / "mismatch.sha256"
+        sidecar.write_text(
+            "0000000000000000000000000000000000000000000000000000000000000000  mismatch.json"
+        )
+        with pytest.raises(ValueError, match="Sidecar digest mismatch"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(contract),
+                sidecar_path=str(sidecar),
+            )
+
+    def test_forbidden_dict_key_fails_closed(self, tmp_path):
+        # Copy committed contract and add a forbidden key at top level.
+        contract_path = self._contract_json_path()
+        contract_bytes = Path(contract_path).read_bytes()
+        contract = json.loads(contract_bytes)
+        contract["pnl"] = 1  # FORBIDDEN_CALCULATION_KEYS includes "pnl"
+        mutated_path = tmp_path / "mutated_pnl.json"
+        mutated_path.write_text(json.dumps(contract, indent=2, sort_keys=True))
+        mutated_sha = hashlib.sha256(mutated_path.read_bytes()).hexdigest()
+        sidecar = tmp_path / "mutated_pnl.sha256"
+        sidecar.write_text(f"{mutated_sha}  mutated_pnl.json")
+        with pytest.raises(ValueError, match="forbidden dict keys"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(mutated_path),
+                sidecar_path=str(sidecar),
+            )
+
+    def test_input_ceiling_violation_fails_closed(self, tmp_path):
+        # Copy committed contract and add open to bars allowed columns.
+        contract_path = self._contract_json_path()
+        contract = json.loads(Path(contract_path).read_bytes())
+        contract["allowed_input_columns"]["bars"].append("open")
+        mutated_path = tmp_path / "mutated_ceiling.json"
+        mutated_path.write_text(json.dumps(contract, indent=2, sort_keys=True))
+        mutated_sha = hashlib.sha256(mutated_path.read_bytes()).hexdigest()
+        sidecar = tmp_path / "mutated_ceiling.sha256"
+        sidecar.write_text(f"{mutated_sha}  mutated_ceiling.json")
+        with pytest.raises(ValueError, match="allowed_input_columns.bars"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(mutated_path),
+                sidecar_path=str(sidecar),
+            )
+
+    def test_output_boundary_missing_fails_closed(self, tmp_path):
+        # Copy committed contract and remove forbidden_output_keys.
+        # forbidden_output_keys is in _REQUIRED_STRATEGY_CONTRACT_KEYS so the
+        # required-field check fires first; match the actual error message.
+        contract_path = self._contract_json_path()
+        contract = json.loads(Path(contract_path).read_bytes())
+        del contract["forbidden_output_keys"]
+        mutated_path = tmp_path / "mutated_boundary.json"
+        mutated_path.write_text(json.dumps(contract, indent=2, sort_keys=True))
+        mutated_sha = hashlib.sha256(mutated_path.read_bytes()).hexdigest()
+        sidecar = tmp_path / "mutated_boundary.sha256"
+        sidecar.write_text(f"{mutated_sha}  mutated_boundary.json")
+        with pytest.raises(ValueError, match="missing required fields"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(mutated_path),
+                sidecar_path=str(sidecar),
+            )
+
+    def test_downstream_boolean_true_fails_closed(self, tmp_path):
+        # Copy committed contract and set oos_seal_dependency_satisfied to true.
+        contract_path = self._contract_json_path()
+        contract = json.loads(Path(contract_path).read_bytes())
+        contract["oos_seal_dependency_satisfied"] = True
+        mutated_path = tmp_path / "mutated_downstream.json"
+        mutated_path.write_text(json.dumps(contract, indent=2, sort_keys=True))
+        mutated_sha = hashlib.sha256(mutated_path.read_bytes()).hexdigest()
+        sidecar = tmp_path / "mutated_downstream.sha256"
+        sidecar.write_text(f"{mutated_sha}  mutated_downstream.json")
+        with pytest.raises(ValueError, match="downstream dependency"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(mutated_path),
+                sidecar_path=str(sidecar),
+            )
+
+    def test_receipt_binding_with_diagnostics(self):
+        """Build a real validation receipt with contract instance diagnostics
+        and assert diagnostic-only posture."""
+        diag = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+        )
+        receipt = _base_receipt(
+            strategy_rule_contract_diagnostics=diag,
+        )
+        assert "strategy_rule_contract_diagnostics" in receipt
+        loaded = receipt["strategy_rule_contract_diagnostics"]
+        assert loaded["contract_runner_read_status"] == "DIAGNOSTIC_READ_ONLY"
+        assert loaded["contract_commit_sha_bound"] is False
+        assert loaded["contract_instance_readiness"] is False
+        assert loaded["contract_scoring_ready"] is False
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+        # validate_real_validation_receipt must not raise
+        validate_real_validation_receipt(receipt)
+
+    def test_cli_with_contract_args_emits_diagnostics(self, tmp_path):
+        """CLI with contract args produces diagnostic section, verdict still blocked."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+            "--strategy-contract-path", self._contract_json_path(),
+            "--strategy-contract-sha256-path", self._sidecar_path(),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "strategy_rule_contract_diagnostics" in receipt
+        loaded = receipt["strategy_rule_contract_diagnostics"]
+        assert loaded.get("diagnostic_kind") == "strategy_rule_contract_instance"
+        assert loaded.get("contract_runner_read_status") == "DIAGNOSTIC_READ_ONLY"
+        assert loaded.get("contract_scoring_ready") is False
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_cli_with_bad_sidecar_exits_nonzero(self, tmp_path):
+        """CLI with bad sidecar path exits nonzero (fails closed)."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        bad_sidecar = tmp_path / "nonexistent.sha256"
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+            "--strategy-contract-path", self._contract_json_path(),
+            "--strategy-contract-sha256-path", str(bad_sidecar),
+        ])
+        assert exit_code != 0  # fails closed
 
 
 _TRIAL_MANIFEST_FORBIDDEN_KEYS = frozenset({

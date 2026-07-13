@@ -74,19 +74,61 @@ These fields:
 
 ## What this PR does NOT do
 
-- The runner does **not** read this contract.
-- The receipt does **not** emit it.
-- No scoring, strategy implementation, signal calculation, PnL, edge, or live-readiness
-  claim is introduced.
-- All downstream gates remain `false` / static.
-- `final_offline_verdict` remains `BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
-- `EDGE_UNPROVEN` and `BLOCK_LIVE_INTEGRATION` remain.
+- This PR (Lane B) did **not** read the contract.
 
-## Lane C and beyond
+## Lane C1 — diagnostic loading (merged in ``contract/strategy-rule-contract-loader-c1``)
 
-Lane C will decide the exact runtime binding and validator semantics. This PR is
-strictly the artifact commit — the contract exists as frozen bytes, but nothing reads
-it yet.
+Lane C1 adds the ability for the runner to **read and hash-check** the frozen contract
+packet, emitting a diagnostic-only section into the offline-edge validation receipt.
+
+What Lane C1 does:
+
+- Loads the contract JSON and SHA-256 sidecar at runtime.
+- Verifies JSON parseability, sidecar format, and SHA-256 binding.
+- Scans all dict keys against the `FORBIDDEN_CALCULATION_KEYS` (42 keys).
+- Checks that `allowed_input_columns` matches the verified runner ceiling
+  (bars: `timestamp`, `close`; funding: `fundingTime`, `fundingRate`).
+- Checks that output-boundary fields (`output_boundary`, `forbidden_output_keys`,
+  `receipt_key_naming_constraint`) are present.
+- Checks that all downstream dependency booleans are `false`.
+- Reports diagnostic statuses including ``contract_runner_read_status``,
+  ``contract_commit_sha_binding_status``, ``contract_scoring_ready``,
+  ``contract_validation_status``.
+
+What Lane C1 does **not** do:
+
+- No scoring, strategy implementation, signal calculation, PnL, or edge.
+- No live-readiness or exchange integration.
+- **Does not solve the `contract_commit_sha` self-reference problem.**
+  The commit SHA field value remains ``TO_BE_FILLED_AFTER_MERGE``. Editing it
+  inside the same JSON file creates a commit self-reference: changing the bytes
+  produces a new SHA, which cannot be known pre-merge. The diagnostic reports
+  ``contract_commit_sha_binding_status = "UNRESOLVED_SELF_REFERENCE_PLACEHOLDER"``
+  and ``contract_commit_sha_bound = false``.
+- No gates flip true. ``contract_scoring_ready``, ``contract_instance_readiness``,
+  and ``contract_commit_sha_bound`` are all ``false``.
+- ``final_offline_verdict`` remains ``BLOCKED_BY_VALIDATION_IMPLEMENTATION``.
+- ``EDGE_UNPROVEN`` and ``BLOCK_LIVE_INTEGRATION`` remain.
+- ``scoring_authorization`` remains ``false``.
+
+CLI arguments (optional):
+
+- ``--strategy-contract-path`` — path to the frozen contract JSON.
+- ``--strategy-contract-sha256-path`` — path to the SHA-256 sidecar.
+
+If both arguments are supplied, the materializer runs and the diagnostic section
+appears in the receipt. If either is omitted, the existing ``CONTRACT_NOT_DEFINED``
+diagnostic is emitted (unchanged).
+
+### Lane C2 and beyond
+
+Lane C2 or later must decide a non-self-referential commit-containment model.
+The approach must resolve ``contract_commit_sha`` without editing the same file
+whose bytes define the hash. Possible strategies include:
+
+- A separate commit-metadata sidecar generated post-merge.
+- An out-of-band binding mechanism (e.g., CI pipeline stamps the merge SHA).
+- Contract instance versioning that externalizes the commit reference.
 
 ## Verification
 

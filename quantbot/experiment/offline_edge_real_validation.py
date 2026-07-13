@@ -69,6 +69,7 @@ __all__ = [
     "materialize_funding_adjustment_arithmetic_scaffold_diagnostics",
     "materialize_funding_adjustment_row_scaffold_diagnostics",
     "_build_split_leakage_audit_diagnostics",
+    "materialize_strategy_rule_contract_instance_diagnostics",
     "_build_strategy_rule_contract_diagnostics",
     "_build_trial_manifest_diagnostics",
     "_build_oos_seal_diagnostics",
@@ -221,6 +222,9 @@ STRATEGY_RULE_CONTRACT_VERSION = "strategy-rule-contract-0.1"
 STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY = "STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY"
 STRATEGY_RULE_CONTRACT_NOT_DEFINED = "CONTRACT_NOT_DEFINED"
 STRATEGY_RULE_CONTRACT_BLOCKED_REASON_NOT_DEFINED = "STRATEGY_RULE_CONTRACT_NOT_DEFINED"
+STRATEGY_RULE_CONTRACT_LOADED_DIAGNOSTIC_ONLY = "STRATEGY_RULE_CONTRACT_LOADED_DIAGNOSTIC_ONLY"
+STRATEGY_RULE_CONTRACT_LOADED_AND_HASH_CHECKED = "CONTRACT_LOADED_AND_HASH_CHECKED"
+STRATEGY_RULE_CONTRACT_BLOCKED_REASON_INSTANCE_READ_ONLY = "CONTRACT_INSTANCE_READ_ONLY_DIAGNOSTIC"
 NOT_DEFINED = "NOT_DEFINED"
 
 # === Trial manifest diagnostics constants ===
@@ -5991,23 +5995,298 @@ def _build_split_leakage_audit_diagnostics(
         "per_symbol": None,
     }
 
+# === Strategy-rule contract instance diagnostic constants ===
 
-def _build_strategy_rule_contract_diagnostics() -> dict[str, Any]:
-    """Build a diagnostic-only section recording that no strategy rule contract
-    exists yet and therefore strategy scoring is blocked.
+# Reference allowed input ceiling the materializer enforces.
+_CONTRACT_BARS_ALLOWED: frozenset[str] = frozenset({"timestamp", "close"})
+_CONTRACT_FUNDING_ALLOWED: frozenset[str] = frozenset({"fundingTime", "fundingRate"})
+
+# Required top-level keys that must survive JSON parsing.
+_REQUIRED_STRATEGY_CONTRACT_KEYS: frozenset[str] = frozenset({
+    "contract_id",
+    "contract_version",
+    "contract_frozen",
+    "contract_hash",
+    "contract_hash_algorithm",
+    "contract_hash_status",
+    "contract_status",
+    "allowed_input_columns",
+    "allowed_input_roles",
+    "output_boundary",
+    "forbidden_output_keys",
+    "receipt_key_naming_constraint",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "trial_manifest_dependency_satisfied",
+    "oos_seal_dependency_satisfied",
+    "null_benchmark_dependency_satisfied",
+    "multiple_testing_dependency_satisfied",
+    "split_scoring_safe_dependency_satisfied",
+    "trade_position_simulation_dependency_satisfied",
+    "net_pnl_equity_risk_dependency_satisfied",
+    "contract_commit_sha",
+})
+
+# Downstream dependency booleans that must all be false.
+_DOWNSTREAM_CONTRACT_DEPENDENCY_BOOLEANS: list[str] = [
+    "trial_manifest_dependency_satisfied",
+    "oos_seal_dependency_satisfied",
+    "null_benchmark_dependency_satisfied",
+    "multiple_testing_dependency_satisfied",
+    "split_scoring_safe_dependency_satisfied",
+    "trade_position_simulation_dependency_satisfied",
+    "net_pnl_equity_risk_dependency_satisfied",
+    "live_integration_authorized",
+]
+
+# Output-boundary fields that must be present in the contract.
+_CONTRACT_OUTPUT_BOUNDARY_KEYS: frozenset[str] = frozenset({
+    "output_boundary",
+    "forbidden_output_keys",
+    "receipt_key_naming_constraint",
+})
+
+
+def materialize_strategy_rule_contract_instance_diagnostics(
+    *,
+    contract_path: str,
+    sidecar_path: str,
+) -> dict[str, Any]:
+    """Read, parse, hash-check, and audit the frozen strategy-rule contract
+    packet, returning a diagnostic-only dict.
+
+    This function performs **no** scoring, strategy definition, signal
+    calculation, PnL, edge, or live-readiness. The returned diagnostic is
+    explicitly ``DIAGNOSTIC_READ_ONLY`` — it records the contract's load
+    status, hash integrity, forbidden-key survival, input-ceiling alignment,
+    output-boundary presence, and downstream boolean posture, but does
+    **not** authorize scoring or advance any gate.
+
+    Raises ``ValueError`` on any fail-closed condition:
+    - missing / malformed JSON or sidecar
+    - sidecar digest mismatch
+    - forbidden dict key found
+    - required field missing
+    - input ceiling violation
+    - output-boundary missing
+    - downstream dependency boolean true
+    """
+    # --- Read contract JSON bytes ---
+    try:
+        contract_bytes = Path(contract_path).read_bytes()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Contract JSON not found: {contract_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Contract JSON read error {contract_path}: {exc}"
+        )
+
+    json_sha256 = hashlib.sha256(contract_bytes).hexdigest()
+
+    # --- Parse JSON ---
+    try:
+        contract: dict = json.loads(contract_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Contract JSON parse error: {exc}"
+        )
+
+    if not isinstance(contract, dict):
+        raise ValueError(
+            "Contract JSON root must be a dict"
+        )
+
+    # --- Read sidecar ---
+    try:
+        sidecar_text = Path(sidecar_path).read_text().strip()
+    except FileNotFoundError:
+        raise ValueError(
+            f"Contract sidecar not found: {sidecar_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"Contract sidecar read error {sidecar_path}: {exc}"
+        )
+
+    # Parse sidecar: expected format "<sha256>  <filename>"
+    parts = sidecar_text.split(None, 1)
+    if not parts or len(parts) != 2:
+        raise ValueError(
+            f"Sidecar format invalid: expected '<sha256>  <filename>', "
+            f"got {sidecar_text!r}"
+        )
+    sidecar_sha256 = parts[0]
+    sidecar_filename = parts[1]
+
+    if len(sidecar_sha256) != 64:
+        raise ValueError(
+            f"Sidecar SHA-256 digest length invalid: "
+            f"expected 64 hex chars, got {len(sidecar_sha256)}"
+        )
+
+    try:
+        int(sidecar_sha256, 16)
+    except ValueError:
+        raise ValueError(
+            f"Sidecar SHA-256 digest is not valid hex: {sidecar_sha256!r}"
+        )
+
+    sidecar_digest_matches = sidecar_sha256 == json_sha256
+    if not sidecar_digest_matches:
+        raise ValueError(
+            f"Sidecar digest mismatch: "
+            f"sidecar={sidecar_sha256}, computed={json_sha256}"
+        )
+
+    # --- Check required field presence ---
+    missing_fields = _REQUIRED_STRATEGY_CONTRACT_KEYS - set(contract.keys())
+    if missing_fields:
+        raise ValueError(
+            f"Contract missing required fields: {sorted(missing_fields)}"
+        )
+
+    # --- Check forbidden dict keys ---
+    forbidden_collisions: list[str] = []
+    def _scan_keys(value: Any, path: str = "$") -> None:
+        if isinstance(value, dict):
+            for key, v in value.items():
+                exempt = (
+                    key == "gross_observational_return"
+                    and _is_under_gross_observational_returns_exempt_path(path)
+                )
+                if key in FORBIDDEN_CALCULATION_KEYS and not exempt:
+                    forbidden_collisions.append(f"{path}.{key}")
+                _scan_keys(v, path + "." + key)
+        elif isinstance(value, (list, tuple)):
+            for i, v in enumerate(value):
+                _scan_keys(v, path + "[" + str(i) + "]")
+
+    _scan_keys(contract)
+    if forbidden_collisions:
+        raise ValueError(
+            f"Contract contains forbidden dict keys: {forbidden_collisions}"
+        )
+
+    # --- Check input ceiling ---
+    allowed_columns = contract.get("allowed_input_columns", {})
+    if not isinstance(allowed_columns, dict):
+        raise ValueError(
+            "allowed_input_columns must be a dict"
+        )
+
+    bars_allowed = allowed_columns.get("bars")
+    if not isinstance(bars_allowed, list) or frozenset(bars_allowed) != _CONTRACT_BARS_ALLOWED:
+        raise ValueError(
+            f"allowed_input_columns.bars must be exactly "
+            f"{sorted(_CONTRACT_BARS_ALLOWED)}, got {bars_allowed}"
+        )
+
+    funding_allowed = allowed_columns.get("funding")
+    if not isinstance(funding_allowed, list) or frozenset(funding_allowed) != _CONTRACT_FUNDING_ALLOWED:
+        raise ValueError(
+            f"allowed_input_columns.funding must be exactly "
+            f"{sorted(_CONTRACT_FUNDING_ALLOWED)}, got {funding_allowed}"
+        )
+
+    # Verify that non_materialized_input_columns exist but are separated.
+    non_mat = contract.get("non_materialized_input_columns", {})
+    if not isinstance(non_mat, dict):
+        raise ValueError("non_materialized_input_columns must be a dict")
+
+    # --- Check output-boundary fields ---
+    output_boundary_missing = _CONTRACT_OUTPUT_BOUNDARY_KEYS - set(contract.keys())
+    if output_boundary_missing:
+        raise ValueError(
+            f"Contract missing output-boundary keys: "
+            f"{sorted(output_boundary_missing)}"
+        )
+
+    # --- Check downstream dependency booleans ---
+    downstream_true: list[str] = []
+    for dep_key in _DOWNSTREAM_CONTRACT_DEPENDENCY_BOOLEANS:
+        val = contract.get(dep_key)
+        if val is True:
+            downstream_true.append(dep_key)
+
+    if downstream_true:
+        raise ValueError(
+            f"Contract has downstream dependency booleans set to true: "
+            f"{downstream_true}"
+        )
+
+    scoring_auth = contract.get("scoring_authorization", False)
+    if scoring_auth is True:
+        raise ValueError(
+            "Contract scoring_authorization must be false"
+        )
+
+    # --- Build diagnostic dict ---
+    contract_commit_sha_field = contract.get("contract_commit_sha", "")
+    commit_is_placeholder = contract_commit_sha_field == "TO_BE_FILLED_AFTER_MERGE"
+
+    return {
+        "diagnostic_kind": "strategy_rule_contract_instance",
+        "contract_source_path": contract_path,
+        "contract_sidecar_path": sidecar_path,
+        "contract_packet_read": True,
+        "json_parse_ok": True,
+        "sidecar_parse_ok": True,
+        "json_sha256": json_sha256,
+        "sidecar_sha256": sidecar_sha256,
+        "sidecar_digest_matches_json_bytes": True,
+        "contract_hash_authority": "SIDECAR",
+        "contract_hash_field_value": str(contract.get("contract_hash", "")),
+        "contract_hash_status": str(contract.get("contract_hash_status", "")),
+        "required_fields_present": True,
+        "missing_required_fields": [],
+        "forbidden_dict_key_scan_passed": True,
+        "forbidden_dict_key_collisions": [],
+        "input_ceiling_check_passed": True,
+        "output_boundary_fields_present": True,
+        "scoring_authorization": False,
+        "live_integration_authorized": False,
+        "downstream_dependency_booleans_all_false": True,
+        "contract_runner_read_status": "DIAGNOSTIC_READ_ONLY",
+        "contract_commit_sha_field_value": contract_commit_sha_field,
+        "contract_commit_sha_bound": False,
+        "contract_commit_sha_binding_status": (
+            "UNRESOLVED_SELF_REFERENCE_PLACEHOLDER"
+            if commit_is_placeholder
+            else "UNBOUND"
+        ),
+        "contract_instance_readiness": False,
+        "contract_scoring_ready": False,
+        "contract_validation_status": "BLOCKED_BY_COMMIT_BINDING_PLACEHOLDER",
+    }
+
+
+def _build_strategy_rule_contract_diagnostics(
+    contract_path: str | None = None,
+    sidecar_path: str | None = None,
+) -> dict[str, Any]:
+    """Build a diagnostic-only section for the strategy rule contract.
+
+    If *contract_path* and *sidecar_path* are both provided and resolve to
+    existing files, the frozen contract instance is loaded, hash-checked, and
+    audited via :func:`materialize_strategy_rule_contract_instance_diagnostics`.
+
+    Otherwise a hardcoded ``CONTRACT_NOT_DEFINED`` diagnostic is returned.
 
     This section does **not** define a strategy, generate signals, or compute
     returns, PnL, Sharpe, drawdown, risk, edge, trades, positions, portfolio
-    metrics, or baseline comparisons. Every contract field is either ``None``,
-    ``NOT_DEFINED``, or ``False`` — this is a diagnostic of absence, not a
-    definition of presence.
+    metrics, or baseline comparisons.
 
-    Fail-closed rules:
-    * ``scoring_authorized`` is always ``False`` at this stage.
-    * ``contract_status`` is always ``CONTRACT_NOT_DEFINED``.
-    * ``scoring_blocked_reason`` is always ``STRATEGY_RULE_CONTRACT_NOT_DEFINED``.
-    * All six ``scoring_prerequisites_present`` values are always ``False``.
+    Raises ``ValueError`` if the contract path is provided but the packet is
+    corrupted (delegated to the materializer).
     """
+    if contract_path is not None and sidecar_path is not None:
+        return materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=contract_path,
+            sidecar_path=sidecar_path,
+        )
+
     return {
         "contract_version": STRATEGY_RULE_CONTRACT_VERSION,
         "calculation_status": STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY,
@@ -6996,6 +7275,25 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="Optional path to funding CSV directory (used with --bars-dir).",
     )
+    parser.add_argument(
+        "--strategy-contract-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to frozen strategy-rule contract JSON. "
+            "If provided, the contract is loaded and hash-checked (diagnostic only, "
+            "no scoring). Requires --strategy-contract-sha256-path."
+        ),
+    )
+    parser.add_argument(
+        "--strategy-contract-sha256-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to the SHA-256 sidecar for the frozen strategy-rule contract. "
+            "Required if --strategy-contract-path is provided."
+        ),
+    )
     return parser
 
 
@@ -7168,7 +7466,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             strategy_rule_contract_diagnostics = (
-                _build_strategy_rule_contract_diagnostics()
+                _build_strategy_rule_contract_diagnostics(
+                    contract_path=args.strategy_contract_path,
+                    sidecar_path=args.strategy_contract_sha256_path,
+                )
             )
             trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
             oos_seal_diagnostics = _build_oos_seal_diagnostics()
@@ -7277,7 +7578,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             strategy_rule_contract_diagnostics = (
-                _build_strategy_rule_contract_diagnostics()
+                _build_strategy_rule_contract_diagnostics(
+                    contract_path=args.strategy_contract_path,
+                    sidecar_path=args.strategy_contract_sha256_path,
+                )
             )
             trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
             oos_seal_diagnostics = _build_oos_seal_diagnostics()
