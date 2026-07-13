@@ -16863,6 +16863,107 @@ class TestImplementationBoundaryL1:
             f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
         )
 
+    # ── Test 10: output/materialization/decision-time policy evidence ──────────
+    def test_boundary_gate_happy_path_policy_evidence(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        gate = result["implementation_boundary_gate"]
+        assert gate["gate_passed"] is True
+        evidence = gate["evidence"]
+        assert evidence["future_runner_output_policy_matches_frozen_value"] is True
+        assert (
+            evidence["future_runner_materialization_policy_matches_frozen_value"]
+            is True
+        )
+        assert (
+            evidence["future_runner_decision_time_policy_matches_frozen_value"]
+            is True
+        )
+        assert evidence["future_runner_forbidden_input_columns_declared"] is True
+
+    def test_missing_output_policy_fails_closed(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        mutated = dict(result)
+        del mutated["future_runner_output_policy"]
+        gate = _derive_implementation_boundary_gate(mutated)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE"
+        )
+        for field in _IMPLEMENTATION_BOUNDARY_AUTHORIZATION_FIELDS:
+            assert gate["evidence"].get(field, False) is not True
+
+    def test_empty_output_policy_fails_closed(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        mutated = dict(result)
+        mutated["future_runner_output_policy"] = ""
+        gate = _derive_implementation_boundary_gate(mutated)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE"
+        )
+
+    def test_mutated_output_policy_fails_closed(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        mutated = dict(result)
+        mutated["future_runner_output_policy"] = "EMIT_OUTPUT_ROWS_NOW"
+        gate = _derive_implementation_boundary_gate(mutated)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE"
+        )
+
+    def test_missing_materialization_policy_fails_closed(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        mutated = dict(result)
+        del mutated["future_runner_materialization_policy"]
+        gate = _derive_implementation_boundary_gate(mutated)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE"
+        )
+
+    def test_mutated_materialization_policy_fails_closed(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        mutated = dict(result)
+        mutated["future_runner_materialization_policy"] = "MATERIALIZE_RULES_NOW"
+        gate = _derive_implementation_boundary_gate(mutated)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE"
+        )
+
+    def test_mutated_decision_time_policy_fails_closed(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        mutated = dict(result)
+        mutated["future_runner_decision_time_policy"] = (
+            "USE_INTRABAR_OR_FUTURE_CONTEXT"
+        )
+        gate = _derive_implementation_boundary_gate(mutated)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE"
+        )
+
+    def test_forbidden_bar_columns_deleted_but_output_policy_intact_fails_closed(
+        self,
+    ):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        mutated = dict(result)
+        mutated["future_runner_forbidden_bar_columns"] = []
+        gate = _derive_implementation_boundary_gate(mutated)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE"
+        )
+
     # ── CLI receipt integration ──────────────────────────────────────────────────
     def _cli_base_args(self, output_dir):
         return [

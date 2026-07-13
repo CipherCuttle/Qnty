@@ -591,6 +591,16 @@ _IMPLEMENTATION_BOUNDARY_FORBIDDEN_BAR_COLUMNS: tuple[str, ...] = (
 _IMPLEMENTATION_BOUNDARY_FORBIDDEN_FUNDING_COLUMNS: tuple[str, ...] = (
     "markPrice",
 )
+FUTURE_RUNNER_OUTPUT_POLICY_FROZEN = "NO_OUTPUT_ROWS_EMITTED_IN_THIS_LANE"
+FUTURE_RUNNER_MATERIALIZATION_POLICY_FROZEN = (
+    "NO_RULE_MATERIALIZATION_IN_THIS_LANE"
+)
+FUTURE_RUNNER_DECISION_TIME_POLICY_FROZEN = (
+    "USE_ONLY_FROZEN_CONTRACT_DECISION_TIME_CONVENTION"
+)
+BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE = (
+    "BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE"
+)
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -11144,11 +11154,11 @@ def _build_implementation_boundary_diagnostics(
             _IMPLEMENTATION_BOUNDARY_FORBIDDEN_FUNDING_COLUMNS
         ),
         "future_runner_decision_time_policy": (
-            "USE_ONLY_FROZEN_CONTRACT_DECISION_TIME_CONVENTION"
+            FUTURE_RUNNER_DECISION_TIME_POLICY_FROZEN
         ),
-        "future_runner_output_policy": "NO_OUTPUT_ROWS_EMITTED_IN_THIS_LANE",
+        "future_runner_output_policy": FUTURE_RUNNER_OUTPUT_POLICY_FROZEN,
         "future_runner_materialization_policy": (
-            "NO_RULE_MATERIALIZATION_IN_THIS_LANE"
+            FUTURE_RUNNER_MATERIALIZATION_POLICY_FROZEN
         ),
         "implementation_boundary_readiness": False,
         "implementation_authorized": False,
@@ -11194,6 +11204,10 @@ def _derive_implementation_boundary_gate(
       ``BLOCKED_BY_PREREQUISITE_CLOSURE_GATE``
     * contract-packet or trial-manifest gate missing/not passed ->
       ``BLOCKED_BY_REQUIRED_UPSTREAM_GATE``
+    * future-runner allowed-input-role/column or forbidden-input-column
+      declarations, or output/materialization/decision-time policy
+      declarations, missing/empty/mutated relative to their frozen values ->
+      ``BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE``
     """
     evidence = {
         "prerequisite_closure_gate_passed": diagnostics.get(
@@ -11205,12 +11219,33 @@ def _derive_implementation_boundary_gate(
         "trial_manifest_gate_passed": diagnostics.get(
             "trial_manifest_gate_passed"
         ),
-        "future_runner_allowed_input_roles_declared": bool(
+        "future_runner_allowed_input_roles_declared": (
             diagnostics.get("future_runner_allowed_input_roles")
+            == ["bars", "funding"]
         ),
-        "future_runner_forbidden_outputs_declared": bool(
+        "future_runner_allowed_bar_columns_declared": (
+            diagnostics.get("future_runner_allowed_bar_columns")
+            == ["close", "timestamp"]
+        ),
+        "future_runner_allowed_funding_columns_declared": (
+            diagnostics.get("future_runner_allowed_funding_columns")
+            == ["fundingRate", "fundingTime"]
+        ),
+        "future_runner_forbidden_input_columns_declared": bool(
             diagnostics.get("future_runner_forbidden_bar_columns")
             and diagnostics.get("future_runner_forbidden_funding_columns")
+        ),
+        "future_runner_output_policy_matches_frozen_value": (
+            diagnostics.get("future_runner_output_policy")
+            == FUTURE_RUNNER_OUTPUT_POLICY_FROZEN
+        ),
+        "future_runner_materialization_policy_matches_frozen_value": (
+            diagnostics.get("future_runner_materialization_policy")
+            == FUTURE_RUNNER_MATERIALIZATION_POLICY_FROZEN
+        ),
+        "future_runner_decision_time_policy_matches_frozen_value": (
+            diagnostics.get("future_runner_decision_time_policy")
+            == FUTURE_RUNNER_DECISION_TIME_POLICY_FROZEN
         ),
         "implementation_authorized": diagnostics.get(
             "implementation_authorized", False
@@ -11222,6 +11257,12 @@ def _derive_implementation_boundary_gate(
             "decision_row_generation_authorized", False
         ),
     }
+
+    boundary_evidence_passed = all(
+        value is True
+        for key, value in evidence.items()
+        if key.endswith("_declared") or key.endswith("_matches_frozen_value")
+    )
 
     def _base_gate(gate_status: str, blocked_reason: str | None) -> dict[str, Any]:
         return {
@@ -11271,6 +11312,12 @@ def _derive_implementation_boundary_gate(
             "BLOCKED_BY_REQUIRED_UPSTREAM_GATE",
             "MISSING_OR_FAILED_UPSTREAM_GATES: "
             + ", ".join(sorted(missing_or_failed_upstream_gates)),
+        )
+
+    if not boundary_evidence_passed:
+        return _base_gate(
+            BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE,
+            "IMPLEMENTATION_BOUNDARY_EVIDENCE_INCOMPLETE_OR_MUTATED",
         )
 
     gate = _base_gate(IMPLEMENTATION_BOUNDARY_DECLARED_DIAGNOSTIC_ONLY, None)
