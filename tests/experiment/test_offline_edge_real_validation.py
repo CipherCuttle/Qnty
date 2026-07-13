@@ -125,6 +125,20 @@ from quantbot.experiment.offline_edge_real_validation import (
     NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED,
     NET_PNL_EQUITY_RISK_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
     _build_net_pnl_equity_risk_contract_diagnostics,
+    materialize_economic_accounting_policy_preregistration_diagnostics,
+    _derive_economic_accounting_policy_preregistration_gate,
+    ECONOMIC_ACCOUNTING_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY,
+    ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED,
+    BLOCKED_BY_SIMULATION_POLICY_GATE,
+    BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_POLICY_EVIDENCE,
+    ECONOMIC_ACCOUNTING_FAMILY_POLICY_FROZEN,
+    ECONOMIC_VALUE_POLICY_FROZEN,
+    COST_VALUE_POLICY_FROZEN,
+    FUNDING_VALUE_POLICY_FROZEN,
+    AGGREGATE_VALUE_POLICY_FROZEN,
+    CAPITAL_PATH_POLICY_FROZEN,
+    DISPERSION_SUMMARY_POLICY_FROZEN,
+    ACCOUNTING_OUTPUT_POLICY_FROZEN,
     FINAL_OFFLINE_EDGE_VERDICT_LOGIC_VERSION,
     FINAL_OFFLINE_EDGE_VERDICT_LOGIC_DIAGNOSTIC_ONLY,
     FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED,
@@ -15250,3 +15264,694 @@ class TestSimulationPolicyPreregistrationI1:
         assert receipt["final_offline_verdict"] == (
             BLOCKED_BY_VALIDATION_IMPLEMENTATION
         )
+
+
+class TestEconomicAccountingPolicyPreregistrationJ1:
+    """Lane J1: economic accounting policy pre-scoring declaration packet + gate.
+
+    Proves the frozen economic accounting policy declarations are frozen and
+    hash-bound to all upstream contracts *before* any economic values, PnL,
+    returns, equity curves, risk metrics, drawdown, or scoring exist. Nothing
+    here computes economic values, authorizes scoring, or advances any gate.
+    """
+
+    CONTRACT_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+    CONTRACT_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256"
+    CONTRACT_BINDING_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json"
+    MANIFEST_PATH = "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.json"
+    MANIFEST_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.sha256"
+    SEAL_PATH = "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.json"
+    SEAL_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.sha256"
+    NULL_PATH = "docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.json"
+    NULL_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.sha256"
+    MT_PATH = "docs/contracts/instances/qnty_offline_edge_multiple_testing_control_v1.json"
+    MT_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_multiple_testing_control_v1.sha256"
+    SP_PATH = "docs/contracts/instances/qnty_offline_edge_simulation_policy_v1.json"
+    SP_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_simulation_policy_v1.sha256"
+    EAP_PATH = "docs/contracts/instances/qnty_offline_edge_economic_accounting_policy_v1.json"
+    EAP_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_economic_accounting_policy_v1.sha256"
+
+    def _upstream_diags(self):
+        """Build all upstream diagnostics including simulation policy gate."""
+        contract_diag = _build_strategy_rule_contract_diagnostics(
+            contract_path=self.CONTRACT_PATH,
+            sidecar_path=self.CONTRACT_SIDECAR_PATH,
+            commit_binding_path=self.CONTRACT_BINDING_PATH,
+        )
+        manifest_diag = _build_trial_manifest_diagnostics(
+            manifest_path=self.MANIFEST_PATH,
+            sidecar_path=self.MANIFEST_SIDECAR_PATH,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        seal_diag = _build_oos_seal_diagnostics(
+            seal_path=self.SEAL_PATH,
+            sidecar_path=self.SEAL_SIDECAR_PATH,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        null_diag = _build_null_benchmark_contract_diagnostics(
+            null_benchmark_path=self.NULL_PATH,
+            sidecar_path=self.NULL_SIDECAR_PATH,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        mt_diag = _build_multiple_testing_control_diagnostics(
+            multiple_testing_control_path=self.MT_PATH,
+            sidecar_path=self.MT_SIDECAR_PATH,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        sp_diag = _build_trade_position_simulation_contract_diagnostics(
+            simulation_policy_path=self.SP_PATH,
+            sidecar_path=self.SP_SIDECAR_PATH,
+            multiple_testing_control_diagnostics=mt_diag,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        return contract_diag, manifest_diag, seal_diag, null_diag, mt_diag, sp_diag
+
+    def _eap_diag(self):
+        """Build the economic accounting policy diagnostics with all upstream."""
+        (contract_diag, manifest_diag, seal_diag, null_diag, mt_diag, sp_diag) = (
+            self._upstream_diags()
+        )
+        return _build_net_pnl_equity_risk_contract_diagnostics(
+            economic_accounting_policy_path=self.EAP_PATH,
+            sidecar_path=self.EAP_SIDECAR_PATH,
+            simulation_policy_diagnostics=sp_diag,
+            multiple_testing_control_diagnostics=mt_diag,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+    # ── Test 1: Absence / no-args returns original shape ──────────────────────
+    def test_absence_returns_original_shape(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["net_pnl_equity_risk_contract_status"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED
+        )
+        assert result["net_pnl_equity_risk_contract_present"] is False
+
+    # ── Test 2: Happy path materializer ───────────────────────────────────────
+    def test_materializer_happy_path(self):
+        """Load the frozen economic accounting policy packet and verify sidecar."""
+        eap_diag = self._eap_diag()
+        assert eap_diag["diagnostic_kind"] == "economic_accounting_policy_preregistration"
+        assert eap_diag["economic_accounting_policy_sidecar_digest_matches_json_bytes"] is True
+        assert eap_diag["economic_accounting_policy_hash_authority"] == "SIDECAR"
+        assert eap_diag["economic_value_generation_authorized"] is False
+        assert eap_diag["economic_accounting_policy_readiness"] is False
+
+    # ── Test 3: Diagnostic happy path ─────────────────────────────────────────
+    def test_diagnostic_happy_path(self):
+        """All frozen values match, all bound digests match, gate is present."""
+        eap_diag = self._eap_diag()
+        assert eap_diag["bound_contract_digest_matches"] is True
+        assert eap_diag["bound_trial_manifest_digest_matches"] is True
+        assert eap_diag["bound_oos_seal_digest_matches"] is True
+        assert eap_diag["bound_null_benchmark_digest_matches"] is True
+        assert eap_diag["bound_multiple_testing_control_digest_matches"] is True
+        assert eap_diag["bound_simulation_policy_digest_matches"] is True
+        assert eap_diag["simulation_policy_gate_passed"] is True
+        assert eap_diag["economic_accounting_family_policy"] == (
+            ECONOMIC_ACCOUNTING_FAMILY_POLICY_FROZEN
+        )
+        assert eap_diag["economic_value_policy"] == ECONOMIC_VALUE_POLICY_FROZEN
+        assert eap_diag["cost_value_policy"] == COST_VALUE_POLICY_FROZEN
+        assert eap_diag["funding_value_policy"] == FUNDING_VALUE_POLICY_FROZEN
+        assert eap_diag["aggregate_value_policy"] == AGGREGATE_VALUE_POLICY_FROZEN
+        assert eap_diag["capital_path_policy"] == CAPITAL_PATH_POLICY_FROZEN
+        assert eap_diag["dispersion_summary_policy"] == DISPERSION_SUMMARY_POLICY_FROZEN
+        assert eap_diag["accounting_output_policy"] == ACCOUNTING_OUTPUT_POLICY_FROZEN
+        assert eap_diag["economic_value_generation_authorized"] is False
+        assert eap_diag["economic_accounting_policy_readiness"] is False
+
+    # ── Test 4: Gate happy path ───────────────────────────────────────────────
+    def test_gate_happy_path(self):
+        eap_diag = self._eap_diag()
+        gate = eap_diag["economic_accounting_policy_preregistration_gate"]
+        assert gate["gate_kind"] == "economic_accounting_policy_preregistration_gate"
+        assert gate["gate_scope"] == "ECONOMIC_ACCOUNTING_POLICY_AND_SIMULATION_BINDING_ONLY"
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == ECONOMIC_ACCOUNTING_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    # ── Test 5: Packet missing fails closed ───────────────────────────────────
+    def test_packet_missing_fails_closed(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["net_pnl_equity_risk_contract_status"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED
+        )
+
+    # ── Test 6: Sidecar missing fails closed ──────────────────────────────────
+    def test_sidecar_missing_fails_closed(self):
+        result = _build_net_pnl_equity_risk_contract_diagnostics(
+            economic_accounting_policy_path="/nonexistent/path.json",
+            sidecar_path=None,
+            simulation_policy_diagnostics={},
+            multiple_testing_control_diagnostics={},
+            null_benchmark_diagnostics={},
+            oos_seal_diagnostics={},
+            trial_manifest_diagnostics={},
+            strategy_rule_contract_diagnostics={},
+        )
+        assert result["net_pnl_equity_risk_contract_status"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED
+        )
+
+    # ── Test 7: Digest mismatch fails closed ──────────────────────────────────
+    def test_digest_mismatch_raises(self):
+        with pytest.raises(ValueError, match="digest mismatch"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=self.EAP_PATH,
+                sidecar_path=self.CONTRACT_SIDECAR_PATH,  # wrong sidecar
+                simulation_policy_diagnostics={"diagnostic_kind": "simulation_policy_preregistration"},
+                multiple_testing_control_diagnostics={},
+                null_benchmark_diagnostics={},
+                oos_seal_diagnostics={},
+                trial_manifest_diagnostics={},
+                strategy_rule_contract_diagnostics={},
+            )
+
+    # ── Test 8: Malformed JSON fails closed ───────────────────────────────────
+    def test_malformed_json_raises(self, tmp_path):
+        bad_bytes = b"{invalid json"
+        packet_path = tmp_path / "eap.json"
+        packet_path.write_bytes(bad_bytes)
+        sidecar_path = tmp_path / "eap.sha256"
+        digest = hashlib.sha256(bad_bytes).hexdigest()
+        sidecar_path.write_text(f"{digest}  {packet_path.name}\n")
+        with pytest.raises(ValueError, match="JSON parse error"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics={},
+                multiple_testing_control_diagnostics={},
+                null_benchmark_diagnostics={},
+                oos_seal_diagnostics={},
+                trial_manifest_diagnostics={},
+                strategy_rule_contract_diagnostics={},
+            )
+
+    # ── Test 9: Forbidden dict key fails closed ───────────────────────────────
+    def _tampered_eap_packet(self, tmp_path, mutate):
+        packet = json.loads(Path(self.EAP_PATH).read_bytes())
+        mutate(packet)
+        packet_bytes = json.dumps(packet, indent=2, sort_keys=True).encode() + b"\n"
+        packet_path = tmp_path / "eap.json"
+        packet_path.write_bytes(packet_bytes)
+        sidecar_path = tmp_path / "eap.sha256"
+        digest = hashlib.sha256(packet_bytes).hexdigest()
+        sidecar_path.write_text(f"{digest}  {packet_path.name}\n")
+        return packet_path, sidecar_path
+
+    def test_forbidden_key_pnl_raises(self, tmp_path):
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path, lambda p: p.__setitem__("pnl", 1)
+        )
+        with pytest.raises(ValueError, match="forbidden dict keys"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics={"diagnostic_kind": "simulation_policy_preregistration"},
+                multiple_testing_control_diagnostics={},
+                null_benchmark_diagnostics={},
+                oos_seal_diagnostics={},
+                trial_manifest_diagnostics={},
+                strategy_rule_contract_diagnostics={},
+            )
+
+    def test_forbidden_key_risk_raises(self, tmp_path):
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path, lambda p: p.__setitem__("risk", 1)
+        )
+        with pytest.raises(ValueError, match="forbidden dict keys"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics={"diagnostic_kind": "simulation_policy_preregistration"},
+                multiple_testing_control_diagnostics={},
+                null_benchmark_diagnostics={},
+                oos_seal_diagnostics={},
+                trial_manifest_diagnostics={},
+                strategy_rule_contract_diagnostics={},
+            )
+
+    def test_forbidden_key_equity_raises(self, tmp_path):
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path, lambda p: p.__setitem__("equity", 1)
+        )
+        with pytest.raises(ValueError, match="forbidden dict keys"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics={"diagnostic_kind": "simulation_policy_preregistration"},
+                multiple_testing_control_diagnostics={},
+                null_benchmark_diagnostics={},
+                oos_seal_diagnostics={},
+                trial_manifest_diagnostics={},
+                strategy_rule_contract_diagnostics={},
+            )
+
+    # ── Tests 10-14: Contract/Trial/OOS/Null/MT digest mismatch ──────────────
+    def test_contract_digest_mismatch_raises(self, tmp_path):
+        diags = self._upstream_diags()
+        contract_diag = dict(diags[0])
+        contract_diag["json_sha256"] = "00" + contract_diag.get("json_sha256", "")[2:]
+        # Simulate mismatched contract
+        with pytest.raises(ValueError, match="bound_contract_sha256 mismatch"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=self.EAP_PATH,
+                sidecar_path=self.EAP_SIDECAR_PATH,
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_trial_manifest_digest_mismatch_raises(self, tmp_path):
+        diags = self._upstream_diags()
+        manifest_diag = dict(diags[1])
+        manifest_diag["manifest_json_sha256"] = "00" + manifest_diag.get("manifest_json_sha256", "")[2:]
+        with pytest.raises(ValueError, match="bound_trial_manifest_sha256 mismatch"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=self.EAP_PATH,
+                sidecar_path=self.EAP_SIDECAR_PATH,
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    def test_oos_seal_digest_mismatch_raises(self, tmp_path):
+        diags = self._upstream_diags()
+        seal_diag = dict(diags[2])
+        seal_diag["seal_json_sha256"] = "00" + seal_diag.get("seal_json_sha256", "")[2:]
+        with pytest.raises(ValueError, match="bound_oos_seal_sha256 mismatch"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=self.EAP_PATH,
+                sidecar_path=self.EAP_SIDECAR_PATH,
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=seal_diag,
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    def test_null_benchmark_digest_mismatch_raises(self, tmp_path):
+        diags = self._upstream_diags()
+        null_diag = dict(diags[3])
+        null_diag["null_benchmark_json_sha256"] = "00" + null_diag.get("null_benchmark_json_sha256", "")[2:]
+        with pytest.raises(ValueError, match="bound_null_benchmark_sha256 mismatch"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=self.EAP_PATH,
+                sidecar_path=self.EAP_SIDECAR_PATH,
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=null_diag,
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    def test_multiple_testing_control_digest_mismatch_raises(self, tmp_path):
+        diags = self._upstream_diags()
+        mt_diag = dict(diags[4])
+        mt_diag["multiple_testing_control_json_sha256"] = "00" + mt_diag.get("multiple_testing_control_json_sha256", "")[2:]
+        with pytest.raises(ValueError, match="bound_multiple_testing_control_sha256 mismatch"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=self.EAP_PATH,
+                sidecar_path=self.EAP_SIDECAR_PATH,
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=mt_diag,
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 15: Simulation policy digest mismatch ────────────────────────────
+    def test_simulation_policy_digest_mismatch_raises(self, tmp_path):
+        diags = self._upstream_diags()
+        sp_diag = dict(diags[5])
+        sp_diag["simulation_policy_json_sha256"] = "00" + sp_diag.get("simulation_policy_json_sha256", "")[2:]
+        with pytest.raises(ValueError, match="bound_simulation_policy_sha256 mismatch"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=self.EAP_PATH,
+                sidecar_path=self.EAP_SIDECAR_PATH,
+                simulation_policy_diagnostics=sp_diag,
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 16: Simulation policy gate missing/false blocks ──────────────────
+    def test_sp_gate_missing_fails_closed(self):
+        diags = self._upstream_diags()
+        sp_diag = {"diagnostic_kind": "simulation_policy_preregistration"}
+        with pytest.raises(ValueError, match="Simulation policy preregistration gate not passed"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=self.EAP_PATH,
+                sidecar_path=self.EAP_SIDECAR_PATH,
+                simulation_policy_diagnostics=sp_diag,
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 17: Mutated economic_accounting_family_policy ────────────────────
+    def test_mutated_family_policy_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__(
+                "economic_accounting_family_policy", "MUTATED"
+            ),
+        )
+        with pytest.raises(ValueError, match="economic_accounting_family_policy"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 18: Mutated economic_value_policy ────────────────────────────────
+    def test_mutated_economic_value_policy_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("economic_value_policy", "COMPUTE_ALL"),
+        )
+        with pytest.raises(ValueError, match="economic_value_policy"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 19: Mutated cost_value_policy ────────────────────────────────────
+    def test_mutated_cost_value_policy_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("cost_value_policy", "COMPUTE_COSTS"),
+        )
+        with pytest.raises(ValueError, match="cost_value_policy"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 20: Mutated funding_value_policy ─────────────────────────────────
+    def test_mutated_funding_value_policy_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("funding_value_policy", "COMPUTE_FUNDING"),
+        )
+        with pytest.raises(ValueError, match="funding_value_policy"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 21: Mutated aggregate_value_policy ───────────────────────────────
+    def test_mutated_aggregate_value_policy_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("aggregate_value_policy", "COMPUTE_AGGREGATES"),
+        )
+        with pytest.raises(ValueError, match="aggregate_value_policy"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 22: Mutated capital_path_policy ──────────────────────────────────
+    def test_mutated_capital_path_policy_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("capital_path_policy", "COMPUTE_CAPITAL_PATH"),
+        )
+        with pytest.raises(ValueError, match="capital_path_policy"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 23: Mutated dispersion_summary_policy ────────────────────────────
+    def test_mutated_dispersion_summary_policy_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("dispersion_summary_policy", "COMPUTE_DISPERSION"),
+        )
+        with pytest.raises(ValueError, match="dispersion_summary_policy"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 24: Mutated accounting_output_policy ─────────────────────────────
+    def test_mutated_accounting_output_policy_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("accounting_output_policy", "EMIT_ALL"),
+        )
+        with pytest.raises(ValueError, match="accounting_output_policy"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 25: Freeze boolean hardening ─────────────────────────────────────
+    def test_freeze_boolean_false_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("economic_accounting_family_policy_frozen", False),
+        )
+        with pytest.raises(ValueError, match="economic_accounting_family_policy_frozen"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    def test_freeze_boolean_string_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("economic_value_policy_frozen", "true"),
+        )
+        with pytest.raises(ValueError, match="economic_value_policy_frozen"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    def test_freeze_boolean_int_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("cost_value_policy_frozen", 1),
+        )
+        with pytest.raises(ValueError, match="cost_value_policy_frozen"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 26: Authorization boolean type hardening ─────────────────────────
+    def test_auth_boolean_int_zero_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("economic_value_generation_authorized", 0),
+        )
+        with pytest.raises(ValueError, match="economic_value_generation_authorized"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    def test_auth_boolean_true_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("scoring_authorization", True),
+        )
+        with pytest.raises(ValueError, match="scoring_authorization"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    def test_auth_boolean_string_false_fails_closed(self, tmp_path):
+        diags = self._upstream_diags()
+        packet_path, sidecar_path = self._tampered_eap_packet(
+            tmp_path,
+            lambda p: p.__setitem__("final_verdict_authorization", "false"),
+        )
+        with pytest.raises(ValueError, match="final_verdict_authorization"):
+            real_validation.materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                simulation_policy_diagnostics=diags[5],
+                multiple_testing_control_diagnostics=diags[4],
+                null_benchmark_diagnostics=diags[3],
+                oos_seal_diagnostics=diags[2],
+                trial_manifest_diagnostics=diags[1],
+                strategy_rule_contract_diagnostics=diags[0],
+            )
+
+    # ── Test 27: Gate projection fails closed on mutated diagnostic value ─────
+    def test_gate_projection_mutated_policy_fails_closed(self):
+        eap_diag = dict(self._eap_diag())
+        eap_diag.pop("economic_accounting_policy_preregistration_gate", None)
+        eap_diag["economic_value_policy"] = "COMPUTE_ALL"
+        gate = _derive_economic_accounting_policy_preregistration_gate(eap_diag)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_POLICY_EVIDENCE
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+
+    # ── Test 28: Receipt integration with all args ────────────────────────────
+    def test_receipt_integration(self):
+        eap_diag = self._eap_diag()
+        gate = eap_diag.get("economic_accounting_policy_preregistration_gate", {})
+        assert gate.get("gate_passed") is True
+        # Final verdict remains blocked
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="test-fingerprint",
+            data_quality_receipt_sha256="test-dq",
+            code_commit_sha="test-sha",
+            split_definitions=[],
+            cost_cases=[],
+            economic_accounting_policy_diagnostics=eap_diag,
+        )
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+        assert receipt.get("economic_accounting_policy_diagnostics") is eap_diag
+
+    # ── Test 29: Absence receipt preserves verdict ────────────────────────────
+    def test_absence_receipt_preserves_verdict(self):
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="test-fingerprint",
+            data_quality_receipt_sha256="test-dq",
+            code_commit_sha="test-sha",
+            split_definitions=[],
+            cost_cases=[],
+        )
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+        assert "economic_accounting_policy_diagnostics" not in receipt
+
+    # ── Test 30: Gate projection with no diagnostic kind ──────────────────────
+    def test_gate_not_loaded(self):
+        gate = _derive_economic_accounting_policy_preregistration_gate({})
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED
+        assert gate["blocked_reason"] == "ECONOMIC_ACCOUNTING_POLICY_NOT_PROVIDED"
