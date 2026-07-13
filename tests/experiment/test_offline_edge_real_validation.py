@@ -14550,3 +14550,138 @@ class TestMultipleTestingControlPreregistrationH1:
         assert receipt["final_offline_verdict"] == (
             BLOCKED_BY_VALIDATION_IMPLEMENTATION
         )
+
+
+class TestSimulationPolicyPreregistrationDiagnostics:
+    """Tests for materialize_simulation_policy_preregistration_diagnostics()
+    and its integration into the offline-edge receipt."""
+
+    # ── Absence / no-args behavior ──────────────────────────────────────────
+    def test_absence_returns_original_shape(self):
+        """No-args call preserves backward-compatible absence shape."""
+        result = real_validation._build_trade_position_simulation_contract_diagnostics()
+        assert result["contract_version"] == TRADE_POSITION_SIMULATION_CONTRACT_VERSION
+        assert result["trade_position_simulation_contract_status"] == (
+            TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED
+        )
+
+    def test_absence_has_prerequisites(self):
+        result = real_validation._build_trade_position_simulation_contract_diagnostics()
+        prereqs = result["trade_position_simulation_contract_prerequisites_present"]
+        assert isinstance(prereqs, dict)
+        for value in prereqs.values():
+            assert value is False
+
+    # ── Happy path: materializer with real packet ───────────────────────────
+    def test_materializer_happy_path(self):
+        """Load the frozen simulation policy packet and verify sidecar."""
+        project_root = Path(__file__).resolve().parent.parent.parent
+        sp_path = str(project_root / "docs/contracts/instances/qnty_offline_edge_simulation_policy_v1.json")
+        sha_path = str(project_root / "docs/contracts/instances/qnty_offline_edge_simulation_policy_v1.sha256")
+        contract_path = str(project_root / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json")
+        contract_sha = str(project_root / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256")
+        trial_path = str(project_root / "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.json")
+        trial_sha = str(project_root / "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.sha256")
+        oos_path = str(project_root / "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.json")
+        oos_sha = str(project_root / "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.sha256")
+        null_path = str(project_root / "docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.json")
+        null_sha = str(project_root / "docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.sha256")
+        mt_path = str(project_root / "docs/contracts/instances/qnty_offline_edge_multiple_testing_control_v1.json")
+        mt_sha = str(project_root / "docs/contracts/instances/qnty_offline_edge_multiple_testing_control_v1.sha256")
+
+        contract_binding = str(project_root / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json")
+        contract_diag = real_validation._build_strategy_rule_contract_diagnostics(
+            contract_path=contract_path, sidecar_path=contract_sha,
+            commit_binding_path=contract_binding,
+        )
+        trial_diag = real_validation._build_trial_manifest_diagnostics(
+            manifest_path=trial_path, sidecar_path=trial_sha,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        oos_diag = real_validation._build_oos_seal_diagnostics(
+            seal_path=oos_path, sidecar_path=oos_sha,
+            trial_manifest_diagnostics=trial_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        null_diag = real_validation._build_null_benchmark_contract_diagnostics(
+            null_benchmark_path=null_path, sidecar_path=null_sha,
+            oos_seal_diagnostics=oos_diag,
+            trial_manifest_diagnostics=trial_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        mt_diag = real_validation._build_multiple_testing_control_diagnostics(
+            multiple_testing_control_path=mt_path, sidecar_path=mt_sha,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=oos_diag,
+            trial_manifest_diagnostics=trial_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+        sp_diag = real_validation._build_trade_position_simulation_contract_diagnostics(
+            simulation_policy_path=sp_path, sidecar_path=sha_path,
+            multiple_testing_control_diagnostics=mt_diag,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=oos_diag,
+            trial_manifest_diagnostics=trial_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+        assert sp_diag["diagnostic_kind"] == "simulation_policy_preregistration"
+        assert sp_diag["simulation_policy_sidecar_digest_matches_json_bytes"] is True
+        assert sp_diag["simulation_policy_hash_authority"] == "SIDECAR"
+        assert sp_diag["simulated_event_generation_authorized"] is False
+        assert sp_diag["economic_value_generation_authorized"] is False
+        assert sp_diag["simulation_family_policy"] == real_validation.SIMULATION_FAMILY_POLICY_FROZEN
+        assert sp_diag["simulation_timing_policy"] == real_validation.SIMULATION_TIMING_POLICY_FROZEN
+        assert sp_diag["simulation_cost_policy"] == real_validation.SIMULATION_COST_POLICY_FROZEN
+        assert sp_diag["simulation_funding_policy"] == real_validation.SIMULATION_FUNDING_POLICY_FROZEN
+        assert sp_diag["simulation_quantity_policy"] == real_validation.SIMULATION_QUANTITY_POLICY_FROZEN
+        assert sp_diag["simulation_output_policy"] == real_validation.SIMULATION_OUTPUT_POLICY_FROZEN
+
+        gate = sp_diag["simulation_policy_preregistration_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == real_validation.SIMULATION_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    def test_packet_missing_fails_closed(self):
+        """No simulation policy args returns absence shape."""
+        result = real_validation._build_trade_position_simulation_contract_diagnostics(
+            simulation_policy_path=None, sidecar_path=None,
+            multiple_testing_control_diagnostics={},
+            null_benchmark_diagnostics={}, oos_seal_diagnostics={},
+            trial_manifest_diagnostics={}, strategy_rule_contract_diagnostics={},
+        )
+        assert result["contract_version"] == TRADE_POSITION_SIMULATION_CONTRACT_VERSION
+        assert result["trade_position_simulation_contract_status"] == (
+            TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED
+        )
+
+    def test_sidecar_missing_fails_closed(self):
+        """Simulation policy path without sidecar returns absence shape."""
+        result = real_validation._build_trade_position_simulation_contract_diagnostics(
+            simulation_policy_path="/nonexistent/path.json", sidecar_path=None,
+            multiple_testing_control_diagnostics={},
+            null_benchmark_diagnostics={}, oos_seal_diagnostics={},
+            trial_manifest_diagnostics={}, strategy_rule_contract_diagnostics={},
+        )
+        assert result["contract_version"] == TRADE_POSITION_SIMULATION_CONTRACT_VERSION
+
+    def test_digest_mismatch_raises(self):
+        """Sidecar digest mismatch raises ValueError."""
+        project_root = Path(__file__).resolve().parent.parent.parent
+        sp_path = str(project_root / "docs/contracts/instances/qnty_offline_edge_simulation_policy_v1.json")
+        # Use a wrong sidecar
+        contract_sha = str(project_root / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256")
+        with pytest.raises(ValueError, match="digest mismatch"):
+            real_validation.materialize_simulation_policy_preregistration_diagnostics(
+                simulation_policy_path=sp_path,
+                sidecar_path=contract_sha,
+                multiple_testing_control_diagnostics={"diagnostic_kind": "multiple_testing_control_preregistration"},
+                null_benchmark_diagnostics={},
+                oos_seal_diagnostics={},
+                trial_manifest_diagnostics={},
+                strategy_rule_contract_diagnostics={},
+            )

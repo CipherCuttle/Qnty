@@ -518,3 +518,70 @@ stops a later "we only ever ran one test" claim from being unfalsifiable.
 python3 -m json.tool docs/contracts/instances/qnty_offline_edge_multiple_testing_control_v1.json >/dev/null
 cd docs/contracts/instances && sha256sum -c qnty_offline_edge_multiple_testing_control_v1.sha256
 ```
+
+### Lane I1 — Simulation Policy Pre-Registration Packet
+
+**Files added:**
+
+| File | Purpose |
+|---|---|
+| `qnty_offline_edge_simulation_policy_v1.json` | Frozen simulation policy pre-scoring declaration packet |
+| `qnty_offline_edge_simulation_policy_v1.sha256` | SHA-256 sidecar of the exact JSON bytes |
+
+**Lane I1** pre-registers the future hypothetical path-construction policy *before* any
+simulated events, returns, PnL, orders, fills, positions, or execution logic exists.
+
+The simulation policy packet:
+
+- Binds to the strategy rule contract, trial manifest, OOS seal, null benchmark, and
+  multiple-testing control digests.
+- Requires the multiple-testing control gate to pass.
+- Declares frozen simulation policy strings:
+  - `simulation_family_policy` = `PREDECLARE_HYPOTHETICAL_PATH_CONSTRUCTION_POLICY_ONLY`
+  - `simulation_timing_policy` = `NO_INTRABAR_ASSUMPTIONS_BEYOND_FROZEN_CONTRACT_DECISION_TIME`
+  - `simulation_cost_policy` = `NO_COST_VALUES_COMPUTED_IN_THIS_LANE`
+  - `simulation_funding_policy` = `NO_FUNDING_VALUES_COMPUTED_IN_THIS_LANE`
+  - `simulation_quantity_policy` = `NO_QUANTITY_OR_NOTIONAL_VALUES_COMPUTED_IN_THIS_LANE`
+  - `simulation_output_policy` = `NO_EVENTS_OR_ECONOMIC_VALUES_EMITTED_IN_THIS_LANE`
+- Freezes all policy booleans to `True` and all authorization booleans to `False`.
+
+**CLI arguments (optional):**
+
+- `--simulation-policy-path` — path to the frozen simulation policy JSON.
+- `--simulation-policy-sha256-path` — path to the SHA-256 sidecar.
+
+If both are supplied (along with all upstream diagnostic arguments), the materializer
+runs and the simulation policy pre-registration gate may pass. If either is omitted,
+the existing absence diagnostic is emitted (unchanged).
+
+**What Lane I1 does:**
+
+- Adds a frozen simulation policy pre-registration packet.
+- Packet binds to contract, trial manifest, OOS seal, null benchmark, and
+  multiple-testing control digests.
+- Gate requires multiple-testing control gate.
+- Diagnostic-only: no simulated events, orders, fills, positions, executions,
+  PnL, returns, Sharpe, edge, outcomes, strategy execution, signal generation,
+  live/paper/exchange integration, or verdict advancement.
+- `simulation_policy_readiness` remains `false`. Even when the packet validates
+  and the gate passes, this is pre-scoring declaration evidence only.
+
+**What Lane I1 does NOT do:**
+
+- No simulated events (`simulated_event_generation_authorized` remains `false`).
+- No economic values (`economic_value_generation_authorized` remains `false`).
+- No scoring, PnL, returns, Sharpe, edge, outcomes, strategy execution, signal
+  generation, live/paper/exchange integration, or verdict advancement.
+- `simulation_policy_readiness` remains `false`.
+- `EDGE_UNPROVEN`, `BLOCK_LIVE_INTEGRATION`, and
+  `BLOCKED_BY_VALIDATION_IMPLEMENTATION` remain.
+- Net-PnL/equity-risk gate remains false.
+- Does not edit any upstream JSON or sidecar (contract, trial manifest, OOS seal,
+  null benchmark, multiple-testing control).
+
+#### Verification
+
+```bash
+python3 -m json.tool docs/contracts/instances/qnty_offline_edge_simulation_policy_v1.json >/dev/null
+cd docs/contracts/instances && sha256sum -c qnty_offline_edge_simulation_policy_v1.sha256
+```
