@@ -125,6 +125,8 @@ from quantbot.experiment.offline_edge_real_validation import (
     NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED,
     NET_PNL_EQUITY_RISK_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
     _build_net_pnl_equity_risk_contract_diagnostics,
+    _net_pnl_equity_risk_absence_diagnostics,
+    _economic_accounting_policy_absence_diagnostics,
     materialize_economic_accounting_policy_preregistration_diagnostics,
     _derive_economic_accounting_policy_preregistration_gate,
     ECONOMIC_ACCOUNTING_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY,
@@ -11833,6 +11835,56 @@ class TestNetPnlEquityRiskContractDiagnostics:
         receipt = json.loads(receipt_path.read_text())
         assert "net_pnl_equity_risk_contract_diagnostics" in receipt
 
+    # ── Blocker 2 regression: no-args has dedicated EAP absence diagnostics ──
+    def test_no_args_has_eap_absence_shape(self):
+        """No-args path returns EAP absence diagnostics, not reused net-PnL."""
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        assert result["net_pnl_equity_risk_contract_status"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED
+        )
+        assert result["net_pnl_equity_risk_contract_present"] is False
+
+        eap = result["economic_accounting_policy_diagnostics"]
+        assert eap["diagnostic_kind"] == "economic_accounting_policy_absence"
+        assert eap["economic_accounting_policy_status"] == (
+            "ECONOMIC_ACCOUNTING_POLICY_NOT_DEFINED"
+        )
+        assert "net_pnl_equity_risk_contract_status" not in eap
+        assert eap["economic_accounting_policy_preregistration_gate"][
+            "gate_passed"
+        ] is False
+        assert eap["economic_accounting_policy_preregistration_gate"][
+            "gate_status"
+        ] == "ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED"
+
+    def test_no_args_eap_absence_not_net_pnl_absence(self):
+        """No-args path must not emit net-PnL absence as EAP diagnostics."""
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        eap = result["economic_accounting_policy_diagnostics"]
+        assert "net_pnl_equity_risk_contract_status" not in eap
+        assert "net_pnl_equity_risk_contract_present" not in eap
+        assert "net_pnl_equity_risk_contract_hash" not in eap
+        assert "net_pnl_equity_risk_contract_source" not in eap
+        assert eap["diagnostic_kind"] == "economic_accounting_policy_absence"
+        assert eap["economic_accounting_policy_present"] is False
+
+    def test_no_args_top_level_gate_from_eap_absence(self):
+        """Top-level preregistration gate matches EAP absence gate."""
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        gate = result["economic_accounting_policy_preregistration_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED"
+        assert gate["blocked_reason"] == "ECONOMIC_ACCOUNTING_POLICY_NOT_PROVIDED"
+
+    def test_no_args_forbidden_keys_still_pass(self):
+        """No-args result with EAP nested diagnostics passes forbidden key scan."""
+        result = _build_net_pnl_equity_risk_contract_diagnostics()
+        all_keys = _all_dict_keys(result)
+        assert _NET_PNL_EQUITY_RISK_CONTRACT_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{_NET_PNL_EQUITY_RISK_CONTRACT_FORBIDDEN_KEYS & all_keys}"
+        )
+
 
 _FINAL_OFFLINE_EDGE_VERDICT_LOGIC_FORBIDDEN_KEYS = frozenset({
     "pnl", "returns", "return", "sharpe", "drawdown", "risk", "edge",
@@ -15336,11 +15388,16 @@ class TestEconomicAccountingPolicyPreregistrationJ1:
         return contract_diag, manifest_diag, seal_diag, null_diag, mt_diag, sp_diag
 
     def _eap_diag(self):
-        """Build the economic accounting policy diagnostics with all upstream."""
+        """Build the economic accounting policy diagnostics with all upstream.
+
+        Returns the nested EAP diagnostic dict (under
+        ``economic_accounting_policy_diagnostics``) so that existing tests
+        that inspect EAP fields continue to work unchanged.
+        """
         (contract_diag, manifest_diag, seal_diag, null_diag, mt_diag, sp_diag) = (
             self._upstream_diags()
         )
-        return _build_net_pnl_equity_risk_contract_diagnostics(
+        result = _build_net_pnl_equity_risk_contract_diagnostics(
             economic_accounting_policy_path=self.EAP_PATH,
             sidecar_path=self.EAP_SIDECAR_PATH,
             simulation_policy_diagnostics=sp_diag,
@@ -15350,6 +15407,7 @@ class TestEconomicAccountingPolicyPreregistrationJ1:
             trial_manifest_diagnostics=manifest_diag,
             strategy_rule_contract_diagnostics=contract_diag,
         )
+        return result["economic_accounting_policy_diagnostics"]
 
     # ── Test 1: Absence / no-args returns original shape ──────────────────────
     def test_absence_returns_original_shape(self):
@@ -15955,3 +16013,88 @@ class TestEconomicAccountingPolicyPreregistrationJ1:
         assert gate["gate_passed"] is False
         assert gate["gate_status"] == ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED
         assert gate["blocked_reason"] == "ECONOMIC_ACCOUNTING_POLICY_NOT_PROVIDED"
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Blocker 1 regressions: full J1 path preserves net-PnL absence shape
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _full_result(self):
+        """Call _build_net_pnl_equity_risk_contract_diagnostics with full EAP
+        args and return the top-level result (net-PnL absence + nested EAP)."""
+        (contract_diag, manifest_diag, seal_diag, null_diag, mt_diag, sp_diag) = (
+            self._upstream_diags()
+        )
+        return _build_net_pnl_equity_risk_contract_diagnostics(
+            economic_accounting_policy_path=self.EAP_PATH,
+            sidecar_path=self.EAP_SIDECAR_PATH,
+            simulation_policy_diagnostics=sp_diag,
+            multiple_testing_control_diagnostics=mt_diag,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+    def test_full_path_preserves_net_pnl_absence_shape(self):
+        """Full J1 path must preserve legacy net-PnL/equity-risk absence keys."""
+        result = self._full_result()
+        assert result["net_pnl_equity_risk_contract_status"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED
+        )
+        assert result["net_pnl_equity_risk_contract_present"] is False
+        assert result["scoring_authorized"] is False
+
+    def test_full_path_eap_diagnostics_nested(self):
+        """Full J1 path nests EAP diagnostics under
+        economic_accounting_policy_diagnostics."""
+        result = self._full_result()
+        eap = result["economic_accounting_policy_diagnostics"]
+        assert eap["diagnostic_kind"] == "economic_accounting_policy_preregistration"
+        assert eap["economic_accounting_policy_sidecar_digest_matches_json_bytes"] is True
+        assert eap["economic_value_generation_authorized"] is False
+        assert eap["economic_accounting_policy_readiness"] is False
+
+    def test_full_path_gate_present_and_passed(self):
+        """Full J1 path has EAP preregistration gate at top level and nested."""
+        result = self._full_result()
+        top_gate = result["economic_accounting_policy_preregistration_gate"]
+        nested_gate = result["economic_accounting_policy_diagnostics"][
+            "economic_accounting_policy_preregistration_gate"
+        ]
+        assert top_gate is nested_gate  # same object
+        assert top_gate["gate_passed"] is True
+        assert top_gate["gate_status"] == (
+            ECONOMIC_ACCOUNTING_POLICY_PREREGISTERED_DIAGNOSTIC_ONLY
+        )
+        assert top_gate["gate_scoring_authorization"] is False
+        assert top_gate["gate_live_authorization"] is False
+        assert top_gate["gate_final_verdict_authorization"] is False
+        assert top_gate["gate_downstream_unlocks"] == []
+
+    def test_full_path_absence_fields_present_and_false(self):
+        """Required invariant: absence fields are present and false/not-defined."""
+        result = self._full_result()
+        assert result["net_pnl_equity_risk_contract_status"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED
+        )
+        assert result["net_pnl_equity_risk_contract_present"] is False
+        assert result["scoring_authorized"] is False
+        assert result["net_pnl_equity_risk_contract_hash"] is None
+        assert result["net_pnl_equity_risk_contract_source"] is None
+
+    def test_full_path_no_forbidden_keys(self):
+        """Full J1 path with nested EAP passes forbidden key scan."""
+        result = self._full_result()
+        all_keys = _all_dict_keys(result)
+        assert _NET_PNL_EQUITY_RISK_CONTRACT_FORBIDDEN_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{_NET_PNL_EQUITY_RISK_CONTRACT_FORBIDDEN_KEYS & all_keys}"
+        )
+
+    def test_full_path_verdict_still_blocked(self):
+        """Full J1 path must not advance the final verdict."""
+        result = self._full_result()
+        # No verdict advancement is part of this function's contract.
+        # Verify absence of verdict-related fields.
+        assert "final_offline_verdict" not in result
+        assert "next_final_offline_verdict" not in result

@@ -9114,6 +9114,7 @@ def _economic_accounting_policy_absence_diagnostics() -> dict[str, Any]:
     a diagnostic of absence, not a definition of presence.
     """
     return {
+        "diagnostic_kind": "economic_accounting_policy_absence",
         "economic_accounting_policy_version": "economic-accounting-policy-0.1",
         "calculation_status": (
             "ECONOMIC_ACCOUNTING_POLICY_DIAGNOSTIC_ONLY"
@@ -9165,6 +9166,21 @@ def _economic_accounting_policy_absence_diagnostics() -> dict[str, Any]:
             "capital_path_policy": False,
             "dispersion_summary_policy": False,
             "accounting_output_policy": False,
+        },
+        "economic_accounting_policy_readiness": False,
+        "economic_value_generation_authorized": False,
+        "scoring_authorization": False,
+        "economic_accounting_policy_preregistration_gate": {
+            "gate_kind": "economic_accounting_policy_preregistration_gate",
+            "gate_scope": "ECONOMIC_ACCOUNTING_POLICY_AND_SIMULATION_BINDING_ONLY",
+            "gate_status": "ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED",
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": {},
+            "blocked_reason": "ECONOMIC_ACCOUNTING_POLICY_NOT_PROVIDED",
         },
     }
 
@@ -10568,68 +10584,13 @@ def _build_trade_position_simulation_contract_diagnostics(
     }
 
 
-def _build_net_pnl_equity_risk_contract_diagnostics(
-    *,
-    economic_accounting_policy_path: str | None = None,
-    sidecar_path: str | None = None,
-    simulation_policy_diagnostics: dict[str, Any] | None = None,
-    multiple_testing_control_diagnostics: dict[str, Any] | None = None,
-    null_benchmark_diagnostics: dict[str, Any] | None = None,
-    oos_seal_diagnostics: dict[str, Any] | None = None,
-    trial_manifest_diagnostics: dict[str, Any] | None = None,
-    strategy_rule_contract_diagnostics: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Build a diagnostic-only section for the net PnL/equity/risk contract.
+def _net_pnl_equity_risk_absence_diagnostics() -> dict[str, Any]:
+    """Return the legacy net-PnL/equity-risk absence diagnostic shape.
 
-    If *economic_accounting_policy_path* and *sidecar_path* are both provided
-    and all upstream diagnostics are supplied, the frozen economic accounting
-    policy packet is loaded, hash-checked, and audited via
-    :func:`materialize_economic_accounting_policy_preregistration_diagnostics`.
-
-    Otherwise a hardcoded ``NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED``
-    diagnostic is returned.
-
-    This section does **not** compute PnL, returns, equity curves, drawdown,
-    risk, Sharpe, or any economic value.
+    This is the backward-compatible absence record that existing consumers
+    and docs rely on.  It is always returned as the top-level section;
+    economic-accounting policy diagnostics (if any) are nested underneath.
     """
-    if (
-        economic_accounting_policy_path is not None
-        and sidecar_path is not None
-        and simulation_policy_diagnostics is not None
-        and multiple_testing_control_diagnostics is not None
-        and null_benchmark_diagnostics is not None
-        and oos_seal_diagnostics is not None
-        and trial_manifest_diagnostics is not None
-        and strategy_rule_contract_diagnostics is not None
-    ):
-        diagnostics = (
-            materialize_economic_accounting_policy_preregistration_diagnostics(
-                economic_accounting_policy_path=(
-                    economic_accounting_policy_path
-                ),
-                sidecar_path=sidecar_path,
-                simulation_policy_diagnostics=(
-                    simulation_policy_diagnostics
-                ),
-                multiple_testing_control_diagnostics=(
-                    multiple_testing_control_diagnostics
-                ),
-                null_benchmark_diagnostics=null_benchmark_diagnostics,
-                oos_seal_diagnostics=oos_seal_diagnostics,
-                trial_manifest_diagnostics=trial_manifest_diagnostics,
-                strategy_rule_contract_diagnostics=(
-                    strategy_rule_contract_diagnostics
-                ),
-            )
-        )
-        diagnostics["economic_accounting_policy_preregistration_gate"] = (
-            _derive_economic_accounting_policy_preregistration_gate(
-                diagnostics
-            )
-        )
-        return diagnostics
-
-    # No-args / absence path: preserve backward-compatible absence shape.
     return {
         "contract_version": NET_PNL_EQUITY_RISK_CONTRACT_VERSION,
         "calculation_status": NET_PNL_EQUITY_RISK_CONTRACT_DIAGNOSTIC_ONLY,
@@ -10702,6 +10663,90 @@ def _build_net_pnl_equity_risk_contract_diagnostics(
             "final_verdict_scoring_policy": False,
         },
     }
+
+
+def _build_net_pnl_equity_risk_contract_diagnostics(
+    *,
+    economic_accounting_policy_path: str | None = None,
+    sidecar_path: str | None = None,
+    simulation_policy_diagnostics: dict[str, Any] | None = None,
+    multiple_testing_control_diagnostics: dict[str, Any] | None = None,
+    null_benchmark_diagnostics: dict[str, Any] | None = None,
+    oos_seal_diagnostics: dict[str, Any] | None = None,
+    trial_manifest_diagnostics: dict[str, Any] | None = None,
+    strategy_rule_contract_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a diagnostic-only section for the net PnL/equity/risk contract.
+
+    If *economic_accounting_policy_path* and *sidecar_path* are both provided
+    and all upstream diagnostics are supplied, the frozen economic accounting
+    policy packet is loaded, hash-checked, and audited via
+    :func:`materialize_economic_accounting_policy_preregistration_diagnostics`.
+
+    Otherwise a hardcoded ``NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED``
+    diagnostic is returned.
+
+    This section does **not** compute PnL, returns, equity curves, drawdown,
+    risk, Sharpe, or any economic value.
+
+    The top-level shape is always the legacy net-PnL/equity-risk absence
+    schema.  Economic-accounting policy diagnostics (if any) are nested under
+    ``economic_accounting_policy_diagnostics``.
+    """
+    if (
+        economic_accounting_policy_path is not None
+        and sidecar_path is not None
+        and simulation_policy_diagnostics is not None
+        and multiple_testing_control_diagnostics is not None
+        and null_benchmark_diagnostics is not None
+        and oos_seal_diagnostics is not None
+        and trial_manifest_diagnostics is not None
+        and strategy_rule_contract_diagnostics is not None
+    ):
+        eap_diagnostics = (
+            materialize_economic_accounting_policy_preregistration_diagnostics(
+                economic_accounting_policy_path=(
+                    economic_accounting_policy_path
+                ),
+                sidecar_path=sidecar_path,
+                simulation_policy_diagnostics=(
+                    simulation_policy_diagnostics
+                ),
+                multiple_testing_control_diagnostics=(
+                    multiple_testing_control_diagnostics
+                ),
+                null_benchmark_diagnostics=null_benchmark_diagnostics,
+                oos_seal_diagnostics=oos_seal_diagnostics,
+                trial_manifest_diagnostics=trial_manifest_diagnostics,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
+        )
+        eap_diagnostics["economic_accounting_policy_preregistration_gate"] = (
+            _derive_economic_accounting_policy_preregistration_gate(
+                eap_diagnostics
+            )
+        )
+
+        diagnostics = _net_pnl_equity_risk_absence_diagnostics()
+        diagnostics["economic_accounting_policy_diagnostics"] = eap_diagnostics
+        diagnostics["economic_accounting_policy_preregistration_gate"] = (
+            eap_diagnostics["economic_accounting_policy_preregistration_gate"]
+        )
+        return diagnostics
+
+    # No-args / absence path: preserve backward-compatible absence shape.
+    diagnostics = _net_pnl_equity_risk_absence_diagnostics()
+    diagnostics["economic_accounting_policy_diagnostics"] = (
+        _economic_accounting_policy_absence_diagnostics()
+    )
+    diagnostics["economic_accounting_policy_preregistration_gate"] = (
+        diagnostics["economic_accounting_policy_diagnostics"][
+            "economic_accounting_policy_preregistration_gate"
+        ]
+    )
+    return diagnostics
 
 
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
