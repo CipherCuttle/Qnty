@@ -6027,7 +6027,7 @@ _REQUIRED_STRATEGY_CONTRACT_KEYS: frozenset[str] = frozenset({
     "contract_commit_sha",
 })
 
-# Downstream dependency booleans that must all be false.
+# Downstream dependency booleans that must all be exactly false.
 _DOWNSTREAM_CONTRACT_DEPENDENCY_BOOLEANS: list[str] = [
     "trial_manifest_dependency_satisfied",
     "oos_seal_dependency_satisfied",
@@ -6037,6 +6037,7 @@ _DOWNSTREAM_CONTRACT_DEPENDENCY_BOOLEANS: list[str] = [
     "trade_position_simulation_dependency_satisfied",
     "net_pnl_equity_risk_dependency_satisfied",
     "live_integration_authorized",
+    "scoring_authorization",
 ]
 
 # Output-boundary fields that must be present in the contract.
@@ -6045,6 +6046,39 @@ _CONTRACT_OUTPUT_BOUNDARY_KEYS: frozenset[str] = frozenset({
     "forbidden_output_keys",
     "receipt_key_naming_constraint",
 })
+
+
+def _find_forbidden_contract_dict_keys(
+    value: Any,
+    *,
+    path: str = "$",
+) -> list[dict[str, str]]:
+    """Recursively scan *value* for any dict key matching a forbidden calculation
+    pattern.
+
+    This is a **strict** scanner for the contract packet only. Unlike the receipt
+    scanner (:func:`_assert_no_forbidden_calculation_keys`), it has **no**
+    exemptions — ``gross_observational_return`` is rejected at any nesting level,
+    including under ``$.gross_observational_returns``.
+
+    Matching is exact dict-key equality against :data:`FORBIDDEN_CALCULATION_KEYS`
+    (42 names). Returns a list of ``{path, key}`` dicts for each collision.
+    """
+    collisions: list[dict[str, str]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            if key in FORBIDDEN_CALCULATION_KEYS:
+                collisions.append({"path": child_path, "key": key})
+            collisions.extend(
+                _find_forbidden_contract_dict_keys(child, path=child_path)
+            )
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            collisions.extend(
+                _find_forbidden_contract_dict_keys(child, path=f"{path}[{index}]")
+            )
+    return collisions
 
 
 def materialize_strategy_rule_contract_instance_diagnostics(
@@ -6147,26 +6181,14 @@ def materialize_strategy_rule_contract_instance_diagnostics(
             f"Contract missing required fields: {sorted(missing_fields)}"
         )
 
-    # --- Check forbidden dict keys ---
-    forbidden_collisions: list[str] = []
-    def _scan_keys(value: Any, path: str = "$") -> None:
-        if isinstance(value, dict):
-            for key, v in value.items():
-                exempt = (
-                    key == "gross_observational_return"
-                    and _is_under_gross_observational_returns_exempt_path(path)
-                )
-                if key in FORBIDDEN_CALCULATION_KEYS and not exempt:
-                    forbidden_collisions.append(f"{path}.{key}")
-                _scan_keys(v, path + "." + key)
-        elif isinstance(value, (list, tuple)):
-            for i, v in enumerate(value):
-                _scan_keys(v, path + "[" + str(i) + "]")
-
-    _scan_keys(contract)
+    # --- Check forbidden dict keys (strict, no receipt-only exemptions) ---
+    forbidden_collisions = _find_forbidden_contract_dict_keys(contract)
     if forbidden_collisions:
+        collision_repr = ", ".join(
+            f"{c['key']!r} at {c['path']}" for c in forbidden_collisions
+        )
         raise ValueError(
-            f"Contract contains forbidden dict keys: {forbidden_collisions}"
+            f"Contract contains forbidden dict keys: {collision_repr}"
         )
 
     # --- Check input ceiling ---
@@ -6203,23 +6225,18 @@ def materialize_strategy_rule_contract_instance_diagnostics(
             f"{sorted(output_boundary_missing)}"
         )
 
-    # --- Check downstream dependency booleans ---
-    downstream_true: list[str] = []
-    for dep_key in _DOWNSTREAM_CONTRACT_DEPENDENCY_BOOLEANS:
-        val = contract.get(dep_key)
-        if val is True:
-            downstream_true.append(dep_key)
-
-    if downstream_true:
+    # --- Check downstream dependency booleans (must be exactly False) ---
+    bad_false_fields: dict[str, Any] = {
+        field: contract.get(field)
+        for field in _DOWNSTREAM_CONTRACT_DEPENDENCY_BOOLEANS
+        if contract.get(field) is not False
+    }
+    if bad_false_fields:
         raise ValueError(
-            f"Contract has downstream dependency booleans set to true: "
-            f"{downstream_true}"
-        )
-
-    scoring_auth = contract.get("scoring_authorization", False)
-    if scoring_auth is True:
-        raise ValueError(
-            "Contract scoring_authorization must be false"
+            f"Strategy rule contract fields must be exactly false: "
+            + ", ".join(
+                f"{k}={v!r}" for k, v in sorted(bad_false_fields.items())
+            )
         )
 
     # --- Build diagnostic dict ---

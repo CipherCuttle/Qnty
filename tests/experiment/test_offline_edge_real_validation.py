@@ -9076,7 +9076,90 @@ class TestStrategyRuleContractDiagnostics:
         mutated_sha = hashlib.sha256(mutated_path.read_bytes()).hexdigest()
         sidecar = tmp_path / "mutated_downstream.sha256"
         sidecar.write_text(f"{mutated_sha}  mutated_downstream.json")
-        with pytest.raises(ValueError, match="downstream dependency"):
+        with pytest.raises(ValueError, match="must be exactly false"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(mutated_path),
+                sidecar_path=str(sidecar),
+            )
+
+    def test_gross_observational_return_not_exempted(self, tmp_path):
+        """Strict contract scanner rejects gross_observational_return under
+        gross_observational_returns (no receipt-only exemption)."""
+        contract_path = self._contract_json_path()
+        contract = json.loads(Path(contract_path).read_bytes())
+        contract["gross_observational_returns"] = {
+            "gross_observational_return": 0.01
+        }
+        mutated_path = tmp_path / "mutated_gross_exempt.json"
+        mutated_path.write_text(json.dumps(contract, indent=2, sort_keys=True))
+        mutated_sha = hashlib.sha256(mutated_path.read_bytes()).hexdigest()
+        sidecar = tmp_path / "mutated_gross_exempt.sha256"
+        sidecar.write_text(f"{mutated_sha}  mutated_gross_exempt.json")
+        with pytest.raises(ValueError, match="forbidden dict keys"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(mutated_path),
+                sidecar_path=str(sidecar),
+            )
+
+    def test_downstream_boolean_string_true_fails_closed(self, tmp_path):
+        """String 'true' must be rejected as not exactly False."""
+        contract_path = self._contract_json_path()
+        contract = json.loads(Path(contract_path).read_bytes())
+        contract["oos_seal_dependency_satisfied"] = "true"
+        mutated_path = tmp_path / "mutated_str_true.json"
+        mutated_path.write_text(json.dumps(contract, indent=2, sort_keys=True))
+        mutated_sha = hashlib.sha256(mutated_path.read_bytes()).hexdigest()
+        sidecar = tmp_path / "mutated_str_true.sha256"
+        sidecar.write_text(f"{mutated_sha}  mutated_str_true.json")
+        with pytest.raises(ValueError, match="must be exactly false"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(mutated_path),
+                sidecar_path=str(sidecar),
+            )
+
+    def test_downstream_boolean_integer_one_fails_closed(self, tmp_path):
+        """Integer 1 must be rejected as not exactly False."""
+        contract_path = self._contract_json_path()
+        contract = json.loads(Path(contract_path).read_bytes())
+        contract["oos_seal_dependency_satisfied"] = 1
+        mutated_path = tmp_path / "mutated_int_one.json"
+        mutated_path.write_text(json.dumps(contract, indent=2, sort_keys=True))
+        mutated_sha = hashlib.sha256(mutated_path.read_bytes()).hexdigest()
+        sidecar = tmp_path / "mutated_int_one.sha256"
+        sidecar.write_text(f"{mutated_sha}  mutated_int_one.json")
+        with pytest.raises(ValueError, match="must be exactly false"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(mutated_path),
+                sidecar_path=str(sidecar),
+            )
+
+    def test_scoring_authorization_zero_fails_closed(self, tmp_path):
+        """scoring_authorization = 0 must be rejected as not exactly False."""
+        contract_path = self._contract_json_path()
+        contract = json.loads(Path(contract_path).read_bytes())
+        contract["scoring_authorization"] = 0
+        mutated_path = tmp_path / "mutated_score_zero.json"
+        mutated_path.write_text(json.dumps(contract, indent=2, sort_keys=True))
+        mutated_sha = hashlib.sha256(mutated_path.read_bytes()).hexdigest()
+        sidecar = tmp_path / "mutated_score_zero.sha256"
+        sidecar.write_text(f"{mutated_sha}  mutated_score_zero.json")
+        with pytest.raises(ValueError, match="must be exactly false"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=str(mutated_path),
+                sidecar_path=str(sidecar),
+            )
+
+    def test_scoring_authorization_string_false_fails_closed(self, tmp_path):
+        """scoring_authorization = 'false' must be rejected as not exactly False."""
+        contract_path = self._contract_json_path()
+        contract = json.loads(Path(contract_path).read_bytes())
+        contract["scoring_authorization"] = "false"
+        mutated_path = tmp_path / "mutated_score_str_false.json"
+        mutated_path.write_text(json.dumps(contract, indent=2, sort_keys=True))
+        mutated_sha = hashlib.sha256(mutated_path.read_bytes()).hexdigest()
+        sidecar = tmp_path / "mutated_score_str_false.sha256"
+        sidecar.write_text(f"{mutated_sha}  mutated_score_str_false.json")
+        with pytest.raises(ValueError, match="must be exactly false"):
             materialize_strategy_rule_contract_instance_diagnostics(
                 contract_path=str(mutated_path),
                 sidecar_path=str(sidecar),
