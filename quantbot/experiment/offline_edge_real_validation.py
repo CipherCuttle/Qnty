@@ -11731,7 +11731,9 @@ def main(argv: list[str] | None = None) -> int:
                 net_pnl_equity_risk_contract_diagnostics
             ),
             economic_accounting_policy_diagnostics=(
-                net_pnl_equity_risk_contract_diagnostics
+                net_pnl_equity_risk_contract_diagnostics.get(
+                    "economic_accounting_policy_diagnostics"
+                )
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -11881,7 +11883,9 @@ def main(argv: list[str] | None = None) -> int:
                 net_pnl_equity_risk_contract_diagnostics
             ),
             economic_accounting_policy_diagnostics=(
-                net_pnl_equity_risk_contract_diagnostics
+                net_pnl_equity_risk_contract_diagnostics.get(
+                    "economic_accounting_policy_diagnostics"
+                )
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics

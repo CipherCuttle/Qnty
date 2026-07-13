@@ -16098,3 +16098,115 @@ class TestEconomicAccountingPolicyPreregistrationJ1:
         # Verify absence of verdict-related fields.
         assert "final_offline_verdict" not in result
         assert "next_final_offline_verdict" not in result
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Blocker 2 regressions: top-level receipt call sites must nest EAP
+    # diagnostics under economic_accounting_policy_diagnostics, not pass the
+    # whole net-PnL/equity-risk absence section.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _cli_base_args(self, output_dir):
+        return [
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--global-min-timestamp", "2026-01-01T00:00:00Z",
+            "--global-max-timestamp", "2026-02-01T00:00:00Z",
+        ]
+
+    def _cli_upstream_args(self):
+        return [
+            "--strategy-contract-path", self.CONTRACT_PATH,
+            "--strategy-contract-sha256-path", self.CONTRACT_SIDECAR_PATH,
+            "--strategy-contract-commit-binding-path", self.CONTRACT_BINDING_PATH,
+            "--trial-manifest-path", self.MANIFEST_PATH,
+            "--trial-manifest-sha256-path", self.MANIFEST_SIDECAR_PATH,
+            "--oos-seal-path", self.SEAL_PATH,
+            "--oos-seal-sha256-path", self.SEAL_SIDECAR_PATH,
+            "--null-benchmark-path", self.NULL_PATH,
+            "--null-benchmark-sha256-path", self.NULL_SIDECAR_PATH,
+            "--multiple-testing-control-path", self.MT_PATH,
+            "--multiple-testing-control-sha256-path", self.MT_SIDECAR_PATH,
+            "--simulation-policy-path", self.SP_PATH,
+            "--simulation-policy-sha256-path", self.SP_SIDECAR_PATH,
+        ]
+
+    def _cli_eap_args(self):
+        return [
+            "--economic-accounting-policy-path", self.EAP_PATH,
+            "--economic-accounting-policy-sha256-path", self.EAP_SIDECAR_PATH,
+        ]
+
+    def test_cli_no_eap_args_top_level_receipt_shape(self, tmp_path):
+        """CLI without EAP args: top-level receipt keeps net-PnL absence shape
+        and gets a dedicated economic-accounting absence section, not the
+        whole net-PnL/equity-risk section duplicated."""
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(self._cli_base_args(output_dir))
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+
+        net_section = receipt["net_pnl_equity_risk_contract_diagnostics"]
+        eap_section = receipt["economic_accounting_policy_diagnostics"]
+
+        assert net_section["net_pnl_equity_risk_contract_status"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED
+        )
+        assert net_section["net_pnl_equity_risk_contract_present"] is False
+
+        assert eap_section["diagnostic_kind"] == "economic_accounting_policy_absence"
+        assert eap_section["economic_accounting_policy_preregistration_gate"][
+            "gate_status"
+        ] == "ECONOMIC_ACCOUNTING_POLICY_NOT_LOADED"
+
+        assert "net_pnl_equity_risk_contract_status" not in eap_section
+        assert "net_pnl_equity_risk_contract_present" not in eap_section
+
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_cli_full_eap_path_top_level_receipt_shape(self, tmp_path):
+        """CLI with full EAP + upstream args: top-level receipt keeps net-PnL
+        absence shape and gets a dedicated economic-accounting preregistration
+        section, not the whole net-PnL/equity-risk section duplicated."""
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(
+            self._cli_base_args(output_dir)
+            + self._cli_upstream_args()
+            + self._cli_eap_args()
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+
+        net_section = receipt["net_pnl_equity_risk_contract_diagnostics"]
+        eap_section = receipt["economic_accounting_policy_diagnostics"]
+
+        assert net_section["net_pnl_equity_risk_contract_status"] == (
+            NET_PNL_EQUITY_RISK_CONTRACT_NOT_DEFINED
+        )
+        assert net_section["net_pnl_equity_risk_contract_present"] is False
+        assert net_section["economic_accounting_policy_preregistration_gate"][
+            "gate_passed"
+        ] is True
+
+        assert eap_section["diagnostic_kind"] == (
+            "economic_accounting_policy_preregistration"
+        )
+        assert eap_section["economic_accounting_policy_preregistration_gate"][
+            "gate_passed"
+        ] is True
+
+        assert "net_pnl_equity_risk_contract_status" not in eap_section
+        assert "net_pnl_equity_risk_contract_present" not in eap_section
+
+        assert net_section["economic_accounting_policy_preregistration_gate"] == (
+            eap_section["economic_accounting_policy_preregistration_gate"]
+        )
+
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
