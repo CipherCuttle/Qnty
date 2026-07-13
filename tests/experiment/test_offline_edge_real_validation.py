@@ -105,7 +105,14 @@ from quantbot.experiment.offline_edge_real_validation import (
     MULTIPLE_TESTING_CONTROL_DIAGNOSTIC_ONLY,
     MULTIPLE_TESTING_CONTROL_NOT_DEFINED,
     MULTIPLE_TESTING_CONTROL_BLOCKED_REASON_NOT_DEFINED,
+    MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY,
+    TESTING_FAMILY_POLICY_FROZEN,
+    SEARCH_PROCEDURE_POLICY_FROZEN,
+    MULTIPLICITY_CONTROL_POLICY_FROZEN,
+    STATISTICAL_EVALUATION_POLICY_FROZEN,
     _build_multiple_testing_control_diagnostics,
+    _derive_multiple_testing_control_preregistration_gate,
+    materialize_multiple_testing_control_preregistration_diagnostics,
     TRADE_POSITION_SIMULATION_CONTRACT_VERSION,
     TRADE_POSITION_SIMULATION_CONTRACT_DIAGNOSTIC_ONLY,
     TRADE_POSITION_SIMULATION_CONTRACT_NOT_DEFINED,
@@ -13886,6 +13893,660 @@ class TestNullBenchmarkPreregistrationG1:
             NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY
         )
         assert null_gate["gate_downstream_unlocks"] == []
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+
+class TestMultipleTestingControlPreregistrationH1:
+    """Lane H1: multiple-testing control pre-scoring declaration packet + gate.
+
+    Proves the declared test family, search procedure, and multiplicity policy
+    are frozen and hash-bound to the frozen null benchmark, OOS seal, trial
+    manifest, and strategy contract *before* any statistical evaluation exists.
+    Nothing here computes a p-value, an interval, a multiplicity adjustment, a
+    null, or a candidate-vs-null comparison, and nothing authorizes scoring.
+    """
+
+    CONTROL_PATH = "docs/contracts/instances/qnty_offline_edge_multiple_testing_control_v1.json"
+    CONTROL_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_multiple_testing_control_v1.sha256"
+    NULL_BENCHMARK_PATH = "docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.json"
+    NULL_BENCHMARK_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.sha256"
+    SEAL_PATH = "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.json"
+    SEAL_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.sha256"
+    CONTRACT_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+    CONTRACT_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256"
+    CONTRACT_BINDING_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json"
+    MANIFEST_PATH = "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.json"
+    MANIFEST_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.sha256"
+
+    def _upstream_diags(self):
+        contract_diag = _build_strategy_rule_contract_diagnostics(
+            contract_path=self.CONTRACT_PATH,
+            sidecar_path=self.CONTRACT_SIDECAR_PATH,
+            commit_binding_path=self.CONTRACT_BINDING_PATH,
+        )
+        manifest_diag = _build_trial_manifest_diagnostics(
+            manifest_path=self.MANIFEST_PATH,
+            sidecar_path=self.MANIFEST_SIDECAR_PATH,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        seal_diag = _build_oos_seal_diagnostics(
+            seal_path=self.SEAL_PATH,
+            sidecar_path=self.SEAL_SIDECAR_PATH,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        null_diag = _build_null_benchmark_contract_diagnostics(
+            null_benchmark_path=self.NULL_BENCHMARK_PATH,
+            sidecar_path=self.NULL_BENCHMARK_SIDECAR_PATH,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        return contract_diag, manifest_diag, seal_diag, null_diag
+
+    def _control_diag(self):
+        contract_diag, manifest_diag, seal_diag, null_diag = (
+            self._upstream_diags()
+        )
+        return _build_multiple_testing_control_diagnostics(
+            multiple_testing_control_path=self.CONTROL_PATH,
+            sidecar_path=self.CONTROL_SIDECAR_PATH,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+    def _tampered_packet(self, tmp_path, mutate):
+        """Write a mutated control packet + a *matching* sidecar.
+
+        The sidecar is regenerated so the digest check passes and the specific
+        semantic check under test is the one that fails.
+        """
+        packet = json.loads(Path(self.CONTROL_PATH).read_bytes())
+        mutate(packet)
+        packet_bytes = json.dumps(packet, indent=2, sort_keys=True).encode() + b"\n"
+        packet_path = tmp_path / "multiple_testing_control.json"
+        packet_path.write_bytes(packet_bytes)
+        sidecar_path = tmp_path / "multiple_testing_control.sha256"
+        digest = hashlib.sha256(packet_bytes).hexdigest()
+        sidecar_path.write_text(f"{digest}  {packet_path.name}\n")
+        return str(packet_path), str(sidecar_path)
+
+    def _materialize_tampered(self, tmp_path, mutate):
+        contract_diag, manifest_diag, seal_diag, null_diag = (
+            self._upstream_diags()
+        )
+        packet_path, sidecar_path = self._tampered_packet(tmp_path, mutate)
+        return materialize_multiple_testing_control_preregistration_diagnostics(
+            multiple_testing_control_path=packet_path,
+            sidecar_path=sidecar_path,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+    # -- 1. Packet JSON + sidecar happy path ---------------------------------
+
+    def test_control_json_and_sidecar_valid(self):
+        packet_bytes = Path(self.CONTROL_PATH).read_bytes()
+        computed = hashlib.sha256(packet_bytes).hexdigest()
+        sidecar = Path(self.CONTROL_SIDECAR_PATH).read_text().strip()
+        assert sidecar.split()[0] == computed
+
+        packet = json.loads(packet_bytes)
+        assert packet["multiple_testing_control_hash"] == "FROZEN_IN_SIDECAR"
+        assert packet["multiple_testing_control_hash_status"] == (
+            "FROZEN_IN_SIDECAR"
+        )
+        assert packet["multiple_testing_control_hash_algorithm"] == "sha256"
+        collisions = real_validation._find_forbidden_contract_dict_keys(packet)
+        assert collisions == [], f"Forbidden keys found: {collisions}"
+
+    # -- 2. Diagnostic happy path --------------------------------------------
+
+    def test_control_diagnostic_happy_path(self):
+        result = self._control_diag()
+        assert result[
+            "multiple_testing_control_sidecar_digest_matches_json_bytes"
+        ] is True
+        assert result["bound_contract_digest_matches"] is True
+        assert result["bound_trial_manifest_digest_matches"] is True
+        assert result["bound_oos_seal_digest_matches"] is True
+        assert result["bound_null_benchmark_digest_matches"] is True
+        assert result["null_benchmark_gate_passed"] is True
+        assert result["null_benchmark_gate_status"] == (
+            NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY
+        )
+        assert result["testing_family_policy"] == TESTING_FAMILY_POLICY_FROZEN
+        assert result["testing_family_policy_frozen"] is True
+        assert result["candidate_declaration_count"] == 1
+        assert result["candidate_declaration_count_frozen"] is True
+        assert result["null_reference_declaration_count"] == 1
+        assert result["null_reference_declaration_count_frozen"] is True
+        assert result["search_procedure_policy"] == SEARCH_PROCEDURE_POLICY_FROZEN
+        assert result["multiplicity_control_policy"] == (
+            MULTIPLICITY_CONTROL_POLICY_FROZEN
+        )
+        assert result["statistical_evaluation_policy"] == (
+            STATISTICAL_EVALUATION_POLICY_FROZEN
+        )
+        assert result["multiple_testing_control_readiness"] is False
+        assert result["statistical_value_generation_authorized"] is False
+        assert result["candidate_comparison_authorized"] is False
+        assert result["null_generation_authorized"] is False
+        assert result["scoring_authorized"] is False
+        assert result["multiple_testing_control_validation_status"] == (
+            MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY
+        )
+
+    def test_control_diagnostic_has_no_forbidden_keys(self):
+        result = self._control_diag()
+        collisions = real_validation._find_forbidden_contract_dict_keys(result)
+        assert collisions == [], f"Forbidden keys found: {collisions}"
+
+    # -- 3. Gate happy path --------------------------------------------------
+
+    def test_control_gate_happy_path(self):
+        gate = self._control_diag()[
+            "multiple_testing_control_preregistration_gate"
+        ]
+        assert gate["gate_kind"] == "multiple_testing_control_preregistration_gate"
+        assert gate["gate_scope"] == "TEST_FAMILY_AND_NULL_BENCHMARK_BINDING_ONLY"
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+        assert gate["blocked_reason"] is None
+        assert gate["evidence"]["null_benchmark_gate_passed"] is True
+        assert gate["evidence"]["bound_null_benchmark_digest_matches"] is True
+        assert gate["evidence"]["candidate_declaration_count"] == 1
+        assert gate["evidence"]["null_reference_declaration_count"] == 1
+        assert gate["evidence"]["testing_family_policy_matches_frozen_value"] is True
+        assert gate["evidence"][
+            "search_procedure_policy_matches_frozen_value"
+        ] is True
+        assert gate["evidence"][
+            "multiplicity_control_policy_matches_frozen_value"
+        ] is True
+
+    # -- 4. Packet missing fails closed --------------------------------------
+
+    def test_control_absent_gate_not_loaded(self):
+        result = _build_multiple_testing_control_diagnostics()
+        gate = result["multiple_testing_control_preregistration_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "MULTIPLE_TESTING_CONTROL_NOT_LOADED"
+        assert gate["blocked_reason"] == "MULTIPLE_TESTING_CONTROL_NOT_PROVIDED"
+        # No-args behavior stays the static absence diagnostic.
+        assert result["multiple_testing_control_status"] == (
+            MULTIPLE_TESTING_CONTROL_NOT_DEFINED
+        )
+        assert result["multiple_testing_control_present"] is False
+        assert result["scoring_authorized"] is False
+
+    def test_control_packet_missing_fails_closed(self):
+        contract_diag, manifest_diag, seal_diag, null_diag = (
+            self._upstream_diags()
+        )
+        with pytest.raises(
+            ValueError, match="Multiple testing control JSON not found"
+        ):
+            materialize_multiple_testing_control_preregistration_diagnostics(
+                multiple_testing_control_path="/tmp/nonexistent_control_h1.json",
+                sidecar_path=self.CONTROL_SIDECAR_PATH,
+                null_benchmark_diagnostics=null_diag,
+                oos_seal_diagnostics=seal_diag,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # -- 5. Sidecar missing fails closed -------------------------------------
+
+    def test_control_sidecar_missing_fails_closed(self):
+        contract_diag, manifest_diag, seal_diag, null_diag = (
+            self._upstream_diags()
+        )
+        with pytest.raises(
+            ValueError, match="Multiple testing control sidecar not found"
+        ):
+            materialize_multiple_testing_control_preregistration_diagnostics(
+                multiple_testing_control_path=self.CONTROL_PATH,
+                sidecar_path="/tmp/nonexistent_control_h1.sha256",
+                null_benchmark_diagnostics=null_diag,
+                oos_seal_diagnostics=seal_diag,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # -- 6. Digest mismatch fails closed -------------------------------------
+
+    def test_control_digest_mismatch_fails_closed(self, tmp_path):
+        contract_diag, manifest_diag, seal_diag, null_diag = (
+            self._upstream_diags()
+        )
+        packet_bytes = Path(self.CONTROL_PATH).read_bytes()
+        packet_path = tmp_path / "multiple_testing_control.json"
+        packet_path.write_bytes(packet_bytes)
+        wrong_digest = hashlib.sha256(packet_bytes + b"tamper").hexdigest()
+        sidecar_path = tmp_path / "multiple_testing_control.sha256"
+        sidecar_path.write_text(f"{wrong_digest}  {packet_path.name}\n")
+        with pytest.raises(ValueError, match="sidecar digest mismatch"):
+            materialize_multiple_testing_control_preregistration_diagnostics(
+                multiple_testing_control_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                null_benchmark_diagnostics=null_diag,
+                oos_seal_diagnostics=seal_diag,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # -- 7. Malformed JSON fails closed --------------------------------------
+
+    def test_control_malformed_json_fails_closed(self, tmp_path):
+        contract_diag, manifest_diag, seal_diag, null_diag = (
+            self._upstream_diags()
+        )
+        bad_bytes = b"{invalid json"
+        packet_path = tmp_path / "multiple_testing_control.json"
+        packet_path.write_bytes(bad_bytes)
+        sidecar_path = tmp_path / "multiple_testing_control.sha256"
+        digest = hashlib.sha256(bad_bytes).hexdigest()
+        sidecar_path.write_text(f"{digest}  {packet_path.name}\n")
+        with pytest.raises(
+            ValueError, match="Multiple testing control JSON parse error"
+        ):
+            materialize_multiple_testing_control_preregistration_diagnostics(
+                multiple_testing_control_path=str(packet_path),
+                sidecar_path=str(sidecar_path),
+                null_benchmark_diagnostics=null_diag,
+                oos_seal_diagnostics=seal_diag,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # -- 8. Forbidden dict key fails closed ----------------------------------
+
+    @pytest.mark.parametrize("key", ["p_value", "confidence_interval", "pnl"])
+    def test_control_forbidden_key_fails_closed(self, tmp_path, key):
+        def mutate(packet):
+            packet[key] = 0.1
+
+        with pytest.raises(ValueError, match="forbidden dict keys"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    # -- 9-12. Bound digest / id mismatches fail closed -----------------------
+
+    def test_control_contract_digest_mismatch_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["bound_contract_sha256"] = "0" * 64
+
+        with pytest.raises(ValueError, match="bound_contract_sha256 mismatch"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_control_trial_manifest_digest_mismatch_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["bound_trial_manifest_sha256"] = "0" * 64
+
+        with pytest.raises(
+            ValueError, match="bound_trial_manifest_sha256 mismatch"
+        ):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_control_oos_seal_digest_mismatch_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["bound_oos_seal_sha256"] = "0" * 64
+
+        with pytest.raises(ValueError, match="bound_oos_seal_sha256 mismatch"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_control_null_benchmark_digest_mismatch_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["bound_null_benchmark_sha256"] = "0" * 64
+
+        with pytest.raises(
+            ValueError, match="bound_null_benchmark_sha256 mismatch"
+        ):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_control_null_benchmark_id_mismatch_fails_closed(self, tmp_path):
+        def mutate(packet):
+            packet["bound_null_benchmark_id"] = "some_other_null_benchmark"
+
+        with pytest.raises(ValueError, match="bound_null_benchmark_id mismatch"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    # -- 13. Missing / failed null benchmark gate blocks the control ----------
+
+    def test_control_blocked_when_null_benchmark_gate_missing(self):
+        contract_diag, manifest_diag, seal_diag, _ = self._upstream_diags()
+        null_diag_no_gate = _build_null_benchmark_contract_diagnostics()
+        with pytest.raises(ValueError, match="Null benchmark gate not passed"):
+            _build_multiple_testing_control_diagnostics(
+                multiple_testing_control_path=self.CONTROL_PATH,
+                sidecar_path=self.CONTROL_SIDECAR_PATH,
+                null_benchmark_diagnostics=null_diag_no_gate,
+                oos_seal_diagnostics=seal_diag,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_gate_projection_blocked_by_null_benchmark_gate(self):
+        """Pure gate helper: a loaded packet with a failed null benchmark gate
+        is blocked, never passed."""
+        diagnostics = dict(self._control_diag())
+        diagnostics.pop("multiple_testing_control_preregistration_gate")
+        diagnostics["null_benchmark_gate_passed"] = False
+        gate = _derive_multiple_testing_control_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_NULL_BENCHMARK_GATE"
+        assert gate["blocked_reason"] == "NULL_BENCHMARK_GATE_NOT_PASSED"
+
+    def test_gate_projection_blocked_by_incomplete_evidence(self):
+        diagnostics = dict(self._control_diag())
+        diagnostics.pop("multiple_testing_control_preregistration_gate")
+        diagnostics["bound_null_benchmark_digest_matches"] = False
+        gate = _derive_multiple_testing_control_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_MULTIPLE_TESTING_CONTROL_EVIDENCE"
+        )
+        assert gate["blocked_reason"] == (
+            "MULTIPLE_TESTING_CONTROL_GATE_EVIDENCE_INCOMPLETE"
+        )
+
+    # -- 14-16. Frozen policy values ------------------------------------------
+    #
+    # A tampered packet is re-hashed into a matching sidecar, so digest checks
+    # alone cannot catch a widened test family or a post-hoc search. The frozen
+    # string values are the only thing standing between the lane and an
+    # unaccounted multiple-testing burden.
+
+    @pytest.mark.parametrize(
+        "field,mutated",
+        [
+            ("testing_family_policy", "UNLIMITED_TRIALS_AND_NULL_REFERENCES"),
+            ("search_procedure_policy", "SEARCH_AND_SELECT_BEST_POST_HOC"),
+            (
+                "multiplicity_control_policy",
+                "NO_ADJUSTMENT_DECLARED_FOR_UNLIMITED_TRIALS",
+            ),
+            ("statistical_evaluation_policy", "COMPUTE_STATISTICAL_VALUES_NOW"),
+        ],
+    )
+    def test_mutated_frozen_policy_fails_closed(self, tmp_path, field, mutated):
+        def mutate(packet):
+            packet[field] = mutated
+
+        with pytest.raises(ValueError, match=f"{field} must be exactly"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    def test_frozen_policy_values_in_diagnostic(self):
+        result = self._control_diag()
+        assert result["testing_family_policy"] == TESTING_FAMILY_POLICY_FROZEN
+        assert result["search_procedure_policy"] == SEARCH_PROCEDURE_POLICY_FROZEN
+        assert result["multiplicity_control_policy"] == (
+            MULTIPLICITY_CONTROL_POLICY_FROZEN
+        )
+        assert result["statistical_evaluation_policy"] == (
+            STATISTICAL_EVALUATION_POLICY_FROZEN
+        )
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "testing_family_policy",
+            "search_procedure_policy",
+            "multiplicity_control_policy",
+            "statistical_evaluation_policy",
+        ],
+    )
+    def test_gate_projection_blocked_by_wrong_frozen_value(self, field):
+        """Pure gate helper: a diagnostic carrying a mutated policy declaration
+        is blocked, never passed."""
+        diagnostics = dict(self._control_diag())
+        diagnostics.pop("multiple_testing_control_preregistration_gate")
+        diagnostics[field] = "SEARCH_AND_SELECT_BEST_POST_HOC"
+        gate = _derive_multiple_testing_control_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_MULTIPLE_TESTING_CONTROL_EVIDENCE"
+        )
+        assert gate["evidence"][f"{field}_matches_frozen_value"] is False
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "testing_family_policy_frozen",
+            "search_procedure_policy_frozen",
+            "multiplicity_control_policy_frozen",
+            "candidate_declaration_count_frozen",
+            "null_reference_declaration_count_frozen",
+        ],
+    )
+    def test_policy_not_frozen_fails_closed(self, tmp_path, field):
+        def mutate(packet):
+            packet[field] = False
+
+        with pytest.raises(ValueError, match=f"{field} must be True"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    # -- 17-18. Declaration counts -------------------------------------------
+
+    @pytest.mark.parametrize(
+        "field",
+        ["candidate_declaration_count", "null_reference_declaration_count"],
+    )
+    @pytest.mark.parametrize("count", [0, 2, 7])
+    def test_declaration_count_not_one_fails_closed(self, tmp_path, field, count):
+        def mutate(packet):
+            packet[field] = count
+
+        with pytest.raises(ValueError, match=f"{field} must be exactly 1"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    @pytest.mark.parametrize(
+        "field",
+        ["candidate_declaration_count", "null_reference_declaration_count"],
+    )
+    @pytest.mark.parametrize("count", ["1", True, None, 1.0])
+    def test_declaration_count_wrong_type_fails_closed(
+        self, tmp_path, field, count
+    ):
+        def mutate(packet):
+            packet[field] = count
+
+        with pytest.raises(ValueError, match=f"{field} must be a JSON integer"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    @pytest.mark.parametrize(
+        "field",
+        ["candidate_declaration_count", "null_reference_declaration_count"],
+    )
+    def test_gate_projection_blocked_by_wrong_count(self, field):
+        diagnostics = dict(self._control_diag())
+        diagnostics.pop("multiple_testing_control_preregistration_gate")
+        diagnostics[field] = 4
+        gate = _derive_multiple_testing_control_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            "BLOCKED_BY_INCOMPLETE_MULTIPLE_TESTING_CONTROL_EVIDENCE"
+        )
+        assert gate["evidence"][field] == 4
+
+    # -- 19. Authorization boolean type hardening ----------------------------
+
+    @pytest.mark.parametrize(
+        "field",
+        list(real_validation._REQUIRED_FALSE_MULTIPLE_TESTING_CONTROL_FIELDS),
+    )
+    @pytest.mark.parametrize("value", [0, "false", "true", True, None])
+    def test_control_auth_boolean_hardening(self, tmp_path, field, value):
+        def mutate(packet):
+            packet[field] = value
+
+        with pytest.raises(ValueError, match="fields must be exactly false"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "testing_family_policy",
+            "search_procedure_policy",
+            "multiplicity_control_policy",
+            "statistical_evaluation_policy",
+            "candidate_declaration_count",
+            "null_reference_declaration_count",
+            "required_null_benchmark_gate_status",
+        ],
+    )
+    def test_control_required_field_missing_fails_closed(self, tmp_path, field):
+        def mutate(packet):
+            del packet[field]
+
+        with pytest.raises(ValueError, match="missing required fields"):
+            self._materialize_tampered(tmp_path, mutate)
+
+    # -- 20. Receipt integration ---------------------------------------------
+
+    def test_receipt_integration_full_path(self):
+        contract_diag, manifest_diag, seal_diag, null_diag = (
+            self._upstream_diags()
+        )
+        control_diag = self._control_diag()
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="test",
+            data_quality_receipt_sha256="test",
+            code_commit_sha="test",
+            split_definitions=[{"split_id": 0}],
+            cost_cases=[],
+            strategy_rule_contract_diagnostics=contract_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            oos_seal_diagnostics=seal_diag,
+            null_benchmark_contract_diagnostics=null_diag,
+            multiple_testing_control_diagnostics=control_diag,
+        )
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+        section = receipt["multiple_testing_control_diagnostics"]
+        gate = section["multiple_testing_control_preregistration_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    # -- 21-23. CLI ----------------------------------------------------------
+
+    def _cli_base_args(self, output_dir):
+        return [
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--global-min-timestamp", "2026-01-01T00:00:00Z",
+            "--global-max-timestamp", "2026-02-01T00:00:00Z",
+        ]
+
+    def _cli_upstream_args(self):
+        return [
+            "--strategy-contract-path", self.CONTRACT_PATH,
+            "--strategy-contract-sha256-path", self.CONTRACT_SIDECAR_PATH,
+            "--strategy-contract-commit-binding-path", self.CONTRACT_BINDING_PATH,
+            "--trial-manifest-path", self.MANIFEST_PATH,
+            "--trial-manifest-sha256-path", self.MANIFEST_SIDECAR_PATH,
+            "--oos-seal-path", self.SEAL_PATH,
+            "--oos-seal-sha256-path", self.SEAL_SIDECAR_PATH,
+            "--null-benchmark-path", self.NULL_BENCHMARK_PATH,
+            "--null-benchmark-sha256-path", self.NULL_BENCHMARK_SIDECAR_PATH,
+        ]
+
+    def _cli_control_args(self):
+        return [
+            "--multiple-testing-control-path", self.CONTROL_PATH,
+            "--multiple-testing-control-sha256-path", self.CONTROL_SIDECAR_PATH,
+        ]
+
+    def test_cli_no_control_args_gate_not_loaded(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(self._cli_base_args(output_dir))
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        gate = receipt["multiple_testing_control_diagnostics"][
+            "multiple_testing_control_preregistration_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "MULTIPLE_TESTING_CONTROL_NOT_LOADED"
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_cli_control_without_null_benchmark_fails_closed(self, tmp_path):
+        """Control args without the upstream gates must not pass."""
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(
+            self._cli_base_args(output_dir) + self._cli_control_args()
+        )
+        assert exit_code == 4
+        assert not (output_dir / "real_validation_receipt.json").exists()
+
+    def test_cli_full_path_all_gates_pass_verdict_blocked(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(
+            self._cli_base_args(output_dir)
+            + self._cli_upstream_args()
+            + self._cli_control_args()
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        contract_gate = receipt["strategy_rule_contract_diagnostics"][
+            "contract_packet_gate"
+        ]
+        manifest_gate = receipt["trial_manifest_diagnostics"][
+            "trial_manifest_preregistration_gate"
+        ]
+        seal_gate = receipt["oos_seal_diagnostics"][
+            "oos_seal_preregistration_gate"
+        ]
+        null_gate = receipt["null_benchmark_contract_diagnostics"][
+            "null_benchmark_preregistration_gate"
+        ]
+        control_gate = receipt["multiple_testing_control_diagnostics"][
+            "multiple_testing_control_preregistration_gate"
+        ]
+        assert contract_gate["gate_passed"] is True
+        assert manifest_gate["gate_passed"] is True
+        assert seal_gate["gate_passed"] is True
+        assert null_gate["gate_passed"] is True
+        assert control_gate["gate_passed"] is True
+        assert control_gate["gate_status"] == (
+            MULTIPLE_TESTING_CONTROL_PREREGISTERED_DIAGNOSTIC_ONLY
+        )
+        assert control_gate["gate_downstream_unlocks"] == []
+        assert control_gate["gate_scoring_authorization"] is False
+        assert control_gate["gate_live_authorization"] is False
+        assert control_gate["gate_final_verdict_authorization"] is False
         assert receipt["final_offline_verdict"] == (
             BLOCKED_BY_VALIDATION_IMPLEMENTATION
         )

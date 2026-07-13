@@ -432,3 +432,89 @@ before anything can be compared against it.
 python3 -m json.tool docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.json >/dev/null
 cd docs/contracts/instances && sha256sum -c qnty_offline_edge_null_benchmark_v1.sha256
 ```
+
+### Lane H1 — Multiple-Testing Control Pre-Registration Packet
+
+**Status:** frozen, diagnostic-only, pre-scoring.
+**Verdict impact:** none — `final_offline_verdict` stays
+`BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+
+**Lane H1** pre-registers the test family and multiplicity policy *before* any
+scoring, null generation, candidate comparison, or outcome math exists. It
+proves that the strategy contract, trial manifest, OOS seal, and null benchmark
+declaration are all pre-registered and diagnostic-bound, and that a
+multiple-testing control policy is declared and hash-bound before any
+statistical evaluation exists.
+
+Declaring the family *before* any statistic exists is the point: it is what
+stops a later "we only ever ran one test" claim from being unfalsifiable.
+
+#### Files
+
+| File | Purpose |
+|---|---|
+| `qnty_offline_edge_multiple_testing_control_v1.json` | Multiple-testing control payload (pre-scoring declaration only) |
+| `qnty_offline_edge_multiple_testing_control_v1.sha256` | SHA-256 sidecar of the exact JSON bytes |
+
+#### What Lane H1 does
+
+- Freezes the test-family policy:
+  `SINGLE_PRE_REGISTERED_TRIAL_AND_SINGLE_NULL_REFERENCE_ONLY`.
+- Freezes the search-procedure policy: `NO_SEARCH_NO_POST_HOC_SELECTION`.
+- Freezes the multiplicity-control policy:
+  `NO_ADJUSTMENT_DECLARED_FOR_SINGLE_TRIAL_SINGLE_NULL_REFERENCE_PRE_SCORING`.
+  This declares *why* no adjustment is required (family size 1 × 1), not that
+  adjustment is waived for a larger family.
+- Freezes the statistical-evaluation policy:
+  `NO_STATISTICAL_VALUES_COMPUTED_IN_THIS_LANE`.
+- Freezes the candidate declaration count and the null reference declaration
+  count at exactly `1` each, so the family cannot be silently widened after
+  outcomes exist.
+- Binds to the frozen strategy contract digest (`bound_contract_sha256`).
+- Binds to the frozen trial manifest digest (`bound_trial_manifest_sha256`).
+- Binds to the frozen OOS seal digest (`bound_oos_seal_sha256`).
+- Binds to the frozen null benchmark digest (`bound_null_benchmark_sha256`).
+- Requires the null benchmark gate to pass (gate status
+  `NULL_BENCHMARK_PREREGISTERED_DIAGNOSTIC_ONLY`). A missing or failed null
+  benchmark gate fails closed: the multiple-testing control gate can never pass
+  without it (`BLOCKED_BY_NULL_BENCHMARK_GATE`). Because the null benchmark gate
+  itself requires the OOS seal gate, the whole B→H1 chain is transitively
+  enforced.
+- Emits the diagnostic-only `multiple_testing_control_preregistration_gate`
+  (scope `TEST_FAMILY_AND_NULL_BENCHMARK_BINDING_ONLY`, downstream unlocks
+  empty).
+- All authorization booleans are `false`:
+  `statistical_value_generation_authorized`, `candidate_comparison_authorized`,
+  `null_generation_authorized`, `trial_execution_authorized`,
+  `oos_scoring_authorized`, `scoring_authorization`,
+  `live_integration_authorized`, `paper_integration_authorized`,
+  `final_verdict_authorization`.
+- All downstream dependency booleans are `false`:
+  `trade_position_simulation_dependency_satisfied`,
+  `net_pnl_equity_risk_dependency_satisfied`.
+
+#### What Lane H1 does NOT do
+
+- Does **not** compute any statistical value — no p-values, no confidence
+  intervals, no corrections, no multiplicity math
+  (`statistical_value_generation_authorized` remains `false`).
+- Does **not** generate a null reference (`null_generation_authorized` remains
+  `false`) or compare a candidate against a null
+  (`candidate_comparison_authorized` remains `false`).
+- No scoring, PnL, returns, Sharpe, edge, outcomes, strategy execution, signal
+  generation, live/paper/exchange integration, or verdict advancement.
+- `multiple_testing_control_readiness` remains `false`. Even when the packet
+  validates and the gate passes, this is pre-scoring declaration evidence only.
+- `EDGE_UNPROVEN`, `BLOCK_LIVE_INTEGRATION`, and
+  `BLOCKED_BY_VALIDATION_IMPLEMENTATION` remain.
+- Simulation / net-PnL gates remain false.
+- Does not edit the contract JSON, contract SHA-256 sidecar, contract
+  commit-binding sidecar, trial manifest JSON/sidecar, OOS seal JSON/sidecar, or
+  null benchmark JSON/sidecar.
+
+#### Verification
+
+```bash
+python3 -m json.tool docs/contracts/instances/qnty_offline_edge_multiple_testing_control_v1.json >/dev/null
+cd docs/contracts/instances && sha256sum -c qnty_offline_edge_multiple_testing_control_v1.sha256
+```
