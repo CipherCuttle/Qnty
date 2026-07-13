@@ -9230,6 +9230,403 @@ class TestStrategyRuleContractDiagnostics:
         assert exit_code != 0  # fails closed
 
 
+class TestStrategyRuleContractCommitBindingDiagnostics:
+    """Tests for commit-binding sidecar integration in
+    materialize_strategy_rule_contract_instance_diagnostics()."""
+
+    @staticmethod
+    def _contract_json_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+        )
+
+    @staticmethod
+    def _sidecar_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256"
+        )
+
+    @staticmethod
+    def _commit_binding_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json"
+        )
+
+    # ── Happy path ──────────────────────────────────────────────────────────
+    def test_happy_path_with_commit_binding(self):
+        """Happy path: contract + sidecar + commit binding all valid."""
+        result = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        assert result["contract_commit_sha_bound"] is True
+        assert result["contract_commit_sha_binding_status"] == (
+            "BOUND_BY_PRIOR_COMMIT_CONTAINMENT_SIDECAR"
+        )
+        assert result["contract_containing_commit_digest_matches"] is True
+        assert result["contract_instance_readiness"] is False
+        assert result["contract_scoring_ready"] is False
+        assert result["contract_validation_status"] == (
+            "COMMIT_BOUND_DIAGNOSTIC_ONLY_NOT_SCORING_READY"
+        )
+        assert result["contract_commit_binding_read"] is True
+        assert result["contract_commit_binding_model"] is not None
+        assert result["contract_containing_commit_sha"] is not None
+        assert result["contract_containing_commit_path_verified"] is True
+
+    # ── C1 compatibility: omit commit binding ──────────────────────────────
+    def test_c1_compatibility_omitted_commit_binding(self):
+        """Omitting commit-binding path preserves unresolved placeholder status."""
+        result = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+        )
+        assert result["contract_commit_sha_bound"] is False
+        assert result["contract_commit_sha_binding_status"] == (
+            "UNRESOLVED_SELF_REFERENCE_PLACEHOLDER"
+        )
+        assert result["contract_instance_readiness"] is False
+        assert result["contract_scoring_ready"] is False
+        assert result["contract_validation_status"] == (
+            "BLOCKED_BY_COMMIT_BINDING_PLACEHOLDER"
+        )
+
+    # ── Missing commit-binding file fails closed ───────────────────────────
+    def test_missing_commit_binding_file_fails_closed(self):
+        """Missing commit-binding file raises ValueError when path supplied."""
+        with pytest.raises(ValueError, match="Commit binding sidecar not found"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=self._contract_json_path(),
+                sidecar_path=self._sidecar_path(),
+                commit_binding_path="/nonexistent/commit_binding.json",
+            )
+
+    # ── Malformed commit-binding JSON fails closed ─────────────────────────
+    def test_malformed_commit_binding_json_fails_closed(self, tmp_path):
+        bad_binding = tmp_path / "bad_binding.json"
+        bad_binding.write_text("{invalid json}")
+        with pytest.raises(ValueError, match="Commit binding sidecar JSON parse error"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=self._contract_json_path(),
+                sidecar_path=self._sidecar_path(),
+                commit_binding_path=str(bad_binding),
+            )
+
+    # ── Forbidden dict key in commit binding fails closed ──────────────────
+    def test_commit_binding_forbidden_key_fails_closed(self, tmp_path):
+        contract_bytes = Path(self._contract_json_path()).read_bytes()
+        contract = json.loads(contract_bytes)
+        binding = {
+            "binding_id": "test",
+            "binding_version": "1.0.0",
+            "binding_kind": "test",
+            "contract_id": contract["contract_id"],
+            "contract_source_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json",
+            "contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "contract_sha256": hashlib.sha256(contract_bytes).hexdigest(),
+            "contract_containing_commit_sha": "f6e2c27ccc9271ca3587895fddd165f76eda784d",
+            "contract_containing_commit_role": "test",
+            "contract_commit_binding_model": "test",
+            "self_reference_avoidance": "test",
+            "contract_commit_sha_field_policy": "test",
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "contract_scoring_ready": False,
+            "contract_instance_readiness": False,
+            "pnl": 1,  # forbidden key
+        }
+        binding_path = tmp_path / "forbidden_binding.json"
+        binding_path.write_text(json.dumps(binding, indent=2, sort_keys=True))
+        with pytest.raises(ValueError, match="forbidden dict keys"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=self._contract_json_path(),
+                sidecar_path=self._sidecar_path(),
+                commit_binding_path=str(binding_path),
+            )
+
+    # ── contract_sha256 mismatch fails closed ──────────────────────────────
+    def test_commit_binding_sha256_mismatch_fails_closed(self, tmp_path):
+        contract_bytes = Path(self._contract_json_path()).read_bytes()
+        contract = json.loads(contract_bytes)
+        binding = {
+            "binding_id": "test",
+            "binding_version": "1.0.0",
+            "binding_kind": "test",
+            "contract_id": contract["contract_id"],
+            "contract_source_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json",
+            "contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "contract_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "contract_containing_commit_sha": "f6e2c27ccc9271ca3587895fddd165f76eda784d",
+            "contract_containing_commit_role": "test",
+            "contract_commit_binding_model": "test",
+            "self_reference_avoidance": "test",
+            "contract_commit_sha_field_policy": "test",
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "contract_scoring_ready": False,
+            "contract_instance_readiness": False,
+        }
+        binding_path = tmp_path / "sha256_mismatch_binding.json"
+        binding_path.write_text(json.dumps(binding, indent=2, sort_keys=True))
+        with pytest.raises(ValueError, match="Commit binding contract_sha256 mismatch"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=self._contract_json_path(),
+                sidecar_path=self._sidecar_path(),
+                commit_binding_path=str(binding_path),
+            )
+
+    # ── contract_id mismatch fails closed ──────────────────────────────────
+    def test_commit_binding_contract_id_mismatch_fails_closed(self, tmp_path):
+        contract_bytes = Path(self._contract_json_path()).read_bytes()
+        binding = {
+            "binding_id": "test",
+            "binding_version": "1.0.0",
+            "binding_kind": "test",
+            "contract_id": "wrong_contract_id",
+            "contract_source_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json",
+            "contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "contract_sha256": hashlib.sha256(contract_bytes).hexdigest(),
+            "contract_containing_commit_sha": "f6e2c27ccc9271ca3587895fddd165f76eda784d",
+            "contract_containing_commit_role": "test",
+            "contract_commit_binding_model": "test",
+            "self_reference_avoidance": "test",
+            "contract_commit_sha_field_policy": "test",
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "contract_scoring_ready": False,
+            "contract_instance_readiness": False,
+        }
+        binding_path = tmp_path / "id_mismatch_binding.json"
+        binding_path.write_text(json.dumps(binding, indent=2, sort_keys=True))
+        with pytest.raises(ValueError, match="Commit binding contract_id mismatch"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=self._contract_json_path(),
+                sidecar_path=self._sidecar_path(),
+                commit_binding_path=str(binding_path),
+            )
+
+    # ── Bad commit SHA format fails closed ─────────────────────────────────
+    def test_bad_commit_sha_format_fails_closed(self, tmp_path):
+        contract_bytes = Path(self._contract_json_path()).read_bytes()
+        contract = json.loads(contract_bytes)
+        binding = {
+            "binding_id": "test",
+            "binding_version": "1.0.0",
+            "binding_kind": "test",
+            "contract_id": contract["contract_id"],
+            "contract_source_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json",
+            "contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "contract_sha256": hashlib.sha256(contract_bytes).hexdigest(),
+            "contract_containing_commit_sha": "not-a-valid-sha",
+            "contract_containing_commit_role": "test",
+            "contract_commit_binding_model": "test",
+            "self_reference_avoidance": "test",
+            "contract_commit_sha_field_policy": "test",
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "contract_scoring_ready": False,
+            "contract_instance_readiness": False,
+        }
+        binding_path = tmp_path / "bad_sha_binding.json"
+        binding_path.write_text(json.dumps(binding, indent=2, sort_keys=True))
+        with pytest.raises(ValueError, match="not a valid.*40-hex-char"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=self._contract_json_path(),
+                sidecar_path=self._sidecar_path(),
+                commit_binding_path=str(binding_path),
+            )
+
+    # ── Nonexistent commit SHA fails closed ────────────────────────────────
+    def test_nonexistent_commit_sha_fails_closed(self, tmp_path):
+        contract_bytes = Path(self._contract_json_path()).read_bytes()
+        contract = json.loads(contract_bytes)
+        binding = {
+            "binding_id": "test",
+            "binding_version": "1.0.0",
+            "binding_kind": "test",
+            "contract_id": contract["contract_id"],
+            "contract_source_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json",
+            "contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "contract_sha256": hashlib.sha256(contract_bytes).hexdigest(),
+            "contract_containing_commit_sha": "0000000000000000000000000000000000000000",
+            "contract_containing_commit_role": "test",
+            "contract_commit_binding_model": "test",
+            "self_reference_avoidance": "test",
+            "contract_commit_sha_field_policy": "test",
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "contract_scoring_ready": False,
+            "contract_instance_readiness": False,
+        }
+        binding_path = tmp_path / "nonexistent_sha_binding.json"
+        binding_path.write_text(json.dumps(binding, indent=2, sort_keys=True))
+        with pytest.raises(ValueError, match="git show.*failed"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=self._contract_json_path(),
+                sidecar_path=self._sidecar_path(),
+                commit_binding_path=str(binding_path),
+            )
+
+    # ── Prior commit does not contain path fails closed ────────────────────
+    def test_prior_commit_wrong_path_fails_closed(self, tmp_path):
+        contract_bytes = Path(self._contract_json_path()).read_bytes()
+        contract = json.loads(contract_bytes)
+        binding = {
+            "binding_id": "test",
+            "binding_version": "1.0.0",
+            "binding_kind": "test",
+            "contract_id": contract["contract_id"],
+            "contract_source_path": "nonexistent/path.json",
+            "contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "contract_sha256": hashlib.sha256(contract_bytes).hexdigest(),
+            "contract_containing_commit_sha": "f6e2c27ccc9271ca3587895fddd165f76eda784d",
+            "contract_containing_commit_role": "test",
+            "contract_commit_binding_model": "test",
+            "self_reference_avoidance": "test",
+            "contract_commit_sha_field_policy": "test",
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "contract_scoring_ready": False,
+            "contract_instance_readiness": False,
+        }
+        binding_path = tmp_path / "wrong_path_binding.json"
+        binding_path.write_text(json.dumps(binding, indent=2, sort_keys=True))
+        with pytest.raises(ValueError, match="contract_source_path mismatch"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=self._contract_json_path(),
+                sidecar_path=self._sidecar_path(),
+                commit_binding_path=str(binding_path),
+            )
+
+    # ── Prior commit contains path but bytes digest mismatch ───────────────
+    def test_prior_commit_digest_mismatch_fails_closed(self, tmp_path):
+        """Prior commit contains the path but bytes digest does not match."""
+        contract_bytes = Path(self._contract_json_path()).read_bytes()
+        contract = json.loads(contract_bytes)
+        # Use a different file that exists in the same commit but has different bytes.
+        binding = {
+            "binding_id": "test",
+            "binding_version": "1.0.0",
+            "binding_kind": "test",
+            "contract_id": contract["contract_id"],
+            "contract_source_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json",
+            "contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "contract_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "contract_containing_commit_sha": "f6e2c27ccc9271ca3587895fddd165f76eda784d",
+            "contract_containing_commit_role": "test",
+            "contract_commit_binding_model": "test",
+            "self_reference_avoidance": "test",
+            "contract_commit_sha_field_policy": "test",
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "contract_scoring_ready": False,
+            "contract_instance_readiness": False,
+        }
+        binding_path = tmp_path / "digest_mismatch_binding.json"
+        binding_path.write_text(json.dumps(binding, indent=2, sort_keys=True))
+        with pytest.raises(ValueError, match="Commit binding contract_sha256 mismatch"):
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=self._contract_json_path(),
+                sidecar_path=self._sidecar_path(),
+                commit_binding_path=str(binding_path),
+            )
+
+    # ── CLI happy path with all three args ─────────────────────────────────
+    def test_cli_with_commit_binding_emits_diagnostics(self, tmp_path):
+        """CLI with contract + sidecar + commit binding produces diagnostic
+        section with commit binding true, scoring false, verdict blocked."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+            "--strategy-contract-path", self._contract_json_path(),
+            "--strategy-contract-sha256-path", self._sidecar_path(),
+            "--strategy-contract-commit-binding-path", self._commit_binding_path(),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "strategy_rule_contract_diagnostics" in receipt
+        loaded = receipt["strategy_rule_contract_diagnostics"]
+        assert loaded.get("contract_commit_sha_bound") is True
+        assert loaded.get("contract_commit_sha_binding_status") == (
+            "BOUND_BY_PRIOR_COMMIT_CONTAINMENT_SIDECAR"
+        )
+        assert loaded.get("contract_scoring_ready") is False
+        assert loaded.get("contract_instance_readiness") is False
+        assert loaded.get("contract_validation_status") == (
+            "COMMIT_BOUND_DIAGNOSTIC_ONLY_NOT_SCORING_READY"
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    # ── CLI compatibility: only contract + sidecar args ────────────────────
+    def test_cli_without_commit_binding_preserves_c1_behavior(self, tmp_path):
+        """CLI with only contract + sidecar args: commit binding false/unresolved,
+        no regression."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+            "--strategy-contract-path", self._contract_json_path(),
+            "--strategy-contract-sha256-path", self._sidecar_path(),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        assert receipt_path.exists()
+        receipt = json.loads(receipt_path.read_text())
+        assert "strategy_rule_contract_diagnostics" in receipt
+        loaded = receipt["strategy_rule_contract_diagnostics"]
+        assert loaded.get("contract_commit_sha_bound") is False
+        assert loaded.get("contract_commit_sha_binding_status") == (
+            "UNRESOLVED_SELF_REFERENCE_PLACEHOLDER"
+        )
+        assert loaded.get("contract_scoring_ready") is False
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    # ── Receipt binding: final receipt includes commit-binding diagnostics ──
+    def test_receipt_includes_commit_binding_diagnostics(self, tmp_path):
+        """Final receipt includes commit-binding diagnostics if supplied."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+            "--strategy-contract-path", self._contract_json_path(),
+            "--strategy-contract-sha256-path", self._sidecar_path(),
+            "--strategy-contract-commit-binding-path", self._commit_binding_path(),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        loaded = receipt["strategy_rule_contract_diagnostics"]
+        assert loaded.get("contract_commit_binding_path") is not None
+        assert loaded.get("contract_commit_binding_read") is True
+        assert loaded.get("contract_commit_binding_model") is not None
+        assert loaded.get("contract_containing_commit_sha") is not None
+        assert loaded.get("contract_containing_commit_path_verified") is True
+        assert loaded.get("contract_containing_commit_digest_matches") is True
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
 _TRIAL_MANIFEST_FORBIDDEN_KEYS = frozenset({
     "pnl", "returns", "return", "sharpe", "drawdown", "risk", "edge",
     "strategy_performance", "trade", "trades", "signal", "signals",

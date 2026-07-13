@@ -33,6 +33,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone, timedelta
@@ -6048,6 +6049,76 @@ _CONTRACT_OUTPUT_BOUNDARY_KEYS: frozenset[str] = frozenset({
 })
 
 
+# Required keys that must survive in the commit-binding sidecar JSON.
+_REQUIRED_COMMIT_BINDING_KEYS: frozenset[str] = frozenset({
+    "binding_id",
+    "binding_version",
+    "binding_kind",
+    "contract_id",
+    "contract_source_path",
+    "contract_sha256_sidecar_path",
+    "contract_sha256",
+    "contract_containing_commit_sha",
+    "contract_containing_commit_role",
+    "contract_commit_binding_model",
+    "self_reference_avoidance",
+    "contract_commit_sha_field_policy",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "contract_scoring_ready",
+    "contract_instance_readiness",
+})
+
+
+def _read_git_blob_bytes_at_commit(
+    *,
+    commit_sha: str,
+    repo_relative_path: str,
+) -> bytes:
+    """Read the bytes of a file at a given git commit.
+
+    Uses ``git show <commit_sha>:<repo_relative_path>`` via subprocess.
+    Fails closed with ``ValueError`` on any nonzero exit.
+
+    *commit_sha* must be a valid git commit SHA (40 hex chars).
+    *repo_relative_path* must be a path relative to the repo root as git
+    would resolve it (forward slashes, no leading ``./``).
+    """
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
+        raise ValueError(
+            f"commit_sha must be exactly 40 hex characters, got {commit_sha!r}"
+        )
+
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{commit_sha}:{repo_relative_path}"],
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        raise ValueError(
+            "git executable not found — cannot verify commit containment"
+        )
+    except subprocess.TimeoutExpired:
+        raise ValueError(
+            "git show timed out while reading commit blob"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"git subprocess error: {exc}"
+        )
+
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(
+            f"git show {commit_sha}:{repo_relative_path} failed "
+            f"(exit {result.returncode}): {stderr}"
+        )
+
+    return result.stdout
+
+
 def _find_forbidden_contract_dict_keys(
     value: Any,
     *,
@@ -6085,9 +6156,17 @@ def materialize_strategy_rule_contract_instance_diagnostics(
     *,
     contract_path: str,
     sidecar_path: str,
+    commit_binding_path: str | None = None,
 ) -> dict[str, Any]:
     """Read, parse, hash-check, and audit the frozen strategy-rule contract
     packet, returning a diagnostic-only dict.
+
+    When *commit_binding_path* is supplied, the function also loads the
+    commit-binding sidecar and verifies that the referenced prior git commit
+    contains the exact contract bytes matching the SHA-256 sidecar digest.
+    This is a non-self-referential containment check: the binding points to
+    a prior commit that already exists on main, not to the current PR's own
+    merge commit.
 
     This function performs **no** scoring, strategy definition, signal
     calculation, PnL, edge, or live-readiness. The returned diagnostic is
@@ -6099,11 +6178,17 @@ def materialize_strategy_rule_contract_instance_diagnostics(
     Raises ``ValueError`` on any fail-closed condition:
     - missing / malformed JSON or sidecar
     - sidecar digest mismatch
-    - forbidden dict key found
-    - required field missing
+    - forbidden dict key found (contract or commit-binding sidecar)
+    - required field missing (contract or commit-binding sidecar)
     - input ceiling violation
     - output-boundary missing
     - downstream dependency boolean true
+    - commit-binding sidecar missing / malformed / invalid
+    - commit-binding contract_id mismatch
+    - commit-binding sha256 mismatch with computed contract bytes
+    - referenced commit SHA not 40 hex chars
+    - git show fails for the referenced commit + path
+    - prior commit blob digest does not match expected sha256
     """
     # --- Read contract JSON bytes ---
     try:
@@ -6243,10 +6328,139 @@ def materialize_strategy_rule_contract_instance_diagnostics(
     contract_commit_sha_field = contract.get("contract_commit_sha", "")
     commit_is_placeholder = contract_commit_sha_field == "TO_BE_FILLED_AFTER_MERGE"
 
+    # Default commit binding diagnostics (unresolved).
+    contract_commit_sha_bound = False
+    contract_commit_binding_read = False
+    contract_commit_binding_path_value = None
+    contract_commit_binding_model = None
+    contract_containing_commit_sha = None
+    contract_containing_commit_path_verified = False
+    contract_containing_commit_digest_matches = False
+    if commit_is_placeholder:
+        contract_commit_sha_binding_status = "UNRESOLVED_SELF_REFERENCE_PLACEHOLDER"
+    else:
+        contract_commit_sha_binding_status = "UNBOUND"
+
+    # --- Commit binding sidecar (optional C2) ---
+    if commit_binding_path is not None:
+        # Load and parse the commit-binding JSON.
+        try:
+            commit_binding_bytes = Path(commit_binding_path).read_bytes()
+        except FileNotFoundError:
+            raise ValueError(
+                f"Commit binding sidecar not found: {commit_binding_path}"
+            )
+        except OSError as exc:
+            raise ValueError(
+                f"Commit binding sidecar read error {commit_binding_path}: {exc}"
+            )
+
+        try:
+            commit_binding: dict = json.loads(commit_binding_bytes)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Commit binding sidecar JSON parse error: {exc}"
+            )
+
+        if not isinstance(commit_binding, dict):
+            raise ValueError(
+                "Commit binding sidecar root must be a dict"
+            )
+
+        # Verify required binding keys exist.
+        missing_binding_keys = _REQUIRED_COMMIT_BINDING_KEYS - set(commit_binding.keys())
+        if missing_binding_keys:
+            raise ValueError(
+                f"Commit binding sidecar missing required keys: "
+                f"{sorted(missing_binding_keys)}"
+            )
+
+        # Scan commit binding sidecar dict keys against forbidden set.
+        binding_forbidden_collisions = _find_forbidden_contract_dict_keys(
+            commit_binding
+        )
+        if binding_forbidden_collisions:
+            collision_repr = ", ".join(
+                f"{c['key']!r} at {c['path']}"
+                for c in binding_forbidden_collisions
+            )
+            raise ValueError(
+                f"Commit binding sidecar contains forbidden dict keys: "
+                f"{collision_repr}"
+            )
+
+        # Verify contract_id matches.
+        binding_contract_id = commit_binding.get("contract_id", "")
+        expected_contract_id = contract.get("contract_id", "")
+        if binding_contract_id != expected_contract_id:
+            raise ValueError(
+                f"Commit binding contract_id mismatch: "
+                f"binding={binding_contract_id!r}, "
+                f"contract={expected_contract_id!r}"
+            )
+
+        # Verify contract_source_path matches (normalized repo-relative).
+        binding_source_path = commit_binding.get("contract_source_path", "")
+        expected_source_path = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+        if binding_source_path != expected_source_path:
+            raise ValueError(
+                f"Commit binding contract_source_path mismatch: "
+                f"binding={binding_source_path!r}, "
+                f"expected={expected_source_path!r}"
+            )
+
+        # Verify contract_sha256 matches computed SHA-256.
+        binding_sha256 = commit_binding.get("contract_sha256", "")
+        if binding_sha256 != json_sha256:
+            raise ValueError(
+                f"Commit binding contract_sha256 mismatch: "
+                f"binding={binding_sha256}, "
+                f"computed={json_sha256}"
+            )
+
+        # Verify contract_containing_commit_sha is 40 hex characters.
+        containing_commit_sha = commit_binding.get("contract_containing_commit_sha", "")
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", containing_commit_sha):
+            raise ValueError(
+                f"Commit binding contract_containing_commit_sha is not a valid "
+                f"40-hex-char SHA: {containing_commit_sha!r}"
+            )
+
+        # Verify that the prior commit contains the contract source path
+        # with exact bytes matching the expected SHA-256.
+        prior_blob_bytes = _read_git_blob_bytes_at_commit(
+            commit_sha=containing_commit_sha,
+            repo_relative_path=binding_source_path,
+        )
+        prior_blob_sha256 = hashlib.sha256(prior_blob_bytes).hexdigest()
+        prior_digest_matches = prior_blob_sha256 == binding_sha256
+
+        if not prior_digest_matches:
+            raise ValueError(
+                f"Prior commit {containing_commit_sha} contains "
+                f"{binding_source_path} but bytes digest mismatch: "
+                f"expected {binding_sha256}, got {prior_blob_sha256}"
+            )
+
+        # Commit binding succeeded.
+        contract_commit_sha_bound = True
+        contract_commit_binding_read = True
+        contract_commit_binding_path_value = str(commit_binding_path)
+        contract_commit_binding_model = str(
+            commit_binding.get("contract_commit_binding_model", "")
+        )
+        contract_containing_commit_sha = containing_commit_sha
+        contract_containing_commit_path_verified = True
+        contract_containing_commit_digest_matches = True
+        contract_commit_sha_binding_status = (
+            "BOUND_BY_PRIOR_COMMIT_CONTAINMENT_SIDECAR"
+        )
+
     return {
         "diagnostic_kind": "strategy_rule_contract_instance",
         "contract_source_path": contract_path,
         "contract_sidecar_path": sidecar_path,
+        "contract_commit_binding_path": contract_commit_binding_path_value,
         "contract_packet_read": True,
         "json_parse_ok": True,
         "sidecar_parse_ok": True,
@@ -6267,27 +6481,40 @@ def materialize_strategy_rule_contract_instance_diagnostics(
         "downstream_dependency_booleans_all_false": True,
         "contract_runner_read_status": "DIAGNOSTIC_READ_ONLY",
         "contract_commit_sha_field_value": contract_commit_sha_field,
-        "contract_commit_sha_bound": False,
-        "contract_commit_sha_binding_status": (
-            "UNRESOLVED_SELF_REFERENCE_PLACEHOLDER"
-            if commit_is_placeholder
-            else "UNBOUND"
+        "contract_commit_sha_bound": contract_commit_sha_bound,
+        "contract_commit_sha_binding_status": contract_commit_sha_binding_status,
+        "contract_commit_binding_read": contract_commit_binding_read,
+        "contract_commit_binding_model": contract_commit_binding_model,
+        "contract_containing_commit_sha": contract_containing_commit_sha,
+        "contract_containing_commit_path_verified": (
+            contract_containing_commit_path_verified
+        ),
+        "contract_containing_commit_digest_matches": (
+            contract_containing_commit_digest_matches
         ),
         "contract_instance_readiness": False,
         "contract_scoring_ready": False,
-        "contract_validation_status": "BLOCKED_BY_COMMIT_BINDING_PLACEHOLDER",
+        "contract_validation_status": (
+            "COMMIT_BOUND_DIAGNOSTIC_ONLY_NOT_SCORING_READY"
+            if contract_commit_sha_bound
+            else "BLOCKED_BY_COMMIT_BINDING_PLACEHOLDER"
+        ),
     }
 
 
 def _build_strategy_rule_contract_diagnostics(
     contract_path: str | None = None,
     sidecar_path: str | None = None,
+    commit_binding_path: str | None = None,
 ) -> dict[str, Any]:
     """Build a diagnostic-only section for the strategy rule contract.
 
     If *contract_path* and *sidecar_path* are both provided and resolve to
     existing files, the frozen contract instance is loaded, hash-checked, and
     audited via :func:`materialize_strategy_rule_contract_instance_diagnostics`.
+
+    When *commit_binding_path* is provided, the materializer additionally
+    verifies non-self-referential prior-commit containment of the contract bytes.
 
     Otherwise a hardcoded ``CONTRACT_NOT_DEFINED`` diagnostic is returned.
 
@@ -6302,6 +6529,7 @@ def _build_strategy_rule_contract_diagnostics(
         return materialize_strategy_rule_contract_instance_diagnostics(
             contract_path=contract_path,
             sidecar_path=sidecar_path,
+            commit_binding_path=commit_binding_path,
         )
 
     return {
@@ -7311,6 +7539,17 @@ def build_parser() -> argparse.ArgumentParser:
             "Required if --strategy-contract-path is provided."
         ),
     )
+    parser.add_argument(
+        "--strategy-contract-commit-binding-path",
+        default=None,
+        type=str,
+        help=(
+            "Optional path to the commit-binding sidecar JSON for the frozen "
+            "strategy-rule contract. If provided, the materializer verifies "
+            "non-self-referential prior-commit containment of the contract bytes. "
+            "Requires --strategy-contract-path and --strategy-contract-sha256-path."
+        ),
+    )
     return parser
 
 
@@ -7486,6 +7725,7 @@ def main(argv: list[str] | None = None) -> int:
                 _build_strategy_rule_contract_diagnostics(
                     contract_path=args.strategy_contract_path,
                     sidecar_path=args.strategy_contract_sha256_path,
+                    commit_binding_path=args.strategy_contract_commit_binding_path,
                 )
             )
             trial_manifest_diagnostics = _build_trial_manifest_diagnostics()
@@ -7598,6 +7838,7 @@ def main(argv: list[str] | None = None) -> int:
                 _build_strategy_rule_contract_diagnostics(
                     contract_path=args.strategy_contract_path,
                     sidecar_path=args.strategy_contract_sha256_path,
+                    commit_binding_path=args.strategy_contract_commit_binding_path,
                 )
             )
             trial_manifest_diagnostics = _build_trial_manifest_diagnostics()

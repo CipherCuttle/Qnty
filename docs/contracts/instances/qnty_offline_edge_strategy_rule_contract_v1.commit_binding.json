@@ -1,0 +1,18 @@
+{
+  "binding_id": "qnty_offline_edge_strategy_rule_contract_v1_commit_binding_c2",
+  "binding_version": "1.0.0",
+  "binding_kind": "NON_SELF_REFERENTIAL_PRIOR_COMMIT_CONTAINS_CONTRACT_BYTES",
+  "contract_id": "qnty_offline_edge_strategy_rule_contract_v1",
+  "contract_source_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json",
+  "contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+  "contract_sha256": "d6462a76c8f2bde79352baab2de0bd6dff3ad6b0f4139c6fba9f7764df04e0d9",
+  "contract_containing_commit_sha": "f6e2c27ccc9271ca3587895fddd165f76eda784d",
+  "contract_containing_commit_role": "prior_main_merge_commit_that_contains_contract_bytes",
+  "contract_commit_binding_model": "sidecar_points_to_prior_commit_containing_exact_contract_bytes",
+  "self_reference_avoidance": "binding_sidecar_does_not_claim_its_own_future_merge_commit",
+  "contract_commit_sha_field_policy": "contract_json_field_may_remain_TO_BE_FILLED_AFTER_MERGE; this sidecar is the authoritative non-self-referential containment binding",
+  "scoring_authorization": false,
+  "live_integration_authorized": false,
+  "contract_scoring_ready": false,
+  "contract_instance_readiness": false
+}
