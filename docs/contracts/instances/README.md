@@ -276,3 +276,45 @@ python3 -m json.tool qnty_offline_edge_strategy_rule_contract_v1.json > /dev/nul
 
 # Verify SHA-256 sidecar
 cd docs/contracts/instances && sha256sum -c qnty_offline_edge_strategy_rule_contract_v1.sha256
+
+## Lane E1 — Trial Manifest Pre-Registration Packet
+
+This directory also contains the frozen trial manifest pre-registration packet
+for the offline-edge validation ladder.
+
+**Lane E1** per the spec: *"Trial manifest pre-registers candidate/trial count,
+binds to contract digest and contract packet gate, no hyperparameter search,
+one authorized trial declaration, diagnostic-only."*
+
+### Files
+
+| File | Purpose |
+|---|---|
+| `qnty_offline_edge_trial_manifest_v1.json` | Trial manifest payload (pre-registration only) |
+| `qnty_offline_edge_trial_manifest_v1.sha256` | SHA-256 sidecar of the exact JSON bytes |
+
+### What Lane E1 does
+
+- Pre-registers a single no-search trial declaration (`funding_carry_v1_declaration_only`).
+- Binds to the frozen strategy contract digest and requires the contract packet gate.
+- Declares `authorized_trial_count = 1`, `trial_count_frozen = true`,
+  `hyperparameter_search_policy = "NO_SEARCH"`, `free_parameter_count = 0`.
+- All authorization booleans are `false`:
+  `trial_execution_authorized`, `scoring_authorization`,
+  `live_integration_authorized`, `paper_integration_authorized`,
+  `final_verdict_authorization`.
+- All downstream dependency booleans are `false`:
+  `oos_seal_dependency_satisfied`, `null_benchmark_dependency_satisfied`,
+  `multiple_testing_dependency_satisfied`,
+  `trade_position_simulation_dependency_satisfied`,
+  `net_pnl_equity_risk_dependency_satisfied`.
+
+### What Lane E1 does NOT do
+
+- No scoring, PnL, outcomes, strategy execution, signal generation,
+  live/paper/exchange integration, or verdict advancement.
+- `trial_manifest_readiness` remains `false`.
+- `trial_scoring_ready` remains `false`.
+- `EDGE_UNPROVEN`, `BLOCK_LIVE_INTEGRATION`, and
+  `BLOCKED_BY_VALIDATION_IMPLEMENTATION` remain.
+- OOS/null/multiple-testing/simulation/net-PnL gates remain false.

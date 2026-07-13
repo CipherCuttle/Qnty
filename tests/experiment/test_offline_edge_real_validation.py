@@ -81,6 +81,9 @@ from quantbot.experiment.offline_edge_real_validation import (
     TRIAL_MANIFEST_NOT_DEFINED,
     TRIAL_MANIFEST_BLOCKED_REASON_NOT_DEFINED,
     _build_trial_manifest_diagnostics,
+    _derive_trial_manifest_preregistration_gate,
+    _REQUIRED_FALSE_TRIAL_MANIFEST_FIELDS,
+    materialize_trial_manifest_preregistration_diagnostics,
     OOS_SEAL_VERSION,
     OOS_SEAL_DIAGNOSTIC_ONLY,
     OOS_SEAL_NOT_DEFINED,
@@ -9704,6 +9707,24 @@ class TestStrategyRuleContractCommitBindingDiagnostics:
             )
 
 
+    def test_materialized_contract_diagnostics_preserve_contract_id(self):
+        """Prove real contract diagnostics preserve identity fields for E1.
+
+        Regression: materialize_strategy_rule_contract_instance_diagnostics()
+        must include contract_id/version/status so trial manifest binding
+        does not fail with 'contract diagnostic says None'.
+        """
+        diagnostics = _build_strategy_rule_contract_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        assert diagnostics["contract_id"] == "qnty_offline_edge_strategy_rule_contract_v1"
+        assert diagnostics["contract_version"] == "1.0.0"
+        assert diagnostics["contract_status"] == "FROZEN_DECLARATION_ONLY"
+        assert diagnostics["contract_packet_gate"]["gate_passed"] is True
+
+
 class TestStrategyRuleContractPacketGate:
     """Tests for _derive_strategy_rule_contract_packet_gate() — Lane D1.
 
@@ -12061,6 +12082,732 @@ class TestFinalOfflineEdgeVerdictLogicDiagnostics:
             FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED
         )
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
+class TestTrialManifestPreregistrationMaterializer:
+    """Tests for materialize_trial_manifest_preregistration_diagnostics()."""
+
+    # ── Helpers ──────────────────────────────────────────────────────────
+
+    def _write_manifest(self, tmp_path: Path, overrides: dict | None = None) -> Path:
+        """Write a valid trial manifest JSON and return its path."""
+        data = {
+            "manifest_id": "qnty_offline_edge_trial_manifest_v1",
+            "manifest_version": "1.0.0",
+            "manifest_kind": "TRIAL_MANIFEST_PRE_REGISTRATION_ONLY",
+            "manifest_status": "FROZEN_PRE_REGISTRATION_ONLY",
+            "manifest_hash": "FROZEN_IN_SIDECAR",
+            "manifest_hash_algorithm": "sha256",
+            "manifest_hash_scope": "exact committed JSON bytes, excluding sidecar",
+            "manifest_hash_status": "FROZEN_IN_SIDECAR",
+            "bound_contract_id": "qnty_offline_edge_strategy_rule_contract_v1",
+            "bound_contract_sha256": "d6462a76c8f2bde79352baab2de0bd6dff3ad6b0f4139c6fba9f7764df04e0d9",
+            "bound_contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "bound_contract_commit_binding_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json",
+            "required_contract_packet_gate_status": "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY",
+            "required_contract_packet_gate_scope": "CONTRACT_PACKET_EXISTENCE_HASH_AND_COMMIT_BINDING_ONLY",
+            "candidate_id": "funding_carry_v1_declaration_only",
+            "hypothesis_id": "funding_carry_v1_pre_scoring",
+            "candidate_family": "funding_carry_declaration_only",
+            "trial_policy": "SINGLE_TRIAL_NO_SEARCH",
+            "authorized_trial_count": 1,
+            "trial_count_frozen": True,
+            "hyperparameter_search_policy": "NO_SEARCH",
+            "free_parameter_count": 0,
+            "declared_parameter_names": [],
+            "dataset_binding_policy": "USES_EXISTING_OFFLINE_EDGE_INPUT_INVENTORY_AT_RUNTIME",
+            "split_binding_policy": "USES_EXISTING_DETERMINISTIC_SPLIT_DEFINITIONS_AT_RUNTIME",
+            "symbol_universe_policy": "USES_VALIDATION_INVENTORY_SYMBOLS_AT_RUNTIME_NOT_FROZEN_HERE",
+            "trial_execution_authorized": False,
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "paper_integration_authorized": False,
+            "final_verdict_authorization": False,
+            "oos_seal_dependency_satisfied": False,
+            "null_benchmark_dependency_satisfied": False,
+            "multiple_testing_dependency_satisfied": False,
+            "trade_position_simulation_dependency_satisfied": False,
+            "net_pnl_equity_risk_dependency_satisfied": False,
+        }
+        if overrides:
+            data.update(overrides)
+        json_str = json.dumps(data, sort_keys=True, indent=2) + "\n"
+        path = tmp_path / "trial_manifest.json"
+        path.write_text(json_str)
+        return path
+
+    def _write_sidecar(self, tmp_path: Path, manifest_path: Path) -> Path:
+        """Write a valid SHA-256 sidecar for the manifest and return its path."""
+        digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        sidecar_path = tmp_path / "trial_manifest.sha256"
+        sidecar_path.write_text(f"{digest}  {manifest_path.name}\n")
+        return sidecar_path
+
+    def _make_contract_diagnostics(self, gate_passed: bool = True) -> dict:
+        """Build a mock strategy-rule contract diagnostics dict."""
+        return {
+            "contract_id": "qnty_offline_edge_strategy_rule_contract_v1",
+            "json_sha256": "d6462a76c8f2bde79352baab2de0bd6dff3ad6b0f4139c6fba9f7764df04e0d9",
+            "contract_packet_gate": {
+                "gate_passed": gate_passed,
+                "gate_status": (
+                    "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY"
+                    if gate_passed
+                    else "BLOCKED_BY_INCOMPLETE_EVIDENCE"
+                ),
+            },
+        }
+
+    # ── Happy path tests ────────────────────────────────────────────────
+
+    def test_manifest_json_sidecar_happy_path(self, tmp_path):
+        """Validate manifest sidecar, strict key scan passes, hash authority sidecar."""
+        manifest_path = self._write_manifest(tmp_path)
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+
+        result = materialize_trial_manifest_preregistration_diagnostics(
+            manifest_path=str(manifest_path),
+            sidecar_path=str(sidecar_path),
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+        assert result["manifest_sidecar_digest_matches_json_bytes"] is True
+        assert result["manifest_forbidden_dict_key_scan_passed"] is True
+        assert result["manifest_hash_authority"] == "SIDECAR"
+        assert result["manifest_hash_field_value"] == "FROZEN_IN_SIDECAR"
+        assert result["manifest_hash_status"] == "FROZEN_IN_SIDECAR"
+
+    def test_trial_manifest_diagnostic_happy_path(self, tmp_path):
+        """Build C2 contract diagnostics, build trial manifest diagnostics."""
+        manifest_path = self._write_manifest(tmp_path)
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+
+        result = materialize_trial_manifest_preregistration_diagnostics(
+            manifest_path=str(manifest_path),
+            sidecar_path=str(sidecar_path),
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+        assert result["manifest_sidecar_digest_matches_json_bytes"] is True
+        assert result["bound_contract_digest_matches"] is True
+        assert result["contract_packet_gate_passed"] is True
+        assert result["authorized_trial_count"] == 1
+        assert result["hyperparameter_search_policy"] == "NO_SEARCH"
+        assert result["free_parameter_count"] == 0
+        assert result["trial_execution_authorized"] is False
+        assert result["trial_scoring_ready"] is False
+
+    def test_trial_manifest_gate_derived_happy_path(self, tmp_path):
+        """Gate passed true, status preregistered, scoring/live/final false."""
+        manifest_path = self._write_manifest(tmp_path)
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+
+        diagnostics = materialize_trial_manifest_preregistration_diagnostics(
+            manifest_path=str(manifest_path),
+            sidecar_path=str(sidecar_path),
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == "TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY"
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    # ── Fail-closed tests ───────────────────────────────────────────────
+
+    def test_manifest_missing_fails_closed(self, tmp_path):
+        """Manifest file missing raises ValueError."""
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="not found"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(tmp_path / "nonexistent.json"),
+                sidecar_path=str(tmp_path / "nonexistent.sha256"),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_sidecar_missing_fails_closed(self, tmp_path):
+        """Sidecar file missing raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="not found"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(tmp_path / "nonexistent.sha256"),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_digest_mismatch_fails_closed(self, tmp_path):
+        """Sidecar digest mismatch raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path)
+        sidecar_path = tmp_path / "trial_manifest.sha256"
+        sidecar_path.write_text("0000000000000000000000000000000000000000000000000000000000000000  bad.json\n")
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="digest mismatch"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_malformed_json_fails_closed(self, tmp_path):
+        """Malformed manifest JSON raises ValueError."""
+        manifest_path = tmp_path / "bad.json"
+        manifest_path.write_text("{bad json}\n")
+        sidecar_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        sidecar_path = tmp_path / "bad.sha256"
+        sidecar_path.write_text(f"{sidecar_digest}  bad.json\n")
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="parse error"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_forbidden_dict_key_fails_closed(self, tmp_path):
+        """Forbidden dict key in manifest raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path, overrides={"pnl": 1})
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="forbidden"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_contract_digest_mismatch_fails_closed(self, tmp_path):
+        """Bound contract digest mismatch raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path, overrides={
+            "bound_contract_sha256": "0" * 64,
+        })
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="mismatch"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_contract_packet_gate_false_blocks(self, tmp_path):
+        """Contract packet gate missing/false blocks manifest."""
+        manifest_path = self._write_manifest(tmp_path)
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=False)
+        with pytest.raises(ValueError, match="gate not passed"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_authorized_trial_count_not_one_fails(self, tmp_path):
+        """authorized_trial_count != 1 raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path, overrides={"authorized_trial_count": 2})
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="authorized_trial_count"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_trial_count_frozen_false_fails(self, tmp_path):
+        """trial_count_frozen=False raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path, overrides={"trial_count_frozen": False})
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="trial_count_frozen"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_hyperparameter_search_policy_not_no_search_fails(self, tmp_path):
+        """hyperparameter_search_policy != 'NO_SEARCH' raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path, overrides={
+            "hyperparameter_search_policy": "GRID_SEARCH",
+        })
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="hyperparameter_search_policy"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_free_parameter_count_not_zero_fails(self, tmp_path):
+        """free_parameter_count != 0 raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path, overrides={"free_parameter_count": 1})
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="free_parameter_count"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_declared_parameter_names_non_empty_fails(self, tmp_path):
+        """declared_parameter_names non-empty raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path, overrides={
+            "declared_parameter_names": ["lookback"],
+        })
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="declared_parameter_names"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── Authorization boolean type hardening ────────────────────────────
+
+    def test_scoring_authorization_zero_fails(self, tmp_path):
+        """scoring_authorization=0 raises ValueError (not False)."""
+        manifest_path = self._write_manifest(tmp_path, overrides={"scoring_authorization": 0})
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="exactly false"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_scoring_authorization_string_false_fails(self, tmp_path):
+        """scoring_authorization='false' (string) raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path, overrides={"scoring_authorization": "false"})
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="exactly false"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    def test_scoring_authorization_true_fails(self, tmp_path):
+        """scoring_authorization=true raises ValueError."""
+        manifest_path = self._write_manifest(tmp_path, overrides={"scoring_authorization": True})
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+        with pytest.raises(ValueError, match="exactly false"):
+            materialize_trial_manifest_preregistration_diagnostics(
+                manifest_path=str(manifest_path),
+                sidecar_path=str(sidecar_path),
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+
+class TestTrialManifestPreregistrationGate:
+    """Tests for _derive_trial_manifest_preregistration_gate()."""
+
+    def _make_full_diagnostics(self) -> dict:
+        """Build a full passing diagnostics dict for the gate."""
+        return {
+            "diagnostic_kind": "trial_manifest_preregistration",
+            "manifest_packet_read": True,
+            "manifest_json_parse_ok": True,
+            "manifest_sidecar_parse_ok": True,
+            "manifest_hash_authority": "SIDECAR",
+            "manifest_hash_field_value": "FROZEN_IN_SIDECAR",
+            "manifest_hash_status": "FROZEN_IN_SIDECAR",
+            "manifest_required_fields_present": True,
+            "manifest_forbidden_dict_key_scan_passed": True,
+            "manifest_sidecar_digest_matches_json_bytes": True,
+            "bound_contract_digest_matches": True,
+            "contract_packet_gate_passed": True,
+            "authorized_trial_count": 1,
+            "trial_count_frozen": True,
+            "hyperparameter_search_policy": "NO_SEARCH",
+            "free_parameter_count": 0,
+            "trial_execution_authorized": False,
+            "trial_scoring_ready": False,
+            "trial_manifest_readiness": False,
+        }
+
+    def test_gate_passes_with_full_diagnostics(self):
+        diagnostics = self._make_full_diagnostics()
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == "TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY"
+        assert gate["blocked_reason"] is None
+
+    def test_gate_fails_when_manifest_not_read(self):
+        diagnostics = self._make_full_diagnostics()
+        diagnostics["manifest_packet_read"] = False
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+
+    def test_gate_fails_when_sidecar_mismatch(self):
+        diagnostics = self._make_full_diagnostics()
+        diagnostics["manifest_sidecar_digest_matches_json_bytes"] = False
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+
+    def test_gate_fails_when_forbidden_key_found(self):
+        diagnostics = self._make_full_diagnostics()
+        diagnostics["manifest_forbidden_dict_key_scan_passed"] = False
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+
+    def test_gate_fails_when_contract_digest_mismatch(self):
+        diagnostics = self._make_full_diagnostics()
+        diagnostics["bound_contract_digest_matches"] = False
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+
+    def test_gate_fails_when_contract_packet_gate_not_passed(self):
+        diagnostics = self._make_full_diagnostics()
+        diagnostics["contract_packet_gate_passed"] = False
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+
+    def test_gate_fails_when_trial_count_not_one(self):
+        diagnostics = self._make_full_diagnostics()
+        diagnostics["authorized_trial_count"] = 2
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+
+    def test_gate_fails_when_trial_count_not_frozen(self):
+        diagnostics = self._make_full_diagnostics()
+        diagnostics["trial_count_frozen"] = False
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+
+    def test_gate_fails_when_search_policy_not_no_search(self):
+        diagnostics = self._make_full_diagnostics()
+        diagnostics["hyperparameter_search_policy"] = "GRID_SEARCH"
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+
+    def test_gate_fails_when_free_params_not_zero(self):
+        diagnostics = self._make_full_diagnostics()
+        diagnostics["free_parameter_count"] = 1
+        gate = _derive_trial_manifest_preregistration_gate(diagnostics)
+        assert gate["gate_passed"] is False
+
+
+class TestTrialManifestPreregistrationBuildDiagnostics:
+    """Tests for _build_trial_manifest_diagnostics() with optional args."""
+
+    def _write_manifest(self, tmp_path: Path) -> Path:
+        data = {
+            "manifest_id": "qnty_offline_edge_trial_manifest_v1",
+            "manifest_version": "1.0.0",
+            "manifest_kind": "TRIAL_MANIFEST_PRE_REGISTRATION_ONLY",
+            "manifest_status": "FROZEN_PRE_REGISTRATION_ONLY",
+            "manifest_hash": "FROZEN_IN_SIDECAR",
+            "manifest_hash_algorithm": "sha256",
+            "manifest_hash_scope": "exact committed JSON bytes, excluding sidecar",
+            "manifest_hash_status": "FROZEN_IN_SIDECAR",
+            "bound_contract_id": "qnty_offline_edge_strategy_rule_contract_v1",
+            "bound_contract_sha256": "d6462a76c8f2bde79352baab2de0bd6dff3ad6b0f4139c6fba9f7764df04e0d9",
+            "bound_contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "bound_contract_commit_binding_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json",
+            "required_contract_packet_gate_status": "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY",
+            "required_contract_packet_gate_scope": "CONTRACT_PACKET_EXISTENCE_HASH_AND_COMMIT_BINDING_ONLY",
+            "candidate_id": "funding_carry_v1_declaration_only",
+            "hypothesis_id": "funding_carry_v1_pre_scoring",
+            "candidate_family": "funding_carry_declaration_only",
+            "trial_policy": "SINGLE_TRIAL_NO_SEARCH",
+            "authorized_trial_count": 1,
+            "trial_count_frozen": True,
+            "hyperparameter_search_policy": "NO_SEARCH",
+            "free_parameter_count": 0,
+            "declared_parameter_names": [],
+            "dataset_binding_policy": "USES_EXISTING_OFFLINE_EDGE_INPUT_INVENTORY_AT_RUNTIME",
+            "split_binding_policy": "USES_EXISTING_DETERMINISTIC_SPLIT_DEFINITIONS_AT_RUNTIME",
+            "symbol_universe_policy": "USES_VALIDATION_INVENTORY_SYMBOLS_AT_RUNTIME_NOT_FROZEN_HERE",
+            "trial_execution_authorized": False,
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "paper_integration_authorized": False,
+            "final_verdict_authorization": False,
+            "oos_seal_dependency_satisfied": False,
+            "null_benchmark_dependency_satisfied": False,
+            "multiple_testing_dependency_satisfied": False,
+            "trade_position_simulation_dependency_satisfied": False,
+            "net_pnl_equity_risk_dependency_satisfied": False,
+        }
+        json_str = json.dumps(data, sort_keys=True, indent=2) + "\n"
+        path = tmp_path / "trial_manifest.json"
+        path.write_text(json_str)
+        return path
+
+    def _write_sidecar(self, tmp_path: Path, manifest_path: Path) -> Path:
+        digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        sidecar_path = tmp_path / "trial_manifest.sha256"
+        sidecar_path.write_text(f"{digest}  {manifest_path.name}\n")
+        return sidecar_path
+
+    def _make_contract_diagnostics(self, gate_passed: bool = True) -> dict:
+        return {
+            "contract_id": "qnty_offline_edge_strategy_rule_contract_v1",
+            "json_sha256": "d6462a76c8f2bde79352baab2de0bd6dff3ad6b0f4139c6fba9f7764df04e0d9",
+            "contract_packet_gate": {
+                "gate_passed": gate_passed,
+                "gate_status": (
+                    "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY"
+                    if gate_passed
+                    else "BLOCKED_BY_INCOMPLETE_EVIDENCE"
+                ),
+            },
+        }
+
+    def test_no_args_returns_absence_with_gate_false(self):
+        """No args: gate exists but false/not loaded."""
+        result = _build_trial_manifest_diagnostics()
+        assert result["trial_manifest_status"] == TRIAL_MANIFEST_NOT_DEFINED
+        gate = result.get("trial_manifest_preregistration_gate", {})
+        assert gate.get("gate_passed") is False
+        assert gate.get("gate_status") == "TRIAL_MANIFEST_NOT_LOADED"
+
+    def test_full_args_trial_manifest_gate_passes(self, tmp_path):
+        """With all contract + trial manifest args, gate passes."""
+        manifest_path = self._write_manifest(tmp_path)
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        contract_diag = self._make_contract_diagnostics(gate_passed=True)
+
+        result = _build_trial_manifest_diagnostics(
+            manifest_path=str(manifest_path),
+            sidecar_path=str(sidecar_path),
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        gate = result.get("trial_manifest_preregistration_gate", {})
+        assert gate.get("gate_passed") is True
+        assert gate.get("gate_status") == "TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY"
+
+    def test_missing_contract_args_returns_gate_false(self, tmp_path):
+        """Trial manifest args without contract gate: fails closed."""
+        manifest_path = self._write_manifest(tmp_path)
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+        result = _build_trial_manifest_diagnostics(
+            manifest_path=str(manifest_path),
+            sidecar_path=str(sidecar_path),
+        )
+        # strategy_rule_contract_diagnostics is None, so materializer not called.
+        assert result["trial_manifest_status"] == TRIAL_MANIFEST_NOT_DEFINED
+        gate = result.get("trial_manifest_preregistration_gate", {})
+        assert gate.get("gate_passed") is False
+
+
+class TestTrialManifestPreregistrationReceiptIntegration:
+    """Tests for trial manifest diagnostics integration into receipt."""
+
+    def _write_manifest(self, tmp_path: Path) -> Path:
+        data = {
+            "manifest_id": "qnty_offline_edge_trial_manifest_v1",
+            "manifest_version": "1.0.0",
+            "manifest_kind": "TRIAL_MANIFEST_PRE_REGISTRATION_ONLY",
+            "manifest_status": "FROZEN_PRE_REGISTRATION_ONLY",
+            "manifest_hash": "FROZEN_IN_SIDECAR",
+            "manifest_hash_algorithm": "sha256",
+            "manifest_hash_scope": "exact committed JSON bytes, excluding sidecar",
+            "manifest_hash_status": "FROZEN_IN_SIDECAR",
+            "bound_contract_id": "qnty_offline_edge_strategy_rule_contract_v1",
+            "bound_contract_sha256": "d6462a76c8f2bde79352baab2de0bd6dff3ad6b0f4139c6fba9f7764df04e0d9",
+            "bound_contract_sha256_sidecar_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256",
+            "bound_contract_commit_binding_path": "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json",
+            "required_contract_packet_gate_status": "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY",
+            "required_contract_packet_gate_scope": "CONTRACT_PACKET_EXISTENCE_HASH_AND_COMMIT_BINDING_ONLY",
+            "candidate_id": "funding_carry_v1_declaration_only",
+            "hypothesis_id": "funding_carry_v1_pre_scoring",
+            "candidate_family": "funding_carry_declaration_only",
+            "trial_policy": "SINGLE_TRIAL_NO_SEARCH",
+            "authorized_trial_count": 1,
+            "trial_count_frozen": True,
+            "hyperparameter_search_policy": "NO_SEARCH",
+            "free_parameter_count": 0,
+            "declared_parameter_names": [],
+            "dataset_binding_policy": "USES_EXISTING_OFFLINE_EDGE_INPUT_INVENTORY_AT_RUNTIME",
+            "split_binding_policy": "USES_EXISTING_DETERMINISTIC_SPLIT_DEFINITIONS_AT_RUNTIME",
+            "symbol_universe_policy": "USES_VALIDATION_INVENTORY_SYMBOLS_AT_RUNTIME_NOT_FROZEN_HERE",
+            "trial_execution_authorized": False,
+            "scoring_authorization": False,
+            "live_integration_authorized": False,
+            "paper_integration_authorized": False,
+            "final_verdict_authorization": False,
+            "oos_seal_dependency_satisfied": False,
+            "null_benchmark_dependency_satisfied": False,
+            "multiple_testing_dependency_satisfied": False,
+            "trade_position_simulation_dependency_satisfied": False,
+            "net_pnl_equity_risk_dependency_satisfied": False,
+        }
+        json_str = json.dumps(data, sort_keys=True, indent=2) + "\n"
+        path = tmp_path / "trial_manifest.json"
+        path.write_text(json_str)
+        return path
+
+    def _write_sidecar(self, tmp_path: Path, manifest_path: Path) -> Path:
+        digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        sidecar_path = tmp_path / "trial_manifest.sha256"
+        sidecar_path.write_text(f"{digest}  {manifest_path.name}\n")
+        return sidecar_path
+
+    def test_receipt_with_trial_manifest_gate_passes(self, tmp_path):
+        """With all contract + trial manifest args, gate passes, final verdict blocked."""
+        manifest_path = self._write_manifest(tmp_path)
+        sidecar_path = self._write_sidecar(tmp_path, manifest_path)
+
+        contract_diag = {
+            "contract_id": "qnty_offline_edge_strategy_rule_contract_v1",
+            "json_sha256": "d6462a76c8f2bde79352baab2de0bd6dff3ad6b0f4139c6fba9f7764df04e0d9",
+            "contract_packet_gate": {
+                "gate_passed": True,
+                "gate_status": "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY",
+            },
+        }
+        trial_diag = _build_trial_manifest_diagnostics(
+            manifest_path=str(manifest_path),
+            sidecar_path=str(sidecar_path),
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+        # Build receipt with both diagnostics.
+        splits = build_deterministic_split_definitions(
+            global_min_timestamp="2026-01-01T00:00:00Z",
+            global_max_timestamp="2026-02-01T00:00:00Z",
+        )
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_receipt_sha256="b" * 64,
+            code_commit_sha="c" * 40,
+            split_definitions=splits,
+            cost_cases=build_cost_case_matrix(),
+            strategy_rule_contract_diagnostics=contract_diag,
+            trial_manifest_diagnostics=trial_diag,
+        )
+
+        assert "trial_manifest_diagnostics" in receipt
+        trial_section = receipt["trial_manifest_diagnostics"]
+        gate = trial_section.get("trial_manifest_preregistration_gate", {})
+        assert gate.get("gate_passed") is True
+        assert gate.get("gate_status") == "TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY"
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_receipt_without_trial_manifest_gate_false(self, tmp_path):
+        """Without trial manifest args, gate exists and false."""
+        splits = build_deterministic_split_definitions(
+            global_min_timestamp="2026-01-01T00:00:00Z",
+            global_max_timestamp="2026-02-01T00:00:00Z",
+        )
+        trial_diag = _build_trial_manifest_diagnostics()
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="a" * 64,
+            data_quality_receipt_sha256="b" * 64,
+            code_commit_sha="c" * 40,
+            split_definitions=splits,
+            cost_cases=build_cost_case_matrix(),
+            trial_manifest_diagnostics=trial_diag,
+        )
+
+        trial_section = receipt["trial_manifest_diagnostics"]
+        gate = trial_section.get("trial_manifest_preregistration_gate", {})
+        assert gate.get("gate_passed") is False
+        assert gate.get("gate_status") == "TRIAL_MANIFEST_NOT_LOADED"
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
+class TestTrialManifestRealPathIntegration:
+    """Full-path integration: real committed contract + trial manifest files.
+
+    Proves the E1 trial manifest pre-registration can bind to real materialized
+    strategy-rule contract diagnostics (not just hand-built mocks), so the
+    ``contract diagnostic says None`` failure no longer occurs.
+    """
+
+    @staticmethod
+    def _contract_json_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+        )
+
+    @staticmethod
+    def _contract_sidecar_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256"
+        )
+
+    @staticmethod
+    def _commit_binding_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json"
+        )
+
+    @staticmethod
+    def _trial_manifest_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.json"
+        )
+
+    @staticmethod
+    def _trial_manifest_sidecar_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.sha256"
+        )
+
+    def test_contract_diagnostics_preserve_identity(self):
+        """Real materialized contract diagnostics include identity fields."""
+        diagnostics = _build_strategy_rule_contract_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._contract_sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        assert diagnostics["contract_id"] == "qnty_offline_edge_strategy_rule_contract_v1"
+        assert diagnostics["contract_version"] == "1.0.0"
+        assert diagnostics["contract_status"] == "FROZEN_DECLARATION_ONLY"
+        assert diagnostics["contract_packet_gate"]["gate_passed"] is True
+
+    def test_trial_manifest_full_real_path_binds_contract(self):
+        """Real trial manifest binds to real contract diagnostics without None error.
+
+        Full end-to-end: real contract JSON + sidecar + commit binding ->
+        _build_strategy_rule_contract_diagnostics ->
+        materialize_trial_manifest_preregistration_diagnostics.
+
+        This is the regression for the P1: the real path must not fail with
+        ``contract diagnostic says None``.
+        """
+        contract_diagnostics = _build_strategy_rule_contract_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._contract_sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+
+        trial_diagnostics = _build_trial_manifest_diagnostics(
+            manifest_path=self._trial_manifest_path(),
+            sidecar_path=self._trial_manifest_sidecar_path(),
+            strategy_rule_contract_diagnostics=contract_diagnostics,
+        )
+
+        assert trial_diagnostics["bound_contract_id"] == (
+            "qnty_offline_edge_strategy_rule_contract_v1"
+        )
+        assert trial_diagnostics["bound_contract_digest_matches"] is True
+        assert trial_diagnostics["contract_packet_gate_passed"] is True
+        gate = trial_diagnostics["trial_manifest_preregistration_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == "TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY"
+        assert trial_diagnostics["trial_scoring_ready"] is False
+        assert trial_diagnostics["trial_execution_authorized"] is False
 
     def test_cli_fallback_path_includes_section(self, tmp_path):
         output_dir = tmp_path / "output"
