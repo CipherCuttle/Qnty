@@ -152,6 +152,12 @@ from quantbot.experiment.offline_edge_real_validation import (
     PREREQUISITE_CLOSURE_REQUIRED_GATE_NAMES,
     _build_prerequisite_closure_diagnostics,
     _derive_prerequisite_closure_gate,
+    IMPLEMENTATION_BOUNDARY_VERSION,
+    IMPLEMENTATION_BOUNDARY_SCOPE,
+    IMPLEMENTATION_BOUNDARY_DECLARED_DIAGNOSTIC_ONLY,
+    _build_implementation_boundary_diagnostics,
+    _derive_implementation_boundary_gate,
+    _IMPLEMENTATION_BOUNDARY_AUTHORIZATION_FIELDS,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -16551,4 +16557,368 @@ class TestPrerequisiteClosureK1:
         assert closure["closure_gate_passed_count"] == 7
         assert closure["closure_all_required_gates_passed"] is True
         assert closure["prerequisite_closure_gate"]["gate_passed"] is True
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
+class TestImplementationBoundaryL1:
+    """Lane L1: implementation boundary plan / runner contract shell.
+
+    A derived, diagnostic-only projection over the K1 prerequisite closure
+    gate (plus the contract-packet and trial-manifest gates it depends on).
+    Declares exactly what a future strategy-rule implementation runner would
+    be allowed to inspect and exactly what it remains forbidden to emit. This
+    lane does not implement the runner, materialize rule outputs, compute
+    decisions/simulated events/economic/statistical values, or authorize
+    scoring/live/final verdict advancement.
+    """
+
+    CONTRACT_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+    CONTRACT_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256"
+    CONTRACT_BINDING_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json"
+    MANIFEST_PATH = "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.json"
+    MANIFEST_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.sha256"
+    SEAL_PATH = "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.json"
+    SEAL_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.sha256"
+    NULL_PATH = "docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.json"
+    NULL_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_null_benchmark_v1.sha256"
+    MT_PATH = "docs/contracts/instances/qnty_offline_edge_multiple_testing_control_v1.json"
+    MT_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_multiple_testing_control_v1.sha256"
+    SP_PATH = "docs/contracts/instances/qnty_offline_edge_simulation_policy_v1.json"
+    SP_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_simulation_policy_v1.sha256"
+    EAP_PATH = "docs/contracts/instances/qnty_offline_edge_economic_accounting_policy_v1.json"
+    EAP_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_economic_accounting_policy_v1.sha256"
+
+    def _full_chain_diags(self):
+        """Build the full K1 chain of upstream diagnostics from frozen packets."""
+        contract_diag = _build_strategy_rule_contract_diagnostics(
+            contract_path=self.CONTRACT_PATH,
+            sidecar_path=self.CONTRACT_SIDECAR_PATH,
+            commit_binding_path=self.CONTRACT_BINDING_PATH,
+        )
+        manifest_diag = _build_trial_manifest_diagnostics(
+            manifest_path=self.MANIFEST_PATH,
+            sidecar_path=self.MANIFEST_SIDECAR_PATH,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        seal_diag = _build_oos_seal_diagnostics(
+            seal_path=self.SEAL_PATH,
+            sidecar_path=self.SEAL_SIDECAR_PATH,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        null_diag = _build_null_benchmark_contract_diagnostics(
+            null_benchmark_path=self.NULL_PATH,
+            sidecar_path=self.NULL_SIDECAR_PATH,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        mt_diag = _build_multiple_testing_control_diagnostics(
+            multiple_testing_control_path=self.MT_PATH,
+            sidecar_path=self.MT_SIDECAR_PATH,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        sp_diag = _build_trade_position_simulation_contract_diagnostics(
+            simulation_policy_path=self.SP_PATH,
+            sidecar_path=self.SP_SIDECAR_PATH,
+            multiple_testing_control_diagnostics=mt_diag,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        eap_diag = _build_net_pnl_equity_risk_contract_diagnostics(
+            economic_accounting_policy_path=self.EAP_PATH,
+            sidecar_path=self.EAP_SIDECAR_PATH,
+            simulation_policy_diagnostics=sp_diag,
+            multiple_testing_control_diagnostics=mt_diag,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        closure_diag = _build_prerequisite_closure_diagnostics(
+            strategy_rule_contract_diagnostics=contract_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            oos_seal_diagnostics=seal_diag,
+            null_benchmark_contract_diagnostics=null_diag,
+            multiple_testing_control_diagnostics=mt_diag,
+            trade_position_simulation_contract_diagnostics=sp_diag,
+            net_pnl_equity_risk_contract_diagnostics=eap_diag,
+        )
+        return {
+            "strategy_rule_contract_diagnostics": contract_diag,
+            "trial_manifest_diagnostics": manifest_diag,
+            "prerequisite_closure_diagnostics": closure_diag,
+        }
+
+    def _absence_diags(self):
+        contract_diag = _build_strategy_rule_contract_diagnostics()
+        manifest_diag = _build_trial_manifest_diagnostics(
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        seal_diag = _build_oos_seal_diagnostics(
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        null_diag = _build_null_benchmark_contract_diagnostics(
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        mt_diag = _build_multiple_testing_control_diagnostics(
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        sp_diag = _build_trade_position_simulation_contract_diagnostics(
+            multiple_testing_control_diagnostics=mt_diag,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        eap_diag = _build_net_pnl_equity_risk_contract_diagnostics(
+            simulation_policy_diagnostics=sp_diag,
+            multiple_testing_control_diagnostics=mt_diag,
+            null_benchmark_diagnostics=null_diag,
+            oos_seal_diagnostics=seal_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        closure_diag = _build_prerequisite_closure_diagnostics(
+            strategy_rule_contract_diagnostics=contract_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            oos_seal_diagnostics=seal_diag,
+            null_benchmark_contract_diagnostics=null_diag,
+            multiple_testing_control_diagnostics=mt_diag,
+            trade_position_simulation_contract_diagnostics=sp_diag,
+            net_pnl_equity_risk_contract_diagnostics=eap_diag,
+        )
+        return {
+            "strategy_rule_contract_diagnostics": contract_diag,
+            "trial_manifest_diagnostics": manifest_diag,
+            "prerequisite_closure_diagnostics": closure_diag,
+        }
+
+    # ── Test 1: no-args / closure failed fails closed ──────────────────────────
+    def test_boundary_diagnostic_closure_failed_fails_closed(self):
+        diags = self._absence_diags()
+        assert diags["prerequisite_closure_diagnostics"][
+            "prerequisite_closure_gate"
+        ]["gate_passed"] is False
+        result = _build_implementation_boundary_diagnostics(**diags)
+        gate = result["implementation_boundary_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_PREREQUISITE_CLOSURE_GATE"
+        for field in _IMPLEMENTATION_BOUNDARY_AUTHORIZATION_FIELDS:
+            assert result[field] is False
+
+    # ── Test 2: full happy path ─────────────────────────────────────────────────
+    def test_boundary_diagnostic_full_happy_path(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        assert result["prerequisite_closure_gate_passed"] is True
+        assert result["contract_packet_gate_passed"] is True
+        assert result["trial_manifest_gate_passed"] is True
+        assert result["implementation_boundary_version"] == (
+            IMPLEMENTATION_BOUNDARY_VERSION
+        )
+        assert result["implementation_boundary_scope"] == (
+            IMPLEMENTATION_BOUNDARY_SCOPE
+        )
+        assert result["implementation_boundary_status"] == (
+            IMPLEMENTATION_BOUNDARY_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert result["future_runner_allowed_bar_columns"] == ["close", "timestamp"]
+        assert result["future_runner_allowed_funding_columns"] == [
+            "fundingRate",
+            "fundingTime",
+        ]
+        assert "open" in result["future_runner_forbidden_bar_columns"]
+        assert "markPrice" in result["future_runner_forbidden_funding_columns"]
+        assert result["future_runner_output_policy"] == (
+            "NO_OUTPUT_ROWS_EMITTED_IN_THIS_LANE"
+        )
+        assert result["future_runner_materialization_policy"] == (
+            "NO_RULE_MATERIALIZATION_IN_THIS_LANE"
+        )
+        for field in _IMPLEMENTATION_BOUNDARY_AUTHORIZATION_FIELDS:
+            assert result[field] is False
+        assert result["final_offline_verdict_remains"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    # ── Test 3: gate happy path ──────────────────────────────────────────────────
+    def test_boundary_gate_happy_path(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        gate = result["implementation_boundary_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            IMPLEMENTATION_BOUNDARY_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+        assert gate["blocked_reason"] is None
+
+    # ── Test 4: closure gate missing fails closed ───────────────────────────────
+    def test_closure_gate_missing_fails_closed(self):
+        diags = self._full_chain_diags()
+        closure = dict(diags["prerequisite_closure_diagnostics"])
+        del closure["prerequisite_closure_gate"]
+        diags["prerequisite_closure_diagnostics"] = closure
+        result = _build_implementation_boundary_diagnostics(**diags)
+        gate = result["implementation_boundary_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_PREREQUISITE_CLOSURE_GATE"
+
+    # ── Test 5: closure gate failed fails closed ────────────────────────────────
+    def test_closure_gate_failed_fails_closed(self):
+        diags = self._full_chain_diags()
+        closure = dict(diags["prerequisite_closure_diagnostics"])
+        original_gate = closure["prerequisite_closure_gate"]
+        failed_gate = dict(original_gate)
+        failed_gate["gate_passed"] = False
+        closure["prerequisite_closure_gate"] = failed_gate
+        diags["prerequisite_closure_diagnostics"] = closure
+        result = _build_implementation_boundary_diagnostics(**diags)
+        gate = result["implementation_boundary_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_PREREQUISITE_CLOSURE_GATE"
+
+    # ── Test 6: contract packet gate missing/failed fails closed ────────────────
+    def test_contract_packet_gate_missing_fails_closed(self):
+        diags = self._full_chain_diags()
+        contract_diag = dict(diags["strategy_rule_contract_diagnostics"])
+        del contract_diag["contract_packet_gate"]
+        diags["strategy_rule_contract_diagnostics"] = contract_diag
+        result = _build_implementation_boundary_diagnostics(**diags)
+        gate = result["implementation_boundary_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_REQUIRED_UPSTREAM_GATE"
+        assert "contract_packet_gate" in gate["blocked_reason"]
+
+    def test_contract_packet_gate_failed_fails_closed(self):
+        diags = self._full_chain_diags()
+        contract_diag = dict(diags["strategy_rule_contract_diagnostics"])
+        original_gate = contract_diag["contract_packet_gate"]
+        failed_gate = dict(original_gate)
+        failed_gate["gate_passed"] = False
+        contract_diag["contract_packet_gate"] = failed_gate
+        diags["strategy_rule_contract_diagnostics"] = contract_diag
+        result = _build_implementation_boundary_diagnostics(**diags)
+        gate = result["implementation_boundary_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_REQUIRED_UPSTREAM_GATE"
+
+    # ── Test 7: trial manifest gate missing/failed fails closed ─────────────────
+    def test_trial_manifest_gate_missing_fails_closed(self):
+        diags = self._full_chain_diags()
+        manifest_diag = dict(diags["trial_manifest_diagnostics"])
+        del manifest_diag["trial_manifest_preregistration_gate"]
+        diags["trial_manifest_diagnostics"] = manifest_diag
+        result = _build_implementation_boundary_diagnostics(**diags)
+        gate = result["implementation_boundary_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_REQUIRED_UPSTREAM_GATE"
+        assert "trial_manifest_preregistration_gate" in gate["blocked_reason"]
+
+    def test_trial_manifest_gate_failed_fails_closed(self):
+        diags = self._full_chain_diags()
+        manifest_diag = dict(diags["trial_manifest_diagnostics"])
+        original_gate = manifest_diag["trial_manifest_preregistration_gate"]
+        failed_gate = dict(original_gate)
+        failed_gate["gate_passed"] = False
+        manifest_diag["trial_manifest_preregistration_gate"] = failed_gate
+        diags["trial_manifest_diagnostics"] = manifest_diag
+        result = _build_implementation_boundary_diagnostics(**diags)
+        gate = result["implementation_boundary_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_REQUIRED_UPSTREAM_GATE"
+
+    # ── Test 8: unexpected authorization fails closed ───────────────────────────
+    def test_unexpected_authorization_fails_closed(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        result["rule_materialization_authorized"] = True
+        gate = _derive_implementation_boundary_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_UNEXPECTED_AUTHORIZATION"
+        assert "rule_materialization_authorized" in gate["blocked_reason"]
+
+    # ── Test 9: forbidden key scan ───────────────────────────────────────────────
+    def test_no_forbidden_calculation_keys(self):
+        diags = self._full_chain_diags()
+        result = _build_implementation_boundary_diagnostics(**diags)
+        all_keys = _all_dict_keys(result)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
+
+    # ── CLI receipt integration ──────────────────────────────────────────────────
+    def _cli_base_args(self, output_dir):
+        return [
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--global-min-timestamp", "2026-01-01T00:00:00Z",
+            "--global-max-timestamp", "2026-02-01T00:00:00Z",
+        ]
+
+    def _cli_full_chain_args(self):
+        return [
+            "--strategy-contract-path", self.CONTRACT_PATH,
+            "--strategy-contract-sha256-path", self.CONTRACT_SIDECAR_PATH,
+            "--strategy-contract-commit-binding-path", self.CONTRACT_BINDING_PATH,
+            "--trial-manifest-path", self.MANIFEST_PATH,
+            "--trial-manifest-sha256-path", self.MANIFEST_SIDECAR_PATH,
+            "--oos-seal-path", self.SEAL_PATH,
+            "--oos-seal-sha256-path", self.SEAL_SIDECAR_PATH,
+            "--null-benchmark-path", self.NULL_PATH,
+            "--null-benchmark-sha256-path", self.NULL_SIDECAR_PATH,
+            "--multiple-testing-control-path", self.MT_PATH,
+            "--multiple-testing-control-sha256-path", self.MT_SIDECAR_PATH,
+            "--simulation-policy-path", self.SP_PATH,
+            "--simulation-policy-sha256-path", self.SP_SIDECAR_PATH,
+            "--economic-accounting-policy-path", self.EAP_PATH,
+            "--economic-accounting-policy-sha256-path", self.EAP_SIDECAR_PATH,
+        ]
+
+    # ── Test 10: receipt integration, no packet args ─────────────────────────────
+    def test_receipt_integration_no_packet_args(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(self._cli_base_args(output_dir))
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        boundary = receipt["implementation_boundary_diagnostics"]
+        assert boundary["implementation_boundary_gate"]["gate_passed"] is False
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    # ── Test 11: receipt integration, full packet args through J1 ────────────────
+    def test_receipt_integration_full_path(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(
+            self._cli_base_args(output_dir) + self._cli_full_chain_args()
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        closure = receipt["prerequisite_closure_diagnostics"]
+        assert closure["prerequisite_closure_gate"]["gate_passed"] is True
+        boundary = receipt["implementation_boundary_diagnostics"]
+        assert boundary["implementation_boundary_gate"]["gate_passed"] is True
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
