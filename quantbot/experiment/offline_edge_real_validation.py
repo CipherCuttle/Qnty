@@ -74,6 +74,8 @@ __all__ = [
     "_build_strategy_rule_contract_diagnostics",
     "_build_trial_manifest_diagnostics",
     "_build_oos_seal_diagnostics",
+    "materialize_oos_seal_preregistration_diagnostics",
+    "_derive_oos_seal_preregistration_gate",
     "_build_null_benchmark_contract_diagnostics",
     "_build_multiple_testing_control_diagnostics",
     "_build_trade_position_simulation_contract_diagnostics",
@@ -253,6 +255,21 @@ OOS_SEAL_VERSION = "oos-seal-0.1"
 OOS_SEAL_DIAGNOSTIC_ONLY = "OOS_SEAL_DIAGNOSTIC_ONLY"
 OOS_SEAL_NOT_DEFINED = "OOS_SEAL_NOT_DEFINED"
 OOS_SEAL_BLOCKED_REASON_NOT_DEFINED = "OOS_SEAL_NOT_DEFINED"
+OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY = "OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY"
+
+_REQUIRED_FALSE_OOS_SEAL_FIELDS: tuple[str, ...] = (
+    "split_mutation_authorized",
+    "oos_scoring_authorized",
+    "trial_execution_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+    "null_benchmark_dependency_satisfied",
+    "multiple_testing_dependency_satisfied",
+    "trade_position_simulation_dependency_satisfied",
+    "net_pnl_equity_risk_dependency_satisfied",
+)
 
 # === Null benchmark contract diagnostics constants ===
 NULL_BENCHMARK_CONTRACT_VERSION = "null-benchmark-contract-0.1"
@@ -6809,6 +6826,9 @@ def materialize_trial_manifest_preregistration_diagnostics(
         "manifest_hash_status": "FROZEN_IN_SIDECAR",
         "manifest_required_fields_present": True,
         "manifest_forbidden_dict_key_scan_passed": True,
+        "manifest_id": str(manifest.get("manifest_id", "")),
+        "manifest_version": str(manifest.get("manifest_version", "")),
+        "manifest_status": str(manifest.get("manifest_status", "")),
         "bound_contract_id": str(bound_contract_id),
         "bound_contract_sha256": str(bound_contract_sha256),
         "bound_contract_digest_matches": True,
@@ -6903,6 +6923,379 @@ def _derive_trial_manifest_preregistration_gate(
         "gate_kind": "trial_manifest_preregistration_gate",
         "gate_scope": (
             "TRIAL_COUNT_CANDIDATE_AND_CONTRACT_BINDING_ONLY"
+        ),
+        "gate_status": gate_status,
+        "gate_passed": all_pass,
+        "gate_scoring_authorization": False,
+        "gate_live_authorization": False,
+        "gate_final_verdict_authorization": False,
+        "gate_downstream_unlocks": [],
+        "evidence": evidence,
+        "blocked_reason": blocked_reason,
+    }
+
+
+def materialize_oos_seal_preregistration_diagnostics(
+    *,
+    seal_path: str,
+    sidecar_path: str,
+    trial_manifest_diagnostics: dict[str, Any],
+    strategy_rule_contract_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Read, parse, hash-check, and audit the frozen OOS seal pre-scoring
+    declaration packet, returning a diagnostic-only dict.
+
+    This function performs **no** scoring, OOS evaluation, strategy definition,
+    signal calculation, PnL, edge, or live-readiness. The returned diagnostic is
+    explicitly diagnostic-only — it records the seal's load status, hash
+    integrity, forbidden-key survival, bound contract/trial-manifest digest
+    checking, trial-manifest gate verification, OOS boundary/split-lock policy
+    presence, and authorization posture, but does **not** authorize scoring or
+    advance any gate.
+
+    Raises ``ValueError`` on any fail-closed condition:
+    - missing / malformed JSON or sidecar
+    - sidecar digest mismatch
+    - forbidden dict key found
+    - required field missing
+    - seal_hash not ``FROZEN_IN_SIDECAR``
+    - seal_hash_status not ``FROZEN_IN_SIDECAR``
+    - seal_hash_algorithm not ``sha256``
+    - bound contract digest mismatch
+    - bound trial manifest digest mismatch
+    - trial manifest gate missing or false
+    - OOS boundary policy not frozen
+    - OOS split selection not frozen
+    - any authorization boolean not exactly False
+    - any downstream dependency boolean not exactly False
+    """
+    # --- Read seal JSON bytes ---
+    try:
+        seal_bytes = Path(seal_path).read_bytes()
+    except FileNotFoundError:
+        raise ValueError(
+            f"OOS seal JSON not found: {seal_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"OOS seal JSON read error {seal_path}: {exc}"
+        )
+
+    json_sha256 = hashlib.sha256(seal_bytes).hexdigest()
+
+    # --- Parse JSON ---
+    try:
+        seal: dict = json.loads(seal_bytes)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"OOS seal JSON parse error: {exc}"
+        )
+
+    if not isinstance(seal, dict):
+        raise ValueError(
+            "OOS seal JSON root must be a dict"
+        )
+
+    # --- Read sidecar ---
+    try:
+        sidecar_text = Path(sidecar_path).read_text().strip()
+    except FileNotFoundError:
+        raise ValueError(
+            f"OOS seal sidecar not found: {sidecar_path}"
+        )
+    except OSError as exc:
+        raise ValueError(
+            f"OOS seal sidecar read error {sidecar_path}: {exc}"
+        )
+
+    # Parse sidecar: expected format "<sha256>  <filename>"
+    parts = sidecar_text.split(None, 1)
+    if not parts or len(parts) != 2:
+        raise ValueError(
+            f"OOS seal sidecar format invalid: "
+            f"expected '<sha256>  <filename>', got {sidecar_text!r}"
+        )
+    sidecar_sha256 = parts[0]
+    sidecar_filename = parts[1]
+
+    if len(sidecar_sha256) != 64:
+        raise ValueError(
+            f"OOS seal sidecar SHA-256 digest length invalid: "
+            f"expected 64 hex chars, got {len(sidecar_sha256)}"
+        )
+
+    try:
+        int(sidecar_sha256, 16)
+    except ValueError:
+        raise ValueError(
+            f"OOS seal sidecar SHA-256 digest is not valid hex: "
+            f"{sidecar_sha256!r}"
+        )
+
+    sidecar_digest_matches = sidecar_sha256 == json_sha256
+    if not sidecar_digest_matches:
+        raise ValueError(
+            f"OOS seal sidecar digest mismatch: "
+            f"sidecar={sidecar_sha256}, computed={json_sha256}"
+        )
+
+    # --- Check required field presence ---
+    _REQUIRED_OOS_SEAL_KEYS: set[str] = {
+        "seal_id",
+        "seal_version",
+        "seal_kind",
+        "seal_status",
+        "seal_hash",
+        "seal_hash_algorithm",
+        "seal_hash_scope",
+        "seal_hash_status",
+        "bound_contract_id",
+        "bound_contract_sha256",
+        "bound_trial_manifest_id",
+        "bound_trial_manifest_sha256",
+        "required_trial_manifest_gate_status",
+        "oos_boundary_policy",
+        "oos_boundary_policy_frozen",
+        "oos_split_selection_policy",
+        "oos_split_selection_frozen",
+        "split_mutation_authorized",
+        "oos_scoring_authorized",
+        "trial_execution_authorized",
+        "scoring_authorization",
+        "live_integration_authorized",
+        "paper_integration_authorized",
+        "final_verdict_authorization",
+        "null_benchmark_dependency_satisfied",
+        "multiple_testing_dependency_satisfied",
+        "trade_position_simulation_dependency_satisfied",
+        "net_pnl_equity_risk_dependency_satisfied",
+    }
+    missing_fields = _REQUIRED_OOS_SEAL_KEYS - set(seal.keys())
+    if missing_fields:
+        raise ValueError(
+            f"OOS seal missing required fields: {sorted(missing_fields)}"
+        )
+
+    # --- Check forbidden dict keys (strict, no exemptions) ---
+    forbidden_collisions = _find_forbidden_contract_dict_keys(seal)
+    if forbidden_collisions:
+        collision_repr = ", ".join(
+            f"{c['key']!r} at {c['path']}" for c in forbidden_collisions
+        )
+        raise ValueError(
+            f"OOS seal contains forbidden dict keys: {collision_repr}"
+        )
+
+    # --- Verify seal hash fields ---
+    if seal.get("seal_hash") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"OOS seal seal_hash must be 'FROZEN_IN_SIDECAR', "
+            f"got {seal.get('seal_hash')!r}"
+        )
+    if seal.get("seal_hash_status") != "FROZEN_IN_SIDECAR":
+        raise ValueError(
+            f"OOS seal seal_hash_status must be 'FROZEN_IN_SIDECAR', "
+            f"got {seal.get('seal_hash_status')!r}"
+        )
+    if seal.get("seal_hash_algorithm") != "sha256":
+        raise ValueError(
+            f"OOS seal seal_hash_algorithm must be 'sha256', "
+            f"got {seal.get('seal_hash_algorithm')!r}"
+        )
+
+    # --- Verify bound contract digest ---
+    contract_diag = strategy_rule_contract_diagnostics
+    contract_json_sha256 = contract_diag.get("json_sha256")
+    contract_id = contract_diag.get("contract_id")
+    bound_contract_sha256 = seal.get("bound_contract_sha256")
+    bound_contract_id = seal.get("bound_contract_id")
+
+    if bound_contract_sha256 != contract_json_sha256:
+        raise ValueError(
+            f"OOS seal bound_contract_sha256 mismatch: "
+            f"seal says {bound_contract_sha256}, "
+            f"contract diagnostic says {contract_json_sha256}"
+        )
+    if bound_contract_id != contract_id:
+        raise ValueError(
+            f"OOS seal bound_contract_id mismatch: "
+            f"seal says {bound_contract_id}, "
+            f"contract diagnostic says {contract_id}"
+        )
+
+    # --- Verify trial manifest gate (before digest check, gate is more fundamental) ---
+    tmd = trial_manifest_diagnostics
+    trial_manifest_gate = tmd.get("trial_manifest_preregistration_gate", {})
+    if not isinstance(trial_manifest_gate, dict):
+        raise ValueError(
+            "Trial manifest gate is not a dict"
+        )
+    if not trial_manifest_gate.get("gate_passed"):
+        raise ValueError(
+            "Trial manifest gate not passed: "
+            f"OOS seal cannot proceed without trial manifest gate"
+        )
+    gate_status = trial_manifest_gate.get("gate_status")
+    if gate_status != "TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY":
+        raise ValueError(
+            f"Trial manifest gate status must be "
+            f"'TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY', "
+            f"got {gate_status!r}"
+        )
+
+    # --- Verify bound trial manifest digest (after gate check) ---
+    manifest_json_sha256 = tmd.get("manifest_json_sha256")
+    manifest_id = tmd.get("manifest_id")
+    bound_trial_manifest_sha256 = seal.get("bound_trial_manifest_sha256")
+    bound_trial_manifest_id = seal.get("bound_trial_manifest_id")
+
+    if bound_trial_manifest_sha256 != manifest_json_sha256:
+        raise ValueError(
+            f"OOS seal bound_trial_manifest_sha256 mismatch: "
+            f"seal says {bound_trial_manifest_sha256}, "
+            f"trial manifest diagnostic says {manifest_json_sha256}"
+        )
+    if bound_trial_manifest_id != manifest_id:
+        raise ValueError(
+            f"OOS seal bound_trial_manifest_id mismatch: "
+            f"seal says {bound_trial_manifest_id}, "
+            f"trial manifest diagnostic says {manifest_id}"
+        )
+
+    # --- Verify OOS boundary policy fields ---
+    if seal.get("oos_boundary_policy_frozen") is not True:
+        raise ValueError(
+            f"OOS seal oos_boundary_policy_frozen must be True, "
+            f"got {seal.get('oos_boundary_policy_frozen')!r}"
+        )
+    if seal.get("oos_split_selection_frozen") is not True:
+        raise ValueError(
+            f"OOS seal oos_split_selection_frozen must be True, "
+            f"got {seal.get('oos_split_selection_frozen')!r}"
+        )
+
+    # --- Verify authorization booleans are exactly False ---
+    bad_false_fields: dict[str, Any] = {
+        field: seal.get(field)
+        for field in _REQUIRED_FALSE_OOS_SEAL_FIELDS
+        if seal.get(field) is not False
+    }
+    if bad_false_fields:
+        raise ValueError(
+            f"OOS seal fields must be exactly false: "
+            + ", ".join(
+                f"{k}={v!r}" for k, v in bad_false_fields.items()
+            )
+        )
+
+    return {
+        "diagnostic_kind": "oos_seal_preregistration",
+        "seal_source_path": seal_path,
+        "seal_sidecar_path": sidecar_path,
+        "seal_packet_read": True,
+        "seal_json_parse_ok": True,
+        "seal_sidecar_parse_ok": True,
+        "seal_json_sha256": json_sha256,
+        "seal_sidecar_sha256": sidecar_sha256,
+        "seal_sidecar_digest_matches_json_bytes": True,
+        "seal_hash_authority": "SIDECAR",
+        "seal_hash_field_value": "FROZEN_IN_SIDECAR",
+        "seal_hash_status": "FROZEN_IN_SIDECAR",
+        "seal_required_fields_present": True,
+        "seal_forbidden_dict_key_scan_passed": True,
+        "bound_contract_id": str(bound_contract_id),
+        "bound_contract_sha256": str(bound_contract_sha256),
+        "bound_contract_digest_matches": True,
+        "bound_trial_manifest_id": str(bound_trial_manifest_id),
+        "bound_trial_manifest_sha256": str(bound_trial_manifest_sha256),
+        "bound_trial_manifest_digest_matches": True,
+        "trial_manifest_gate_required": True,
+        "trial_manifest_gate_passed": True,
+        "trial_manifest_gate_status": str(gate_status),
+        "oos_boundary_policy": str(seal.get("oos_boundary_policy", "")),
+        "oos_boundary_policy_frozen": True,
+        "oos_split_selection_policy": str(seal.get("oos_split_selection_policy", "")),
+        "oos_split_selection_frozen": True,
+        "oos_seal_readiness": False,
+        "oos_scoring_authorized": False,
+        "trial_execution_authorized": False,
+        "oos_seal_validation_status": (
+            "OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY"
+        ),
+    }
+
+
+def _derive_oos_seal_preregistration_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive an OOS seal pre-registration gate from diagnostics.
+
+    The gate passes only when all of the following hold:
+    - seal packet read
+    - seal sidecar matches
+    - seal strict forbidden-key scan passed
+    - bound contract digest matches
+    - bound trial manifest digest matches
+    - trial manifest gate passed
+    - OOS boundary policy frozen
+    - OOS split selection frozen
+    - all authorization booleans false
+    - all downstream dependency booleans false
+    """
+    evidence: dict[str, Any] = {
+        "seal_sidecar_digest_matches_json_bytes": (
+            diagnostics.get("seal_sidecar_digest_matches_json_bytes")
+            is True
+        ),
+        "bound_contract_digest_matches": (
+            diagnostics.get("bound_contract_digest_matches") is True
+        ),
+        "bound_trial_manifest_digest_matches": (
+            diagnostics.get("bound_trial_manifest_digest_matches") is True
+        ),
+        "trial_manifest_gate_passed": (
+            diagnostics.get("trial_manifest_gate_passed") is True
+        ),
+        "oos_boundary_policy_frozen": (
+            diagnostics.get("oos_boundary_policy_frozen") is True
+        ),
+        "oos_split_selection_frozen": (
+            diagnostics.get("oos_split_selection_frozen") is True
+        ),
+    }
+
+    extra_pass = (
+        diagnostics.get("diagnostic_kind")
+        == "oos_seal_preregistration"
+        and diagnostics.get("seal_packet_read") is True
+        and diagnostics.get("seal_json_parse_ok") is True
+        and diagnostics.get("seal_sidecar_parse_ok") is True
+        and diagnostics.get("seal_hash_authority") == "SIDECAR"
+        and diagnostics.get("seal_hash_field_value") == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("seal_hash_status") == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("seal_required_fields_present") is True
+        and diagnostics.get("seal_forbidden_dict_key_scan_passed") is True
+        and diagnostics.get("oos_scoring_authorized") is False
+        and diagnostics.get("trial_execution_authorized") is False
+        and diagnostics.get("oos_seal_readiness") is False
+    )
+
+    all_pass = all(evidence.values()) and extra_pass
+
+    if all_pass:
+        gate_status = "OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY"
+        blocked_reason = None
+    elif diagnostics.get("diagnostic_kind") != "oos_seal_preregistration":
+        gate_status = "OOS_SEAL_NOT_LOADED"
+        blocked_reason = "OOS_SEAL_NOT_PROVIDED"
+    else:
+        gate_status = "BLOCKED_BY_INCOMPLETE_OOS_SEAL_EVIDENCE"
+        blocked_reason = "OOS_SEAL_GATE_EVIDENCE_INCOMPLETE"
+
+    return {
+        "gate_kind": "oos_seal_preregistration_gate",
+        "gate_scope": (
+            "OOS_BOUNDARY_AND_TRIAL_MANIFEST_BINDING_ONLY"
         ),
         "gate_status": gate_status,
         "gate_passed": all_pass,
@@ -7182,6 +7575,8 @@ def _build_trial_manifest_diagnostics(
             "calculation_status": TRIAL_MANIFEST_DIAGNOSTIC_ONLY,
             "trial_manifest_status": TRIAL_MANIFEST_NOT_DEFINED,
             "trial_manifest_present": False,
+            "manifest_id": None,
+            "manifest_status": None,
             "trial_manifest_hash": None,
             "trial_manifest_source": None,
             "scoring_authorized": False,
@@ -7225,9 +7620,22 @@ def _build_trial_manifest_diagnostics(
     return diagnostics
 
 
-def _build_oos_seal_diagnostics() -> dict[str, Any]:
-    """Build a diagnostic-only section recording that no OOS seal exists yet
-    and therefore OOS scoring is blocked.
+def _build_oos_seal_diagnostics(
+    *,
+    seal_path: str | None = None,
+    sidecar_path: str | None = None,
+    trial_manifest_diagnostics: dict[str, Any] | None = None,
+    strategy_rule_contract_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a diagnostic-only section for the OOS seal.
+
+    If *seal_path*, *sidecar_path*, *trial_manifest_diagnostics*, and
+    *strategy_rule_contract_diagnostics* are all provided, the frozen OOS
+    seal pre-scoring declaration packet is loaded, hash-checked, and audited
+    via :func:`materialize_oos_seal_preregistration_diagnostics`.
+
+    Otherwise a hardcoded ``OOS_SEAL_NOT_DEFINED`` diagnostic is returned
+    with a failing gate.
 
     This section does **not** define an OOS period, choose dates, choose
     splits, hash data, freeze the symbol universe, score anything, inspect
@@ -7235,53 +7643,73 @@ def _build_oos_seal_diagnostics() -> dict[str, Any]:
     either ``None``, ``False``, or ``NOT_DEFINED`` — this is a diagnostic of
     absence, not a definition of presence.
 
-    Fail-closed rules:
-    * ``scoring_authorized`` is always ``False`` at this stage.
-    * ``oos_seal_status`` is always ``OOS_SEAL_NOT_DEFINED``.
-    * ``scoring_blocked_reason`` is always ``OOS_SEAL_NOT_DEFINED``.
-    * All ``oos_seal_prerequisites_present`` values are always ``False``.
+    Raises ``ValueError`` if seal paths are provided but the packet is
+    corrupted (delegated to the materializer).
     """
-    return {
-        "seal_version": OOS_SEAL_VERSION,
-        "calculation_status": OOS_SEAL_DIAGNOSTIC_ONLY,
-        "oos_seal_status": OOS_SEAL_NOT_DEFINED,
-        "oos_seal_present": False,
-        "oos_seal_hash": None,
-        "oos_seal_source": None,
-        "scoring_authorized": False,
-        "scoring_blocked_reason": OOS_SEAL_BLOCKED_REASON_NOT_DEFINED,
-        "oos_split_id": None,
-        "oos_period_start": None,
-        "oos_period_end": None,
-        "oos_period_frozen": False,
-        "oos_symbol_universe_frozen": False,
-        "oos_symbol_universe_hash": None,
-        "oos_data_hash_present": False,
-        "oos_data_hash": None,
-        "sealed_before_scoring": False,
-        "seal_timestamp_utc": None,
-        "seal_commit_sha": None,
-        "holdout_access_policy_defined": False,
-        "holdout_access_policy": "NOT_DEFINED",
-        "strategy_rule_contract_dependency_satisfied": False,
-        "trial_manifest_dependency_satisfied": False,
-        "split_scoring_safe_dependency_satisfied": False,
-        "null_benchmark_contract_present": False,
-        "multiple_testing_policy_present": False,
-        "oos_seal_prerequisites_present": {
-            "strategy_rule_contract": False,
-            "trial_manifest": False,
-            "trial_count": False,
-            "candidate_registry": False,
-            "symbol_universe_freeze": False,
-            "split_policy_freeze": False,
-            "holdout_access_policy": False,
-            "oos_period": False,
-            "oos_data_hash": False,
-            "null_benchmark_contract": False,
-            "multiple_testing_policy": False,
-        },
-    }
+    if (
+        seal_path is not None
+        and sidecar_path is not None
+        and trial_manifest_diagnostics is not None
+        and strategy_rule_contract_diagnostics is not None
+    ):
+        diagnostics = (
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=seal_path,
+                sidecar_path=sidecar_path,
+                trial_manifest_diagnostics=trial_manifest_diagnostics,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
+        )
+    else:
+        diagnostics = {
+            "seal_version": OOS_SEAL_VERSION,
+            "calculation_status": OOS_SEAL_DIAGNOSTIC_ONLY,
+            "oos_seal_status": OOS_SEAL_NOT_DEFINED,
+            "oos_seal_present": False,
+            "oos_seal_hash": None,
+            "oos_seal_source": None,
+            "scoring_authorized": False,
+            "scoring_blocked_reason": OOS_SEAL_BLOCKED_REASON_NOT_DEFINED,
+            "oos_split_id": None,
+            "oos_period_start": None,
+            "oos_period_end": None,
+            "oos_period_frozen": False,
+            "oos_symbol_universe_frozen": False,
+            "oos_symbol_universe_hash": None,
+            "oos_data_hash_present": False,
+            "oos_data_hash": None,
+            "sealed_before_scoring": False,
+            "seal_timestamp_utc": None,
+            "seal_commit_sha": None,
+            "holdout_access_policy_defined": False,
+            "holdout_access_policy": "NOT_DEFINED",
+            "strategy_rule_contract_dependency_satisfied": False,
+            "trial_manifest_dependency_satisfied": False,
+            "split_scoring_safe_dependency_satisfied": False,
+            "null_benchmark_contract_present": False,
+            "multiple_testing_policy_present": False,
+            "oos_seal_prerequisites_present": {
+                "strategy_rule_contract": False,
+                "trial_manifest": False,
+                "trial_count": False,
+                "candidate_registry": False,
+                "symbol_universe_freeze": False,
+                "split_policy_freeze": False,
+                "holdout_access_policy": False,
+                "oos_period": False,
+                "oos_data_hash": False,
+                "null_benchmark_contract": False,
+                "multiple_testing_policy": False,
+            },
+        }
+
+    # Derive OOS seal pre-registration gate from diagnostics (pure, no I/O).
+    diagnostics["oos_seal_preregistration_gate"] = (
+        _derive_oos_seal_preregistration_gate(diagnostics)
+    )
+    return diagnostics
 
 
 def _build_null_benchmark_contract_diagnostics() -> dict[str, Any]:
@@ -8168,6 +8596,27 @@ def build_parser() -> argparse.ArgumentParser:
             "Required if --trial-manifest-path is provided."
         ),
     )
+    parser.add_argument(
+        "--oos-seal-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to frozen OOS seal pre-scoring declaration JSON. "
+            "If provided, the seal is loaded and hash-checked (diagnostic only, "
+            "no scoring). Requires --oos-seal-sha256-path, "
+            "--trial-manifest-path/--trial-manifest-sha256-path, and "
+            "--strategy-contract-path/--strategy-contract-sha256-path."
+        ),
+    )
+    parser.add_argument(
+        "--oos-seal-sha256-path",
+        default=None,
+        type=str,
+        help=(
+            "Path to the SHA-256 sidecar for the frozen OOS seal. "
+            "Required if --oos-seal-path is provided."
+        ),
+    )
     return parser
 
 
@@ -8353,7 +8802,14 @@ def main(argv: list[str] | None = None) -> int:
                     strategy_rule_contract_diagnostics
                 ),
             )
-            oos_seal_diagnostics = _build_oos_seal_diagnostics()
+            oos_seal_diagnostics = _build_oos_seal_diagnostics(
+                seal_path=args.oos_seal_path,
+                sidecar_path=args.oos_seal_sha256_path,
+                trial_manifest_diagnostics=trial_manifest_diagnostics,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
             null_benchmark_contract_diagnostics = (
                 _build_null_benchmark_contract_diagnostics()
             )
@@ -8472,7 +8928,14 @@ def main(argv: list[str] | None = None) -> int:
                     strategy_rule_contract_diagnostics
                 ),
             )
-            oos_seal_diagnostics = _build_oos_seal_diagnostics()
+            oos_seal_diagnostics = _build_oos_seal_diagnostics(
+                seal_path=args.oos_seal_path,
+                sidecar_path=args.oos_seal_sha256_path,
+                trial_manifest_diagnostics=trial_manifest_diagnostics,
+                strategy_rule_contract_diagnostics=(
+                    strategy_rule_contract_diagnostics
+                ),
+            )
             null_benchmark_contract_diagnostics = (
                 _build_null_benchmark_contract_diagnostics()
             )

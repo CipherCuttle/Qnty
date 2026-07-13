@@ -318,3 +318,48 @@ one authorized trial declaration, diagnostic-only."*
 - `EDGE_UNPROVEN`, `BLOCK_LIVE_INTEGRATION`, and
   `BLOCKED_BY_VALIDATION_IMPLEMENTATION` remain.
 - OOS/null/multiple-testing/simulation/net-PnL gates remain false.
+
+### Lane F1 — OOS Seal Pre-Scoring Declaration Packet
+
+This directory also contains the frozen OOS seal pre-scoring declaration packet
+for the offline-edge validation ladder.
+
+**Lane F1** per the spec: *"OOS seal pre-scoring declaration packet that
+declares the out-of-sample boundary and split-lock policy before any scoring
+exists."*
+
+#### Files
+
+| File | Purpose |
+|---|---|
+| `qnty_offline_edge_oos_seal_v1.json` | OOS seal payload (pre-scoring declaration only) |
+| `qnty_offline_edge_oos_seal_v1.sha256` | SHA-256 sidecar of the exact JSON bytes |
+
+#### What Lane F1 does
+
+- Freezes the OOS boundary policy: `USE_EXISTING_DETERMINISTIC_SPLIT_DEFINITIONS_WITH_FINAL_SPLIT_HELD_OUT`.
+- Freezes the split-lock policy: `FINAL_CHRONOLOGICAL_SPLIT_IS_OOS`, no split mutation.
+- Binds to the frozen trial manifest digest (`bound_trial_manifest_sha256`).
+- Binds to the frozen strategy contract digest (`bound_contract_sha256`).
+- Requires the trial manifest gate to pass (gate status `TRIAL_MANIFEST_PREREGISTERED_DIAGNOSTIC_ONLY`).
+- All authorization booleans are `false`:
+  `oos_scoring_authorized`, `trial_execution_authorized`,
+  `scoring_authorization`, `live_integration_authorized`,
+  `paper_integration_authorized`, `final_verdict_authorization`,
+  `split_mutation_authorized`.
+- All downstream dependency booleans are `false`:
+  `null_benchmark_dependency_satisfied`, `multiple_testing_dependency_satisfied`,
+  `trade_position_simulation_dependency_satisfied`,
+  `net_pnl_equity_risk_dependency_satisfied`.
+
+#### What Lane F1 does NOT do
+
+- No scoring, PnL, outcomes, strategy execution, signal generation,
+  live/paper/exchange integration, or verdict advancement.
+- `oos_seal_readiness` remains `false`.
+- `oos_scoring_authorized` remains `false`.
+- `EDGE_UNPROVEN`, `BLOCK_LIVE_INTEGRATION`, and
+  `BLOCKED_BY_VALIDATION_IMPLEMENTATION` remain.
+- Null/multiple-testing/simulation/net-PnL gates remain false.
+- Does not edit the contract JSON, contract SHA-256 sidecar, contract
+  commit-binding sidecar, trial manifest JSON, or trial manifest SHA-256 sidecar.
