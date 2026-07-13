@@ -210,6 +210,64 @@ Future lanes must still solve trial manifest, OOS seal, null benchmark, multiple
 testing control, trade/position simulation, net PnL/equity/risk contract, and
 final verdict advancement.
 
+### Lane D1 — contract-packet gate projection (this PR)
+
+Lane D1 adds a **derived contract-packet gate** that compresses the C2 diagnostic
+evidence into a single gate object. This is a pure diagnostic projection — it never
+reads files, calls git, or mutates the diagnostics.
+
+**What Lane D1 does:**
+
+- Adds a pure helper ``_derive_strategy_rule_contract_packet_gate(diagnostics)``
+  that derives the gate from the existing strategy-rule contract diagnostics.
+- The gate is automatically added inside ``strategy_rule_contract_diagnostics``
+  at build time (no separate integration step).
+- The gate can pass only when C2 commit binding verifies — all of:
+
+  * ``contract_packet_read`` is ``True``
+  * ``sidecar_digest_matches_json_bytes`` is ``True``
+  * ``forbidden_dict_key_scan_passed`` is ``True``
+  * ``input_ceiling_check_passed`` is ``True``
+  * ``output_boundary_fields_present`` is ``True``
+  * ``downstream_dependency_booleans_all_false`` is ``True``
+  * ``contract_commit_sha_bound`` is ``True``
+  * ``contract_commit_sha_binding_status`` is ``"BOUND_BY_PRIOR_COMMIT_CONTAINMENT_SIDECAR"``
+  * ``contract_containing_commit_digest_matches`` is ``True``
+  * ``scoring_authorization`` is ``False``
+  * ``live_integration_authorized`` is ``False``
+  * ``contract_instance_readiness`` is ``False``
+  * ``contract_scoring_ready`` is ``False``
+
+**Gate shape when passed:**
+
+```json
+"contract_packet_gate": {
+  "gate_kind": "strategy_rule_contract_packet_gate",
+  "gate_scope": "CONTRACT_PACKET_EXISTENCE_HASH_AND_COMMIT_BINDING_ONLY",
+  "gate_status": "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY",
+  "gate_passed": true,
+  "gate_scoring_authorization": false,
+  "gate_live_authorization": false,
+  "gate_final_verdict_authorization": false,
+  "gate_downstream_unlocks": [],
+  "evidence": { ... },
+  "blocked_reason": null
+}
+```
+
+**What Lane D1 does NOT do:**
+
+- No scoring, strategy implementation, signal calculation, PnL, or edge.
+- No live-readiness or exchange integration.
+- ``gate_scoring_authorization``, ``gate_live_authorization``, and
+  ``gate_final_verdict_authorization`` are always ``false``.
+- ``gate_downstream_unlocks`` is always an empty list.
+- Does not flip ``contract_instance_readiness`` or ``contract_scoring_ready``.
+- ``final_offline_verdict`` remains ``BLOCKED_BY_VALIDATION_IMPLEMENTATION``.
+- ``EDGE_UNPROVEN`` and ``BLOCK_LIVE_INTEGRATION`` remain.
+- Trial manifest, OOS seal, null benchmark, multiple testing, simulation,
+  net PnL/equity/risk gates remain false.
+
 ## Verification
 
 ```bash

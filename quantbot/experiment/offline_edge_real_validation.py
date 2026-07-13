@@ -79,6 +79,7 @@ __all__ = [
     "_build_trade_position_simulation_contract_diagnostics",
     "_build_net_pnl_equity_risk_contract_diagnostics",
     "_build_final_offline_edge_verdict_logic_diagnostics",
+    "_derive_strategy_rule_contract_packet_gate",
 ]
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -6555,47 +6556,194 @@ def _build_strategy_rule_contract_diagnostics(
     corrupted (delegated to the materializer).
     """
     if contract_path is not None and sidecar_path is not None:
-        return materialize_strategy_rule_contract_instance_diagnostics(
-            contract_path=contract_path,
-            sidecar_path=sidecar_path,
-            commit_binding_path=commit_binding_path,
+        diagnostics = (
+            materialize_strategy_rule_contract_instance_diagnostics(
+                contract_path=contract_path,
+                sidecar_path=sidecar_path,
+                commit_binding_path=commit_binding_path,
+            )
         )
+    else:
+        diagnostics = {
+            "contract_version": STRATEGY_RULE_CONTRACT_VERSION,
+            "calculation_status": STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY,
+            "contract_status": STRATEGY_RULE_CONTRACT_NOT_DEFINED,
+            "scoring_authorized": False,
+            "scoring_blocked_reason": STRATEGY_RULE_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
+            "allowed_input_roles": None,
+            "allowed_input_columns": None,
+            "forbidden_input_roles": None,
+            "forbidden_input_columns": None,
+            "forbidden_future_columns": None,
+            "decision_time_convention": None,
+            "decision_time_column": None,
+            "decision_time_offset": None,
+            "feature_lookback": None,
+            "feature_lookback_bars": None,
+            "label_horizon": None,
+            "label_horizon_bars": None,
+            "holding_period": None,
+            "holding_period_bars": None,
+            "side_semantics": None,
+            "side_source": None,
+            "notional_semantics": None,
+            "notional_source": None,
+            "notional_currency": None,
+            "cost_dependency": NOT_DEFINED,
+            "funding_dependency": NOT_DEFINED,
+            "scoring_prerequisites_present": {
+                "decision_time_convention": False,
+                "feature_lookback": False,
+                "label_horizon": False,
+                "holding_period": False,
+                "funding_interval_exposure": False,
+                "cost_event_timing": False,
+            },
+        }
+
+    # Derive contract-packet gate from diagnostics (pure, no I/O).
+    diagnostics["contract_packet_gate"] = (
+        _derive_strategy_rule_contract_packet_gate(diagnostics)
+    )
+    return diagnostics
+
+
+def _derive_strategy_rule_contract_packet_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive a narrow contract-packet gate projection from existing diagnostics.
+
+    This is a pure function: it never reads files, never calls git, never
+    mutates *diagnostics*, and is fully deterministic. It compresses the
+    existing strategy-rule contract diagnostics into a gate object that
+    records whether the frozen contract packet is loaded, hash-bound,
+    strict-key checked, input/output bounded, dependency-false, and
+    commit-bound to a prior containing commit.
+
+    The gate does **not** authorize scoring, strategy execution, PnL, live
+    readiness, or final verdict advancement.
+
+    Returns a dict with ``gate_passed``, ``gate_status``, ``evidence``,
+    and authorization fields all set to ``False`` / empty / blocked.
+    """
+    # Detect absence: no diagnostic_kind or contract not defined.
+    if diagnostics.get("diagnostic_kind") != "strategy_rule_contract_instance":
+        return {
+            "gate_kind": "strategy_rule_contract_packet_gate",
+            "gate_scope": (
+                "CONTRACT_PACKET_EXISTENCE_HASH_AND_COMMIT_BINDING_ONLY"
+            ),
+            "gate_status": "CONTRACT_PACKET_NOT_LOADED",
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": {},
+            "blocked_reason": "CONTRACT_PACKET_NOT_LOADED",
+        }
+
+    # Check commit binding status.
+    contract_commit_sha_bound = diagnostics.get(
+        "contract_commit_sha_bound", False
+    )
+    if not contract_commit_sha_bound:
+        return {
+            "gate_kind": "strategy_rule_contract_packet_gate",
+            "gate_scope": (
+                "CONTRACT_PACKET_EXISTENCE_HASH_AND_COMMIT_BINDING_ONLY"
+            ),
+            "gate_status": "BLOCKED_BY_COMMIT_BINDING_PLACEHOLDER",
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": {
+                "contract_packet_read": diagnostics.get(
+                    "contract_packet_read", False
+                ),
+                "sidecar_digest_matches_json_bytes": diagnostics.get(
+                    "sidecar_digest_matches_json_bytes", False
+                ),
+                "contract_commit_sha_bound": False,
+            },
+            "blocked_reason": "CONTRACT_COMMIT_BINDING_NOT_VERIFIED",
+        }
+
+    # Full pass criteria — all must be true/exact for gate_passed = True.
+    evidence: dict[str, Any] = {
+        "contract_packet_read": (
+            diagnostics.get("contract_packet_read") is True
+        ),
+        "sidecar_digest_matches_json_bytes": (
+            diagnostics.get("sidecar_digest_matches_json_bytes") is True
+        ),
+        "forbidden_dict_key_scan_passed": (
+            diagnostics.get("forbidden_dict_key_scan_passed") is True
+        ),
+        "input_ceiling_check_passed": (
+            diagnostics.get("input_ceiling_check_passed") is True
+        ),
+        "output_boundary_fields_present": (
+            diagnostics.get("output_boundary_fields_present") is True
+        ),
+        "downstream_dependency_booleans_all_false": (
+            diagnostics.get("downstream_dependency_booleans_all_false") is True
+        ),
+        "contract_commit_sha_bound": (
+            diagnostics.get("contract_commit_sha_bound") is True
+        ),
+        "contract_commit_sha_binding_status": (
+            diagnostics.get("contract_commit_sha_binding_status")
+            == "BOUND_BY_PRIOR_COMMIT_CONTAINMENT_SIDECAR"
+        ),
+        "contract_containing_commit_digest_matches": (
+            diagnostics.get("contract_containing_commit_digest_matches")
+            is True
+        ),
+    }
+
+    # Additional checks not included in evidence dict.
+    extra_pass = (
+        diagnostics.get("diagnostic_kind")
+        == "strategy_rule_contract_instance"
+        and diagnostics.get("json_parse_ok") is True
+        and diagnostics.get("sidecar_parse_ok") is True
+        and diagnostics.get("contract_hash_authority") == "SIDECAR"
+        and diagnostics.get("contract_hash_field_value") == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("contract_hash_status") == "FROZEN_IN_SIDECAR"
+        and diagnostics.get("required_fields_present") is True
+        and diagnostics.get("scoring_authorization") is False
+        and diagnostics.get("live_integration_authorized") is False
+        and diagnostics.get("contract_containing_commit_path_verified")
+        is True
+        and diagnostics.get("contract_instance_readiness") is False
+        and diagnostics.get("contract_scoring_ready") is False
+    )
+
+    all_pass = all(evidence.values()) and extra_pass
+
+    if all_pass:
+        gate_status = "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY"
+        blocked_reason = None
+    else:
+        gate_status = "BLOCKED_BY_INCOMPLETE_EVIDENCE"
+        blocked_reason = "CONTRACT_PACKET_GATE_EVIDENCE_INCOMPLETE"
 
     return {
-        "contract_version": STRATEGY_RULE_CONTRACT_VERSION,
-        "calculation_status": STRATEGY_RULE_CONTRACT_DIAGNOSTIC_ONLY,
-        "contract_status": STRATEGY_RULE_CONTRACT_NOT_DEFINED,
-        "scoring_authorized": False,
-        "scoring_blocked_reason": STRATEGY_RULE_CONTRACT_BLOCKED_REASON_NOT_DEFINED,
-        "allowed_input_roles": None,
-        "allowed_input_columns": None,
-        "forbidden_input_roles": None,
-        "forbidden_input_columns": None,
-        "forbidden_future_columns": None,
-        "decision_time_convention": None,
-        "decision_time_column": None,
-        "decision_time_offset": None,
-        "feature_lookback": None,
-        "feature_lookback_bars": None,
-        "label_horizon": None,
-        "label_horizon_bars": None,
-        "holding_period": None,
-        "holding_period_bars": None,
-        "side_semantics": None,
-        "side_source": None,
-        "notional_semantics": None,
-        "notional_source": None,
-        "notional_currency": None,
-        "cost_dependency": NOT_DEFINED,
-        "funding_dependency": NOT_DEFINED,
-        "scoring_prerequisites_present": {
-            "decision_time_convention": False,
-            "feature_lookback": False,
-            "label_horizon": False,
-            "holding_period": False,
-            "funding_interval_exposure": False,
-            "cost_event_timing": False,
-        },
+        "gate_kind": "strategy_rule_contract_packet_gate",
+        "gate_scope": (
+            "CONTRACT_PACKET_EXISTENCE_HASH_AND_COMMIT_BINDING_ONLY"
+        ),
+        "gate_status": gate_status,
+        "gate_passed": all_pass,
+        "gate_scoring_authorization": False,
+        "gate_live_authorization": False,
+        "gate_final_verdict_authorization": False,
+        "gate_downstream_unlocks": [],
+        "evidence": evidence,
+        "blocked_reason": blocked_reason,
     }
 
 

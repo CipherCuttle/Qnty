@@ -62,6 +62,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     _build_funding_adjustment_sample_aggregate_diagnostics,
     _build_split_leakage_audit_diagnostics,
     _build_strategy_rule_contract_diagnostics,
+    _derive_strategy_rule_contract_packet_gate,
     materialize_strategy_rule_contract_instance_diagnostics,
     SPLIT_LEAKAGE_AUDIT_VERSION,
     SPLIT_LEAKAGE_AUDIT_DIAGNOSTIC_ONLY,
@@ -9701,6 +9702,296 @@ class TestStrategyRuleContractCommitBindingDiagnostics:
                 sidecar_path=str(sidecar_outside),
                 commit_binding_path=str(binding_path),
             )
+
+
+class TestStrategyRuleContractPacketGate:
+    """Tests for _derive_strategy_rule_contract_packet_gate() — Lane D1.
+
+    The gate is a diagnostic-only projection derived from existing strategy-rule
+    contract diagnostics. It compresses C2 evidence that the frozen contract
+    packet is loaded, hash-bound, strict-key checked, input/output bounded,
+    dependency-false, and commit-bound to a prior containing commit.
+
+    Gate pass does **not** authorize scoring, strategy execution, PnL, live
+    readiness, or final verdict advancement.
+    """
+
+    @staticmethod
+    def _contract_json_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+        )
+
+    @staticmethod
+    def _sidecar_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256"
+        )
+
+    @staticmethod
+    def _commit_binding_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[2]
+            / "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json"
+        )
+
+    # ── Test 1: Helper happy path (C2 diagnostics → gate passed) ──────────
+    def test_happy_path_gate_passed(self):
+        """C2 diagnostics with all fields correct yields gate_passed True."""
+        diagnostics = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        gate = _derive_strategy_rule_contract_packet_gate(diagnostics)
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY"
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+        assert gate["blocked_reason"] is None
+        # Evidence fields all present and true.
+        ev = gate["evidence"]
+        assert ev["contract_packet_read"] is True
+        assert ev["sidecar_digest_matches_json_bytes"] is True
+        assert ev["forbidden_dict_key_scan_passed"] is True
+        assert ev["input_ceiling_check_passed"] is True
+        assert ev["output_boundary_fields_present"] is True
+        assert ev["downstream_dependency_booleans_all_false"] is True
+        assert ev["contract_commit_sha_bound"] is True
+        assert ev["contract_commit_sha_binding_status"] is True
+        assert ev["contract_containing_commit_digest_matches"] is True
+
+    # ── Test 2: C1 compatibility (no commit binding) ──────────────────────
+    def test_c1_compatibility_no_commit_binding(self):
+        """C1 diagnostics (contract + sidecar only) yields gate_passed False."""
+        diagnostics = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+        )
+        gate = _derive_strategy_rule_contract_packet_gate(diagnostics)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_COMMIT_BINDING_PLACEHOLDER"
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+        assert gate["blocked_reason"] == "CONTRACT_COMMIT_BINDING_NOT_VERIFIED"
+        ev = gate["evidence"]
+        assert ev["contract_commit_sha_bound"] is False
+
+    # ── Test 3: Absence compatibility (no contract paths) ─────────────────
+    def test_absence_compatibility(self):
+        """No contract args yields gate_passed False with NOT_LOADED status."""
+        diagnostics = _build_strategy_rule_contract_diagnostics()
+        gate = diagnostics["contract_packet_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "CONTRACT_PACKET_NOT_LOADED"
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+        assert gate["blocked_reason"] == "CONTRACT_PACKET_NOT_LOADED"
+        assert gate["evidence"] == {}
+
+    # ── Test 4: Missing critical field fails closed ───────────────────────
+    def test_missing_critical_field_fails_closed(self):
+        """Removing sidecar_digest_matches_json_bytes yields gate_passed False."""
+        diagnostics = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        # Remove a critical field.
+        del diagnostics["sidecar_digest_matches_json_bytes"]
+        gate = _derive_strategy_rule_contract_packet_gate(diagnostics)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_INCOMPLETE_EVIDENCE"
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+        assert gate["blocked_reason"] == "CONTRACT_PACKET_GATE_EVIDENCE_INCOMPLETE"
+        # The evidence field for the removed key should be False.
+        assert gate["evidence"]["sidecar_digest_matches_json_bytes"] is False
+
+    # ── Test 5: Wrong commit-binding status fails closed ──────────────────
+    def test_wrong_commit_binding_status_fails_closed(self):
+        """Wrong binding status while bound=True yields gate_passed False."""
+        diagnostics = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        diagnostics["contract_commit_sha_binding_status"] = (
+            "UNRESOLVED_SELF_REFERENCE_PLACEHOLDER"
+        )
+        gate = _derive_strategy_rule_contract_packet_gate(diagnostics)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_INCOMPLETE_EVIDENCE"
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    # ── Test 6: Scoring authorization true fails closed ───────────────────
+    def test_scoring_authorization_true_fails_closed(self):
+        """scoring_authorization=True yields gate_passed False."""
+        diagnostics = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        diagnostics["scoring_authorization"] = True
+        gate = _derive_strategy_rule_contract_packet_gate(diagnostics)
+        assert gate["gate_passed"] is False
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    # ── Test 7: Readiness true fails closed ───────────────────────────────
+    def test_readiness_true_fails_closed(self):
+        """contract_scoring_ready=True yields gate_passed False."""
+        diagnostics = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        diagnostics["contract_scoring_ready"] = True
+        gate = _derive_strategy_rule_contract_packet_gate(diagnostics)
+        assert gate["gate_passed"] is False
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    def test_instance_readiness_true_fails_closed(self):
+        """contract_instance_readiness=True yields gate_passed False."""
+        diagnostics = materialize_strategy_rule_contract_instance_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        diagnostics["contract_instance_readiness"] = True
+        gate = _derive_strategy_rule_contract_packet_gate(diagnostics)
+        assert gate["gate_passed"] is False
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    # ── Test 8: Receipt integration ───────────────────────────────────────
+    def test_receipt_integration_all_args(self):
+        """Receipt with all three contract paths includes gate, passed True,
+        final verdict still blocked."""
+        diagnostics = _build_strategy_rule_contract_diagnostics(
+            contract_path=self._contract_json_path(),
+            sidecar_path=self._sidecar_path(),
+            commit_binding_path=self._commit_binding_path(),
+        )
+        receipt = _base_receipt(
+            strategy_rule_contract_diagnostics=diagnostics,
+        )
+        loaded = receipt["strategy_rule_contract_diagnostics"]
+        assert "contract_packet_gate" in loaded
+        gate = loaded["contract_packet_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY"
+        )
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+        assert receipt["guardrail_status"]["edge_unproven"] is True
+        assert receipt["guardrail_status"]["block_live_integration"] is True
+        # validate_real_validation_receipt must not raise
+        validate_real_validation_receipt(receipt)
+
+    # ── Test 9: CLI no contract args ──────────────────────────────────────
+    def test_cli_no_contract_args(self, tmp_path):
+        """CLI without contract args includes gate with passed False."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        diag = receipt["strategy_rule_contract_diagnostics"]
+        assert "contract_packet_gate" in diag
+        gate = diag["contract_packet_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "CONTRACT_PACKET_NOT_LOADED"
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    # ── Test 10: CLI contract + sidecar only ──────────────────────────────
+    def test_cli_contract_sidecar_only(self, tmp_path):
+        """CLI with contract + sidecar only yields gate False, verdict blocked."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+            "--strategy-contract-path", self._contract_json_path(),
+            "--strategy-contract-sha256-path", self._sidecar_path(),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        diag = receipt["strategy_rule_contract_diagnostics"]
+        assert "contract_packet_gate" in diag
+        gate = diag["contract_packet_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_COMMIT_BINDING_PLACEHOLDER"
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    # ── Test 11: CLI all three args ───────────────────────────────────────
+    def test_cli_all_three_args(self, tmp_path):
+        """CLI with contract + sidecar + commit binding yields gate True,
+        verdict still blocked."""
+        _write_tiny_bars_csv(tmp_path)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main([
+            "--read-only", "--output-dir", str(output_dir),
+            "--input-manifest-fingerprint", "abc",
+            "--data-quality-receipt-sha256", "def",
+            "--code-commit-sha", "ghi",
+            "--bars-dir", str(tmp_path),
+            "--strategy-contract-path", self._contract_json_path(),
+            "--strategy-contract-sha256-path", self._sidecar_path(),
+            "--strategy-contract-commit-binding-path",
+            self._commit_binding_path(),
+        ])
+        assert exit_code == 0
+        receipt_path = output_dir / "real_validation_receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        diag = receipt["strategy_rule_contract_diagnostics"]
+        assert "contract_packet_gate" in diag
+        gate = diag["contract_packet_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            "CONTRACT_PACKET_COMMIT_BOUND_DIAGNOSTIC_ONLY"
+        )
+        assert receipt["final_offline_verdict"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+        assert receipt["guardrail_status"]["edge_unproven"] is True
+        assert receipt["guardrail_status"]["block_live_integration"] is True
 
 
 _TRIAL_MANIFEST_FORBIDDEN_KEYS = frozenset({
