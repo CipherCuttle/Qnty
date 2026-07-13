@@ -12830,3 +12830,474 @@ class TestTrialManifestRealPathIntegration:
             FINAL_OFFLINE_EDGE_VERDICT_LOGIC_BLOCKED
         )
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
+class TestOosSealPreregistrationF1:
+    """Lane F1: OOS seal pre-scoring declaration packet + diagnostic-only gate."""
+
+    SEAL_PATH = "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.json"
+    SEAL_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_oos_seal_v1.sha256"
+    CONTRACT_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.json"
+    CONTRACT_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.sha256"
+    CONTRACT_BINDING_PATH = "docs/contracts/instances/qnty_offline_edge_strategy_rule_contract_v1.commit_binding.json"
+    MANIFEST_PATH = "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.json"
+    MANIFEST_SIDECAR_PATH = "docs/contracts/instances/qnty_offline_edge_trial_manifest_v1.sha256"
+
+    def _build_contract_diagnostics(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            _build_strategy_rule_contract_diagnostics,
+        )
+        return _build_strategy_rule_contract_diagnostics(
+            contract_path=self.CONTRACT_PATH,
+            sidecar_path=self.CONTRACT_SIDECAR_PATH,
+            commit_binding_path=self.CONTRACT_BINDING_PATH,
+        )
+
+    def _build_trial_manifest_diagnostics(self, contract_diag):
+        from quantbot.experiment.offline_edge_real_validation import (
+            _build_trial_manifest_diagnostics,
+        )
+        return _build_trial_manifest_diagnostics(
+            manifest_path=self.MANIFEST_PATH,
+            sidecar_path=self.MANIFEST_SIDECAR_PATH,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+    # ── Seal JSON + sidecar happy path ─────────────────────────────────
+
+    def test_oos_seal_json_and_sidecar_valid(self):
+        """Validate sidecar, strict key scan passes, hash authority sidecar."""
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+            _find_forbidden_contract_dict_keys,
+            _REQUIRED_FALSE_OOS_SEAL_FIELDS,
+        )
+        import json, hashlib
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        result = materialize_oos_seal_preregistration_diagnostics(
+            seal_path=self.SEAL_PATH,
+            sidecar_path=self.SEAL_SIDECAR_PATH,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        assert result["seal_sidecar_digest_matches_json_bytes"] is True
+        assert result["seal_hash_authority"] == "SIDECAR"
+        assert result["seal_hash_field_value"] == "FROZEN_IN_SIDECAR"
+        assert result["seal_hash_status"] == "FROZEN_IN_SIDECAR"
+        assert result["seal_required_fields_present"] is True
+        assert result["seal_forbidden_dict_key_scan_passed"] is True
+
+        # Verify actual seal JSON has no forbidden keys
+        seal_bytes = Path(self.SEAL_PATH).read_bytes()
+        seal_dict = json.loads(seal_bytes)
+        collisions = _find_forbidden_contract_dict_keys(seal_dict)
+        assert collisions == [], f"Forbidden keys found: {collisions}"
+
+    # ── OOS seal diagnostic happy path ─────────────────────────────────
+
+    def test_oos_seal_diagnostic_happy_path(self):
+        """Build C2 contract + E1 manifest + F1 OOS seal, all pass."""
+        from quantbot.experiment.offline_edge_real_validation import (
+            _build_oos_seal_diagnostics,
+        )
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        result = _build_oos_seal_diagnostics(
+            seal_path=self.SEAL_PATH,
+            sidecar_path=self.SEAL_SIDECAR_PATH,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        assert result["seal_sidecar_digest_matches_json_bytes"] is True
+        assert result["bound_contract_digest_matches"] is True
+        assert result["bound_trial_manifest_digest_matches"] is True
+        assert result["trial_manifest_gate_passed"] is True
+        assert result["oos_boundary_policy_frozen"] is True
+        assert result["oos_split_selection_frozen"] is True
+        assert result["oos_scoring_authorized"] is False
+
+    # ── OOS seal gate happy path ───────────────────────────────────────
+
+    def test_oos_seal_gate_happy_path(self):
+        """Gate passes with correct status and all authorizations false."""
+        from quantbot.experiment.offline_edge_real_validation import (
+            _build_oos_seal_diagnostics,
+        )
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        oos_diag = _build_oos_seal_diagnostics(
+            seal_path=self.SEAL_PATH,
+            sidecar_path=self.SEAL_SIDECAR_PATH,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+        gate = oos_diag.get("oos_seal_preregistration_gate", {})
+        assert gate.get("gate_passed") is True
+        assert gate.get("gate_status") == "OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY"
+        assert gate.get("gate_scoring_authorization") is False
+        assert gate.get("gate_live_authorization") is False
+        assert gate.get("gate_final_verdict_authorization") is False
+        assert gate.get("gate_downstream_unlocks") == []
+
+    # ── Seal missing fails closed ──────────────────────────────────────
+
+    def test_oos_seal_missing_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            _build_oos_seal_diagnostics,
+        )
+        result = _build_oos_seal_diagnostics()
+        gate = result.get("oos_seal_preregistration_gate", {})
+        assert gate.get("gate_passed") is False
+        assert gate.get("gate_status") == "OOS_SEAL_NOT_LOADED"
+
+    # ── Seal sidecar missing fails closed ──────────────────────────────
+
+    def test_oos_seal_sidecar_missing_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+        )
+        import tempfile, json, hashlib
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            seal_bytes = Path(self.SEAL_PATH).read_bytes()
+            f.write(seal_bytes.decode())
+            seal_tmp = f.name
+        missing_sidecar = "/tmp/nonexistent_sidecar_oos.sha256"
+        with pytest.raises(ValueError, match="OOS seal sidecar not found"):
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=seal_tmp,
+                sidecar_path=missing_sidecar,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── Seal digest mismatch fails closed ──────────────────────────────
+
+    def test_oos_seal_digest_mismatch_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+        )
+        import tempfile, hashlib
+        # Use the real seal JSON bytes with a sidecar that has a wrong digest
+        real_bytes = Path(self.SEAL_PATH).read_bytes()
+        wrong_digest = hashlib.sha256(real_bytes + b"tamper").hexdigest()
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as src:
+            src.write(real_bytes)
+            seal_tmp = src.name
+        seal_basename = Path(seal_tmp).name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sha256", delete=False) as f:
+            f.write(f"{wrong_digest}  {seal_basename}")
+            sidecar_tmp = f.name
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        with pytest.raises(ValueError, match="sidecar digest mismatch"):
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=seal_tmp,
+                sidecar_path=sidecar_tmp,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── Malformed seal JSON fails closed ───────────────────────────────
+
+    def test_oos_seal_malformed_json_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+        )
+        import tempfile
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            f.write("{invalid json")
+            seal_tmp = f.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sha256", delete=False) as f:
+            import hashlib
+            d = hashlib.sha256(b"{invalid json").hexdigest()
+            f.write(f"{d}  bad.json")
+            sidecar_tmp = f.name
+        with pytest.raises(ValueError, match="JSON parse error"):
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=seal_tmp,
+                sidecar_path=sidecar_tmp,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── Forbidden dict key in seal fails closed ────────────────────────
+
+    def test_oos_seal_forbidden_key_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+        )
+        import tempfile, hashlib
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        # Copy the real seal and inject a forbidden key
+        import json
+        real_bytes = Path(self.SEAL_PATH).read_bytes()
+        real_dict = json.loads(real_bytes)
+        real_dict["pnl"] = 1  # forbidden key
+        bad_bytes = json.dumps(real_dict, indent=2, sort_keys=True).encode() + b"\n"
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".json", delete=False) as f:
+            f.write(bad_bytes)
+            seal_tmp = f.name
+        bad_digest = hashlib.sha256(bad_bytes).hexdigest()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sha256", delete=False) as f:
+            f.write(f"{bad_digest}  bad.json")
+            sidecar_tmp = f.name
+        with pytest.raises(ValueError, match="forbidden dict key"):
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=seal_tmp,
+                sidecar_path=sidecar_tmp,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── Contract digest mismatch fails closed ──────────────────────────
+
+    def test_oos_seal_contract_digest_mismatch_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+        )
+        import tempfile, json, hashlib
+        real_bytes = Path(self.SEAL_PATH).read_bytes()
+        real_dict = json.loads(real_bytes)
+        real_dict["bound_contract_sha256"] = "0" * 64
+        bad_bytes = json.dumps(real_dict, indent=2, sort_keys=True).encode() + b"\n"
+        bad_digest = hashlib.sha256(bad_bytes).hexdigest()
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".json", delete=False) as f:
+            f.write(bad_bytes)
+            seal_tmp = f.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sha256", delete=False) as f:
+            f.write(f"{bad_digest}  bad.json")
+            sidecar_tmp = f.name
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        with pytest.raises(ValueError, match="bound_contract_sha256 mismatch"):
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=seal_tmp,
+                sidecar_path=sidecar_tmp,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── Trial manifest digest mismatch fails closed ────────────────────
+
+    def test_oos_seal_manifest_digest_mismatch_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+        )
+        import tempfile, json, hashlib
+        real_bytes = Path(self.SEAL_PATH).read_bytes()
+        real_dict = json.loads(real_bytes)
+        real_dict["bound_trial_manifest_sha256"] = "0" * 64
+        bad_bytes = json.dumps(real_dict, indent=2, sort_keys=True).encode() + b"\n"
+        bad_digest = hashlib.sha256(bad_bytes).hexdigest()
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".json", delete=False) as f:
+            f.write(bad_bytes)
+            seal_tmp = f.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sha256", delete=False) as f:
+            f.write(f"{bad_digest}  bad.json")
+            sidecar_tmp = f.name
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        with pytest.raises(ValueError, match="bound_trial_manifest_sha256 mismatch"):
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=seal_tmp,
+                sidecar_path=sidecar_tmp,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── Trial manifest gate missing blocks OOS seal ────────────────────
+
+    def test_oos_seal_trial_manifest_gate_missing_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+            _build_trial_manifest_diagnostics,
+        )
+        contract_diag = self._build_contract_diagnostics()
+        # Build manifest WITHOUT gate by omitting paths
+        manifest_diag = _build_trial_manifest_diagnostics(
+            manifest_path=None,
+            sidecar_path=None,
+            strategy_rule_contract_diagnostics=None,
+        )
+        with pytest.raises(ValueError, match="Trial manifest gate not passed"):
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=self.SEAL_PATH,
+                sidecar_path=self.SEAL_SIDECAR_PATH,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── oos_boundary_policy_frozen = false fails closed ────────────────
+
+    def test_oos_boundary_policy_not_frozen_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+        )
+        import tempfile, json, hashlib
+        real_bytes = Path(self.SEAL_PATH).read_bytes()
+        real_dict = json.loads(real_bytes)
+        real_dict["oos_boundary_policy_frozen"] = False
+        bad_bytes = json.dumps(real_dict, indent=2, sort_keys=True).encode() + b"\n"
+        bad_digest = hashlib.sha256(bad_bytes).hexdigest()
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".json", delete=False) as f:
+            f.write(bad_bytes)
+            seal_tmp = f.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sha256", delete=False) as f:
+            f.write(f"{bad_digest}  bad.json")
+            sidecar_tmp = f.name
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        with pytest.raises(ValueError, match="oos_boundary_policy_frozen must be True"):
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=seal_tmp,
+                sidecar_path=sidecar_tmp,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── oos_split_selection_frozen = false fails closed ────────────────
+
+    def test_oos_split_selection_not_frozen_fails_closed(self):
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+        )
+        import tempfile, json, hashlib
+        real_bytes = Path(self.SEAL_PATH).read_bytes()
+        real_dict = json.loads(real_bytes)
+        real_dict["oos_split_selection_frozen"] = False
+        bad_bytes = json.dumps(real_dict, indent=2, sort_keys=True).encode() + b"\n"
+        bad_digest = hashlib.sha256(bad_bytes).hexdigest()
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".json", delete=False) as f:
+            f.write(bad_bytes)
+            seal_tmp = f.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sha256", delete=False) as f:
+            f.write(f"{bad_digest}  bad.json")
+            sidecar_tmp = f.name
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        with pytest.raises(ValueError, match="oos_split_selection_frozen must be True"):
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=seal_tmp,
+                sidecar_path=sidecar_tmp,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── Authorization boolean type hardening ───────────────────────────
+
+    @pytest.mark.parametrize("field,value", [
+        ("oos_scoring_authorized", 0),
+        ("oos_scoring_authorized", "false"),
+        ("oos_scoring_authorized", True),
+    ])
+    def test_oos_seal_auth_boolean_hardening(self, field, value):
+        from quantbot.experiment.offline_edge_real_validation import (
+            materialize_oos_seal_preregistration_diagnostics,
+        )
+        import tempfile, json, hashlib
+        real_bytes = Path(self.SEAL_PATH).read_bytes()
+        real_dict = json.loads(real_bytes)
+        real_dict[field] = value
+        bad_bytes = json.dumps(real_dict, indent=2, sort_keys=True).encode() + b"\n"
+        bad_digest = hashlib.sha256(bad_bytes).hexdigest()
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".json", delete=False) as f:
+            f.write(bad_bytes)
+            seal_tmp = f.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".sha256", delete=False) as f:
+            f.write(f"{bad_digest}  bad.json")
+            sidecar_tmp = f.name
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        with pytest.raises(ValueError, match="fields must be exactly false"):
+            materialize_oos_seal_preregistration_diagnostics(
+                seal_path=seal_tmp,
+                sidecar_path=sidecar_tmp,
+                trial_manifest_diagnostics=manifest_diag,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
+
+    # ── Receipt integration with all args ──────────────────────────────
+
+    def test_receipt_integration_full_path(self):
+        """All args provided: gates pass, final verdict still blocked."""
+        from quantbot.experiment.offline_edge_real_validation import (
+            build_real_validation_receipt,
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+        )
+        import tempfile, json
+
+        contract_diag = self._build_contract_diagnostics()
+        manifest_diag = self._build_trial_manifest_diagnostics(contract_diag)
+        oos_diag = self._build_oos_seal_diagnostics_with_args(
+            contract_diag, manifest_diag
+        )
+
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint="test",
+            data_quality_receipt_sha256="test",
+            code_commit_sha="test",
+            split_definitions=[{"split_id": 0}],
+            cost_cases=[],
+            strategy_rule_contract_diagnostics=contract_diag,
+            trial_manifest_diagnostics=manifest_diag,
+            oos_seal_diagnostics=oos_diag,
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+        # Check OOS seal gate exists and passes
+        oos_diag = receipt["oos_seal_diagnostics"]
+        gate = oos_diag["oos_seal_preregistration_gate"]
+        assert gate["gate_kind"] == "oos_seal_preregistration_gate"
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == "OOS_SEAL_PREREGISTERED_DIAGNOSTIC_ONLY"
+        assert gate["gate_scoring_authorization"] is False
+
+    def _build_oos_seal_diagnostics_with_args(self, contract_diag, manifest_diag):
+        from quantbot.experiment.offline_edge_real_validation import (
+            _build_oos_seal_diagnostics,
+        )
+        return _build_oos_seal_diagnostics(
+            seal_path=self.SEAL_PATH,
+            sidecar_path=self.SEAL_SIDECAR_PATH,
+            trial_manifest_diagnostics=manifest_diag,
+            strategy_rule_contract_diagnostics=contract_diag,
+        )
+
+    def test_cli_no_seal_args_gate_not_loaded(self):
+        """CLI without --oos-seal-path: OOS seal gate exists and false."""
+        from quantbot.experiment.offline_edge_real_validation import (
+            _build_oos_seal_diagnostics,
+        )
+        result = _build_oos_seal_diagnostics()
+        gate = result.get("oos_seal_preregistration_gate", {})
+        assert gate.get("gate_passed") is False
+        assert gate.get("gate_status") == "OOS_SEAL_NOT_LOADED"
+
+    def test_cli_seal_without_trial_manifest_gate_fails_closed(self):
+        """Seal args without trial manifest gate: blocked."""
+        from quantbot.experiment.offline_edge_real_validation import (
+            _build_oos_seal_diagnostics,
+        )
+        contract_diag = self._build_contract_diagnostics()
+        # Build trial manifest WITHOUT gate
+        from quantbot.experiment.offline_edge_real_validation import (
+            _build_trial_manifest_diagnostics,
+        )
+        manifest_diag_no_gate = _build_trial_manifest_diagnostics(
+            manifest_path=None,
+            sidecar_path=None,
+            strategy_rule_contract_diagnostics=None,
+        )
+        with pytest.raises(ValueError, match="Trial manifest gate not passed"):
+            _build_oos_seal_diagnostics(
+                seal_path=self.SEAL_PATH,
+                sidecar_path=self.SEAL_SIDECAR_PATH,
+                trial_manifest_diagnostics=manifest_diag_no_gate,
+                strategy_rule_contract_diagnostics=contract_diag,
+            )
