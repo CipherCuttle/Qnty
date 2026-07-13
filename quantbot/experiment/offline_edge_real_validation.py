@@ -379,7 +379,6 @@ _REQUIRED_FALSE_MULTIPLE_TESTING_CONTROL_FIELDS: tuple[str, ...] = (
 )
 
 # === Trade position simulation contract diagnostics constants ===
-# === Trade position simulation contract diagnostics constants ===
 # Simulation policy pre-registration constants.
 # A frozen simulation policy declaration packet that pre-registers the future
 # hypothetical path-construction policy before any simulated events, returns,
@@ -10790,7 +10789,21 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             trade_position_simulation_contract_diagnostics = (
-                _build_trade_position_simulation_contract_diagnostics()
+                _build_trade_position_simulation_contract_diagnostics(
+                    simulation_policy_path=args.simulation_policy_path,
+                    sidecar_path=args.simulation_policy_sha256_path,
+                    multiple_testing_control_diagnostics=(
+                        multiple_testing_control_diagnostics
+                    ),
+                    null_benchmark_diagnostics=(
+                        null_benchmark_contract_diagnostics
+                    ),
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                )
             )
             net_pnl_equity_risk_contract_diagnostics = (
                 _build_net_pnl_equity_risk_contract_diagnostics()
@@ -10937,7 +10950,21 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             trade_position_simulation_contract_diagnostics = (
-                _build_trade_position_simulation_contract_diagnostics()
+                _build_trade_position_simulation_contract_diagnostics(
+                    simulation_policy_path=args.simulation_policy_path,
+                    sidecar_path=args.simulation_policy_sha256_path,
+                    multiple_testing_control_diagnostics=(
+                        multiple_testing_control_diagnostics
+                    ),
+                    null_benchmark_diagnostics=(
+                        null_benchmark_contract_diagnostics
+                    ),
+                    oos_seal_diagnostics=oos_seal_diagnostics,
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                )
             )
             net_pnl_equity_risk_contract_diagnostics = (
                 _build_net_pnl_equity_risk_contract_diagnostics()
