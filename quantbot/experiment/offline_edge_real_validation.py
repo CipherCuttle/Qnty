@@ -116,6 +116,8 @@ __all__ = [
     "_derive_simulated_events_v0_gate",
     "_build_economic_output_schema_lock_diagnostics",
     "_derive_economic_output_schema_lock_gate",
+    "_build_economic_accounting_rows_v0_diagnostics",
+    "_derive_economic_accounting_rows_v0_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -1115,6 +1117,42 @@ _FORBIDDEN_ECONOMIC_OUTPUT_SCHEMA_KEY_NAMES = (
     "confidence_interval", "trade", "trades", "order", "orders", "fill", "fills",
     "execution", "executions", "position", "positions", "portfolio", "live_ready",
     "deploy_ready", "profitable",
+)
+
+# === Lane V1: neutral economic accounting row artifacts ===
+ECONOMIC_ACCOUNTING_ROWS_V0_VERSION = "economic-accounting-rows-v0-0.1"
+ECONOMIC_ACCOUNTING_ROWS_V0_SCOPE = "NEUTRAL_ACCOUNTING_ROW_ARTIFACT_ONLY_NO_RETURNS_OR_SCORING"
+ECONOMIC_ACCOUNTING_ROWS_V0_DECLARED_ARTIFACT_ONLY = "ECONOMIC_ACCOUNTING_ROWS_V0_DECLARED_ARTIFACT_ONLY"
+ECONOMIC_ACCOUNTING_ROWS_V0_POLICY = "EMIT_SCHEMA_LOCKED_NEUTRAL_ACCOUNTING_ROWS_ONLY_NO_RETURNS_OR_SCORING"
+ECONOMIC_ACCOUNTING_ROWS_V0_SCHEMA_VERSION = "economic-accounting-rows-v0-0.1"
+ECONOMIC_ACCOUNTING_ROWS_V0_SCHEMA_KIND = "economic_accounting_row_v0"
+ECONOMIC_ACCOUNTING_ROWS_V0_FAMILY = "neutral_event_accounting_v0"
+ECONOMIC_ACCOUNTING_ROWS_V0_VARIANT = "noop_event_neutral_amount"
+ECONOMIC_ACCOUNTING_ROWS_V0_REVISION = "v1-0.1"
+ECONOMIC_ACCOUNTING_ROWS_V0_MAX_ROWS = 100
+ECONOMIC_ACCOUNTING_ROWS_V0_NEUTRAL_AMOUNT_VALUE = 0
+BLOCKED_BY_ECONOMIC_OUTPUT_SCHEMA_LOCK_GATE = "BLOCKED_BY_ECONOMIC_OUTPUT_SCHEMA_LOCK_GATE"
+BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_ROWS_V0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_ROWS_V0_EVIDENCE"
+BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_ROW_SCHEMA = "BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_ROW_SCHEMA"
+BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_FORBIDDEN_KEY = "BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_FORBIDDEN_KEY"
+BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_FORBIDDEN_VALUE = "BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_FORBIDDEN_VALUE"
+BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_NON_NEUTRAL_AMOUNT = "BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_NON_NEUTRAL_AMOUNT"
+BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_DOWNSTREAM_OUTPUT = "BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_DOWNSTREAM_OUTPUT"
+BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_DOWNSTREAM_AUTHORIZATION = "BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_DOWNSTREAM_AUTHORIZATION"
+_ECONOMIC_ACCOUNTING_ROWS_V0_FORBIDDEN_NAMES = frozenset(
+    set(_FORBIDDEN_ECONOMIC_OUTPUT_SCHEMA_KEY_NAMES)
+    | {"close", "fundingRate", "open", "high", "low", "volume", "markPrice", "price_value", "funding_value", "cost", "costs", "fee", "fees"}
+)
+_ECONOMIC_ACCOUNTING_ROWS_V0_DOWNSTREAM_OUTPUT_FIELDS = (
+    "price_values_emitted", "funding_rate_values_emitted", "cost_values_emitted",
+    "return_values_emitted", "profit_values_emitted", "statistical_values_emitted",
+    "null_comparison_values_emitted", "scoring_values_emitted", "live_integration_values_emitted",
+    "paper_integration_values_emitted", "final_verdict_values_emitted",
+)
+_ECONOMIC_ACCOUNTING_ROWS_V0_DOWNSTREAM_AUTHORIZATION_FIELDS = (
+    "statistical_value_generation_authorized", "candidate_comparison_authorized",
+    "null_generation_authorized", "scoring_authorization", "live_integration_authorized",
+    "paper_integration_authorized", "final_verdict_authorization",
 )
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
@@ -16439,6 +16477,176 @@ def _derive_economic_output_schema_lock_gate(diagnostics: dict[str, Any]) -> dic
     return result
 
 
+def _build_economic_accounting_rows_v0_diagnostics(
+    *, economic_output_schema_lock_diagnostics: dict[str, Any],
+    simulated_events_v0_diagnostics: dict[str, Any],
+    simulated_event_schema_lock_diagnostics: dict[str, Any],
+    materialized_rule_rows_v0_diagnostics: dict[str, Any],
+    materialized_rule_row_schema_lock_diagnostics: dict[str, Any],
+    no_output_runner_dry_harness_diagnostics: dict[str, Any],
+    projected_input_joinability_diagnostics: dict[str, Any],
+    projected_input_temporal_sequence_diagnostics: dict[str, Any],
+    projected_input_row_count_diagnostics: dict[str, Any],
+    projected_input_shape_inventory_diagnostics: dict[str, Any],
+    allowed_runner_input_projection_diagnostics: dict[str, Any],
+    no_output_runner_invocation_diagnostics: dict[str, Any],
+    implementation_boundary_diagnostics: dict[str, Any],
+    economic_accounting_policy_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build V1 rows solely from U1 event metadata with neutral-zero amounts."""
+    def passed(section: dict[str, Any], gate_name: str) -> bool:
+        gate = section.get(gate_name)
+        return bool(isinstance(gate, dict) and gate.get("gate_passed") is True)
+
+    upstream_sections = (
+        ("economic_output_schema_lock", economic_output_schema_lock_diagnostics, "economic_output_schema_lock_gate"),
+        ("simulated_events_v0", simulated_events_v0_diagnostics, "simulated_events_v0_gate"),
+        ("simulated_event_schema_lock", simulated_event_schema_lock_diagnostics, "simulated_event_schema_lock_gate"),
+        ("materialized_rule_rows_v0", materialized_rule_rows_v0_diagnostics, "materialized_rule_rows_v0_gate"),
+        ("materialized_rule_row_schema_lock", materialized_rule_row_schema_lock_diagnostics, "materialized_rule_row_schema_lock_gate"),
+        ("no_output_runner_dry_harness", no_output_runner_dry_harness_diagnostics, "no_output_runner_dry_harness_gate"),
+        ("projected_input_joinability", projected_input_joinability_diagnostics, "projected_input_joinability_gate"),
+        ("projected_input_temporal_sequence", projected_input_temporal_sequence_diagnostics, "projected_input_temporal_sequence_gate"),
+        ("projected_input_row_count", projected_input_row_count_diagnostics, "projected_input_row_count_gate"),
+        ("projected_input_shape_inventory", projected_input_shape_inventory_diagnostics, "projected_input_shape_inventory_gate"),
+        ("allowed_runner_input_projection", allowed_runner_input_projection_diagnostics, "allowed_runner_input_projection_gate"),
+        ("no_output_runner_invocation", no_output_runner_invocation_diagnostics, "no_output_runner_invocation_gate"),
+        ("implementation_boundary", implementation_boundary_diagnostics, "implementation_boundary_gate"),
+    )
+    upstream = {f"{name}_gate_passed": passed(section, gate) for name, section, gate in upstream_sections}
+    events = simulated_events_v0_diagnostics.get("simulated_events")
+    events = events if isinstance(events, list) else []
+    cap_exceeded = len(events) > ECONOMIC_ACCOUNTING_ROWS_V0_MAX_ROWS
+    rows: list[dict[str, Any]] = []
+    if all(upstream.values()) and not cap_exceeded:
+        for sequence, event in enumerate(events, start=1):
+            if not isinstance(event, dict):
+                rows = []
+                break
+            rows.append({
+                "schema_version": ECONOMIC_ACCOUNTING_ROWS_V0_SCHEMA_VERSION,
+                "schema_kind": ECONOMIC_ACCOUNTING_ROWS_V0_SCHEMA_KIND,
+                "run_id": event.get("run_id"), "accounting_sequence_id": sequence,
+                "source_event_sequence_id": event.get("event_sequence_id"),
+                "source_rule_row_sequence_id": event.get("source_rule_row_sequence_id"),
+                "symbol": event.get("symbol"), "split_id": event.get("split_id"),
+                "split_partition": event.get("split_partition"),
+                "accounting_time_utc": event.get("event_time_utc"),
+                "source_event_time_utc": event.get("event_time_utc"),
+                "source_decision_time_utc": event.get("source_decision_time_utc"),
+                "source_bar_time_utc": event.get("source_bar_time_utc"),
+                "source_funding_time_utc": event.get("source_funding_time_utc"),
+                "accounting_family": ECONOMIC_ACCOUNTING_ROWS_V0_FAMILY,
+                "accounting_variant": ECONOMIC_ACCOUNTING_ROWS_V0_VARIANT,
+                "accounting_revision": ECONOMIC_ACCOUNTING_ROWS_V0_REVISION,
+                "accounting_entry_name": "neutral_artifact_entry",
+                "accounting_entry_code": "NOOP_ACCOUNTING_ARTIFACT_ONLY",
+                "accounting_basis_name": "schema_locked_noop_event",
+                "accounting_basis_code": "EVENT_METADATA_ONLY", "accounting_unit": "unitless",
+                "accounting_amount_kind": "neutral_zero",
+                "accounting_amount_value": ECONOMIC_ACCOUNTING_ROWS_V0_NEUTRAL_AMOUNT_VALUE,
+                "accounting_metadata_only": True,
+            })
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "economic_accounting_rows_v0",
+        "economic_accounting_rows_v0_version": ECONOMIC_ACCOUNTING_ROWS_V0_VERSION,
+        "economic_accounting_rows_v0_scope": ECONOMIC_ACCOUNTING_ROWS_V0_SCOPE,
+        "economic_accounting_rows_v0_status": ECONOMIC_ACCOUNTING_ROWS_V0_DECLARED_ARTIFACT_ONLY,
+        **{f"{name}_gate_required": True for name, _, _ in upstream_sections}, **upstream,
+        "economic_accounting_rows_v0_declared": True,
+        "economic_accounting_rows_v0_mode": "SCHEMA_LOCKED_NEUTRAL_ACCOUNTING_ROW_ARTIFACT_ONLY",
+        "economic_accounting_rows_v0_policy": ECONOMIC_ACCOUNTING_ROWS_V0_POLICY,
+        "economic_output_rows_emitted": bool(rows), "economic_output_row_count": len(rows),
+        "accounting_rows_emitted": bool(rows), "accounting_row_count": len(rows),
+        "amount_values_emitted": bool(rows), "economic_values_emitted": bool(rows),
+        "economic_accounting_rows": rows, "source_simulated_event_count": len(events),
+        "accounting_row_count_matches_source_event_count": len(rows) == len(events),
+        "accounting_schema_keys": list(_ALLOWED_ECONOMIC_OUTPUT_SCHEMA_KEYS),
+        "accounting_schema_key_count": len(_ALLOWED_ECONOMIC_OUTPUT_SCHEMA_KEYS),
+        "accounting_forbidden_key_names_absent": True, "accounting_forbidden_values_absent": True,
+        "accounting_amount_values_all_neutral_zero": True, "accounting_non_neutral_amount_values_emitted": False,
+        "simulated_event_cap_exceeded": cap_exceeded,
+        **{field: False for field in _ECONOMIC_ACCOUNTING_ROWS_V0_DOWNSTREAM_OUTPUT_FIELDS},
+        "rule_materialization_authorized": True, "simulated_event_generation_authorized": True,
+        "economic_output_generation_authorized": True, "accounting_application_authorized": True,
+        "amount_generation_authorized": True, "economic_value_generation_authorized": True,
+        **{field: False for field in _ECONOMIC_ACCOUNTING_ROWS_V0_DOWNSTREAM_AUTHORIZATION_FIELDS},
+        "economic_accounting_policy_diagnostics_present": isinstance(economic_accounting_policy_diagnostics, dict),
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["economic_accounting_rows_v0_gate"] = _derive_economic_accounting_rows_v0_gate(diagnostics)
+    return diagnostics
+
+
+def _derive_economic_accounting_rows_v0_gate(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    """Fail closed unless V1 rows are exact, neutral, ordered U1 projections."""
+    rows = diagnostics.get("economic_accounting_rows")
+    rows_are_list = isinstance(rows, list)
+    every_row_is_dict = rows_are_list and all(isinstance(row, dict) for row in rows)
+    allowed_keys = set(_ALLOWED_ECONOMIC_OUTPUT_SCHEMA_KEYS)
+    schema_exact = every_row_is_dict and all(set(row) == allowed_keys for row in rows)
+    forbidden_keys = every_row_is_dict and any(_ECONOMIC_ACCOUNTING_ROWS_V0_FORBIDDEN_NAMES & set(row) for row in rows)
+    forbidden_values = every_row_is_dict and any(
+        isinstance(value, str) and value in _ECONOMIC_ACCOUNTING_ROWS_V0_FORBIDDEN_NAMES
+        for row in rows for value in row.values()
+    )
+    amounts_neutral = every_row_is_dict and all(
+        type(row.get("accounting_amount_value")) is int and row.get("accounting_amount_value") == 0
+        for row in rows
+    )
+    def sort_key(row: dict[str, Any]) -> tuple[str, str, str, str, int]:
+        sequence = row.get("accounting_sequence_id")
+        return (str(row.get("symbol", "")), str(row.get("split_id", "")), str(row.get("split_partition", "")), str(row.get("accounting_time_utc", "")), sequence if isinstance(sequence, int) else -1)
+    in_order = every_row_is_dict and rows == sorted(rows, key=sort_key)
+    identities = [(row.get("run_id"), row.get("symbol"), row.get("split_id"), row.get("split_partition"), row.get("accounting_sequence_id")) for row in rows] if every_row_is_dict else []
+    upstream_fields = tuple(key for key in diagnostics if key.endswith("_gate_passed"))
+    output_offenders = [field for field in _ECONOMIC_ACCOUNTING_ROWS_V0_DOWNSTREAM_OUTPUT_FIELDS if diagnostics.get(field) is True]
+    authorization_offenders = [field for field in _ECONOMIC_ACCOUNTING_ROWS_V0_DOWNSTREAM_AUTHORIZATION_FIELDS if diagnostics.get(field) is True]
+    evidence = {**{field: diagnostics.get(field) for field in upstream_fields},
+        "declared": diagnostics.get("economic_accounting_rows_v0_declared") is True,
+        "mode_matches": diagnostics.get("economic_accounting_rows_v0_mode") == "SCHEMA_LOCKED_NEUTRAL_ACCOUNTING_ROW_ARTIFACT_ONLY",
+        "status_matches": diagnostics.get("economic_accounting_rows_v0_status") == ECONOMIC_ACCOUNTING_ROWS_V0_DECLARED_ARTIFACT_ONLY,
+        "policy_matches": diagnostics.get("economic_accounting_rows_v0_policy") == ECONOMIC_ACCOUNTING_ROWS_V0_POLICY,
+        "rows_are_list": rows_are_list, "rows_emitted": diagnostics.get("accounting_rows_emitted") is True and diagnostics.get("economic_output_rows_emitted") is True,
+        "count_matches_list_length": rows_are_list and diagnostics.get("accounting_row_count") == len(rows) == diagnostics.get("economic_output_row_count"),
+        "count_positive": bool(rows_are_list and rows), "source_count_positive": diagnostics.get("source_simulated_event_count", 0) > 0,
+        "count_matches_source": diagnostics.get("accounting_row_count_matches_source_event_count") is True and rows_are_list and len(rows) == diagnostics.get("source_simulated_event_count"),
+        "schema_exact": schema_exact, "no_forbidden_keys": not forbidden_keys, "no_forbidden_values": not forbidden_values,
+        "amounts_neutral": amounts_neutral and diagnostics.get("accounting_amount_values_all_neutral_zero") is True and diagnostics.get("accounting_non_neutral_amount_values_emitted") is False,
+        "rows_in_order": in_order, "no_duplicate_identities": len(identities) == len(set(identities)),
+        "cap_not_exceeded": diagnostics.get("simulated_event_cap_exceeded") is False,
+        **{field: diagnostics.get(field) is True for field in ("rule_materialization_authorized", "simulated_event_generation_authorized", "economic_output_generation_authorized", "accounting_application_authorized", "amount_generation_authorized", "economic_value_generation_authorized")},
+        "final_offline_verdict_remains": diagnostics.get("final_offline_verdict_remains")}
+    def gate(status: str, reason: str | None) -> dict[str, Any]:
+        return {"gate_kind": "economic_accounting_rows_v0_gate", "gate_scope": ECONOMIC_ACCOUNTING_ROWS_V0_SCOPE, "gate_status": status, "gate_passed": False, "gate_scoring_authorization": False, "gate_live_authorization": False, "gate_final_verdict_authorization": False, "gate_downstream_unlocks": [], "evidence": evidence, "blocked_reason": reason}
+    if not diagnostics.get("economic_output_schema_lock_gate_passed"):
+        return gate(BLOCKED_BY_ECONOMIC_OUTPUT_SCHEMA_LOCK_GATE, "ECONOMIC_OUTPUT_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not diagnostics.get("simulated_events_v0_gate_passed"):
+        return gate(BLOCKED_BY_SIMULATED_EVENTS_V0_GATE, "SIMULATED_EVENTS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not diagnostics.get("simulated_event_schema_lock_gate_passed"):
+        return gate(BLOCKED_BY_SIMULATED_EVENT_SCHEMA_LOCK_GATE, "SIMULATED_EVENT_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not diagnostics.get("materialized_rule_rows_v0_gate_passed"):
+        return gate(BLOCKED_BY_MATERIALIZED_RULE_ROWS_V0_GATE, "MATERIALIZED_RULE_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if output_offenders:
+        return gate(BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_DOWNSTREAM_OUTPUT, "UNEXPECTED_DOWNSTREAM_OUTPUT_FIELDS_TRUE")
+    if authorization_offenders:
+        return gate(BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_DOWNSTREAM_AUTHORIZATION, "UNEXPECTED_DOWNSTREAM_AUTHORIZATION_FIELDS_TRUE")
+    if forbidden_keys:
+        return gate(BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_FORBIDDEN_KEY, "FORBIDDEN_KEY_NAME_PRESENT_ON_ACCOUNTING_ROW")
+    if forbidden_values:
+        return gate(BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_FORBIDDEN_VALUE, "FORBIDDEN_VALUE_PRESENT_ON_ACCOUNTING_ROW")
+    if every_row_is_dict and not schema_exact:
+        return gate(BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_ROW_SCHEMA, "ROW_KEYS_DO_NOT_EXACTLY_MATCH_V0_SCHEMA")
+    if every_row_is_dict and not amounts_neutral:
+        return gate(BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_NON_NEUTRAL_AMOUNT, "ACCOUNTING_AMOUNT_VALUE_NOT_EXACT_INT_ZERO")
+    required = ("declared", "mode_matches", "status_matches", "policy_matches", "rows_are_list", "rows_emitted", "count_matches_list_length", "count_positive", "source_count_positive", "count_matches_source", "schema_exact", "no_forbidden_keys", "no_forbidden_values", "amounts_neutral", "rows_in_order", "no_duplicate_identities", "cap_not_exceeded", "rule_materialization_authorized", "simulated_event_generation_authorized", "economic_output_generation_authorized", "accounting_application_authorized", "amount_generation_authorized", "economic_value_generation_authorized")
+    if (not all(evidence.get(field) is True for field in upstream_fields) or not all(evidence.get(field) is True for field in required) or evidence["final_offline_verdict_remains"] != BLOCKED_BY_VALIDATION_IMPLEMENTATION):
+        return gate(BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_ROWS_V0_EVIDENCE, "ECONOMIC_ACCOUNTING_ROWS_V0_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    result = gate(ECONOMIC_ACCOUNTING_ROWS_V0_DECLARED_ARTIFACT_ONLY, None)
+    result["gate_passed"] = True
+    return result
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -16570,6 +16778,7 @@ def build_real_validation_receipt(
     simulated_event_schema_lock_diagnostics: dict | None = None,
     simulated_events_v0_diagnostics: dict | None = None,
     economic_output_schema_lock_diagnostics: dict | None = None,
+    economic_accounting_rows_v0_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -16766,6 +16975,10 @@ def build_real_validation_receipt(
     if economic_output_schema_lock_diagnostics is not None:
         receipt["economic_output_schema_lock_diagnostics"] = (
             economic_output_schema_lock_diagnostics
+        )
+    if economic_accounting_rows_v0_diagnostics is not None:
+        receipt["economic_accounting_rows_v0_diagnostics"] = (
+            economic_accounting_rows_v0_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -17717,6 +17930,24 @@ def main(argv: list[str] | None = None) -> int:
                     economic_accounting_policy_diagnostics=net_pnl_equity_risk_contract_diagnostics.get("economic_accounting_policy_diagnostics"),
                 )
             )
+            economic_accounting_rows_v0_diagnostics = (
+                _build_economic_accounting_rows_v0_diagnostics(
+                    economic_output_schema_lock_diagnostics=economic_output_schema_lock_diagnostics,
+                    simulated_events_v0_diagnostics=simulated_events_v0_diagnostics,
+                    simulated_event_schema_lock_diagnostics=simulated_event_schema_lock_diagnostics,
+                    materialized_rule_rows_v0_diagnostics=materialized_rule_rows_v0_diagnostics,
+                    materialized_rule_row_schema_lock_diagnostics=materialized_rule_row_schema_lock_diagnostics,
+                    no_output_runner_dry_harness_diagnostics=no_output_runner_dry_harness_diagnostics,
+                    projected_input_joinability_diagnostics=projected_input_joinability_diagnostics,
+                    projected_input_temporal_sequence_diagnostics=projected_input_temporal_sequence_diagnostics,
+                    projected_input_row_count_diagnostics=projected_input_row_count_diagnostics,
+                    projected_input_shape_inventory_diagnostics=projected_input_shape_inventory_diagnostics,
+                    allowed_runner_input_projection_diagnostics=allowed_runner_input_projection_diagnostics,
+                    no_output_runner_invocation_diagnostics=no_output_runner_invocation_diagnostics,
+                    implementation_boundary_diagnostics=implementation_boundary_diagnostics,
+                    economic_accounting_policy_diagnostics=net_pnl_equity_risk_contract_diagnostics.get("economic_accounting_policy_diagnostics"),
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -17825,6 +18056,9 @@ def main(argv: list[str] | None = None) -> int:
             simulated_events_v0_diagnostics=simulated_events_v0_diagnostics,
             economic_output_schema_lock_diagnostics=(
                 economic_output_schema_lock_diagnostics
+            ),
+            economic_accounting_rows_v0_diagnostics=(
+                economic_accounting_rows_v0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -18233,6 +18467,24 @@ def main(argv: list[str] | None = None) -> int:
                     economic_accounting_policy_diagnostics=net_pnl_equity_risk_contract_diagnostics.get("economic_accounting_policy_diagnostics"),
                 )
             )
+            economic_accounting_rows_v0_diagnostics = (
+                _build_economic_accounting_rows_v0_diagnostics(
+                    economic_output_schema_lock_diagnostics=economic_output_schema_lock_diagnostics,
+                    simulated_events_v0_diagnostics=simulated_events_v0_diagnostics,
+                    simulated_event_schema_lock_diagnostics=simulated_event_schema_lock_diagnostics,
+                    materialized_rule_rows_v0_diagnostics=materialized_rule_rows_v0_diagnostics,
+                    materialized_rule_row_schema_lock_diagnostics=materialized_rule_row_schema_lock_diagnostics,
+                    no_output_runner_dry_harness_diagnostics=no_output_runner_dry_harness_diagnostics,
+                    projected_input_joinability_diagnostics=projected_input_joinability_diagnostics,
+                    projected_input_temporal_sequence_diagnostics=projected_input_temporal_sequence_diagnostics,
+                    projected_input_row_count_diagnostics=projected_input_row_count_diagnostics,
+                    projected_input_shape_inventory_diagnostics=projected_input_shape_inventory_diagnostics,
+                    allowed_runner_input_projection_diagnostics=allowed_runner_input_projection_diagnostics,
+                    no_output_runner_invocation_diagnostics=no_output_runner_invocation_diagnostics,
+                    implementation_boundary_diagnostics=implementation_boundary_diagnostics,
+                    economic_accounting_policy_diagnostics=net_pnl_equity_risk_contract_diagnostics.get("economic_accounting_policy_diagnostics"),
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -18306,6 +18558,9 @@ def main(argv: list[str] | None = None) -> int:
             simulated_events_v0_diagnostics=simulated_events_v0_diagnostics,
             economic_output_schema_lock_diagnostics=(
                 economic_output_schema_lock_diagnostics
+            ),
+            economic_accounting_rows_v0_diagnostics=(
+                economic_accounting_rows_v0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
