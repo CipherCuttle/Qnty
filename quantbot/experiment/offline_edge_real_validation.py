@@ -102,6 +102,8 @@ __all__ = [
     "_derive_projected_input_row_count_gate",
     "_build_projected_input_temporal_sequence_diagnostics",
     "_derive_projected_input_temporal_sequence_gate",
+    "_build_projected_input_joinability_diagnostics",
+    "_derive_projected_input_joinability_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -741,6 +743,35 @@ BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE = (
 )
 BLOCKED_BY_UNEXPECTED_TIME_VALUE_EMISSION = (
     "BLOCKED_BY_UNEXPECTED_TIME_VALUE_EMISSION"
+)
+
+# === Lane R1: projected input cross-role temporal joinability diagnostics ===
+# A diagnostic-only projection over Q1/P1/O1/N1/M1/L1 that checks whether
+# bars and funding projected inputs are joinable by role/symbol/split/time
+# grid under the frozen exact timestamp policy. It emits only metadata-safe
+# counts, booleans, role names, symbol identifiers, and split identifiers. It
+# emits no timestamp values, prices, funding values, row samples, projected
+# row values, rule outputs, decisions, events, economics, statistics, scoring,
+# live readiness, or final verdict advancement.
+PROJECTED_INPUT_JOINABILITY_VERSION = "projected-input-joinability-0.1"
+PROJECTED_INPUT_JOINABILITY_SCOPE = (
+    "PROJECTED_INPUT_CROSS_ROLE_TEMPORAL_JOINABILITY_METADATA_ONLY"
+)
+PROJECTED_INPUT_JOINABILITY_DECLARED_DIAGNOSTIC_ONLY = (
+    "PROJECTED_INPUT_JOINABILITY_DECLARED_DIAGNOSTIC_ONLY"
+)
+PROJECTED_INPUT_JOINABILITY_METADATA_ONLY_POLICY = (
+    "NO_TIMESTAMP_VALUES_ROW_VALUES_OR_RULE_OUTPUTS_EMITTED_IN_THIS_LANE"
+)
+PROJECTED_INPUT_JOINABILITY_FROZEN_POLICY = "EXACT_UTC_TIMESTAMP_SET_MATCH_BY_SYMBOL_AND_SPLIT"
+BLOCKED_BY_PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE = (
+    "BLOCKED_BY_PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE"
+)
+BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_JOINABILITY_EVIDENCE = (
+    "BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_JOINABILITY_EVIDENCE"
+)
+BLOCKED_BY_UNEXPECTED_JOINABILITY_VALUE_EMISSION = (
+    "BLOCKED_BY_UNEXPECTED_JOINABILITY_VALUE_EMISSION"
 )
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
@@ -11559,6 +11590,24 @@ _PROJECTED_INPUT_TEMPORAL_SEQUENCE_AUTHORIZATION_FIELDS = (
 )
 
 
+_PROJECTED_INPUT_JOINABILITY_AUTHORIZATION_FIELDS = (
+    "runner_input_joinability_readiness",
+    "implementation_authorized",
+    "runner_implementation_authorized",
+    "rule_materialization_authorized",
+    "decision_row_generation_authorized",
+    "simulated_event_generation_authorized",
+    "economic_value_generation_authorized",
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+)
+
+
 def _build_no_output_runner_invocation_diagnostics(
     *,
     implementation_boundary_diagnostics: dict[str, Any],
@@ -13520,6 +13569,572 @@ def _derive_projected_input_temporal_sequence_gate(
     return gate
 
 
+def _extract_projected_input_joinability_summary(
+    *,
+    projected_input_temporal_sequence_diagnostics: dict[str, Any],
+    inventory_diagnostics: dict[str, Any] | None,
+    split_diagnostics: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build count-only cross-role joinability evidence for R1.
+
+    This reuses the same timestamp-column loading helpers as the older
+    funding-to-bars joinability diagnostic, but reduces the data immediately
+    to counts and booleans. No timestamp, price, funding, or row values are
+    returned.
+    """
+    split_identifiers = _extract_shape_inventory_split_identifiers(
+        split_diagnostics
+    )
+    summary: dict[str, Any] = {
+        "summary_kind": "metadata_only_cross_role_joinability_summary",
+        "timestamp_values_included": False,
+        "time_values_included": False,
+        "price_values_included": False,
+        "funding_values_included": False,
+        "row_values_included": False,
+        "row_samples_included": False,
+        "projected_row_values_included": False,
+        "rule_outputs_included": False,
+        "roles_declared": ["bars", "funding"],
+        "split_identifiers": split_identifiers,
+        "joinability_policy": PROJECTED_INPUT_JOINABILITY_FROZEN_POLICY,
+        "all_required_roles_present": False,
+        "symbol_overlap_complete": False,
+        "all_required_symbols_joinable": False,
+        "joinability_complete": False,
+        "role_symbol_counts": {"bars": 0, "funding": 0},
+        "role_row_counts": {"bars": 0, "funding": 0},
+        "role_presence_by_role": {"bars": False, "funding": False},
+        "symbol_joinability": [],
+        "blocked_reasons": [],
+    }
+
+    if not isinstance(inventory_diagnostics, dict):
+        summary["blocked_reasons"] = ["MISSING_INVENTORY_METADATA"]
+        return summary
+
+    roles = inventory_diagnostics.get("roles")
+    role_entries = roles if isinstance(roles, list) else []
+    entries_by_role = {
+        entry.get("role"): entry for entry in role_entries if isinstance(entry, dict)
+    }
+    for role in ("bars", "funding"):
+        role_entry = entries_by_role.get(role)
+        files = (
+            role_entry.get("files")
+            if isinstance(role_entry, dict)
+            and isinstance(role_entry.get("files"), list)
+            else []
+        )
+        filename_suffix = "_8h_ohlcv.csv" if role == "bars" else "_funding.csv"
+        symbols: set[str] = set()
+        for file_entry in files:
+            if not isinstance(file_entry, dict):
+                continue
+            try:
+                symbols.add(
+                    _symbol_from_filename(
+                        file_entry.get("filename"),
+                        filename_suffix,
+                        role,
+                    )
+                )
+            except ValueError:
+                continue
+        summary["role_presence_by_role"][role] = bool(files)
+        summary["role_symbol_counts"][role] = len(symbols)
+        summary["role_row_counts"][role] = sum(
+            int(file_entry.get("row_count", 0))
+            for file_entry in files
+            if isinstance(file_entry, dict)
+            and isinstance(file_entry.get("row_count"), int)
+        )
+
+    required_roles_present = all(summary["role_presence_by_role"].values())
+    summary["all_required_roles_present"] = required_roles_present
+    if not required_roles_present:
+        summary["blocked_reasons"] = ["MISSING_REQUIRED_ROLE"]
+        return summary
+
+    q1_gate = projected_input_temporal_sequence_diagnostics.get(
+        "projected_input_temporal_sequence_gate"
+    )
+    if not (
+        isinstance(q1_gate, dict)
+        and q1_gate.get("gate_passed") is True
+    ):
+        summary["blocked_reasons"] = [
+            "PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE_MISSING_OR_NOT_PASSED"
+        ]
+        return summary
+
+    try:
+        windows = _build_split_windows_for_joinability(
+            split_diagnostics.get("split_definitions", [])
+            if isinstance(split_diagnostics, dict)
+            else []
+        )
+        bars_by_symbol = _load_role_symbol_timestamps(
+            role_entry=entries_by_role["bars"],
+            filename_suffix="_8h_ohlcv.csv",
+            timestamp_column="timestamp",
+            role="bars",
+        )
+        funding_by_symbol = _load_role_symbol_timestamps(
+            role_entry=entries_by_role["funding"],
+            filename_suffix="_funding.csv",
+            timestamp_column="fundingTime",
+            role="funding",
+        )
+    except ValueError:
+        summary["blocked_reasons"] = ["JOINABILITY_METADATA_LOAD_FAILED"]
+        return summary
+
+    bars_symbols = set(bars_by_symbol)
+    funding_symbols = set(funding_by_symbol)
+    common_symbols = bars_symbols & funding_symbols
+    summary["symbol_overlap_complete"] = (
+        bool(common_symbols) and bars_symbols == funding_symbols
+    )
+    if not summary["symbol_overlap_complete"]:
+        summary["blocked_reasons"] = ["SYMBOLS_DO_NOT_OVERLAP_EXACTLY"]
+
+    symbol_joinability: list[dict[str, Any]] = []
+    all_symbols_joinable = bool(common_symbols) and bars_symbols == funding_symbols
+    for symbol in sorted(common_symbols):
+        bars_set = set(bars_by_symbol[symbol]["timestamps"])
+        funding_set = set(funding_by_symbol[symbol]["timestamps"])
+        matched_count, status = _classify_timestamp_set_match(
+            bars_set, funding_set
+        )
+        bars_missing = len(bars_set - funding_set)
+        funding_missing = len(funding_set - bars_set)
+        symbol_joinable = (
+            status == _JOINABILITY_EXACT
+            and bars_missing == 0
+            and funding_missing == 0
+            and len(bars_set) == len(funding_set)
+            and len(bars_set) > 0
+        )
+
+        split_joinability: list[dict[str, Any]] = []
+        for window in windows:
+            split_complete = True
+            partitions: dict[str, dict[str, Any]] = {}
+            for partition, start_key, end_key, include_end in (
+                ("train", "train_start", "train_end", False),
+                (
+                    "validation",
+                    "validation_start",
+                    "validation_end",
+                    window["include_validation_end"],
+                ),
+            ):
+                bars_window = {
+                    ts
+                    for ts in bars_set
+                    if _timestamp_in_window(
+                        ts,
+                        start=window[start_key],
+                        end=window[end_key],
+                        include_end=include_end,
+                    )
+                }
+                funding_window = {
+                    ts
+                    for ts in funding_set
+                    if _timestamp_in_window(
+                        ts,
+                        start=window[start_key],
+                        end=window[end_key],
+                        include_end=include_end,
+                    )
+                }
+                partition_matched, partition_status = _classify_timestamp_set_match(
+                    bars_window, funding_window
+                )
+                partition_bars_missing = len(bars_window - funding_window)
+                partition_funding_missing = len(funding_window - bars_window)
+                partition_joinable = (
+                    partition_status in (_JOINABILITY_EXACT, _JOINABILITY_EMPTY_BOTH)
+                    and partition_bars_missing == 0
+                    and partition_funding_missing == 0
+                    and len(bars_window) == len(funding_window)
+                )
+                split_complete = split_complete and partition_joinable
+                partitions[partition] = {
+                    "bars_row_count": len(bars_window),
+                    "funding_row_count": len(funding_window),
+                    "matched_count": partition_matched,
+                    "bars_missing_match_count": partition_bars_missing,
+                    "funding_missing_match_count": partition_funding_missing,
+                    "joinability_status": partition_status,
+                    "joinability_complete": partition_joinable,
+                }
+            split_joinability.append(
+                {
+                    "split_id": window["split_id"],
+                    "joinability_complete": split_complete,
+                    "partitions": partitions,
+                }
+            )
+            symbol_joinable = symbol_joinable and split_complete
+
+        symbol_joinability.append(
+            {
+                "symbol": symbol,
+                "roles_present": ["bars", "funding"],
+                "bars_row_count": len(bars_set),
+                "funding_row_count": len(funding_set),
+                "matched_count": matched_count,
+                "bars_missing_match_count": bars_missing,
+                "funding_missing_match_count": funding_missing,
+                "joinability_status": status,
+                "joinability_complete": symbol_joinable,
+                "splits": split_joinability,
+            }
+        )
+        all_symbols_joinable = all_symbols_joinable and symbol_joinable
+
+    summary["symbol_joinability"] = symbol_joinability
+    summary["all_required_symbols_joinable"] = all_symbols_joinable
+    summary["joinability_complete"] = (
+        required_roles_present
+        and summary["symbol_overlap_complete"] is True
+        and all_symbols_joinable
+    )
+    if not summary["joinability_complete"] and not summary["blocked_reasons"]:
+        summary["blocked_reasons"] = ["TIME_GRIDS_DO_NOT_ALIGN_UNDER_FROZEN_POLICY"]
+    return summary
+
+
+def _build_projected_input_joinability_diagnostics(
+    *,
+    projected_input_temporal_sequence_diagnostics: dict[str, Any],
+    projected_input_row_count_diagnostics: dict[str, Any],
+    projected_input_shape_inventory_diagnostics: dict[str, Any],
+    allowed_runner_input_projection_diagnostics: dict[str, Any],
+    no_output_runner_invocation_diagnostics: dict[str, Any],
+    implementation_boundary_diagnostics: dict[str, Any],
+    split_diagnostics: dict[str, Any] | None = None,
+    inventory_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build Lane R1 projected input cross-role joinability diagnostics."""
+    projected_input_temporal_sequence_gate = (
+        projected_input_temporal_sequence_diagnostics.get(
+            "projected_input_temporal_sequence_gate"
+        )
+    )
+    projected_input_row_count_gate = projected_input_row_count_diagnostics.get(
+        "projected_input_row_count_gate"
+    )
+    projected_input_shape_inventory_gate = (
+        projected_input_shape_inventory_diagnostics.get(
+            "projected_input_shape_inventory_gate"
+        )
+    )
+    allowed_runner_input_projection_gate = (
+        allowed_runner_input_projection_diagnostics.get(
+            "allowed_runner_input_projection_gate"
+        )
+    )
+    no_output_runner_invocation_gate = (
+        no_output_runner_invocation_diagnostics.get(
+            "no_output_runner_invocation_gate"
+        )
+    )
+    implementation_boundary_gate = implementation_boundary_diagnostics.get(
+        "implementation_boundary_gate"
+    )
+    joinability_summary = _extract_projected_input_joinability_summary(
+        projected_input_temporal_sequence_diagnostics=(
+            projected_input_temporal_sequence_diagnostics
+        ),
+        inventory_diagnostics=inventory_diagnostics,
+        split_diagnostics=split_diagnostics,
+    )
+
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "projected_input_joinability_inventory",
+        "projected_input_joinability_version": PROJECTED_INPUT_JOINABILITY_VERSION,
+        "projected_input_joinability_scope": PROJECTED_INPUT_JOINABILITY_SCOPE,
+        "projected_input_joinability_status": (
+            PROJECTED_INPUT_JOINABILITY_DECLARED_DIAGNOSTIC_ONLY
+        ),
+        "projected_input_temporal_sequence_gate_required": True,
+        "projected_input_temporal_sequence_gate_passed": bool(
+            projected_input_temporal_sequence_gate is not None
+            and projected_input_temporal_sequence_gate.get("gate_passed") is True
+        ),
+        "projected_input_row_count_gate_required": True,
+        "projected_input_row_count_gate_passed": bool(
+            projected_input_row_count_gate is not None
+            and projected_input_row_count_gate.get("gate_passed") is True
+        ),
+        "projected_input_shape_inventory_gate_required": True,
+        "projected_input_shape_inventory_gate_passed": bool(
+            projected_input_shape_inventory_gate is not None
+            and projected_input_shape_inventory_gate.get("gate_passed") is True
+        ),
+        "allowed_runner_input_projection_gate_required": True,
+        "allowed_runner_input_projection_gate_passed": bool(
+            allowed_runner_input_projection_gate is not None
+            and allowed_runner_input_projection_gate.get("gate_passed") is True
+        ),
+        "no_output_runner_invocation_gate_required": True,
+        "no_output_runner_invocation_gate_passed": bool(
+            no_output_runner_invocation_gate is not None
+            and no_output_runner_invocation_gate.get("gate_passed") is True
+        ),
+        "implementation_boundary_gate_required": True,
+        "implementation_boundary_gate_passed": bool(
+            implementation_boundary_gate is not None
+            and implementation_boundary_gate.get("gate_passed") is True
+        ),
+        "projected_input_joinability_declared": True,
+        "projected_input_joinability_mode": "METADATA_ONLY",
+        "projected_input_joinability_policy": (
+            PROJECTED_INPUT_JOINABILITY_METADATA_ONLY_POLICY
+        ),
+        "joinability_frozen_policy": PROJECTED_INPUT_JOINABILITY_FROZEN_POLICY,
+        "joinability_summary_kind": (
+            "metadata_only_cross_role_joinability_summary"
+        ),
+        "timestamp_values_emitted": False,
+        "time_values_emitted": False,
+        "price_values_emitted": False,
+        "funding_values_emitted": False,
+        "row_value_samples_emitted": False,
+        "projected_input_values_emitted": False,
+        "projected_input_row_values_emitted": False,
+        "rule_output_rows_emitted": False,
+        "decision_rows_emitted": False,
+        "simulated_events_emitted": False,
+        "economic_values_emitted": False,
+        "statistical_values_emitted": False,
+        "joinability_summary": joinability_summary,
+        "runner_input_joinability_readiness": False,
+        "implementation_authorized": False,
+        "runner_implementation_authorized": False,
+        "rule_materialization_authorized": False,
+        "decision_row_generation_authorized": False,
+        "simulated_event_generation_authorized": False,
+        "economic_value_generation_authorized": False,
+        "statistical_value_generation_authorized": False,
+        "candidate_comparison_authorized": False,
+        "null_generation_authorized": False,
+        "scoring_authorization": False,
+        "live_integration_authorized": False,
+        "paper_integration_authorized": False,
+        "final_verdict_authorization": False,
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["projected_input_joinability_gate"] = (
+        _derive_projected_input_joinability_gate(diagnostics)
+    )
+    return diagnostics
+
+
+def _derive_projected_input_joinability_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive the Lane R1 projected input joinability gate."""
+    summary = diagnostics.get("joinability_summary")
+    summary_is_mapping = isinstance(summary, dict)
+    evidence = {
+        "projected_input_temporal_sequence_gate_passed": diagnostics.get(
+            "projected_input_temporal_sequence_gate_passed"
+        ),
+        "projected_input_row_count_gate_passed": diagnostics.get(
+            "projected_input_row_count_gate_passed"
+        ),
+        "projected_input_shape_inventory_gate_passed": diagnostics.get(
+            "projected_input_shape_inventory_gate_passed"
+        ),
+        "allowed_runner_input_projection_gate_passed": diagnostics.get(
+            "allowed_runner_input_projection_gate_passed"
+        ),
+        "no_output_runner_invocation_gate_passed": diagnostics.get(
+            "no_output_runner_invocation_gate_passed"
+        ),
+        "implementation_boundary_gate_passed": diagnostics.get(
+            "implementation_boundary_gate_passed"
+        ),
+        "projected_input_joinability_declared": (
+            diagnostics.get("projected_input_joinability_declared") is True
+        ),
+        "projected_input_joinability_metadata_only": (
+            diagnostics.get("projected_input_joinability_mode") == "METADATA_ONLY"
+            and diagnostics.get("projected_input_joinability_policy")
+            == PROJECTED_INPUT_JOINABILITY_METADATA_ONLY_POLICY
+        ),
+        "joinability_summary_metadata_only": (
+            summary_is_mapping
+            and diagnostics.get("joinability_summary_kind")
+            == "metadata_only_cross_role_joinability_summary"
+            and summary.get("summary_kind")
+            == "metadata_only_cross_role_joinability_summary"
+            and summary.get("roles_declared") == ["bars", "funding"]
+            and summary.get("joinability_policy")
+            == PROJECTED_INPUT_JOINABILITY_FROZEN_POLICY
+            and summary.get("timestamp_values_included") is False
+            and summary.get("time_values_included") is False
+            and summary.get("price_values_included") is False
+            and summary.get("funding_values_included") is False
+            and summary.get("row_values_included") is False
+            and summary.get("row_samples_included") is False
+            and summary.get("projected_row_values_included") is False
+            and summary.get("rule_outputs_included") is False
+            and summary.get("all_required_roles_present") is True
+            and summary.get("symbol_overlap_complete") is True
+            and summary.get("all_required_symbols_joinable") is True
+            and summary.get("joinability_complete") is True
+            and isinstance(summary.get("role_symbol_counts"), dict)
+            and isinstance(summary.get("role_row_counts"), dict)
+            and isinstance(summary.get("role_presence_by_role"), dict)
+            and isinstance(summary.get("symbol_joinability"), list)
+        ),
+        "timestamp_values_emitted": diagnostics.get("timestamp_values_emitted"),
+        "time_values_emitted": diagnostics.get("time_values_emitted"),
+        "price_values_emitted": diagnostics.get("price_values_emitted"),
+        "funding_values_emitted": diagnostics.get("funding_values_emitted"),
+        "row_value_samples_emitted": diagnostics.get("row_value_samples_emitted"),
+        "projected_input_values_emitted": diagnostics.get(
+            "projected_input_values_emitted"
+        ),
+        "projected_input_row_values_emitted": diagnostics.get(
+            "projected_input_row_values_emitted"
+        ),
+        "rule_output_rows_emitted": diagnostics.get("rule_output_rows_emitted"),
+        "decision_rows_emitted": diagnostics.get("decision_rows_emitted"),
+        "simulated_events_emitted": diagnostics.get("simulated_events_emitted"),
+        "economic_values_emitted": diagnostics.get("economic_values_emitted"),
+        "statistical_values_emitted": diagnostics.get("statistical_values_emitted"),
+        "runner_input_joinability_readiness": diagnostics.get(
+            "runner_input_joinability_readiness", False
+        ),
+        "implementation_authorized": diagnostics.get(
+            "implementation_authorized", False
+        ),
+        "runner_implementation_authorized": diagnostics.get(
+            "runner_implementation_authorized", False
+        ),
+        "rule_materialization_authorized": diagnostics.get(
+            "rule_materialization_authorized", False
+        ),
+        "decision_row_generation_authorized": diagnostics.get(
+            "decision_row_generation_authorized", False
+        ),
+    }
+    joinability_evidence_passed = all(
+        evidence.get(key) is True
+        for key in (
+            "projected_input_joinability_declared",
+            "projected_input_joinability_metadata_only",
+            "joinability_summary_metadata_only",
+        )
+    )
+    emitted_flags = (
+        "timestamp_values_emitted",
+        "time_values_emitted",
+        "price_values_emitted",
+        "funding_values_emitted",
+        "row_value_samples_emitted",
+        "projected_input_values_emitted",
+        "projected_input_row_values_emitted",
+        "rule_output_rows_emitted",
+        "decision_rows_emitted",
+        "simulated_events_emitted",
+        "economic_values_emitted",
+        "statistical_values_emitted",
+    )
+
+    def _base_gate(gate_status: str, blocked_reason: str | None) -> dict[str, Any]:
+        return {
+            "gate_kind": "projected_input_joinability_gate",
+            "gate_scope": PROJECTED_INPUT_JOINABILITY_SCOPE,
+            "gate_status": gate_status,
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": evidence,
+            "blocked_reason": blocked_reason,
+        }
+
+    offending_authorizations = [
+        field
+        for field in _PROJECTED_INPUT_JOINABILITY_AUTHORIZATION_FIELDS
+        if diagnostics.get(field) is True
+    ]
+    if offending_authorizations:
+        return _base_gate(
+            "BLOCKED_BY_UNEXPECTED_AUTHORIZATION",
+            "UNEXPECTED_AUTHORIZATION_FIELDS_TRUE: "
+            + ", ".join(sorted(offending_authorizations)),
+        )
+
+    if not diagnostics.get("projected_input_temporal_sequence_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE,
+            "PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("projected_input_row_count_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE,
+            "PROJECTED_INPUT_ROW_COUNT_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("projected_input_shape_inventory_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_PROJECTED_INPUT_SHAPE_INVENTORY_GATE,
+            "PROJECTED_INPUT_SHAPE_INVENTORY_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("allowed_runner_input_projection_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE,
+            "ALLOWED_RUNNER_INPUT_PROJECTION_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("no_output_runner_invocation_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE,
+            "NO_OUTPUT_RUNNER_INVOCATION_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("implementation_boundary_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE,
+            "IMPLEMENTATION_BOUNDARY_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    emitted_true = [
+        field for field in emitted_flags if diagnostics.get(field) is True
+    ]
+    if emitted_true:
+        return _base_gate(
+            BLOCKED_BY_UNEXPECTED_JOINABILITY_VALUE_EMISSION,
+            "UNEXPECTED_JOINABILITY_VALUE_EMISSION_FIELDS_TRUE: "
+            + ", ".join(sorted(emitted_true)),
+        )
+
+    if not joinability_evidence_passed:
+        return _base_gate(
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_JOINABILITY_EVIDENCE,
+            "PROJECTED_INPUT_JOINABILITY_EVIDENCE_INCOMPLETE_OR_MUTATED",
+        )
+
+    gate = _base_gate(
+        PROJECTED_INPUT_JOINABILITY_DECLARED_DIAGNOSTIC_ONLY,
+        None,
+    )
+    gate["gate_passed"] = True
+    return gate
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -13644,6 +14259,7 @@ def build_real_validation_receipt(
     projected_input_shape_inventory_diagnostics: dict | None = None,
     projected_input_row_count_diagnostics: dict | None = None,
     projected_input_temporal_sequence_diagnostics: dict | None = None,
+    projected_input_joinability_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -13814,6 +14430,10 @@ def build_real_validation_receipt(
     if projected_input_temporal_sequence_diagnostics is not None:
         receipt["projected_input_temporal_sequence_diagnostics"] = (
             projected_input_temporal_sequence_diagnostics
+        )
+    if projected_input_joinability_diagnostics is not None:
+        receipt["projected_input_joinability_diagnostics"] = (
+            projected_input_joinability_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -14587,6 +15207,32 @@ def main(argv: list[str] | None = None) -> int:
                     inventory_diagnostics=inventory,
                 )
             )
+            projected_input_joinability_diagnostics = (
+                _build_projected_input_joinability_diagnostics(
+                    projected_input_temporal_sequence_diagnostics=(
+                        projected_input_temporal_sequence_diagnostics
+                    ),
+                    projected_input_row_count_diagnostics=(
+                        projected_input_row_count_diagnostics
+                    ),
+                    projected_input_shape_inventory_diagnostics=(
+                        projected_input_shape_inventory_diagnostics
+                    ),
+                    allowed_runner_input_projection_diagnostics=(
+                        allowed_runner_input_projection_diagnostics
+                    ),
+                    no_output_runner_invocation_diagnostics=(
+                        no_output_runner_invocation_diagnostics
+                    ),
+                    implementation_boundary_diagnostics=(
+                        implementation_boundary_diagnostics
+                    ),
+                    split_diagnostics={
+                        "split_definitions": split_definitions,
+                    },
+                    inventory_diagnostics=inventory,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -14676,6 +15322,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             projected_input_temporal_sequence_diagnostics=(
                 projected_input_temporal_sequence_diagnostics
+            ),
+            projected_input_joinability_diagnostics=(
+                projected_input_joinability_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -14907,6 +15556,31 @@ def main(argv: list[str] | None = None) -> int:
                     },
                 )
             )
+            projected_input_joinability_diagnostics = (
+                _build_projected_input_joinability_diagnostics(
+                    projected_input_temporal_sequence_diagnostics=(
+                        projected_input_temporal_sequence_diagnostics
+                    ),
+                    projected_input_row_count_diagnostics=(
+                        projected_input_row_count_diagnostics
+                    ),
+                    projected_input_shape_inventory_diagnostics=(
+                        projected_input_shape_inventory_diagnostics
+                    ),
+                    allowed_runner_input_projection_diagnostics=(
+                        allowed_runner_input_projection_diagnostics
+                    ),
+                    no_output_runner_invocation_diagnostics=(
+                        no_output_runner_invocation_diagnostics
+                    ),
+                    implementation_boundary_diagnostics=(
+                        implementation_boundary_diagnostics
+                    ),
+                    split_diagnostics={
+                        "split_definitions": split_definitions,
+                    },
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -14961,6 +15635,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             projected_input_temporal_sequence_diagnostics=(
                 projected_input_temporal_sequence_diagnostics
+            ),
+            projected_input_joinability_diagnostics=(
+                projected_input_joinability_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
