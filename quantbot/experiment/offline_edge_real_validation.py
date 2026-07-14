@@ -16938,6 +16938,7 @@ def _derive_null_reference_comparison_rows_v0_gate(diagnostics: dict[str, Any]) 
     schema_exact = every_row_is_dict and all(set(row) == set(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS) for row in rows)
     values_absent = every_row_is_dict and all(row.get("comparison_value") is None for row in rows)
     values_not_present = every_row_is_dict and all(row.get("comparison_value_present") is False for row in rows)
+    rows_metadata_only = every_row_is_dict and all(row.get("comparison_metadata_only") is True for row in rows)
     def sort_key(row: dict[str, Any]) -> tuple[str, str, str, str, int]:
         sequence = row.get("comparison_sequence_id")
         return (str(row.get("symbol", "")), str(row.get("split_id", "")), str(row.get("split_partition", "")), str(row.get("comparison_time_utc", "")), sequence if isinstance(sequence, int) else -1)
@@ -16957,6 +16958,7 @@ def _derive_null_reference_comparison_rows_v0_gate(diagnostics: dict[str, Any]) 
         "count_positive": rows_are_list and len(rows) > 0,
         "count_matches": rows_are_list and diagnostics.get("comparison_row_count") == len(rows) == diagnostics.get("source_accounting_row_count") and diagnostics.get("comparison_row_count_matches_source_accounting_row_count") is True,
         "schema_exact": schema_exact, "values_absent": values_absent, "values_not_present": values_not_present,
+        "rows_metadata_only": rows_metadata_only,
         "values_not_emitted": diagnostics.get("comparison_values_emitted") is False and diagnostics.get("comparison_value_count") == 0,
         "identities_unique": len(identities) == len(set(identities)), "rows_in_order": in_order,
         "cap_not_exceeded": diagnostics.get("comparison_rows_cap_exceeded") is False,
@@ -16993,7 +16995,7 @@ def _derive_null_reference_comparison_rows_v0_gate(diagnostics: dict[str, Any]) 
         return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_ORDERING_MUTATION, "COMPARISON_ROWS_NOT_DETERMINISTICALLY_ORDERED")
     if rows_are_list and not evidence["count_matches"]:
         return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_SOURCE_COUNT_MISMATCH, "COMPARISON_ROW_COUNT_DOES_NOT_MATCH_SOURCE_ACCOUNTING_ROW_COUNT")
-    required = ("declared", "status_matches", "rows_are_list", "rows_emitted", "count_positive", "count_matches", "schema_exact", "values_absent", "values_not_present", "values_not_emitted", "identities_unique", "rows_in_order", "cap_not_exceeded") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
+    required = ("declared", "status_matches", "rows_are_list", "rows_emitted", "count_positive", "count_matches", "schema_exact", "values_absent", "values_not_present", "rows_metadata_only", "values_not_emitted", "identities_unique", "rows_in_order", "cap_not_exceeded") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
     if not all(evidence.get(field) is True for field in required):
         return gate(BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE, "NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE_INCOMPLETE_OR_MUTATED")
     result = gate(NULL_REFERENCE_COMPARISON_ROWS_V0_DECLARED_ARTIFACT_ONLY, None)

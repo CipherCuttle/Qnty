@@ -20527,6 +20527,7 @@ class TestNullReferenceComparisonRowsV0W1:
         assert all(set(row) == set(real_validation._ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS) for row in result["comparison_rows"])
         assert all(row["comparison_value"] is None for row in result["comparison_rows"])
         assert all(row["comparison_value_present"] is False for row in result["comparison_rows"])
+        assert all(row["comparison_metadata_only"] is True for row in result["comparison_rows"])
         assert result["comparison_values_emitted"] is False
         assert result["comparison_value_count"] == 0
         assert result["final_offline_verdict_remains"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
@@ -20558,6 +20559,12 @@ class TestNullReferenceComparisonRowsV0W1:
         result = self._build(tmp_path)
         result["comparison_rows"][0][field] = value
         assert real_validation._derive_null_reference_comparison_rows_v0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("value", [False, None])
+    def test_row_metadata_only_mutations_fail_closed(self, tmp_path, value):
+        result = self._build(tmp_path)
+        result["comparison_rows"][0]["comparison_metadata_only"] = value
+        assert real_validation._derive_null_reference_comparison_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE
 
     @pytest.mark.parametrize("field, value", [
         ("comparison_values_emitted", True), ("comparison_value_count", 1),
