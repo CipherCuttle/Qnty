@@ -20287,6 +20287,88 @@ class TestEconomicOutputSchemaLockV0:
         assert _derive_economic_output_schema_lock_gate(result)["gate_status"] == BLOCKED_BY_INCOMPLETE_ECONOMIC_OUTPUT_SCHEMA_EVIDENCE
 
 
+class TestEconomicAccountingRowsV0V1:
+    """Lane V1: U1 events become exact-schema neutral accounting artifacts."""
+
+    def _build(self, tmp_path):
+        v0 = TestEconomicOutputSchemaLockV0()
+        u1 = v0._u1()
+        events = u1._build(tmp_path)
+        t1 = u1._u0()._t1()
+        diags, inventory = t1._full_chain_diags(tmp_path)
+        t1_diagnostics = t1._build(diags, inventory)
+        u0 = u1._u0()._build(diags, inventory)
+        schema = v0._build(tmp_path)
+        return real_validation._build_economic_accounting_rows_v0_diagnostics(
+            economic_output_schema_lock_diagnostics=schema,
+            simulated_events_v0_diagnostics=events,
+            simulated_event_schema_lock_diagnostics=u0,
+            materialized_rule_rows_v0_diagnostics=t1_diagnostics,
+            materialized_rule_row_schema_lock_diagnostics=diags["materialized_rule_row_schema_lock_diagnostics"],
+            no_output_runner_dry_harness_diagnostics=diags["no_output_runner_dry_harness_diagnostics"],
+            projected_input_joinability_diagnostics=diags["projected_input_joinability_diagnostics"],
+            projected_input_temporal_sequence_diagnostics=diags["projected_input_temporal_sequence_diagnostics"],
+            projected_input_row_count_diagnostics=diags["projected_input_row_count_diagnostics"],
+            projected_input_shape_inventory_diagnostics=diags["projected_input_shape_inventory_diagnostics"],
+            allowed_runner_input_projection_diagnostics=diags["allowed_runner_input_projection_diagnostics"],
+            no_output_runner_invocation_diagnostics=diags["no_output_runner_invocation_diagnostics"],
+            implementation_boundary_diagnostics=diags["implementation_boundary_diagnostics"],
+        )
+
+    def test_exact_neutral_rows_and_gate_pass(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["economic_accounting_rows_v0_gate"]["gate_passed"] is True
+        assert result["accounting_row_count"] == result["source_simulated_event_count"] > 0
+        assert all(set(row) == set(_ALLOWED_ECONOMIC_OUTPUT_SCHEMA_KEYS) for row in result["economic_accounting_rows"])
+        assert all(row["accounting_amount_value"] == 0 for row in result["economic_accounting_rows"])
+        assert result["final_offline_verdict_remains"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    @pytest.mark.parametrize("value", [False, 1, -1, 0.01, "0", None, float("nan"), float("inf"), {}, []])
+    def test_non_neutral_amount_fails_closed(self, tmp_path, value):
+        result = self._build(tmp_path)
+        result["economic_accounting_rows"][0]["accounting_amount_value"] = value
+        assert real_validation._derive_economic_accounting_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_NON_NEUTRAL_AMOUNT
+
+    @pytest.mark.parametrize("key", ["pnl", "return", "profit", "edge", "score", "trade", "order", "fill", "execution", "position", "close", "fundingRate"])
+    def test_forbidden_row_key_fails_closed(self, tmp_path, key):
+        result = self._build(tmp_path)
+        result["economic_accounting_rows"][0][key] = "x"
+        assert real_validation._derive_economic_accounting_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_FORBIDDEN_KEY
+
+    @pytest.mark.parametrize("field", ["amount_values_emitted", "economic_values_emitted"])
+    def test_required_emission_evidence_false_fails_closed(self, tmp_path, field):
+        result = self._build(tmp_path)
+        result[field] = False
+        assert real_validation._derive_economic_accounting_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_ROWS_V0_EVIDENCE
+
+    def test_forbidden_row_value_fails_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["economic_accounting_rows"][0]["accounting_entry_name"] = "profit"
+        assert real_validation._derive_economic_accounting_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_FORBIDDEN_VALUE
+
+    def test_schema_count_order_and_authorization_mutations_fail_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["economic_accounting_rows"][0]["extra"] = "x"
+        assert real_validation._derive_economic_accounting_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_ROW_SCHEMA
+        result = self._build(tmp_path)
+        result["economic_accounting_rows"] = list(reversed(result["economic_accounting_rows"]))
+        assert real_validation._derive_economic_accounting_rows_v0_gate(result)["gate_passed"] is False
+        result = self._build(tmp_path)
+        result["amount_generation_authorized"] = False
+        assert real_validation._derive_economic_accounting_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_ROWS_V0_EVIDENCE
+
+    def test_no_input_receipt_includes_failed_v1_gate(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        assert real_validation.main(m1._cli_base_args(output_dir)) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        diagnostics = receipt["economic_accounting_rows_v0_diagnostics"]
+        assert diagnostics["economic_accounting_rows_v0_gate"]["gate_status"] == real_validation.BLOCKED_BY_ECONOMIC_OUTPUT_SCHEMA_LOCK_GATE
+        assert diagnostics["economic_accounting_rows"] == []
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
 class TestProjectedInputShapeInventoryO1:
     """Lane O1: projected input shape inventory diagnostics."""
 
