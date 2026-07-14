@@ -15908,7 +15908,8 @@ def _derive_simulated_event_schema_lock_gate(
         "final_verdict_values_emitted",
     )
     authorization_fields = (
-        "implementation_authorized", "runner_implementation_authorized",
+        "simulated_event_schema_readiness", "implementation_authorized",
+        "runner_implementation_authorized",
         "simulated_event_generation_authorized",
         "economic_value_generation_authorized",
         "statistical_value_generation_authorized",

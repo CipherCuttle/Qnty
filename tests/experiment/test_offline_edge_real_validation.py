@@ -20006,10 +20006,18 @@ class TestSimulatedEventSchemaLockU0:
             result = self._result(tmp_path)
             result[field] = True
             assert _derive_simulated_event_schema_lock_gate(result)["gate_status"] == BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_EMISSION
-        for field in ("simulated_event_generation_authorized", "economic_value_generation_authorized", "scoring_authorization", "live_integration_authorized", "final_verdict_authorization"):
+        for field in ("simulated_event_schema_readiness", "simulated_event_generation_authorized", "economic_value_generation_authorized", "scoring_authorization", "live_integration_authorized", "final_verdict_authorization"):
             result = self._result(tmp_path)
             result[field] = True
             assert _derive_simulated_event_schema_lock_gate(result)["gate_status"] == BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_AUTHORIZATION
+
+    def test_simulated_event_schema_readiness_true_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["simulated_event_schema_readiness"] = True
+        gate = _derive_simulated_event_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_AUTHORIZATION
+        assert "simulated_event_schema_readiness" in gate["blocked_reason"]
 
     def test_forbidden_key_scan_and_rule_materialization_allowance(self, tmp_path):
         result = self._result(tmp_path)
