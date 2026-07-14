@@ -120,6 +120,8 @@ __all__ = [
     "_derive_economic_accounting_rows_v0_gate",
     "_build_null_reference_comparison_schema_lock_diagnostics",
     "_derive_null_reference_comparison_schema_lock_gate",
+    "_build_null_reference_comparison_rows_v0_diagnostics",
+    "_derive_null_reference_comparison_rows_v0_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -1199,6 +1201,48 @@ _ECONOMIC_ACCOUNTING_ROWS_V0_DOWNSTREAM_AUTHORIZATION_FIELDS = (
     "statistical_value_generation_authorized", "candidate_comparison_authorized",
     "null_generation_authorized", "scoring_authorization", "live_integration_authorized",
     "paper_integration_authorized", "final_verdict_authorization",
+)
+
+# === Lane W1: neutral null/reference comparison metadata rows ===
+NULL_REFERENCE_COMPARISON_ROWS_V0_VERSION = "null-reference-comparison-rows-v0-0.1"
+NULL_REFERENCE_COMPARISON_ROWS_V0_SCOPE = "NEUTRAL_COMPARISON_METADATA_ROWS_ONLY_NO_COMPARISON_VALUES"
+NULL_REFERENCE_COMPARISON_ROWS_V0_DECLARED_ARTIFACT_ONLY = "NULL_REFERENCE_COMPARISON_ROWS_V0_DECLARED_ARTIFACT_ONLY"
+NULL_REFERENCE_COMPARISON_ROWS_V0_SCHEMA_VERSION = "null-reference-comparison-rows-v0-0.1"
+NULL_REFERENCE_COMPARISON_ROWS_V0_SCHEMA_KIND = "null_reference_comparison_row_v0"
+NULL_REFERENCE_COMPARISON_ROWS_V0_MAX_ROWS = 100
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_GATE = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_GATE"
+BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_W1_GATE = "BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_W1_GATE"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_UPSTREAM_GATE = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_UPSTREAM_GATE"
+BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE"
+BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_SCHEMA = "BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_SCHEMA"
+BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_CONSTANTS = "BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_CONSTANTS"
+BLOCKED_BY_UNEXPECTED_EMITTED_NULL_REFERENCE_COMPARISON_VALUES = "BLOCKED_BY_UNEXPECTED_EMITTED_NULL_REFERENCE_COMPARISON_VALUES"
+BLOCKED_BY_UNEXPECTED_NON_METADATA_NULL_REFERENCE_COMPARISON_VALUE = "BLOCKED_BY_UNEXPECTED_NON_METADATA_NULL_REFERENCE_COMPARISON_VALUE"
+BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROWS_V0_DOWNSTREAM_OUTPUT = "BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROWS_V0_DOWNSTREAM_OUTPUT"
+BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROWS_V0_DOWNSTREAM_AUTHORIZATION = "BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROWS_V0_DOWNSTREAM_AUTHORIZATION"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FINAL_VERDICT_ADVANCEMENT = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FINAL_VERDICT_ADVANCEMENT"
+BLOCKED_BY_DUPLICATE_NULL_REFERENCE_COMPARISON_ROW_IDENTITY = "BLOCKED_BY_DUPLICATE_NULL_REFERENCE_COMPARISON_ROW_IDENTITY"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_ORDERING_MUTATION = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_ORDERING_MUTATION"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_SOURCE_COUNT_MISMATCH = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_SOURCE_COUNT_MISMATCH"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_CAP_EXCEEDED = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_CAP_EXCEEDED"
+_NULL_REFERENCE_COMPARISON_ROWS_V0_FIXED_ROW_CONSTANTS = {
+    "schema_version": NULL_REFERENCE_COMPARISON_ROWS_V0_SCHEMA_VERSION,
+    "schema_kind": NULL_REFERENCE_COMPARISON_ROWS_V0_SCHEMA_KIND,
+    "comparison_family": "neutral_comparison_metadata_v0",
+    "comparison_variant": "noop_no_comparison_value",
+    "comparison_revision": "w1-0.1",
+    "comparison_entry_name": "metadata_only_comparison_artifact",
+    "comparison_entry_code": "NOOP_COMPARISON_METADATA_ONLY",
+    "comparison_basis_name": "schema_locked_accounting_row_projection",
+    "comparison_basis_code": "ACCOUNTING_METADATA_ONLY",
+    "comparison_unit": "unitless",
+    "comparison_value_kind": "not_computed",
+}
+_NULL_REFERENCE_COMPARISON_W1_OUTPUT_FIELDS = (
+    "comparison_values_emitted", "null_comparison_values_emitted",
+    "statistical_values_emitted", "scoring_values_emitted",
+    "live_integration_values_emitted", "paper_integration_values_emitted",
+    "final_verdict_values_emitted",
 )
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
@@ -16811,6 +16855,175 @@ def _derive_null_reference_comparison_schema_lock_gate(diagnostics: dict[str, An
     return result
 
 
+def _build_null_reference_comparison_rows_v0_diagnostics(
+    *, null_reference_comparison_schema_lock_diagnostics: dict[str, Any],
+    economic_accounting_rows_v0_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Project V1 accounting metadata into W0's exact comparison row schema."""
+    def passed(section: dict[str, Any], gate_name: str) -> bool:
+        gate = section.get(gate_name)
+        return bool(isinstance(gate, dict) and gate.get("gate_passed") is True)
+
+    accounting_rows = economic_accounting_rows_v0_diagnostics.get("economic_accounting_rows")
+    accounting_rows = accounting_rows if isinstance(accounting_rows, list) else []
+    cap_exceeded = len(accounting_rows) > NULL_REFERENCE_COMPARISON_ROWS_V0_MAX_ROWS
+    upstream_fields = (
+        "economic_output_schema_lock_gate_passed", "simulated_events_v0_gate_passed",
+        "simulated_event_schema_lock_gate_passed", "materialized_rule_rows_v0_gate_passed",
+        "materialized_rule_row_schema_lock_gate_passed", "no_output_runner_dry_harness_gate_passed",
+        "projected_input_joinability_gate_passed", "projected_input_temporal_sequence_gate_passed",
+        "projected_input_row_count_gate_passed", "projected_input_shape_inventory_gate_passed",
+        "allowed_runner_input_projection_gate_passed", "no_output_runner_invocation_gate_passed",
+        "implementation_boundary_gate_passed",
+    )
+    upstream = {
+        field: economic_accounting_rows_v0_diagnostics.get(field) is True
+        for field in upstream_fields
+    }
+    rows: list[dict[str, Any]] = []
+    if (
+        passed(null_reference_comparison_schema_lock_diagnostics, "null_reference_comparison_schema_lock_gate")
+        and passed(economic_accounting_rows_v0_diagnostics, "economic_accounting_rows_v0_gate")
+        and all(upstream.values()) and not cap_exceeded
+    ):
+        for sequence, accounting_row in enumerate(accounting_rows, start=1):
+            if not isinstance(accounting_row, dict):
+                rows = []
+                break
+            rows.append({
+                "schema_version": NULL_REFERENCE_COMPARISON_ROWS_V0_SCHEMA_VERSION,
+                "schema_kind": NULL_REFERENCE_COMPARISON_ROWS_V0_SCHEMA_KIND,
+                "run_id": accounting_row.get("run_id"),
+                "comparison_sequence_id": sequence,
+                "source_accounting_sequence_id": accounting_row.get("accounting_sequence_id"),
+                "source_event_sequence_id": accounting_row.get("source_event_sequence_id"),
+                "source_rule_row_sequence_id": accounting_row.get("source_rule_row_sequence_id"),
+                "symbol": accounting_row.get("symbol"), "split_id": accounting_row.get("split_id"),
+                "split_partition": accounting_row.get("split_partition"),
+                "comparison_time_utc": accounting_row.get("accounting_time_utc"),
+                "source_accounting_time_utc": accounting_row.get("accounting_time_utc"),
+                "source_event_time_utc": accounting_row.get("source_event_time_utc"),
+                "comparison_family": "neutral_comparison_metadata_v0",
+                "comparison_variant": "noop_no_comparison_value",
+                "comparison_revision": "w1-0.1",
+                "comparison_entry_name": "metadata_only_comparison_artifact",
+                "comparison_entry_code": "NOOP_COMPARISON_METADATA_ONLY",
+                "comparison_basis_name": "schema_locked_accounting_row_projection",
+                "comparison_basis_code": "ACCOUNTING_METADATA_ONLY",
+                "comparison_unit": "unitless", "comparison_value_kind": "not_computed",
+                "comparison_value_present": False, "comparison_value": None,
+                "comparison_metadata_only": True,
+            })
+        rows.sort(key=lambda row: (
+            str(row["symbol"]), str(row["split_id"]), str(row["split_partition"]),
+            str(row["comparison_time_utc"]), row["comparison_sequence_id"],
+        ))
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "null_reference_comparison_rows_v0",
+        "null_reference_comparison_rows_v0_version": NULL_REFERENCE_COMPARISON_ROWS_V0_VERSION,
+        "null_reference_comparison_rows_v0_scope": NULL_REFERENCE_COMPARISON_ROWS_V0_SCOPE,
+        "null_reference_comparison_rows_v0_status": NULL_REFERENCE_COMPARISON_ROWS_V0_DECLARED_ARTIFACT_ONLY,
+        "null_reference_comparison_rows_v0_declared": True,
+        "null_reference_comparison_schema_lock_gate_required": True,
+        "null_reference_comparison_schema_lock_gate_passed": passed(null_reference_comparison_schema_lock_diagnostics, "null_reference_comparison_schema_lock_gate"),
+        "economic_accounting_rows_v0_gate_required": True,
+        "economic_accounting_rows_v0_gate_passed": passed(economic_accounting_rows_v0_diagnostics, "economic_accounting_rows_v0_gate"),
+        **{field.replace("_passed", "_required"): True for field in upstream_fields}, **upstream,
+        "comparison_rows": rows, "comparison_rows_emitted": bool(rows),
+        "comparison_row_count": len(rows), "source_accounting_row_count": len(accounting_rows),
+        "comparison_row_count_matches_source_accounting_row_count": len(rows) == len(accounting_rows),
+        "comparison_rows_cap_exceeded": cap_exceeded,
+        "comparison_schema_keys": list(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS),
+        "comparison_schema_key_count": len(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS),
+        "comparison_values_emitted": False, "comparison_value_count": 0,
+        **{field: False for field in _NULL_REFERENCE_COMPARISON_W1_OUTPUT_FIELDS if field != "comparison_values_emitted"},
+        **{field: False for field in _NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS},
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["null_reference_comparison_rows_v0_gate"] = _derive_null_reference_comparison_rows_v0_gate(diagnostics)
+    return diagnostics
+
+
+def _derive_null_reference_comparison_rows_v0_gate(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    """Fail closed unless W1 rows are exact-schema, ordered metadata projections."""
+    rows = diagnostics.get("comparison_rows")
+    rows_are_list = isinstance(rows, list)
+    every_row_is_dict = rows_are_list and all(isinstance(row, dict) for row in rows)
+    schema_exact = every_row_is_dict and all(set(row) == set(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS) for row in rows)
+    row_constants_match = every_row_is_dict and all(
+        all(row.get(field) == expected for field, expected in _NULL_REFERENCE_COMPARISON_ROWS_V0_FIXED_ROW_CONSTANTS.items())
+        for row in rows
+    )
+    values_absent = every_row_is_dict and all(row.get("comparison_value") is None for row in rows)
+    values_not_present = every_row_is_dict and all(row.get("comparison_value_present") is False for row in rows)
+    rows_metadata_only = every_row_is_dict and all(row.get("comparison_metadata_only") is True for row in rows)
+    def sort_key(row: dict[str, Any]) -> tuple[str, str, str, str, int]:
+        sequence = row.get("comparison_sequence_id")
+        return (str(row.get("symbol", "")), str(row.get("split_id", "")), str(row.get("split_partition", "")), str(row.get("comparison_time_utc", "")), sequence if isinstance(sequence, int) else -1)
+    in_order = every_row_is_dict and rows == sorted(rows, key=sort_key)
+    identities = [(row.get("run_id"), row.get("symbol"), row.get("split_id"), row.get("split_partition"), row.get("comparison_sequence_id")) for row in rows] if every_row_is_dict else []
+    upstream_fields = _NULL_REFERENCE_COMPARISON_W0_UPSTREAM_GATE_FIELDS
+    output_offenders = [field for field in _NULL_REFERENCE_COMPARISON_W1_OUTPUT_FIELDS if diagnostics.get(field) is True]
+    authorization_offenders = [field for field in _NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS if diagnostics.get(field) is True]
+    exact_false_fields = _NULL_REFERENCE_COMPARISON_W1_OUTPUT_FIELDS + _NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS
+    evidence = {
+        "schema_lock_gate_passed": diagnostics.get("null_reference_comparison_schema_lock_gate_passed") is True,
+        "accounting_rows_gate_passed": diagnostics.get("economic_accounting_rows_v0_gate_passed") is True,
+        **{field: diagnostics.get(field) is True for field in upstream_fields},
+        "declared": diagnostics.get("null_reference_comparison_rows_v0_declared") is True,
+        "status_matches": diagnostics.get("null_reference_comparison_rows_v0_status") == NULL_REFERENCE_COMPARISON_ROWS_V0_DECLARED_ARTIFACT_ONLY,
+        "rows_are_list": rows_are_list, "rows_emitted": diagnostics.get("comparison_rows_emitted") is True,
+        "count_positive": rows_are_list and len(rows) > 0,
+        "count_matches": rows_are_list and diagnostics.get("comparison_row_count") == len(rows) == diagnostics.get("source_accounting_row_count") and diagnostics.get("comparison_row_count_matches_source_accounting_row_count") is True,
+        "schema_exact": schema_exact, "row_constants_match": row_constants_match,
+        "values_absent": values_absent, "values_not_present": values_not_present,
+        "rows_metadata_only": rows_metadata_only,
+        "values_not_emitted": diagnostics.get("comparison_values_emitted") is False and diagnostics.get("comparison_value_count") == 0,
+        "identities_unique": len(identities) == len(set(identities)), "rows_in_order": in_order,
+        "cap_not_exceeded": diagnostics.get("comparison_rows_cap_exceeded") is False,
+        **{f"{field}_is_exactly_false": diagnostics.get(field) is False for field in exact_false_fields},
+        "final_offline_verdict_remains": diagnostics.get("final_offline_verdict_remains"),
+    }
+    def gate(status: str, reason: str | None) -> dict[str, Any]:
+        return {"gate_kind": "null_reference_comparison_rows_v0_gate", "gate_scope": NULL_REFERENCE_COMPARISON_ROWS_V0_SCOPE, "gate_status": status, "gate_passed": False, "gate_scoring_authorization": False, "gate_live_authorization": False, "gate_final_verdict_authorization": False, "gate_downstream_unlocks": [], "evidence": evidence, "blocked_reason": reason}
+    if not evidence["schema_lock_gate_passed"]:
+        return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_GATE, "NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["accounting_rows_gate_passed"]:
+        return gate(BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_W1_GATE, "ECONOMIC_ACCOUNTING_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not all(evidence[field] is True for field in upstream_fields):
+        return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_UPSTREAM_GATE, "REQUIRED_UPSTREAM_GATE_MISSING_OR_NOT_PASSED")
+    if evidence["cap_not_exceeded"] is False:
+        return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_CAP_EXCEEDED, "COMPARISON_ROW_CAP_EXCEEDED")
+    if every_row_is_dict and not schema_exact:
+        return gate(BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_SCHEMA, "ROW_KEYS_DO_NOT_EXACTLY_MATCH_W0_ALLOWED_SCHEMA_KEYS")
+    if every_row_is_dict and not row_constants_match:
+        return gate(BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_CONSTANTS, "ROW_CONSTANTS_DO_NOT_MATCH_W1_SCHEMA_LOCKED_METADATA_PROJECTION")
+    if every_row_is_dict and not values_absent:
+        return gate(BLOCKED_BY_UNEXPECTED_NON_METADATA_NULL_REFERENCE_COMPARISON_VALUE, "COMPARISON_VALUE_MUST_BE_NONE")
+    if every_row_is_dict and not values_not_present:
+        return gate(BLOCKED_BY_UNEXPECTED_EMITTED_NULL_REFERENCE_COMPARISON_VALUES, "COMPARISON_VALUE_PRESENT_MUST_BE_FALSE")
+    if diagnostics.get("comparison_values_emitted") is True or diagnostics.get("comparison_value_count") != 0:
+        return gate(BLOCKED_BY_UNEXPECTED_EMITTED_NULL_REFERENCE_COMPARISON_VALUES, "COMPARISON_VALUES_MUST_NOT_BE_EMITTED")
+    if output_offenders:
+        return gate(BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROWS_V0_DOWNSTREAM_OUTPUT, "UNEXPECTED_DOWNSTREAM_OUTPUT_FIELDS_TRUE")
+    if authorization_offenders:
+        return gate(BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROWS_V0_DOWNSTREAM_AUTHORIZATION, "UNEXPECTED_DOWNSTREAM_AUTHORIZATION_FIELDS_TRUE")
+    if diagnostics.get("final_offline_verdict_remains") != BLOCKED_BY_VALIDATION_IMPLEMENTATION:
+        return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FINAL_VERDICT_ADVANCEMENT, "FINAL_OFFLINE_VERDICT_MUST_REMAIN_BLOCKED")
+    if every_row_is_dict and not evidence["identities_unique"]:
+        return gate(BLOCKED_BY_DUPLICATE_NULL_REFERENCE_COMPARISON_ROW_IDENTITY, "DUPLICATE_COMPARISON_ROW_IDENTITY")
+    if every_row_is_dict and not evidence["rows_in_order"]:
+        return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_ORDERING_MUTATION, "COMPARISON_ROWS_NOT_DETERMINISTICALLY_ORDERED")
+    if rows_are_list and not evidence["count_matches"]:
+        return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_SOURCE_COUNT_MISMATCH, "COMPARISON_ROW_COUNT_DOES_NOT_MATCH_SOURCE_ACCOUNTING_ROW_COUNT")
+    required = ("declared", "status_matches", "rows_are_list", "rows_emitted", "count_positive", "count_matches", "schema_exact", "row_constants_match", "values_absent", "values_not_present", "rows_metadata_only", "values_not_emitted", "identities_unique", "rows_in_order", "cap_not_exceeded") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
+    if not all(evidence.get(field) is True for field in required):
+        return gate(BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE, "NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    result = gate(NULL_REFERENCE_COMPARISON_ROWS_V0_DECLARED_ARTIFACT_ONLY, None)
+    result["gate_passed"] = True
+    return result
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -16944,6 +17157,7 @@ def build_real_validation_receipt(
     economic_output_schema_lock_diagnostics: dict | None = None,
     economic_accounting_rows_v0_diagnostics: dict | None = None,
     null_reference_comparison_schema_lock_diagnostics: dict | None = None,
+    null_reference_comparison_rows_v0_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -17148,6 +17362,10 @@ def build_real_validation_receipt(
     if null_reference_comparison_schema_lock_diagnostics is not None:
         receipt["null_reference_comparison_schema_lock_diagnostics"] = (
             null_reference_comparison_schema_lock_diagnostics
+        )
+    if null_reference_comparison_rows_v0_diagnostics is not None:
+        receipt["null_reference_comparison_rows_v0_diagnostics"] = (
+            null_reference_comparison_rows_v0_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -18122,6 +18340,12 @@ def main(argv: list[str] | None = None) -> int:
                     economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
                 )
             )
+            null_reference_comparison_rows_v0_diagnostics = (
+                _build_null_reference_comparison_rows_v0_diagnostics(
+                    null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
+                    economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -18236,6 +18460,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             null_reference_comparison_schema_lock_diagnostics=(
                 null_reference_comparison_schema_lock_diagnostics
+            ),
+            null_reference_comparison_rows_v0_diagnostics=(
+                null_reference_comparison_rows_v0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -18667,6 +18894,12 @@ def main(argv: list[str] | None = None) -> int:
                     economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
                 )
             )
+            null_reference_comparison_rows_v0_diagnostics = (
+                _build_null_reference_comparison_rows_v0_diagnostics(
+                    null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
+                    economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -18746,6 +18979,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             null_reference_comparison_schema_lock_diagnostics=(
                 null_reference_comparison_schema_lock_diagnostics
+            ),
+            null_reference_comparison_rows_v0_diagnostics=(
+                null_reference_comparison_rows_v0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
