@@ -114,6 +114,8 @@ __all__ = [
     "_derive_simulated_event_schema_lock_gate",
     "_build_simulated_events_v0_diagnostics",
     "_derive_simulated_events_v0_gate",
+    "_build_economic_output_schema_lock_diagnostics",
+    "_derive_economic_output_schema_lock_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -1077,6 +1079,42 @@ _SIMULATED_EVENTS_V0_DOWNSTREAM_AUTHORIZATION_FIELDS = (
     "candidate_comparison_authorized", "null_generation_authorized",
     "scoring_authorization", "live_integration_authorized",
     "paper_integration_authorized", "final_verdict_authorization",
+)
+
+# === Lane V0: economic output schema lock diagnostics ===
+ECONOMIC_OUTPUT_SCHEMA_LOCK_VERSION = "economic-output-schema-lock-0.1"
+ECONOMIC_OUTPUT_SCHEMA_LOCK_SCOPE = "FUTURE_ECONOMIC_OUTPUT_SCHEMA_ONLY_NO_AMOUNTS_EMITTED"
+ECONOMIC_OUTPUT_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY = "ECONOMIC_OUTPUT_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY"
+ECONOMIC_OUTPUT_SCHEMA_LOCK_POLICY = "DECLARE_ECONOMIC_OUTPUT_SCHEMA_ONLY_DO_NOT_EMIT_AMOUNTS_IN_THIS_LANE"
+BLOCKED_BY_SIMULATED_EVENTS_V0_GATE = "BLOCKED_BY_SIMULATED_EVENTS_V0_GATE"
+BLOCKED_BY_INCOMPLETE_ECONOMIC_OUTPUT_SCHEMA_EVIDENCE = "BLOCKED_BY_INCOMPLETE_ECONOMIC_OUTPUT_SCHEMA_EVIDENCE"
+BLOCKED_BY_UNEXPECTED_ECONOMIC_OUTPUT_EMISSION = "BLOCKED_BY_UNEXPECTED_ECONOMIC_OUTPUT_EMISSION"
+BLOCKED_BY_UNEXPECTED_ECONOMIC_OUTPUT_AUTHORIZATION = "BLOCKED_BY_UNEXPECTED_ECONOMIC_OUTPUT_AUTHORIZATION"
+_ALLOWED_ECONOMIC_OUTPUT_SCHEMA_KEYS = (
+    "schema_version", "schema_kind", "run_id", "accounting_sequence_id",
+    "source_event_sequence_id", "source_rule_row_sequence_id", "symbol", "split_id",
+    "split_partition", "accounting_time_utc", "source_event_time_utc",
+    "source_decision_time_utc", "source_bar_time_utc", "source_funding_time_utc",
+    "accounting_family", "accounting_variant", "accounting_revision",
+    "accounting_entry_name", "accounting_entry_code", "accounting_basis_name",
+    "accounting_basis_code", "accounting_unit", "accounting_amount_kind",
+    "accounting_amount_value", "accounting_metadata_only",
+)
+_REQUIRED_ECONOMIC_OUTPUT_SCHEMA_KEYS = (
+    "schema_version", "schema_kind", "run_id", "accounting_sequence_id",
+    "source_event_sequence_id", "symbol", "split_id", "split_partition",
+    "accounting_time_utc", "accounting_family", "accounting_revision",
+    "accounting_entry_name", "accounting_entry_code", "accounting_unit",
+    "accounting_amount_kind", "accounting_amount_value",
+)
+_FORBIDDEN_ECONOMIC_OUTPUT_SCHEMA_KEY_NAMES = (
+    "pnl", "return", "returns", "gross_observational_return", "gross_return_value",
+    "net_return_value", "cost_adjusted_return", "funding_adjusted_return",
+    "price_change", "sharpe", "edge", "risk", "drawdown", "equity",
+    "equity_curve", "score", "metric", "performance", "profit", "p_value",
+    "confidence_interval", "trade", "trades", "order", "orders", "fill", "fills",
+    "execution", "executions", "position", "positions", "portfolio", "live_ready",
+    "deploy_ready", "profitable",
 )
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
@@ -16246,6 +16284,161 @@ def _derive_simulated_events_v0_gate(diagnostics: dict[str, Any]) -> dict[str, A
     return result
 
 
+def _build_economic_output_schema_lock_diagnostics(
+    *,
+    simulated_events_v0_diagnostics: dict[str, Any],
+    simulated_event_schema_lock_diagnostics: dict[str, Any],
+    materialized_rule_rows_v0_diagnostics: dict[str, Any],
+    materialized_rule_row_schema_lock_diagnostics: dict[str, Any],
+    no_output_runner_dry_harness_diagnostics: dict[str, Any],
+    projected_input_joinability_diagnostics: dict[str, Any],
+    projected_input_temporal_sequence_diagnostics: dict[str, Any],
+    projected_input_row_count_diagnostics: dict[str, Any],
+    projected_input_shape_inventory_diagnostics: dict[str, Any],
+    allowed_runner_input_projection_diagnostics: dict[str, Any],
+    no_output_runner_invocation_diagnostics: dict[str, Any],
+    implementation_boundary_diagnostics: dict[str, Any],
+    economic_accounting_policy_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build pure V0 schema-only diagnostics; no accounting rows are emitted."""
+    def passed(section: dict[str, Any], gate_name: str) -> bool:
+        gate = section.get(gate_name)
+        return bool(isinstance(gate, dict) and gate.get("gate_passed") is True)
+
+    upstream_sections = (
+        ("simulated_events_v0", simulated_events_v0_diagnostics, "simulated_events_v0_gate"),
+        ("simulated_event_schema_lock", simulated_event_schema_lock_diagnostics, "simulated_event_schema_lock_gate"),
+        ("materialized_rule_rows_v0", materialized_rule_rows_v0_diagnostics, "materialized_rule_rows_v0_gate"),
+        ("materialized_rule_row_schema_lock", materialized_rule_row_schema_lock_diagnostics, "materialized_rule_row_schema_lock_gate"),
+        ("no_output_runner_dry_harness", no_output_runner_dry_harness_diagnostics, "no_output_runner_dry_harness_gate"),
+        ("projected_input_joinability", projected_input_joinability_diagnostics, "projected_input_joinability_gate"),
+        ("projected_input_temporal_sequence", projected_input_temporal_sequence_diagnostics, "projected_input_temporal_sequence_gate"),
+        ("projected_input_row_count", projected_input_row_count_diagnostics, "projected_input_row_count_gate"),
+        ("projected_input_shape_inventory", projected_input_shape_inventory_diagnostics, "projected_input_shape_inventory_gate"),
+        ("allowed_runner_input_projection", allowed_runner_input_projection_diagnostics, "allowed_runner_input_projection_gate"),
+        ("no_output_runner_invocation", no_output_runner_invocation_diagnostics, "no_output_runner_invocation_gate"),
+        ("implementation_boundary", implementation_boundary_diagnostics, "implementation_boundary_gate"),
+    )
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "economic_output_schema_lock",
+        "economic_output_schema_lock_version": ECONOMIC_OUTPUT_SCHEMA_LOCK_VERSION,
+        "economic_output_schema_lock_scope": ECONOMIC_OUTPUT_SCHEMA_LOCK_SCOPE,
+        "economic_output_schema_lock_status": ECONOMIC_OUTPUT_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY,
+        **{f"{name}_gate_required": True for name, _, _ in upstream_sections},
+        **{f"{name}_gate_passed": passed(section, gate) for name, section, gate in upstream_sections},
+        "economic_output_schema_declared": True,
+        "economic_output_schema_mode": "SCHEMA_ONLY",
+        "economic_output_schema_policy": ECONOMIC_OUTPUT_SCHEMA_LOCK_POLICY,
+        "allowed_economic_output_schema_keys": list(_ALLOWED_ECONOMIC_OUTPUT_SCHEMA_KEYS),
+        "required_economic_output_schema_keys": list(_REQUIRED_ECONOMIC_OUTPUT_SCHEMA_KEYS),
+        "forbidden_economic_output_key_names": list(_FORBIDDEN_ECONOMIC_OUTPUT_SCHEMA_KEY_NAMES),
+        "economic_output_rows_emitted": False,
+        "economic_output_row_count": 0,
+        "accounting_rows_emitted": False,
+        "accounting_row_count": 0,
+        "amount_values_emitted": False,
+        "price_values_emitted": False,
+        "funding_rate_values_emitted": False,
+        "economic_values_emitted": False,
+        "statistical_values_emitted": False,
+        "null_comparison_values_emitted": False,
+        "scoring_values_emitted": False,
+        "live_integration_values_emitted": False,
+        "paper_integration_values_emitted": False,
+        "final_verdict_values_emitted": False,
+        "economic_output_schema_readiness": False,
+        "economic_output_generation_authorized": False,
+        "accounting_application_authorized": False,
+        "amount_generation_authorized": False,
+        "rule_materialization_authorized": True,
+        "simulated_event_generation_authorized": True,
+        "economic_value_generation_authorized": False,
+        "statistical_value_generation_authorized": False,
+        "candidate_comparison_authorized": False,
+        "null_generation_authorized": False,
+        "scoring_authorization": False,
+        "live_integration_authorized": False,
+        "paper_integration_authorized": False,
+        "final_verdict_authorization": False,
+        "economic_accounting_policy_diagnostics_present": isinstance(economic_accounting_policy_diagnostics, dict),
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["economic_output_schema_lock_gate"] = _derive_economic_output_schema_lock_gate(diagnostics)
+    return diagnostics
+
+
+def _derive_economic_output_schema_lock_gate(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    """Derive V0's fail-closed schema-only gate without inspecting inputs."""
+    forbidden_names = set(_FORBIDDEN_ECONOMIC_OUTPUT_SCHEMA_KEY_NAMES)
+    def forbidden_dict_keys(value: Any) -> list[str]:
+        if isinstance(value, dict):
+            return [key for key, child in value.items() for key in ([key] if key in forbidden_names else []) + forbidden_dict_keys(child)]
+        if isinstance(value, list):
+            return [key for child in value for key in forbidden_dict_keys(child)]
+        return []
+
+    allowed = diagnostics.get("allowed_economic_output_schema_keys")
+    required = diagnostics.get("required_economic_output_schema_keys")
+    forbidden = diagnostics.get("forbidden_economic_output_key_names")
+    collisions = forbidden_dict_keys(diagnostics)
+    upstream_fields = tuple(key for key in diagnostics if key.endswith("_gate_passed"))
+    emission_fields = (
+        "economic_output_rows_emitted", "accounting_rows_emitted", "amount_values_emitted",
+        "price_values_emitted", "funding_rate_values_emitted", "economic_values_emitted",
+        "statistical_values_emitted", "null_comparison_values_emitted", "scoring_values_emitted",
+        "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted",
+    )
+    authorization_fields = (
+        "economic_output_schema_readiness", "economic_output_generation_authorized",
+        "accounting_application_authorized", "amount_generation_authorized",
+        "economic_value_generation_authorized", "statistical_value_generation_authorized",
+        "candidate_comparison_authorized", "null_generation_authorized", "scoring_authorization",
+        "live_integration_authorized", "paper_integration_authorized", "final_verdict_authorization",
+    )
+    evidence = {
+        **{field: diagnostics.get(field) for field in upstream_fields},
+        "schema_declared": diagnostics.get("economic_output_schema_declared") is True,
+        "schema_mode_matches": diagnostics.get("economic_output_schema_mode") == "SCHEMA_ONLY",
+        "schema_status_matches": diagnostics.get("economic_output_schema_lock_status") == ECONOMIC_OUTPUT_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY,
+        "schema_policy_matches": diagnostics.get("economic_output_schema_policy") == ECONOMIC_OUTPUT_SCHEMA_LOCK_POLICY,
+        "allowed_schema_keys_match": allowed == list(_ALLOWED_ECONOMIC_OUTPUT_SCHEMA_KEYS),
+        "required_schema_keys_match": required == list(_REQUIRED_ECONOMIC_OUTPUT_SCHEMA_KEYS),
+        "required_schema_keys_subset_allowed": isinstance(allowed, list) and isinstance(required, list) and bool(required) and set(required) <= set(allowed),
+        "forbidden_key_names_declared_as_safe_list": forbidden == list(_FORBIDDEN_ECONOMIC_OUTPUT_SCHEMA_KEY_NAMES),
+        "forbidden_dict_key_collisions_absent": not collisions,
+        "economic_output_row_count_zero": diagnostics.get("economic_output_row_count") == 0,
+        "accounting_row_count_zero": diagnostics.get("accounting_row_count") == 0,
+        "rule_materialization_authorized": diagnostics.get("rule_materialization_authorized") is True,
+        "simulated_event_generation_authorized": diagnostics.get("simulated_event_generation_authorized") is True,
+        "final_offline_verdict_remains": diagnostics.get("final_offline_verdict_remains"),
+    }
+    def gate(status: str, reason: str | None) -> dict[str, Any]:
+        return {"gate_kind": "economic_output_schema_lock_gate", "gate_scope": ECONOMIC_OUTPUT_SCHEMA_LOCK_SCOPE,
+                "gate_status": status, "gate_passed": False, "gate_scoring_authorization": False,
+                "gate_live_authorization": False, "gate_final_verdict_authorization": False,
+                "gate_downstream_unlocks": [], "evidence": evidence, "blocked_reason": reason}
+    if not diagnostics.get("simulated_events_v0_gate_passed"):
+        return gate(BLOCKED_BY_SIMULATED_EVENTS_V0_GATE, "SIMULATED_EVENTS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not diagnostics.get("simulated_event_schema_lock_gate_passed"):
+        return gate(BLOCKED_BY_SIMULATED_EVENT_SCHEMA_LOCK_GATE, "SIMULATED_EVENT_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not diagnostics.get("materialized_rule_rows_v0_gate_passed"):
+        return gate(BLOCKED_BY_MATERIALIZED_RULE_ROWS_V0_GATE, "MATERIALIZED_RULE_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    emission_offenders = [field for field in emission_fields if diagnostics.get(field) is True]
+    if emission_offenders or diagnostics.get("economic_output_row_count") != 0 or diagnostics.get("accounting_row_count") != 0:
+        return gate(BLOCKED_BY_UNEXPECTED_ECONOMIC_OUTPUT_EMISSION, "UNEXPECTED_ECONOMIC_OUTPUT_EMISSION")
+    authorization_offenders = [field for field in authorization_fields if diagnostics.get(field) is True]
+    if authorization_offenders:
+        return gate(BLOCKED_BY_UNEXPECTED_ECONOMIC_OUTPUT_AUTHORIZATION, "UNEXPECTED_ECONOMIC_OUTPUT_AUTHORIZATION")
+    required_evidence = ("schema_declared", "schema_mode_matches", "schema_status_matches", "schema_policy_matches", "allowed_schema_keys_match", "required_schema_keys_match", "required_schema_keys_subset_allowed", "forbidden_key_names_declared_as_safe_list", "forbidden_dict_key_collisions_absent", "economic_output_row_count_zero", "accounting_row_count_zero", "rule_materialization_authorized", "simulated_event_generation_authorized")
+    if (not all(evidence.get(field) is True for field in upstream_fields)
+            or not all(evidence.get(field) is True for field in required_evidence)
+            or evidence["final_offline_verdict_remains"] != BLOCKED_BY_VALIDATION_IMPLEMENTATION):
+        return gate(BLOCKED_BY_INCOMPLETE_ECONOMIC_OUTPUT_SCHEMA_EVIDENCE, "ECONOMIC_OUTPUT_SCHEMA_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    result = gate(ECONOMIC_OUTPUT_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY, None)
+    result["gate_passed"] = True
+    return result
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -16376,6 +16569,7 @@ def build_real_validation_receipt(
     materialized_rule_rows_v0_diagnostics: dict | None = None,
     simulated_event_schema_lock_diagnostics: dict | None = None,
     simulated_events_v0_diagnostics: dict | None = None,
+    economic_output_schema_lock_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -16569,6 +16763,10 @@ def build_real_validation_receipt(
         )
     if simulated_events_v0_diagnostics is not None:
         receipt["simulated_events_v0_diagnostics"] = simulated_events_v0_diagnostics
+    if economic_output_schema_lock_diagnostics is not None:
+        receipt["economic_output_schema_lock_diagnostics"] = (
+            economic_output_schema_lock_diagnostics
+        )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
             final_offline_edge_verdict_logic_diagnostics
@@ -17502,6 +17700,23 @@ def main(argv: list[str] | None = None) -> int:
                 no_output_runner_invocation_diagnostics=no_output_runner_invocation_diagnostics,
                 implementation_boundary_diagnostics=implementation_boundary_diagnostics,
             )
+            economic_output_schema_lock_diagnostics = (
+                _build_economic_output_schema_lock_diagnostics(
+                    simulated_events_v0_diagnostics=simulated_events_v0_diagnostics,
+                    simulated_event_schema_lock_diagnostics=simulated_event_schema_lock_diagnostics,
+                    materialized_rule_rows_v0_diagnostics=materialized_rule_rows_v0_diagnostics,
+                    materialized_rule_row_schema_lock_diagnostics=materialized_rule_row_schema_lock_diagnostics,
+                    no_output_runner_dry_harness_diagnostics=no_output_runner_dry_harness_diagnostics,
+                    projected_input_joinability_diagnostics=projected_input_joinability_diagnostics,
+                    projected_input_temporal_sequence_diagnostics=projected_input_temporal_sequence_diagnostics,
+                    projected_input_row_count_diagnostics=projected_input_row_count_diagnostics,
+                    projected_input_shape_inventory_diagnostics=projected_input_shape_inventory_diagnostics,
+                    allowed_runner_input_projection_diagnostics=allowed_runner_input_projection_diagnostics,
+                    no_output_runner_invocation_diagnostics=no_output_runner_invocation_diagnostics,
+                    implementation_boundary_diagnostics=implementation_boundary_diagnostics,
+                    economic_accounting_policy_diagnostics=net_pnl_equity_risk_contract_diagnostics.get("economic_accounting_policy_diagnostics"),
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -17608,6 +17823,9 @@ def main(argv: list[str] | None = None) -> int:
                 simulated_event_schema_lock_diagnostics
             ),
             simulated_events_v0_diagnostics=simulated_events_v0_diagnostics,
+            economic_output_schema_lock_diagnostics=(
+                economic_output_schema_lock_diagnostics
+            ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
             ),
@@ -17998,6 +18216,23 @@ def main(argv: list[str] | None = None) -> int:
                 no_output_runner_invocation_diagnostics=no_output_runner_invocation_diagnostics,
                 implementation_boundary_diagnostics=implementation_boundary_diagnostics,
             )
+            economic_output_schema_lock_diagnostics = (
+                _build_economic_output_schema_lock_diagnostics(
+                    simulated_events_v0_diagnostics=simulated_events_v0_diagnostics,
+                    simulated_event_schema_lock_diagnostics=simulated_event_schema_lock_diagnostics,
+                    materialized_rule_rows_v0_diagnostics=materialized_rule_rows_v0_diagnostics,
+                    materialized_rule_row_schema_lock_diagnostics=materialized_rule_row_schema_lock_diagnostics,
+                    no_output_runner_dry_harness_diagnostics=no_output_runner_dry_harness_diagnostics,
+                    projected_input_joinability_diagnostics=projected_input_joinability_diagnostics,
+                    projected_input_temporal_sequence_diagnostics=projected_input_temporal_sequence_diagnostics,
+                    projected_input_row_count_diagnostics=projected_input_row_count_diagnostics,
+                    projected_input_shape_inventory_diagnostics=projected_input_shape_inventory_diagnostics,
+                    allowed_runner_input_projection_diagnostics=allowed_runner_input_projection_diagnostics,
+                    no_output_runner_invocation_diagnostics=no_output_runner_invocation_diagnostics,
+                    implementation_boundary_diagnostics=implementation_boundary_diagnostics,
+                    economic_accounting_policy_diagnostics=net_pnl_equity_risk_contract_diagnostics.get("economic_accounting_policy_diagnostics"),
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -18069,6 +18304,9 @@ def main(argv: list[str] | None = None) -> int:
                 simulated_event_schema_lock_diagnostics
             ),
             simulated_events_v0_diagnostics=simulated_events_v0_diagnostics,
+            economic_output_schema_lock_diagnostics=(
+                economic_output_schema_lock_diagnostics
+            ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
             ),
