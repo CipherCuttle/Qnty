@@ -20648,6 +20648,130 @@ class TestNullReferenceComparisonRowsV0W1:
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
 
+class TestStatisticalMetadataRowsV0X1:
+    """Lane X1: W1 rows project into X0's zero-value statistical schema."""
+
+    def _build(self, tmp_path):
+        v1 = TestEconomicAccountingRowsV0V1()._build(tmp_path)
+        w0 = real_validation._build_null_reference_comparison_schema_lock_diagnostics(economic_accounting_rows_v0_diagnostics=v1)
+        w1 = real_validation._build_null_reference_comparison_rows_v0_diagnostics(null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1)
+        x0 = real_validation._build_statistical_output_schema_lock_diagnostics(null_reference_comparison_rows_v0_diagnostics=w1, null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1)
+        return real_validation._build_statistical_metadata_rows_v0_diagnostics(statistical_output_schema_lock_diagnostics=x0, null_reference_comparison_rows_v0_diagnostics=w1)
+
+    def test_exact_metadata_rows_zero_values_and_gate_pass(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["statistical_metadata_rows_v0_gate"]["gate_passed"] is True
+        assert result["statistical_row_count"] == result["source_comparison_row_count"] > 0
+        assert all(set(row) == set(real_validation._ALLOWED_STATISTICAL_OUTPUT_SCHEMA_KEYS) for row in result["statistical_rows"])
+        assert all(all(row[field] == value for field, value in real_validation._STATISTICAL_METADATA_ROWS_V0_FIXED_ROW_CONSTANTS.items()) for row in result["statistical_rows"])
+        assert all(row["statistical_value"] is None and row["statistical_value_present"] is False and row["statistical_metadata_only"] is True for row in result["statistical_rows"])
+        assert result["statistical_values_emitted"] is False and result["statistical_value_count"] == 0
+
+    @pytest.mark.parametrize("field, status", [
+        ("statistical_output_schema_lock_gate_passed", real_validation.BLOCKED_BY_STATISTICAL_OUTPUT_SCHEMA_LOCK_X0_FOR_X1_GATE),
+        ("null_reference_comparison_rows_v0_gate_passed", real_validation.BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FOR_X1_GATE),
+        ("null_reference_comparison_schema_lock_gate_passed", real_validation.BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_FOR_X1_GATE),
+        ("economic_accounting_rows_v0_gate_passed", real_validation.BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_X1_GATE),
+        ("implementation_boundary_gate_passed", real_validation.BLOCKED_BY_STATISTICAL_METADATA_ROWS_V0_UPSTREAM_GATE),
+    ])
+    def test_dependencies_fail_closed(self, tmp_path, field, status):
+        result = self._build(tmp_path); result[field] = False
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("mutation", ["extra", "missing"])
+    def test_schema_mutations_fail_closed(self, tmp_path, mutation):
+        result = self._build(tmp_path)
+        if mutation == "extra": result["statistical_rows"][0]["extra"] = "x"
+        else: del result["statistical_rows"][0]["statistical_unit"]
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_METADATA_ROW_SCHEMA
+
+    @pytest.mark.parametrize("field, value", [("schema_kind", "mutated"), ("statistical_value_kind", "computed"), ("statistical_variant", "actual_statistical_output"), ("statistical_entry_code", "COMPUTED_STATISTICAL_OUTPUT")])
+    def test_row_constant_mutations_fail_closed(self, tmp_path, field, value):
+        result = self._build(tmp_path); result["statistical_rows"][0][field] = value
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_METADATA_ROW_CONSTANTS
+
+    @pytest.mark.parametrize("field, value, status", [("statistical_value", 0, real_validation.BLOCKED_BY_UNEXPECTED_NON_METADATA_STATISTICAL_VALUE), ("statistical_value_present", True, real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_X1)])
+    def test_row_value_mutations_fail_closed(self, tmp_path, field, value, status):
+        result = self._build(tmp_path); result["statistical_rows"][0][field] = value
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("value", [False, None])
+    def test_metadata_only_mutations_fail_closed(self, tmp_path, value):
+        result = self._build(tmp_path); result["statistical_rows"][0]["statistical_metadata_only"] = value
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_STATISTICAL_METADATA_ROWS_V0_EVIDENCE
+
+    @pytest.mark.parametrize("field, value", [("statistical_values_emitted", True), ("statistical_value_count", 1)])
+    def test_emitted_value_evidence_fails_closed(self, tmp_path, field, value):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_X1
+
+    @pytest.mark.parametrize("field", ["inferential_values_emitted", "uncertainty_values_emitted", "candidate_comparison_values_emitted"])
+    def test_inferential_output_fails_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_METADATA_INFERENTIAL_OUTPUT
+
+    @pytest.mark.parametrize("field", real_validation._STATISTICAL_METADATA_ROWS_X1_OUTPUT_FIELDS + real_validation._STATISTICAL_METADATA_ROWS_X1_AUTHORIZATION_FIELDS)
+    @pytest.mark.parametrize("value", [None, 1])
+    def test_downstream_evidence_requires_exact_false(self, tmp_path, field, value):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_STATISTICAL_METADATA_ROWS_V0_EVIDENCE
+
+    @pytest.mark.parametrize("field", ["scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted"])
+    def test_downstream_output_fails_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_METADATA_DOWNSTREAM_OUTPUT
+
+    @pytest.mark.parametrize("field", real_validation._STATISTICAL_METADATA_ROWS_X1_AUTHORIZATION_FIELDS)
+    def test_downstream_authorization_fails_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_METADATA_DOWNSTREAM_AUTHORIZATION
+
+    def test_count_duplicate_order_cap_and_verdict_fail_closed(self, tmp_path):
+        result = self._build(tmp_path); result["statistical_row_count"] -= 1
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_STATISTICAL_METADATA_ROW_SOURCE_COUNT_MISMATCH
+        result = self._build(tmp_path)
+        for field in ("run_id", "symbol", "split_id", "split_partition", "statistical_sequence_id"): result["statistical_rows"][1][field] = result["statistical_rows"][0][field]
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_DUPLICATE_STATISTICAL_METADATA_ROW_IDENTITY
+        result = self._build(tmp_path); result["statistical_rows"] = list(reversed(result["statistical_rows"]))
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_STATISTICAL_METADATA_ROW_ORDERING_MUTATION
+        result = self._build(tmp_path); result["statistical_rows_cap_exceeded"] = True
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_STATISTICAL_METADATA_ROW_CAP_EXCEEDED
+        result = self._build(tmp_path); result["final_offline_verdict_remains"] = "MUTATED"
+        assert real_validation._derive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_STATISTICAL_METADATA_ROWS_V0_FINAL_VERDICT_ADVANCEMENT
+
+    def test_forbidden_keys_absent(self, tmp_path):
+        result = self._build(tmp_path); forbidden = {"p_value", "confidence_interval", "score", "metric", "performance", "pnl", "profit", "edge", "return", "returns"}
+        def keys(value):
+            if isinstance(value, dict):
+                yield from value
+                for child in value.values(): yield from keys(child)
+            elif isinstance(value, list):
+                for child in value: yield from keys(child)
+        assert not (set(keys(result)) & forbidden)
+        assert not (set(real_validation._ALLOWED_STATISTICAL_OUTPUT_SCHEMA_KEYS) & forbidden)
+
+    def test_no_input_cli_receipt_includes_failed_x1_gate(self, tmp_path):
+        output_dir = tmp_path / "output"; output_dir.mkdir()
+        m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        assert real_validation.main(m1._cli_base_args(output_dir)) == 0
+        diagnostics = json.loads((output_dir / "real_validation_receipt.json").read_text())["statistical_metadata_rows_v0_diagnostics"]
+        assert diagnostics["statistical_metadata_rows_v0_gate"]["gate_passed"] is False
+        assert diagnostics["statistical_rows"] == []
+
+    def test_full_cli_receipt_includes_x1_rows_and_remains_blocked(self, tmp_path):
+        output_dir, bars_dir, funding_dir = tmp_path / "output", tmp_path / "bars", tmp_path / "funding"
+        output_dir.mkdir(); bars_dir.mkdir(); funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+        j1 = TestEconomicAccountingPolicyPreregistrationJ1()
+        assert real_validation.main(j1._cli_base_args(output_dir) + j1._cli_upstream_args() + j1._cli_eap_args() + ["--bars-dir", str(bars_dir), "--funding-dir", str(funding_dir)]) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        diagnostics = receipt["statistical_metadata_rows_v0_diagnostics"]
+        assert diagnostics["statistical_values_emitted"] is False
+        assert diagnostics["statistical_value_count"] == 0
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
 class TestStatisticalOutputSchemaLockX0:
     """Lane X0: declare a future statistical schema and emit no artifacts."""
 
