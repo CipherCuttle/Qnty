@@ -1532,6 +1532,7 @@ BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_AA0_GATE = "BLOCKED_BY_ECONOMIC_ACCOU
 BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_UPSTREAM_GATE = "BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_UPSTREAM_GATE"
 BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_EVIDENCE"
 BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_KEY_MUTATION = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_KEY_MUTATION"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_VALUE_MUTATION = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_VALUE_MUTATION"
 BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_KIND_MUTATION = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_KIND_MUTATION"
 BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUE_ROWS_AA0 = "BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUE_ROWS_AA0"
 BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUES_AA0 = "BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUES_AA0"
@@ -1552,6 +1553,23 @@ _ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_KEYS_AA0 = (
 _ALLOWED_FUTURE_DESCRIPTIVE_VALUE_KIND_NAMES_AA0 = (
     "source_metadata_row_count", "source_symbol_count", "source_split_partition_count",
 )
+_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_AA0_EXPECTED = {
+    "policy_version": DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_VERSION,
+    "policy_kind": "descriptive_statistical_value_policy_lock",
+    "source_row_schema_kind": DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_SCHEMA_KIND,
+    "source_row_schema_version": DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_SCHEMA_VERSION,
+    "source_metadata_row_kind": "descriptive_statistical_metadata_rows_v0",
+    "allowed_future_descriptive_value_kind_names": list(_ALLOWED_FUTURE_DESCRIPTIVE_VALUE_KIND_NAMES_AA0),
+    "required_source_metadata_only_policy": True,
+    "required_value_absence_policy": True,
+    "required_no_inferential_policy": True,
+    "required_no_uncertainty_policy": True,
+    "required_no_candidate_comparison_policy": True,
+    "required_no_scoring_policy": True,
+    "required_no_live_integration_policy": True,
+    "required_no_paper_integration_policy": True,
+    "required_no_final_verdict_policy": True,
+}
 _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_UPSTREAM_GATE_FIELDS = _DESCRIPTIVE_STATISTICAL_METADATA_ROWS_Z1_UPSTREAM_GATE_FIELDS
 _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_OUTPUT_FIELDS = _DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_OUTPUT_FIELDS
 _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_AUTHORIZATION_FIELDS = _DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_AUTHORIZATION_FIELDS
@@ -18136,21 +18154,8 @@ def _build_descriptive_statistical_value_policy_lock_aa0_diagnostics(
 
     upstream_fields = _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_UPSTREAM_GATE_FIELDS
     policy = {
-        "policy_version": DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_VERSION,
-        "policy_kind": "descriptive_statistical_value_policy_lock",
-        "source_row_schema_kind": DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_SCHEMA_KIND,
-        "source_row_schema_version": DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_SCHEMA_VERSION,
-        "source_metadata_row_kind": "descriptive_statistical_metadata_rows_v0",
-        "allowed_future_descriptive_value_kind_names": list(_ALLOWED_FUTURE_DESCRIPTIVE_VALUE_KIND_NAMES_AA0),
-        "required_source_metadata_only_policy": True,
-        "required_value_absence_policy": True,
-        "required_no_inferential_policy": True,
-        "required_no_uncertainty_policy": True,
-        "required_no_candidate_comparison_policy": True,
-        "required_no_scoring_policy": True,
-        "required_no_live_integration_policy": True,
-        "required_no_paper_integration_policy": True,
-        "required_no_final_verdict_policy": True,
+        key: value.copy() if isinstance(value, list) else value
+        for key, value in _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_AA0_EXPECTED.items()
     }
     diagnostics: dict[str, Any] = {
         "diagnostic_kind": "descriptive_statistical_value_policy_lock_aa0",
@@ -18217,6 +18222,7 @@ def _derive_descriptive_statistical_value_policy_lock_aa0_gate(diagnostics: dict
         "declared": diagnostics.get("descriptive_statistical_value_policy_lock_declared") is True,
         "status_matches": diagnostics.get("descriptive_statistical_value_policy_lock_status") == DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_DECLARED_DIAGNOSTIC_ONLY,
         "policy_keys_match": diagnostics.get("declared_descriptive_statistical_value_policy_keys") == list(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_KEYS_AA0) and diagnostics.get("declared_descriptive_statistical_value_policy_key_count") == len(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_KEYS_AA0) and isinstance(policy, dict) and set(policy) == set(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_KEYS_AA0),
+        "policy_literal_matches": isinstance(policy, dict) and policy == _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_AA0_EXPECTED,
         "value_kinds_match": diagnostics.get("declared_future_descriptive_value_kind_names") == list(_ALLOWED_FUTURE_DESCRIPTIVE_VALUE_KIND_NAMES_AA0) and diagnostics.get("declared_future_descriptive_value_kind_count") == len(_ALLOWED_FUTURE_DESCRIPTIVE_VALUE_KIND_NAMES_AA0) and isinstance(policy, dict) and policy.get("allowed_future_descriptive_value_kind_names") == list(_ALLOWED_FUTURE_DESCRIPTIVE_VALUE_KIND_NAMES_AA0),
         "rows_empty": diagnostics.get("descriptive_value_rows") == [], "rows_not_emitted": diagnostics.get("descriptive_value_rows_emitted") is False,
         "row_count_zero": diagnostics.get("descriptive_value_row_count") == 0, "values_not_emitted": diagnostics.get("descriptive_values_emitted") is False,
@@ -18238,6 +18244,7 @@ def _derive_descriptive_statistical_value_policy_lock_aa0_gate(diagnostics: dict
     if not evidence["accounting_rows_gate_passed"]: return gate(BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_AA0_GATE, "ECONOMIC_ACCOUNTING_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
     if not all(evidence[field] is True for field in upstream_fields): return gate(BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_UPSTREAM_GATE, "REQUIRED_UPSTREAM_GATE_MISSING_OR_NOT_PASSED")
     if not evidence["policy_keys_match"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_KEY_MUTATION, "DECLARED_POLICY_KEYS_DO_NOT_EXACTLY_MATCH_AA0_ALLOWED_KEYS")
+    if not evidence["policy_literal_matches"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_VALUE_MUTATION, "DECLARED_POLICY_LITERAL_DOES_NOT_EXACTLY_MATCH_AA0_EXPECTED_VALUES")
     if not evidence["value_kinds_match"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_KIND_MUTATION, "DECLARED_VALUE_KIND_NAMES_DO_NOT_EXACTLY_MATCH_AA0_ALLOWED_NAMES")
     if any(field not in diagnostics or not isinstance(diagnostics.get(field), bool) for field in exact_false_fields): return gate(BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_EVIDENCE, "DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_EVIDENCE_INCOMPLETE_OR_MUTATED")
     if not (evidence["rows_empty"] and evidence["rows_not_emitted"] and evidence["row_count_zero"]): return gate(BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUE_ROWS_AA0, "DESCRIPTIVE_VALUE_ROWS_MUST_NOT_BE_EMITTED_IN_AA0")
@@ -18247,7 +18254,7 @@ def _derive_descriptive_statistical_value_policy_lock_aa0_gate(diagnostics: dict
     if any(diagnostics.get(field) is True for field in ("scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted")): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_DOWNSTREAM_OUTPUT, "UNEXPECTED_DOWNSTREAM_OUTPUT")
     if any(diagnostics.get(field) is True for field in authorization_fields): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_DOWNSTREAM_AUTHORIZATION, "UNEXPECTED_DOWNSTREAM_AUTHORIZATION")
     if diagnostics.get("final_offline_verdict_remains") != BLOCKED_BY_VALIDATION_IMPLEMENTATION: return gate(BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_FINAL_VERDICT_ADVANCEMENT, "FINAL_OFFLINE_VERDICT_MUST_REMAIN_BLOCKED")
-    required = ("declared", "status_matches", "policy_keys_match", "value_kinds_match", "rows_empty", "rows_not_emitted", "row_count_zero", "values_not_emitted", "value_count_zero", "statistical_values_empty", "statistical_values_not_emitted", "statistical_value_count_zero", "downstream_unlocks_empty") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
+    required = ("declared", "status_matches", "policy_keys_match", "policy_literal_matches", "value_kinds_match", "rows_empty", "rows_not_emitted", "row_count_zero", "values_not_emitted", "value_count_zero", "statistical_values_empty", "statistical_values_not_emitted", "statistical_value_count_zero", "downstream_unlocks_empty") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
     if not all(evidence.get(field) is True for field in required): return gate(BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_EVIDENCE, "DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_EVIDENCE_INCOMPLETE_OR_MUTATED")
     result = gate(DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_DECLARED_DIAGNOSTIC_ONLY, None)
     result["gate_passed"] = True
