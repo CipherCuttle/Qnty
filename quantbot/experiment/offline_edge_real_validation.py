@@ -16194,6 +16194,7 @@ def _derive_simulated_events_v0_gate(diagnostics: dict[str, Any]) -> dict[str, A
         "mode_matches": diagnostics.get("simulated_events_v0_mode") == "SCHEMA_LOCKED_EVENT_ARTIFACT_ONLY",
         "status_matches": diagnostics.get("simulated_events_v0_status") == SIMULATED_EVENTS_V0_DECLARED_ARTIFACT_ONLY,
         "policy_matches": diagnostics.get("simulated_events_v0_policy") == SIMULATED_EVENTS_V0_POLICY,
+        "simulated_events_emitted": diagnostics.get("simulated_events_emitted") is True,
         "events_are_list": events_are_list,
         "count_matches_list_length": events_are_list and diagnostics.get("simulated_event_count") == len(events),
         "count_positive": bool(events_are_list and len(events) > 0),
@@ -16231,7 +16232,7 @@ def _derive_simulated_events_v0_gate(diagnostics: dict[str, Any]) -> dict[str, A
         return gate(BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_FORBIDDEN_VALUE, "FORBIDDEN_VALUE_PRESENT_ON_A_SIMULATED_EVENT")
     if not schema_exact and every_event_is_dict:
         return gate(BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_SCHEMA, "EVENT_KEYS_DO_NOT_EXACTLY_MATCH_ALLOWED_SIMULATED_EVENT_SCHEMA_KEYS")
-    required = ("declared", "mode_matches", "status_matches", "policy_matches", "events_are_list",
+    required = ("declared", "mode_matches", "status_matches", "policy_matches", "simulated_events_emitted", "events_are_list",
                 "count_matches_list_length", "count_positive", "source_count_positive", "count_matches_source",
                 "every_event_is_dict", "every_event_schema_exact", "no_forbidden_event_keys",
                 "no_forbidden_event_values", "events_in_order", "no_duplicate_event_identities", "cap_not_exceeded",

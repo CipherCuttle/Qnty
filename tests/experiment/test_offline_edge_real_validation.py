@@ -20103,6 +20103,14 @@ class TestSimulatedEventsV0U1:
         result[field] = value
         assert _derive_simulated_events_v0_gate(result)["gate_status"] == BLOCKED_BY_INCOMPLETE_SIMULATED_EVENTS_V0_EVIDENCE
 
+    def test_simulated_events_emitted_false_with_events_fails_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["simulated_event_count"] > 0
+        result["simulated_events_emitted"] = False
+        gate = _derive_simulated_events_v0_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_INCOMPLETE_SIMULATED_EVENTS_V0_EVIDENCE
+
     def test_count_mismatch_empty_and_schema_fail_closed(self, tmp_path):
         result = self._build(tmp_path)
         result["simulated_event_count"] += 1
