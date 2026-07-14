@@ -857,6 +857,9 @@ BLOCKED_BY_UNEXPECTED_RULE_ROW_SCHEMA = "BLOCKED_BY_UNEXPECTED_RULE_ROW_SCHEMA"
 BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_KEY = (
     "BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_KEY"
 )
+BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_VALUE = (
+    "BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_VALUE"
+)
 BLOCKED_BY_UNEXPECTED_ECONOMIC_OR_SCORING_AUTHORIZATION = (
     "BLOCKED_BY_UNEXPECTED_ECONOMIC_OR_SCORING_AUTHORIZATION"
 )
@@ -894,10 +897,15 @@ _MATERIALIZED_RULE_ROWS_V0_AUTHORIZATION_FIELDS = (
     "final_verdict_authorization",
 )
 _MATERIALIZED_RULE_ROWS_V0_DISALLOWED_AUTHORIZATION_FIELDS = (
+    "decision_row_generation_authorized",
+    "simulated_event_generation_authorized",
     "economic_value_generation_authorized",
     "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
     "scoring_authorization",
     "live_integration_authorized",
+    "paper_integration_authorized",
     "final_verdict_authorization",
 )
 
@@ -15293,9 +15301,7 @@ def _extract_materialized_rule_rows_v0(
                             "rule_input_roles": ["bars", "funding"],
                             "rule_input_columns": [
                                 "timestamp",
-                                "close",
                                 "fundingTime",
-                                "fundingRate",
                             ],
                             "rule_condition_name": "joinable_input_row_present",
                             "rule_condition_result": "OBSERVED",
@@ -15464,6 +15470,18 @@ def _derive_materialized_rule_rows_v0_gate(
         forbidden_row_key_names & set(row.keys())  # type: ignore[union-attr]
         for row in rows
     )
+
+    def _row_contains_forbidden_value(row: dict[str, Any]) -> bool:
+        for value in row.values():
+            values_to_check = value if isinstance(value, list) else [value]
+            for item in values_to_check:
+                if isinstance(item, str) and item in forbidden_row_key_names:
+                    return True
+        return False
+
+    no_forbidden_row_values = every_row_is_dict and not any(
+        _row_contains_forbidden_value(row) for row in rows  # type: ignore[arg-type]
+    )
     def _order_sort_key(row: dict[str, Any]) -> tuple[str, str, str, str, int]:
         return (
             str(row.get("symbol", "")),
@@ -15538,6 +15556,7 @@ def _derive_materialized_rule_rows_v0_gate(
         "every_row_is_dict": every_row_is_dict,
         "every_row_schema_exact": every_row_schema_exact,
         "no_forbidden_row_keys": no_forbidden_row_keys,
+        "no_forbidden_row_values": no_forbidden_row_values,
         "rows_in_order": rows_in_order,
         "no_duplicate_row_identities": no_duplicate_identities,
         "forbidden_dict_key_collisions_absent": not forbidden_dict_key_collisions,
@@ -15594,6 +15613,12 @@ def _derive_materialized_rule_rows_v0_gate(
             "FORBIDDEN_KEY_NAME_PRESENT_ON_A_MATERIALIZED_RULE_ROW",
         )
 
+    if not evidence["no_forbidden_row_values"] and evidence["every_row_is_dict"]:
+        return _base_gate(
+            BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_VALUE,
+            "FORBIDDEN_VALUE_PRESENT_ON_A_MATERIALIZED_RULE_ROW",
+        )
+
     if not evidence["every_row_schema_exact"] and evidence["every_row_is_dict"]:
         return _base_gate(
             BLOCKED_BY_UNEXPECTED_RULE_ROW_SCHEMA,
@@ -15613,6 +15638,7 @@ def _derive_materialized_rule_rows_v0_gate(
             "every_row_is_dict",
             "every_row_schema_exact",
             "no_forbidden_row_keys",
+            "no_forbidden_row_values",
             "rows_in_order",
             "no_duplicate_row_identities",
             "forbidden_dict_key_collisions_absent",

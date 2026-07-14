@@ -251,6 +251,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROWS_V0_EVIDENCE,
     BLOCKED_BY_UNEXPECTED_RULE_ROW_SCHEMA,
     BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_KEY,
+    BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_VALUE,
     BLOCKED_BY_UNEXPECTED_ECONOMIC_OR_SCORING_AUTHORIZATION,
     _build_materialized_rule_rows_v0_diagnostics,
     _derive_materialized_rule_rows_v0_gate,
@@ -19594,6 +19595,9 @@ class TestMaterializedRuleRowsV0T1:
         assert result["final_offline_verdict_remains"] == (
             BLOCKED_BY_VALIDATION_IMPLEMENTATION
         )
+        serialized_rows = json.dumps(rows)
+        assert "close" not in serialized_rows
+        assert "fundingRate" not in serialized_rows
 
     def test_full_valid_path_gate_never_authorizes_downstream(self, tmp_path):
         gate = self._result(tmp_path)["materialized_rule_rows_v0_gate"]
@@ -19711,6 +19715,25 @@ class TestMaterializedRuleRowsV0T1:
         assert gate["gate_passed"] is False
         assert gate["gate_status"] == BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_KEY
 
+    # ── Test 13b: forbidden value inside rule_input_columns fails closed ────
+    @pytest.mark.parametrize(
+        "rule_input_columns",
+        [
+            ["timestamp", "close", "fundingTime"],
+            ["timestamp", "fundingTime", "fundingRate"],
+        ],
+    )
+    def test_forbidden_row_input_column_value_fails_closed(
+        self, tmp_path, rule_input_columns
+    ):
+        result = self._result(tmp_path)
+        mutated_rows = [dict(row) for row in result["materialized_rule_rows"]]
+        mutated_rows[0]["rule_input_columns"] = rule_input_columns
+        result["materialized_rule_rows"] = mutated_rows
+        gate = _derive_materialized_rule_rows_v0_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_VALUE
+
     # ── Test 14: duplicate row identity fails closed ─────────────────────────
     def test_duplicate_row_identity_fails_closed(self, tmp_path):
         result = self._result(tmp_path)
@@ -19742,10 +19765,15 @@ class TestMaterializedRuleRowsV0T1:
     @pytest.mark.parametrize(
         "field",
         [
+            "decision_row_generation_authorized",
+            "simulated_event_generation_authorized",
             "economic_value_generation_authorized",
             "statistical_value_generation_authorized",
+            "candidate_comparison_authorized",
+            "null_generation_authorized",
             "scoring_authorization",
             "live_integration_authorized",
+            "paper_integration_authorized",
             "final_verdict_authorization",
         ],
     )
