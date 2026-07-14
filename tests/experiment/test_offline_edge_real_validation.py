@@ -208,6 +208,17 @@ from quantbot.experiment.offline_edge_real_validation import (
     _build_projected_input_temporal_sequence_diagnostics,
     _derive_projected_input_temporal_sequence_gate,
     _PROJECTED_INPUT_TEMPORAL_SEQUENCE_AUTHORIZATION_FIELDS,
+    PROJECTED_INPUT_JOINABILITY_VERSION,
+    PROJECTED_INPUT_JOINABILITY_SCOPE,
+    PROJECTED_INPUT_JOINABILITY_DECLARED_DIAGNOSTIC_ONLY,
+    PROJECTED_INPUT_JOINABILITY_METADATA_ONLY_POLICY,
+    PROJECTED_INPUT_JOINABILITY_FROZEN_POLICY,
+    BLOCKED_BY_PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE,
+    BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_JOINABILITY_EVIDENCE,
+    BLOCKED_BY_UNEXPECTED_JOINABILITY_VALUE_EMISSION,
+    _build_projected_input_joinability_diagnostics,
+    _derive_projected_input_joinability_gate,
+    _PROJECTED_INPUT_JOINABILITY_AUTHORIZATION_FIELDS,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -18321,6 +18332,375 @@ class TestProjectedInputTemporalSequenceQ1:
         assert row_gate["gate_passed"] is False
         assert temporal_gate["gate_passed"] is False
         assert temporal_gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE
+
+    def test_no_forbidden_calculation_keys(self, tmp_path):
+        result = self._result(tmp_path)
+        all_keys = _all_dict_keys(result)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
+
+
+class TestProjectedInputJoinabilityR1:
+    def _q1(self):
+        return TestProjectedInputTemporalSequenceQ1()
+
+    def _write_inventory(self, tmp_path, *, exact_funding=True, include_funding=True):
+        inventory = self._q1()._write_inventory(tmp_path, include_funding=include_funding)
+        if exact_funding and include_funding:
+            funding_entry = next(
+                entry for entry in inventory["roles"] if entry["role"] == "funding"
+            )
+            funding_path = Path(funding_entry["directory"]) / "BTCUSDT_8h_funding.csv"
+            funding_path.write_text(
+                "fundingTime,fundingRate,markPrice\n"
+                "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+                "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+                "2026-01-03T00:00:00Z,0.0003,50200.0\n"
+            )
+            self._q1()._refresh_inventory_file(
+                inventory,
+                role="funding",
+                filename="BTCUSDT_8h_funding.csv",
+            )
+        return inventory
+
+    def _full_chain_diags(self, inventory):
+        q1 = self._q1()
+        diags = q1._full_chain_diags(inventory)
+        diags["projected_input_temporal_sequence_diagnostics"] = q1._build(
+            diags,
+            inventory=inventory,
+        )
+        return diags
+
+    def _absence_diags(self):
+        q1 = self._q1()
+        diags = q1._absence_diags()
+        diags["projected_input_temporal_sequence_diagnostics"] = q1._build(diags)
+        return diags
+
+    def _build(self, diags, inventory=None):
+        return _build_projected_input_joinability_diagnostics(
+            projected_input_temporal_sequence_diagnostics=diags[
+                "projected_input_temporal_sequence_diagnostics"
+            ],
+            projected_input_row_count_diagnostics=diags[
+                "projected_input_row_count_diagnostics"
+            ],
+            projected_input_shape_inventory_diagnostics=diags[
+                "projected_input_shape_inventory_diagnostics"
+            ],
+            allowed_runner_input_projection_diagnostics=diags[
+                "allowed_runner_input_projection_diagnostics"
+            ],
+            no_output_runner_invocation_diagnostics=diags[
+                "no_output_runner_invocation_diagnostics"
+            ],
+            implementation_boundary_diagnostics=diags[
+                "implementation_boundary_diagnostics"
+            ],
+            split_diagnostics={
+                "split_definitions": materialize_split_definitions_from_inventory(
+                    inventory=inventory,
+                    split_count=3,
+                )
+            }
+            if inventory is not None
+            else None,
+            inventory_diagnostics=inventory,
+        )
+
+    def _result(self, tmp_path):
+        inventory = self._write_inventory(tmp_path)
+        return self._build(self._full_chain_diags(inventory), inventory)
+
+    def _assert_all_authorizations_false(self, result):
+        for field in _PROJECTED_INPUT_JOINABILITY_AUTHORIZATION_FIELDS:
+            assert result[field] is False
+
+    def test_joinability_no_args_q1_failed_fails_closed(self):
+        result = self._build(self._absence_diags())
+        gate = result["projected_input_joinability_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE
+        self._assert_all_authorizations_false(result)
+
+    def test_joinability_diagnostic_full_exact_path(self, tmp_path):
+        result = self._result(tmp_path)
+        assert result["diagnostic_kind"] == "projected_input_joinability_inventory"
+        assert result["projected_input_joinability_version"] == (
+            PROJECTED_INPUT_JOINABILITY_VERSION
+        )
+        assert result["projected_input_joinability_scope"] == (
+            PROJECTED_INPUT_JOINABILITY_SCOPE
+        )
+        assert result["projected_input_joinability_status"] == (
+            PROJECTED_INPUT_JOINABILITY_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert result["projected_input_joinability_mode"] == "METADATA_ONLY"
+        assert result["projected_input_joinability_policy"] == (
+            PROJECTED_INPUT_JOINABILITY_METADATA_ONLY_POLICY
+        )
+        assert result["joinability_frozen_policy"] == (
+            PROJECTED_INPUT_JOINABILITY_FROZEN_POLICY
+        )
+        for field in (
+            "timestamp_values_emitted",
+            "time_values_emitted",
+            "price_values_emitted",
+            "funding_values_emitted",
+            "row_value_samples_emitted",
+            "projected_input_values_emitted",
+            "projected_input_row_values_emitted",
+            "rule_output_rows_emitted",
+            "decision_rows_emitted",
+            "simulated_events_emitted",
+            "economic_values_emitted",
+            "statistical_values_emitted",
+        ):
+            assert result[field] is False
+        summary = result["joinability_summary"]
+        assert summary["summary_kind"] == (
+            "metadata_only_cross_role_joinability_summary"
+        )
+        assert summary["timestamp_values_included"] is False
+        assert summary["price_values_included"] is False
+        assert summary["funding_values_included"] is False
+        assert summary["row_samples_included"] is False
+        assert summary["projected_row_values_included"] is False
+        assert summary["rule_outputs_included"] is False
+        assert summary["roles_declared"] == ["bars", "funding"]
+        assert summary["all_required_roles_present"] is True
+        assert summary["symbol_overlap_complete"] is True
+        assert summary["all_required_symbols_joinable"] is True
+        assert summary["joinability_complete"] is True
+        assert summary["role_row_counts"] == {"bars": 3, "funding": 3}
+        symbol = summary["symbol_joinability"][0]
+        assert symbol["symbol"] == "BTCUSDT"
+        assert symbol["bars_row_count"] == 3
+        assert symbol["funding_row_count"] == 3
+        assert symbol["matched_count"] == 3
+        assert symbol["bars_missing_match_count"] == 0
+        assert symbol["funding_missing_match_count"] == 0
+        assert symbol["joinability_complete"] is True
+        assert "bars_file" not in symbol
+        assert "first_timestamp" not in json.dumps(result)
+        self._assert_all_authorizations_false(result)
+
+    def test_joinability_gate_happy_path(self, tmp_path):
+        gate = self._result(tmp_path)["projected_input_joinability_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == PROJECTED_INPUT_JOINABILITY_DECLARED_DIAGNOSTIC_ONLY
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    @pytest.mark.parametrize(
+        ("flag", "expected_status"),
+        [
+            (
+                "projected_input_temporal_sequence_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE,
+            ),
+            (
+                "projected_input_row_count_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE,
+            ),
+            (
+                "projected_input_shape_inventory_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_SHAPE_INVENTORY_GATE,
+            ),
+            (
+                "allowed_runner_input_projection_gate_passed",
+                BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE,
+            ),
+            (
+                "no_output_runner_invocation_gate_passed",
+                BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE,
+            ),
+            (
+                "implementation_boundary_gate_passed",
+                BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE,
+            ),
+        ],
+    )
+    def test_required_upstream_gate_failed_fails_closed(
+        self, tmp_path, flag, expected_status
+    ):
+        result = self._result(tmp_path)
+        result[flag] = False
+        gate = _derive_projected_input_joinability_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == expected_status
+
+    def test_bars_only_no_funding_fails_closed(self, tmp_path):
+        inventory = self._write_inventory(
+            tmp_path,
+            exact_funding=False,
+            include_funding=False,
+        )
+        result = self._build(self._full_chain_diags(inventory), inventory)
+        summary = result["joinability_summary"]
+        assert summary["all_required_roles_present"] is False
+        assert summary["joinability_complete"] is False
+        assert "MISSING_REQUIRED_ROLE" in summary["blocked_reasons"]
+        gate = result["projected_input_joinability_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE
+
+    def test_non_overlapping_time_grid_fails_closed_without_values(self, tmp_path):
+        inventory = self._write_inventory(tmp_path, exact_funding=False)
+        result = self._build(self._full_chain_diags(inventory), inventory)
+        summary = result["joinability_summary"]
+        assert summary["all_required_roles_present"] is True
+        assert summary["symbol_overlap_complete"] is True
+        assert summary["all_required_symbols_joinable"] is False
+        assert summary["joinability_complete"] is False
+        assert "TIME_GRIDS_DO_NOT_ALIGN_UNDER_FROZEN_POLICY" in (
+            summary["blocked_reasons"]
+        )
+        symbol = summary["symbol_joinability"][0]
+        assert symbol["matched_count"] == 0
+        assert symbol["bars_missing_match_count"] == 3
+        assert symbol["funding_missing_match_count"] == 2
+        gate = result["projected_input_joinability_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_JOINABILITY_EVIDENCE
+        )
+        assert "2026-01-01T00:00:00Z" not in json.dumps(result)
+        assert "100.5" not in json.dumps(result)
+        assert "0.0001" not in json.dumps(result)
+
+    def test_symbol_mismatch_fails_closed(self, tmp_path):
+        inventory = self._write_inventory(tmp_path)
+        funding_entry = next(
+            entry for entry in inventory["roles"] if entry["role"] == "funding"
+        )
+        file_entry = funding_entry["files"][0]
+        old_path = Path(funding_entry["directory"]) / file_entry["filename"]
+        new_path = Path(funding_entry["directory"]) / "ETHUSDT_8h_funding.csv"
+        old_path.rename(new_path)
+        file_entry["filename"] = "ETHUSDT_8h_funding.csv"
+        self._q1()._refresh_inventory_file(
+            inventory,
+            role="funding",
+            filename="ETHUSDT_8h_funding.csv",
+        )
+        result = self._build(self._full_chain_diags(inventory), inventory)
+        summary = result["joinability_summary"]
+        assert summary["symbol_overlap_complete"] is False
+        assert summary["joinability_complete"] is False
+        assert "SYMBOLS_DO_NOT_OVERLAP_EXACTLY" in summary["blocked_reasons"]
+        gate = result["projected_input_joinability_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_JOINABILITY_EVIDENCE
+        )
+
+    def test_any_emitted_joinability_value_flag_true_fails_closed(self, tmp_path):
+        for field in (
+            "timestamp_values_emitted",
+            "time_values_emitted",
+            "price_values_emitted",
+            "funding_values_emitted",
+            "row_value_samples_emitted",
+            "projected_input_values_emitted",
+            "projected_input_row_values_emitted",
+            "rule_output_rows_emitted",
+            "decision_rows_emitted",
+            "simulated_events_emitted",
+            "economic_values_emitted",
+            "statistical_values_emitted",
+        ):
+            result = self._result(tmp_path)
+            result[field] = True
+            gate = _derive_projected_input_joinability_gate(result)
+            assert gate["gate_passed"] is False
+            assert gate["gate_status"] == (
+                BLOCKED_BY_UNEXPECTED_JOINABILITY_VALUE_EMISSION
+            )
+
+    def test_unexpected_authorization_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["decision_row_generation_authorized"] = True
+        gate = _derive_projected_input_joinability_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_UNEXPECTED_AUTHORIZATION"
+        assert "decision_row_generation_authorized" in gate["blocked_reason"]
+
+    def test_receipt_integration_full_path_exact_grid(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        funding_path = _write_tiny_funding_csv(
+            funding_dir,
+            "BTCUSDT_8h_funding.csv",
+        )
+        funding_path.write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,0.0003,50200.0\n"
+        )
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = self._q1()._p1()._o1()._n1()._m1()
+        exit_code = real_validation.main(
+            m1._cli_base_args(output_dir)
+            + m1._cli_full_chain_args()
+            + [
+                "--bars-dir",
+                str(bars_dir),
+                "--funding-dir",
+                str(funding_dir),
+            ]
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        q1_gate = receipt["projected_input_temporal_sequence_diagnostics"][
+            "projected_input_temporal_sequence_gate"
+        ]
+        assert q1_gate["gate_passed"] is True
+        diagnostics = receipt["projected_input_joinability_diagnostics"]
+        gate = diagnostics["projected_input_joinability_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            PROJECTED_INPUT_JOINABILITY_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert diagnostics["joinability_summary"]["joinability_complete"] is True
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_receipt_integration_bars_only_fails_r1_closed(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = self._q1()._p1()._o1()._n1()._m1()
+        exit_code = real_validation.main(
+            m1._cli_base_args(output_dir)
+            + m1._cli_full_chain_args()
+            + ["--bars-dir", str(bars_dir)]
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        diagnostics = receipt["projected_input_joinability_diagnostics"]
+        summary = diagnostics["joinability_summary"]
+        assert summary["all_required_roles_present"] is False
+        assert summary["joinability_complete"] is False
+        gate = diagnostics["projected_input_joinability_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE
 
     def test_no_forbidden_calculation_keys(self, tmp_path):
         result = self._result(tmp_path)
