@@ -21199,6 +21199,143 @@ class TestStatisticalValueReadinessRowsV0Y1:
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
 
+class TestDescriptiveStatisticalValueSchemaLockZ0:
+    """Lane Z0: exact future descriptive schema; no rows or values."""
+
+    def _parts(self, tmp_path):
+        v1, w0, w1, x0, x1, y0 = TestStatisticalValueReadinessRowsV0Y1()._parts(tmp_path)
+        y1 = real_validation._build_statistical_value_readiness_rows_v0_diagnostics(statistical_value_contract_lock_y0_diagnostics=y0, statistical_metadata_rows_v0_diagnostics=x1, statistical_output_schema_lock_diagnostics=x0, null_reference_comparison_rows_v0_diagnostics=w1, null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1)
+        return v1, w0, w1, x0, x1, y0, y1
+
+    def _build(self, tmp_path):
+        v1, w0, w1, x0, x1, y0, y1 = self._parts(tmp_path)
+        return real_validation._build_descriptive_statistical_value_schema_lock_z0_diagnostics(statistical_value_readiness_rows_v0_diagnostics=y1, statistical_value_contract_lock_y0_diagnostics=y0, statistical_metadata_rows_v0_diagnostics=x1, statistical_output_schema_lock_diagnostics=x0, null_reference_comparison_rows_v0_diagnostics=w1, null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1)
+
+    def test_happy_path_declares_schema_and_emits_zero_rows_and_values(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["diagnostic_kind"] == "descriptive_statistical_value_schema_lock_z0"
+        assert result["descriptive_statistical_value_schema_lock_z0_gate"]["gate_passed"] is True
+        assert result["declared_descriptive_statistical_value_row_keys"] == list(real_validation._ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_KEYS)
+        assert result["declared_descriptive_statistical_value_kind_names"] == ["not_computed"]
+        assert result["source_readiness_row_count"] > 0
+        assert result["descriptive_value_rows"] == []
+        assert result["descriptive_value_row_count"] == result["descriptive_value_count"] == 0
+        assert result["statistical_values"] == []
+        assert result["statistical_value_count"] == 0
+        assert all(result[field] is False for field in real_validation._DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_OUTPUT_FIELDS + real_validation._DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_AUTHORIZATION_FIELDS)
+
+    @pytest.mark.parametrize("field,status", [
+        ("statistical_value_readiness_rows_v0_gate_passed", real_validation.BLOCKED_BY_STATISTICAL_VALUE_READINESS_ROWS_V0_FOR_Z0_GATE),
+        ("statistical_value_contract_lock_gate_passed", real_validation.BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_FOR_Z0_GATE),
+        ("statistical_metadata_rows_v0_gate_passed", real_validation.BLOCKED_BY_STATISTICAL_METADATA_ROWS_V0_FOR_Z0_GATE),
+        ("statistical_output_schema_lock_gate_passed", real_validation.BLOCKED_BY_STATISTICAL_OUTPUT_SCHEMA_LOCK_X0_FOR_Z0_GATE),
+        ("null_reference_comparison_rows_v0_gate_passed", real_validation.BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FOR_Z0_GATE),
+        ("null_reference_comparison_schema_lock_gate_passed", real_validation.BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_FOR_Z0_GATE),
+        ("economic_accounting_rows_v0_gate_passed", real_validation.BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_Z0_GATE),
+        ("implementation_boundary_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_UPSTREAM_GATE),
+    ])
+    def test_dependencies_fail_closed(self, tmp_path, field, status):
+        result = self._build(tmp_path); result[field] = False
+        assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("field, mutation, status", [
+        ("declared_descriptive_statistical_value_row_keys", "remove", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_SCHEMA_MUTATION),
+        ("declared_descriptive_statistical_value_row_keys", "extra", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_SCHEMA_MUTATION),
+        ("declared_descriptive_statistical_value_kind_names", "remove", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_MUTATION),
+        ("declared_descriptive_statistical_value_kind_names", "extra", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_MUTATION),
+        ("declared_descriptive_statistical_value_kind_names", "change", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_MUTATION),
+    ])
+    def test_schema_and_kind_mutations_fail_closed(self, tmp_path, field, mutation, status):
+        result = self._build(tmp_path)
+        if mutation == "remove": result[field].pop()
+        elif mutation == "extra": result[field].append("unexpected")
+        else: result[field][0] = "computed"
+        assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("field,value,status", [
+        ("descriptive_value_rows", ["unexpected"], real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUE_ROWS),
+        ("descriptive_value_rows_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUE_ROWS),
+        ("descriptive_value_row_count", 1, real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUE_ROWS),
+        ("descriptive_values_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUES),
+        ("descriptive_value_count", 1, real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUES),
+        ("statistical_values", ["unexpected"], real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Z0),
+        ("statistical_values_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Z0),
+        ("statistical_value_count", 1, real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Z0),
+    ])
+    def test_value_or_row_emission_fails_closed(self, tmp_path, field, value, status):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("field,status", [
+        ("inferential_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_INFERENTIAL_OUTPUT),
+        ("uncertainty_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_INFERENTIAL_OUTPUT),
+        ("candidate_comparison_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_INFERENTIAL_OUTPUT),
+        ("scoring_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT),
+        ("live_integration_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT),
+        ("paper_integration_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT),
+        ("final_verdict_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT),
+    ])
+    def test_downstream_outputs_fail_closed(self, tmp_path, field, status):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("field", real_validation._DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_OUTPUT_FIELDS + real_validation._DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_AUTHORIZATION_FIELDS)
+    @pytest.mark.parametrize("value", [None, 1])
+    def test_downstream_evidence_requires_exact_false(self, tmp_path, field, value):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_EVIDENCE
+
+    def test_authorizations_unlocks_verdict_and_forbidden_keys_fail_closed(self, tmp_path):
+        result = self._build(tmp_path); result["statistical_value_generation_authorized"] = True
+        assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_AUTHORIZATION
+        result = self._build(tmp_path); result["downstream_unlocks"] = ["unexpected"]
+        assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_EVIDENCE
+        result = self._build(tmp_path); result["final_offline_verdict_remains"] = "MUTATED"
+        assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_FINAL_VERDICT_ADVANCEMENT
+        forbidden = {"p_value", "confidence_interval", "score", "metric", "performance", "pnl", "profit", "edge", "return", "returns"}
+        def keys(value):
+            if isinstance(value, dict):
+                yield from value
+                for child in value.values(): yield from keys(child)
+            elif isinstance(value, list):
+                for child in value: yield from keys(child)
+        result = self._build(tmp_path)
+        assert not (set(keys(result)) & forbidden)
+        assert not (set(result["declared_descriptive_statistical_value_row_keys"]) & forbidden)
+        assert not (set(result["declared_descriptive_statistical_value_kind_names"]) & forbidden)
+
+    def test_no_input_and_full_cli_receipts_include_z0(self, tmp_path):
+        output_dir = tmp_path / "output"; output_dir.mkdir()
+        m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        assert real_validation.main(m1._cli_base_args(output_dir)) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        assert receipt["descriptive_statistical_value_schema_lock_z0_diagnostics"]["descriptive_statistical_value_schema_lock_z0_gate"]["gate_passed"] is False
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_full_cli_receipt_includes_passing_z0_with_zero_rows_and_values(self, tmp_path):
+        output_dir = tmp_path / "output"; output_dir.mkdir()
+        bars_dir = tmp_path / "bars"; funding_dir = tmp_path / "funding"
+        bars_dir.mkdir(); funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        funding_path = _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+        funding_path.write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,0.0003,50200.0\n"
+        )
+        j1 = TestEconomicAccountingPolicyPreregistrationJ1()
+        assert real_validation.main(j1._cli_base_args(output_dir) + j1._cli_upstream_args() + j1._cli_eap_args() + ["--bars-dir", str(bars_dir), "--funding-dir", str(funding_dir)]) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        result = receipt["descriptive_statistical_value_schema_lock_z0_diagnostics"]
+        assert result["descriptive_statistical_value_schema_lock_z0_gate"]["gate_passed"] is True
+        assert result["descriptive_value_rows"] == []
+        assert result["descriptive_value_row_count"] == result["descriptive_value_count"] == 0
+        assert result["statistical_values"] == []
+        assert result["statistical_value_count"] == 0
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
 class TestProjectedInputShapeInventoryO1:
     """Lane O1: projected input shape inventory diagnostics."""
 

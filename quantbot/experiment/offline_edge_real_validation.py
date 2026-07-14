@@ -130,6 +130,8 @@ __all__ = [
     "_derive_statistical_value_contract_lock_gate",
     "_build_statistical_value_readiness_rows_v0_diagnostics",
     "_derive_statistical_value_readiness_rows_v0_gate",
+    "_build_descriptive_statistical_value_schema_lock_z0_diagnostics",
+    "_derive_descriptive_statistical_value_schema_lock_z0_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -1422,6 +1424,47 @@ _STATISTICAL_VALUE_READINESS_ROWS_V0_FIXED_ROW_CONSTANTS = {
 _STATISTICAL_VALUE_READINESS_Y1_UPSTREAM_GATE_FIELDS = _STATISTICAL_VALUE_CONTRACT_Y0_UPSTREAM_GATE_FIELDS
 _STATISTICAL_VALUE_READINESS_Y1_OUTPUT_FIELDS = _STATISTICAL_OUTPUT_SCHEMA_X0_OUTPUT_FIELDS
 _STATISTICAL_VALUE_READINESS_Y1_AUTHORIZATION_FIELDS = _STATISTICAL_OUTPUT_SCHEMA_X0_AUTHORIZATION_FIELDS
+
+# === Lane Z0: descriptive statistical value row schema lock diagnostics ===
+DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_VERSION = "descriptive-statistical-value-schema-lock-z0-0.1"
+DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_SCOPE = "FUTURE_DESCRIPTIVE_STATISTICAL_VALUE_ROWS_ONLY_NO_VALUES_EMITTED"
+DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_DECLARED_DIAGNOSTIC_ONLY = "DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_DECLARED_DIAGNOSTIC_ONLY"
+BLOCKED_BY_STATISTICAL_VALUE_READINESS_ROWS_V0_FOR_Z0_GATE = "BLOCKED_BY_STATISTICAL_VALUE_READINESS_ROWS_V0_FOR_Z0_GATE"
+BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_FOR_Z0_GATE = "BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_FOR_Z0_GATE"
+BLOCKED_BY_STATISTICAL_METADATA_ROWS_V0_FOR_Z0_GATE = "BLOCKED_BY_STATISTICAL_METADATA_ROWS_V0_FOR_Z0_GATE"
+BLOCKED_BY_STATISTICAL_OUTPUT_SCHEMA_LOCK_X0_FOR_Z0_GATE = "BLOCKED_BY_STATISTICAL_OUTPUT_SCHEMA_LOCK_X0_FOR_Z0_GATE"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FOR_Z0_GATE = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FOR_Z0_GATE"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_FOR_Z0_GATE = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_FOR_Z0_GATE"
+BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_Z0_GATE = "BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_Z0_GATE"
+BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_UPSTREAM_GATE = "BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_UPSTREAM_GATE"
+BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_EVIDENCE"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_SCHEMA_MUTATION = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_SCHEMA_MUTATION"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_MUTATION = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_MUTATION"
+BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUE_ROWS = "BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUE_ROWS"
+BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUES = "BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUES"
+BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Z0 = "BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Z0"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_INFERENTIAL_OUTPUT = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_INFERENTIAL_OUTPUT"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_AUTHORIZATION = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_AUTHORIZATION"
+BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_FINAL_VERDICT_ADVANCEMENT = "BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_FINAL_VERDICT_ADVANCEMENT"
+_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_KEYS = (
+    "schema_version", "schema_kind", "run_id", "descriptive_sequence_id",
+    "source_readiness_sequence_id", "source_statistical_sequence_id",
+    "source_comparison_sequence_id", "source_accounting_sequence_id",
+    "source_event_sequence_id", "source_rule_row_sequence_id", "symbol",
+    "split_id", "split_partition", "descriptive_time_utc",
+    "source_readiness_time_utc", "source_statistical_time_utc",
+    "source_comparison_time_utc", "source_accounting_time_utc",
+    "source_event_time_utc", "descriptive_family", "descriptive_variant",
+    "descriptive_revision", "descriptive_entry_name", "descriptive_entry_code",
+    "descriptive_basis_name", "descriptive_basis_code", "descriptive_unit",
+    "descriptive_value_kind", "descriptive_value_present", "descriptive_value",
+    "descriptive_metadata_only",
+)
+_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_NAMES_Z0 = ("not_computed",)
+_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_UPSTREAM_GATE_FIELDS = _STATISTICAL_VALUE_READINESS_Y1_UPSTREAM_GATE_FIELDS
+_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_OUTPUT_FIELDS = _STATISTICAL_OUTPUT_SCHEMA_X0_OUTPUT_FIELDS
+_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_AUTHORIZATION_FIELDS = _STATISTICAL_OUTPUT_SCHEMA_X0_AUTHORIZATION_FIELDS
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -17702,6 +17745,119 @@ def _derive_statistical_value_readiness_rows_v0_gate(diagnostics: dict[str, Any]
     return result
 
 
+def _build_descriptive_statistical_value_schema_lock_z0_diagnostics(
+    *, statistical_value_readiness_rows_v0_diagnostics: dict[str, Any],
+    statistical_value_contract_lock_y0_diagnostics: dict[str, Any],
+    statistical_metadata_rows_v0_diagnostics: dict[str, Any],
+    statistical_output_schema_lock_diagnostics: dict[str, Any],
+    null_reference_comparison_rows_v0_diagnostics: dict[str, Any],
+    null_reference_comparison_schema_lock_diagnostics: dict[str, Any],
+    economic_accounting_rows_v0_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Declare Z0's future descriptive-value row schema without emitting rows."""
+    def passed(section: dict[str, Any], gate_name: str) -> bool:
+        gate = section.get(gate_name)
+        return bool(isinstance(gate, dict) and gate.get("gate_passed") is True)
+
+    upstream_fields = _DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_UPSTREAM_GATE_FIELDS
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "descriptive_statistical_value_schema_lock_z0",
+        "descriptive_statistical_value_schema_lock_version": DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_VERSION,
+        "descriptive_statistical_value_schema_lock_scope": DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_SCOPE,
+        "descriptive_statistical_value_schema_lock_status": DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_DECLARED_DIAGNOSTIC_ONLY,
+        "statistical_value_readiness_rows_v0_gate_required": True,
+        "statistical_value_readiness_rows_v0_gate_passed": passed(statistical_value_readiness_rows_v0_diagnostics, "statistical_value_readiness_rows_v0_gate"),
+        "statistical_value_contract_lock_gate_required": True,
+        "statistical_value_contract_lock_gate_passed": passed(statistical_value_contract_lock_y0_diagnostics, "statistical_value_contract_lock_gate"),
+        "statistical_metadata_rows_v0_gate_required": True,
+        "statistical_metadata_rows_v0_gate_passed": passed(statistical_metadata_rows_v0_diagnostics, "statistical_metadata_rows_v0_gate"),
+        "statistical_output_schema_lock_gate_required": True,
+        "statistical_output_schema_lock_gate_passed": passed(statistical_output_schema_lock_diagnostics, "statistical_output_schema_lock_gate"),
+        "null_reference_comparison_rows_v0_gate_required": True,
+        "null_reference_comparison_rows_v0_gate_passed": passed(null_reference_comparison_rows_v0_diagnostics, "null_reference_comparison_rows_v0_gate"),
+        "null_reference_comparison_schema_lock_gate_required": True,
+        "null_reference_comparison_schema_lock_gate_passed": passed(null_reference_comparison_schema_lock_diagnostics, "null_reference_comparison_schema_lock_gate"),
+        "economic_accounting_rows_v0_gate_required": True,
+        "economic_accounting_rows_v0_gate_passed": passed(economic_accounting_rows_v0_diagnostics, "economic_accounting_rows_v0_gate"),
+        **{field.replace("_passed", "_required"): True for field in upstream_fields},
+        **{field: economic_accounting_rows_v0_diagnostics.get(field) is True for field in upstream_fields},
+        "descriptive_statistical_value_schema_lock_declared": True,
+        "declared_descriptive_statistical_value_row_keys": list(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_KEYS),
+        "declared_descriptive_statistical_value_row_key_count": len(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_KEYS),
+        "declared_descriptive_statistical_value_kind_names": list(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_NAMES_Z0),
+        "declared_descriptive_statistical_value_kind_count": len(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_NAMES_Z0),
+        "source_readiness_row_count": len(statistical_value_readiness_rows_v0_diagnostics.get("readiness_rows", [])),
+        "descriptive_value_rows": [], "descriptive_value_rows_emitted": False,
+        "descriptive_value_row_count": 0, "descriptive_values_emitted": False,
+        "descriptive_value_count": 0, "statistical_values": [],
+        "statistical_values_emitted": False, "statistical_value_count": 0,
+        **{field: False for field in _DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_OUTPUT_FIELDS if field != "statistical_values_emitted"},
+        **{field: False for field in _DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_AUTHORIZATION_FIELDS},
+        "downstream_unlocks": [],
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["descriptive_statistical_value_schema_lock_z0_gate"] = _derive_descriptive_statistical_value_schema_lock_z0_gate(diagnostics)
+    return diagnostics
+
+
+def _derive_descriptive_statistical_value_schema_lock_z0_gate(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    """Fail closed unless Z0 declares the exact future schema and emits nothing."""
+    upstream_fields = _DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_UPSTREAM_GATE_FIELDS
+    output_fields = _DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_OUTPUT_FIELDS
+    authorization_fields = _DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_AUTHORIZATION_FIELDS
+    exact_false_fields = output_fields + authorization_fields
+    evidence = {
+        "readiness_rows_gate_passed": diagnostics.get("statistical_value_readiness_rows_v0_gate_passed") is True,
+        "contract_lock_gate_passed": diagnostics.get("statistical_value_contract_lock_gate_passed") is True,
+        "metadata_rows_gate_passed": diagnostics.get("statistical_metadata_rows_v0_gate_passed") is True,
+        "schema_lock_gate_passed": diagnostics.get("statistical_output_schema_lock_gate_passed") is True,
+        "comparison_rows_gate_passed": diagnostics.get("null_reference_comparison_rows_v0_gate_passed") is True,
+        "comparison_schema_gate_passed": diagnostics.get("null_reference_comparison_schema_lock_gate_passed") is True,
+        "accounting_rows_gate_passed": diagnostics.get("economic_accounting_rows_v0_gate_passed") is True,
+        **{field: diagnostics.get(field) is True for field in upstream_fields},
+        "declared": diagnostics.get("descriptive_statistical_value_schema_lock_declared") is True,
+        "status_matches": diagnostics.get("descriptive_statistical_value_schema_lock_status") == DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_DECLARED_DIAGNOSTIC_ONLY,
+        "row_keys_match": diagnostics.get("declared_descriptive_statistical_value_row_keys") == list(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_KEYS),
+        "row_key_count_matches": diagnostics.get("declared_descriptive_statistical_value_row_key_count") == len(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_KEYS),
+        "value_kinds_match": diagnostics.get("declared_descriptive_statistical_value_kind_names") == list(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_NAMES_Z0),
+        "value_kind_count_matches": diagnostics.get("declared_descriptive_statistical_value_kind_count") == len(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_NAMES_Z0),
+        "rows_empty": diagnostics.get("descriptive_value_rows") == [],
+        "row_count_zero": diagnostics.get("descriptive_value_row_count") == 0,
+        "rows_not_emitted": diagnostics.get("descriptive_value_rows_emitted") is False,
+        "values_not_emitted": diagnostics.get("descriptive_values_emitted") is False,
+        "value_count_zero": diagnostics.get("descriptive_value_count") == 0,
+        "statistical_values_empty": diagnostics.get("statistical_values") == [],
+        "statistical_values_not_emitted": diagnostics.get("statistical_values_emitted") is False,
+        "statistical_value_count_zero": diagnostics.get("statistical_value_count") == 0,
+        **{f"{field}_is_exactly_false": diagnostics.get(field) is False for field in exact_false_fields},
+        "downstream_unlocks_empty": diagnostics.get("downstream_unlocks") == [],
+    }
+    def gate(status: str, reason: str | None) -> dict[str, Any]:
+        return {"gate_kind": "descriptive_statistical_value_schema_lock_z0_gate", "gate_scope": DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_SCOPE, "gate_status": status, "gate_passed": False, "gate_scoring_authorization": False, "gate_live_authorization": False, "gate_final_verdict_authorization": False, "gate_downstream_unlocks": [], "evidence": evidence, "blocked_reason": reason}
+    if not evidence["readiness_rows_gate_passed"]: return gate(BLOCKED_BY_STATISTICAL_VALUE_READINESS_ROWS_V0_FOR_Z0_GATE, "STATISTICAL_VALUE_READINESS_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["contract_lock_gate_passed"]: return gate(BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_FOR_Z0_GATE, "STATISTICAL_VALUE_CONTRACT_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["metadata_rows_gate_passed"]: return gate(BLOCKED_BY_STATISTICAL_METADATA_ROWS_V0_FOR_Z0_GATE, "STATISTICAL_METADATA_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["schema_lock_gate_passed"]: return gate(BLOCKED_BY_STATISTICAL_OUTPUT_SCHEMA_LOCK_X0_FOR_Z0_GATE, "STATISTICAL_OUTPUT_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["comparison_rows_gate_passed"]: return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FOR_Z0_GATE, "NULL_REFERENCE_COMPARISON_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["comparison_schema_gate_passed"]: return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_FOR_Z0_GATE, "NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["accounting_rows_gate_passed"]: return gate(BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_Z0_GATE, "ECONOMIC_ACCOUNTING_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not all(evidence[field] is True for field in upstream_fields): return gate(BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_UPSTREAM_GATE, "REQUIRED_UPSTREAM_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["row_keys_match"] or not evidence["row_key_count_matches"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_SCHEMA_MUTATION, "DECLARED_DESCRIPTIVE_ROW_KEYS_DO_NOT_EXACTLY_MATCH_Z0_ALLOWED_KEYS")
+    if not evidence["value_kinds_match"] or not evidence["value_kind_count_matches"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_KIND_MUTATION, "DECLARED_DESCRIPTIVE_VALUE_KIND_NAMES_DO_NOT_EXACTLY_MATCH_Z0_ALLOWED_NAMES")
+    if not (evidence["rows_empty"] and evidence["row_count_zero"] and evidence["rows_not_emitted"]): return gate(BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUE_ROWS, "DESCRIPTIVE_VALUE_ROWS_MUST_NOT_BE_EMITTED_IN_Z0")
+    if not (evidence["values_not_emitted"] and evidence["value_count_zero"]): return gate(BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_VALUES, "DESCRIPTIVE_VALUES_MUST_NOT_BE_EMITTED_IN_Z0")
+    if diagnostics.get("statistical_values") != [] or diagnostics.get("statistical_values_emitted") is True or diagnostics.get("statistical_value_count") != 0: return gate(BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Z0, "STATISTICAL_VALUES_MUST_NOT_BE_EMITTED_IN_Z0")
+    if any(diagnostics.get(field) is True for field in ("inferential_values_emitted", "uncertainty_values_emitted", "candidate_comparison_values_emitted")): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_INFERENTIAL_OUTPUT, "UNEXPECTED_INFERENTIAL_UNCERTAINTY_OR_CANDIDATE_OUTPUT")
+    if any(diagnostics.get(field) is True for field in ("scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted")): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT, "UNEXPECTED_DOWNSTREAM_OUTPUT")
+    if any(diagnostics.get(field) is True for field in authorization_fields): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_AUTHORIZATION, "UNEXPECTED_DOWNSTREAM_AUTHORIZATION")
+    if diagnostics.get("final_offline_verdict_remains") != BLOCKED_BY_VALIDATION_IMPLEMENTATION: return gate(BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_FINAL_VERDICT_ADVANCEMENT, "FINAL_OFFLINE_VERDICT_MUST_REMAIN_BLOCKED")
+    required = ("declared", "status_matches", "row_keys_match", "row_key_count_matches", "value_kinds_match", "value_kind_count_matches", "rows_empty", "row_count_zero", "rows_not_emitted", "values_not_emitted", "value_count_zero", "statistical_values_empty", "statistical_values_not_emitted", "statistical_value_count_zero", "downstream_unlocks_empty") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
+    if not all(evidence.get(field) is True for field in required): return gate(BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_EVIDENCE, "DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    result = gate(DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_DECLARED_DIAGNOSTIC_ONLY, None)
+    result["gate_passed"] = True
+    return result
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -17840,6 +17996,7 @@ def build_real_validation_receipt(
     statistical_metadata_rows_v0_diagnostics: dict | None = None,
     statistical_value_contract_lock_y0_diagnostics: dict | None = None,
     statistical_value_readiness_rows_v0_diagnostics: dict | None = None,
+    descriptive_statistical_value_schema_lock_z0_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -18064,6 +18221,10 @@ def build_real_validation_receipt(
     if statistical_value_readiness_rows_v0_diagnostics is not None:
         receipt["statistical_value_readiness_rows_v0_diagnostics"] = (
             statistical_value_readiness_rows_v0_diagnostics
+        )
+    if descriptive_statistical_value_schema_lock_z0_diagnostics is not None:
+        receipt["descriptive_statistical_value_schema_lock_z0_diagnostics"] = (
+            descriptive_statistical_value_schema_lock_z0_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -19076,6 +19237,17 @@ def main(argv: list[str] | None = None) -> int:
                     economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
                 )
             )
+            descriptive_statistical_value_schema_lock_z0_diagnostics = (
+                _build_descriptive_statistical_value_schema_lock_z0_diagnostics(
+                    statistical_value_readiness_rows_v0_diagnostics=statistical_value_readiness_rows_v0_diagnostics,
+                    statistical_value_contract_lock_y0_diagnostics=statistical_value_contract_lock_y0_diagnostics,
+                    statistical_metadata_rows_v0_diagnostics=statistical_metadata_rows_v0_diagnostics,
+                    statistical_output_schema_lock_diagnostics=statistical_output_schema_lock_diagnostics,
+                    null_reference_comparison_rows_v0_diagnostics=null_reference_comparison_rows_v0_diagnostics,
+                    null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
+                    economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -19205,6 +19377,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             statistical_value_readiness_rows_v0_diagnostics=(
                 statistical_value_readiness_rows_v0_diagnostics
+            ),
+            descriptive_statistical_value_schema_lock_z0_diagnostics=(
+                descriptive_statistical_value_schema_lock_z0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -19674,6 +19849,17 @@ def main(argv: list[str] | None = None) -> int:
                     economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
                 )
             )
+            descriptive_statistical_value_schema_lock_z0_diagnostics = (
+                _build_descriptive_statistical_value_schema_lock_z0_diagnostics(
+                    statistical_value_readiness_rows_v0_diagnostics=statistical_value_readiness_rows_v0_diagnostics,
+                    statistical_value_contract_lock_y0_diagnostics=statistical_value_contract_lock_y0_diagnostics,
+                    statistical_metadata_rows_v0_diagnostics=statistical_metadata_rows_v0_diagnostics,
+                    statistical_output_schema_lock_diagnostics=statistical_output_schema_lock_diagnostics,
+                    null_reference_comparison_rows_v0_diagnostics=null_reference_comparison_rows_v0_diagnostics,
+                    null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
+                    economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -19768,6 +19954,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             statistical_value_readiness_rows_v0_diagnostics=(
                 statistical_value_readiness_rows_v0_diagnostics
+            ),
+            descriptive_statistical_value_schema_lock_z0_diagnostics=(
+                descriptive_statistical_value_schema_lock_z0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
