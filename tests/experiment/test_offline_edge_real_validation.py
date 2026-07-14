@@ -21583,6 +21583,112 @@ class TestDescriptiveStatisticalValuePolicyLockAA0:
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
 
+class TestDescriptiveCountValuesV0AA1:
+    """Lane AA1: AA0-authorized descriptive counts from Z1 rows only."""
+
+    def _parts(self, tmp_path):
+        v1, w0, w1, x0, x1, y0, y1, z0 = TestDescriptiveStatisticalMetadataRowsV0Z1()._parts(tmp_path)
+        z1 = real_validation._build_descriptive_statistical_metadata_rows_v0_diagnostics(
+            descriptive_statistical_value_schema_lock_z0_diagnostics=z0, statistical_value_readiness_rows_v0_diagnostics=y1,
+            statistical_value_contract_lock_y0_diagnostics=y0, statistical_metadata_rows_v0_diagnostics=x1,
+            statistical_output_schema_lock_diagnostics=x0, null_reference_comparison_rows_v0_diagnostics=w1,
+            null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1,
+        )
+        aa0 = real_validation._build_descriptive_statistical_value_policy_lock_aa0_diagnostics(
+            descriptive_statistical_metadata_rows_v0_diagnostics=z1, descriptive_statistical_value_schema_lock_z0_diagnostics=z0,
+            statistical_value_readiness_rows_v0_diagnostics=y1, statistical_value_contract_lock_y0_diagnostics=y0,
+            statistical_metadata_rows_v0_diagnostics=x1, statistical_output_schema_lock_diagnostics=x0,
+            null_reference_comparison_rows_v0_diagnostics=w1, null_reference_comparison_schema_lock_diagnostics=w0,
+            economic_accounting_rows_v0_diagnostics=v1,
+        )
+        return v1, w0, w1, x0, x1, y0, y1, z0, z1, aa0
+
+    def _build(self, tmp_path):
+        v1, w0, w1, x0, x1, y0, y1, z0, z1, aa0 = self._parts(tmp_path)
+        return real_validation._build_descriptive_count_values_v0_diagnostics(
+            descriptive_statistical_value_policy_lock_aa0_diagnostics=aa0, descriptive_statistical_metadata_rows_v0_diagnostics=z1,
+            descriptive_statistical_value_schema_lock_z0_diagnostics=z0, statistical_value_readiness_rows_v0_diagnostics=y1,
+            statistical_value_contract_lock_y0_diagnostics=y0, statistical_metadata_rows_v0_diagnostics=x1,
+            statistical_output_schema_lock_diagnostics=x0, null_reference_comparison_rows_v0_diagnostics=w1,
+            null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1,
+        )
+
+    def test_happy_path_emits_exactly_three_aa0_allowed_counts(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["descriptive_count_values_v0_gate"]["gate_passed"] is True
+        assert result["allowed_descriptive_value_kind_names"] == list(real_validation._ALLOWED_DESCRIPTIVE_COUNT_VALUE_KIND_NAMES_AA1)
+        assert result["descriptive_value_rows_emitted"] is result["descriptive_values_emitted"] is True
+        assert result["descriptive_value_row_count"] == result["descriptive_value_count"] == 3
+        assert [row["descriptive_value_kind"] for row in result["descriptive_value_rows"]] == list(real_validation._ALLOWED_DESCRIPTIVE_COUNT_VALUE_KIND_NAMES_AA1)
+        assert all(set(row) == set(real_validation._ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_KEYS) for row in result["descriptive_value_rows"])
+        assert all(all(row[field] == expected for field, expected in real_validation._DESCRIPTIVE_COUNT_VALUES_V0_FIXED_ROW_CONSTANTS.items()) for row in result["descriptive_value_rows"])
+        source_rows = result["source_descriptive_metadata_rows"]
+        assert [row["descriptive_value"] for row in result["descriptive_value_rows"]] == [len(source_rows), len({row["symbol"] for row in source_rows}), len({(row["split_id"], row["split_partition"]) for row in source_rows})]
+        assert all(isinstance(row["descriptive_value"], int) and row["descriptive_value"] >= 0 and row["descriptive_value_present"] is True and row["descriptive_metadata_only"] is False for row in result["descriptive_value_rows"])
+        assert result["statistical_values"] == []
+        assert result["statistical_values_emitted"] is False
+        assert result["statistical_value_count"] == 0
+
+    @pytest.mark.parametrize("field,status", [
+        ("descriptive_statistical_value_policy_lock_aa0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_FOR_AA1_GATE),
+        ("descriptive_statistical_metadata_rows_v0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_FOR_AA1_GATE),
+        ("descriptive_statistical_value_schema_lock_z0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
+        ("implementation_boundary_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
+    ])
+    def test_dependencies_fail_closed(self, tmp_path, field, status):
+        result = self._build(tmp_path); result[field] = False
+        assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("mutation,status", [
+        (lambda r: r.__setitem__("aa0_policy_literal_accepted", False), real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_POLICY_LITERAL),
+        (lambda r: r.__setitem__("allowed_descriptive_value_kind_names", ["sample_size"]), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_KIND_MUTATION),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("extra", True), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_SCHEMA),
+        (lambda r: r["descriptive_value_rows"][0].pop("schema_kind"), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_SCHEMA),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_variant", "mutated"), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_CONSTANTS),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value_kind", "sample_size"), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_KIND),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value", -1), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value", 1.5), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE),
+        (lambda r: r["descriptive_value_rows"].reverse(), real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_ROW_ORDERING_MUTATION),
+    ])
+    def test_row_mutations_fail_closed(self, tmp_path, mutation, status):
+        result = self._build(tmp_path); mutation(result)
+        assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == status
+
+    def test_count_statistical_output_and_authorization_regressions_fail_closed(self, tmp_path):
+        result = self._build(tmp_path); result["descriptive_value_rows"][0]["descriptive_value"] += 1
+        assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_MISMATCH
+        for field, status in (("statistical_values", real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AA1), ("inferential_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_INFERENTIAL_OUTPUT), ("scoring_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_OUTPUT), ("statistical_value_generation_authorized", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_AUTHORIZATION)):
+            result = self._build(tmp_path); result[field] = ["unexpected"] if field == "statistical_values" else True
+            assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == status
+        result = self._build(tmp_path); result["final_offline_verdict_remains"] = "MUTATED"
+        assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_FINAL_VERDICT_ADVANCEMENT
+        forbidden = {"p_value", "confidence_interval", "score", "metric", "performance", "pnl", "profit", "edge", "return", "returns"}
+        assert not (set(_all_dict_keys(self._build(tmp_path))) & forbidden)
+
+    def test_no_input_and_full_cli_receipts_include_aa1(self, tmp_path):
+        output_dir = tmp_path / "empty-output"; output_dir.mkdir()
+        m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        assert real_validation.main(m1._cli_base_args(output_dir)) == 0
+        empty = json.loads((output_dir / "real_validation_receipt.json").read_text())["descriptive_count_values_v0_diagnostics"]
+        assert empty["descriptive_count_values_v0_gate"]["gate_passed"] is False
+        assert empty["descriptive_value_rows"] == [] and empty["descriptive_value_count"] == 0
+        output_dir = tmp_path / "full-output"; output_dir.mkdir(); bars_dir = tmp_path / "bars"; funding_dir = tmp_path / "funding"
+        bars_dir.mkdir(); funding_dir.mkdir(); _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        funding_path = _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+        funding_path.write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,0.0003,50200.0\n"
+        )
+        j1 = TestEconomicAccountingPolicyPreregistrationJ1()
+        assert real_validation.main(j1._cli_base_args(output_dir) + j1._cli_upstream_args() + j1._cli_eap_args() + ["--bars-dir", str(bars_dir), "--funding-dir", str(funding_dir)]) == 0
+        full = json.loads((output_dir / "real_validation_receipt.json").read_text())["descriptive_count_values_v0_diagnostics"]
+        assert full["descriptive_count_values_v0_gate"]["gate_passed"] is True
+        assert full["descriptive_value_row_count"] == full["descriptive_value_count"] == 3
+        assert full["statistical_values"] == [] and full["final_offline_verdict_remains"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
 class TestDescriptiveStatisticalValueSchemaLockZ0:
     """Lane Z0: exact future descriptive schema; no rows or values."""
 
