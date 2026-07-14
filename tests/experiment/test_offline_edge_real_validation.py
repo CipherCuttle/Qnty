@@ -255,6 +255,19 @@ from quantbot.experiment.offline_edge_real_validation import (
     BLOCKED_BY_UNEXPECTED_ECONOMIC_OR_SCORING_AUTHORIZATION,
     _build_materialized_rule_rows_v0_diagnostics,
     _derive_materialized_rule_rows_v0_gate,
+    SIMULATED_EVENT_SCHEMA_LOCK_VERSION,
+    SIMULATED_EVENT_SCHEMA_LOCK_SCOPE,
+    SIMULATED_EVENT_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY,
+    SIMULATED_EVENT_SCHEMA_LOCK_POLICY,
+    BLOCKED_BY_MATERIALIZED_RULE_ROWS_V0_GATE,
+    BLOCKED_BY_INCOMPLETE_SIMULATED_EVENT_SCHEMA_EVIDENCE,
+    BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_EMISSION,
+    BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_AUTHORIZATION,
+    _ALLOWED_SIMULATED_EVENT_SCHEMA_KEYS,
+    _REQUIRED_SIMULATED_EVENT_SCHEMA_KEYS,
+    _FORBIDDEN_SIMULATED_EVENT_SCHEMA_KEY_NAMES,
+    _build_simulated_event_schema_lock_diagnostics,
+    _derive_simulated_event_schema_lock_gate,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -19896,6 +19909,112 @@ class TestMaterializedRuleRowsV0T1:
             "rule_metadata_only",
         )
         assert len(_ALLOWED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS) == 20
+
+
+class TestSimulatedEventSchemaLockU0:
+    """Lane U0: declare a future event schema without emitting events."""
+
+    def _t1(self):
+        return TestMaterializedRuleRowsV0T1()
+
+    def _build(self, diags, inventory=None):
+        t1 = self._t1()._build(diags, inventory)
+        return _build_simulated_event_schema_lock_diagnostics(
+            materialized_rule_rows_v0_diagnostics=t1,
+            materialized_rule_row_schema_lock_diagnostics=diags[
+                "materialized_rule_row_schema_lock_diagnostics"
+            ],
+            no_output_runner_dry_harness_diagnostics=diags[
+                "no_output_runner_dry_harness_diagnostics"
+            ],
+            projected_input_joinability_diagnostics=diags[
+                "projected_input_joinability_diagnostics"
+            ],
+            projected_input_temporal_sequence_diagnostics=diags[
+                "projected_input_temporal_sequence_diagnostics"
+            ],
+            projected_input_row_count_diagnostics=diags[
+                "projected_input_row_count_diagnostics"
+            ],
+            projected_input_shape_inventory_diagnostics=diags[
+                "projected_input_shape_inventory_diagnostics"
+            ],
+            allowed_runner_input_projection_diagnostics=diags[
+                "allowed_runner_input_projection_diagnostics"
+            ],
+            no_output_runner_invocation_diagnostics=diags[
+                "no_output_runner_invocation_diagnostics"
+            ],
+            implementation_boundary_diagnostics=diags[
+                "implementation_boundary_diagnostics"
+            ],
+        )
+
+    def _result(self, tmp_path):
+        diags, inventory = self._t1()._full_chain_diags(tmp_path)
+        return self._build(diags, inventory)
+
+    def test_no_packet_no_input_receipt_fails_closed(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = self._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        assert real_validation.main(m1._cli_base_args(output_dir)) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        diagnostics = receipt["simulated_event_schema_lock_diagnostics"]
+        assert diagnostics["simulated_event_schema_lock_gate"]["gate_passed"] is False
+        assert diagnostics["simulated_event_schema_lock_gate"]["gate_status"] == BLOCKED_BY_MATERIALIZED_RULE_ROWS_V0_GATE
+        assert diagnostics["simulated_event_count"] == 0
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_full_t1_path_declares_exact_schema_only(self, tmp_path):
+        result = self._result(tmp_path)
+        assert result["diagnostic_kind"] == "simulated_event_schema_lock"
+        assert result["simulated_event_schema_lock_version"] == SIMULATED_EVENT_SCHEMA_LOCK_VERSION
+        assert result["simulated_event_schema_lock_scope"] == SIMULATED_EVENT_SCHEMA_LOCK_SCOPE
+        assert result["simulated_event_schema_lock_status"] == SIMULATED_EVENT_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY
+        assert result["simulated_event_schema_policy"] == SIMULATED_EVENT_SCHEMA_LOCK_POLICY
+        assert result["allowed_simulated_event_schema_keys"] == list(_ALLOWED_SIMULATED_EVENT_SCHEMA_KEYS)
+        assert result["required_simulated_event_schema_keys"] == list(_REQUIRED_SIMULATED_EVENT_SCHEMA_KEYS)
+        assert set(result["required_simulated_event_schema_keys"]) <= set(result["allowed_simulated_event_schema_keys"])
+        assert result["forbidden_simulated_event_key_names"] == list(_FORBIDDEN_SIMULATED_EVENT_SCHEMA_KEY_NAMES)
+        assert result["simulated_events_emitted"] is False
+        assert result["simulated_event_count"] == 0
+        assert result["simulated_event_schema_lock_gate"]["gate_passed"] is True
+        assert result["final_offline_verdict_remains"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_schema_mutations_fail_closed(self, tmp_path):
+        for key, value in (
+            ("simulated_event_schema_mode", "EVENT_EMISSION"),
+            ("simulated_event_schema_policy", "EMIT_SIMULATED_EVENTS_NOW"),
+            ("allowed_simulated_event_schema_keys", []),
+            ("required_simulated_event_schema_keys", ["not_allowed"]),
+        ):
+            result = self._result(tmp_path)
+            result[key] = value
+            gate = _derive_simulated_event_schema_lock_gate(result)
+            assert gate["gate_passed"] is False
+            assert gate["gate_status"] == BLOCKED_BY_INCOMPLETE_SIMULATED_EVENT_SCHEMA_EVIDENCE
+
+    def test_emission_and_authorization_mutations_fail_closed(self, tmp_path):
+        for field in (
+            "simulated_events_emitted", "simulated_event_rows_emitted",
+            "economic_values_emitted", "statistical_values_emitted",
+            "null_comparison_values_emitted", "scoring_values_emitted",
+            "live_integration_values_emitted", "paper_integration_values_emitted",
+            "final_verdict_values_emitted",
+        ):
+            result = self._result(tmp_path)
+            result[field] = True
+            assert _derive_simulated_event_schema_lock_gate(result)["gate_status"] == BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_EMISSION
+        for field in ("simulated_event_generation_authorized", "economic_value_generation_authorized", "scoring_authorization", "live_integration_authorized", "final_verdict_authorization"):
+            result = self._result(tmp_path)
+            result[field] = True
+            assert _derive_simulated_event_schema_lock_gate(result)["gate_status"] == BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_AUTHORIZATION
+
+    def test_forbidden_key_scan_and_rule_materialization_allowance(self, tmp_path):
+        result = self._result(tmp_path)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(_all_dict_keys(result))
+        assert result["rule_materialization_authorized"] is True
 
 
 class TestProjectedInputShapeInventoryO1:
