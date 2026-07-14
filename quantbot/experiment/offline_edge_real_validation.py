@@ -16608,6 +16608,8 @@ def _derive_economic_accounting_rows_v0_gate(diagnostics: dict[str, Any]) -> dic
         "status_matches": diagnostics.get("economic_accounting_rows_v0_status") == ECONOMIC_ACCOUNTING_ROWS_V0_DECLARED_ARTIFACT_ONLY,
         "policy_matches": diagnostics.get("economic_accounting_rows_v0_policy") == ECONOMIC_ACCOUNTING_ROWS_V0_POLICY,
         "rows_are_list": rows_are_list, "rows_emitted": diagnostics.get("accounting_rows_emitted") is True and diagnostics.get("economic_output_rows_emitted") is True,
+        "amount_values_emitted": diagnostics.get("amount_values_emitted") is True,
+        "economic_values_emitted": diagnostics.get("economic_values_emitted") is True,
         "count_matches_list_length": rows_are_list and diagnostics.get("accounting_row_count") == len(rows) == diagnostics.get("economic_output_row_count"),
         "count_positive": bool(rows_are_list and rows), "source_count_positive": diagnostics.get("source_simulated_event_count", 0) > 0,
         "count_matches_source": diagnostics.get("accounting_row_count_matches_source_event_count") is True and rows_are_list and len(rows) == diagnostics.get("source_simulated_event_count"),
@@ -16639,7 +16641,7 @@ def _derive_economic_accounting_rows_v0_gate(diagnostics: dict[str, Any]) -> dic
         return gate(BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_ROW_SCHEMA, "ROW_KEYS_DO_NOT_EXACTLY_MATCH_V0_SCHEMA")
     if every_row_is_dict and not amounts_neutral:
         return gate(BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_NON_NEUTRAL_AMOUNT, "ACCOUNTING_AMOUNT_VALUE_NOT_EXACT_INT_ZERO")
-    required = ("declared", "mode_matches", "status_matches", "policy_matches", "rows_are_list", "rows_emitted", "count_matches_list_length", "count_positive", "source_count_positive", "count_matches_source", "schema_exact", "no_forbidden_keys", "no_forbidden_values", "amounts_neutral", "rows_in_order", "no_duplicate_identities", "cap_not_exceeded", "rule_materialization_authorized", "simulated_event_generation_authorized", "economic_output_generation_authorized", "accounting_application_authorized", "amount_generation_authorized", "economic_value_generation_authorized")
+    required = ("declared", "mode_matches", "status_matches", "policy_matches", "rows_are_list", "rows_emitted", "amount_values_emitted", "economic_values_emitted", "count_matches_list_length", "count_positive", "source_count_positive", "count_matches_source", "schema_exact", "no_forbidden_keys", "no_forbidden_values", "amounts_neutral", "rows_in_order", "no_duplicate_identities", "cap_not_exceeded", "rule_materialization_authorized", "simulated_event_generation_authorized", "economic_output_generation_authorized", "accounting_application_authorized", "amount_generation_authorized", "economic_value_generation_authorized")
     if (not all(evidence.get(field) is True for field in upstream_fields) or not all(evidence.get(field) is True for field in required) or evidence["final_offline_verdict_remains"] != BLOCKED_BY_VALIDATION_IMPLEMENTATION):
         return gate(BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_ROWS_V0_EVIDENCE, "ECONOMIC_ACCOUNTING_ROWS_V0_EVIDENCE_INCOMPLETE_OR_MUTATED")
     result = gate(ECONOMIC_ACCOUNTING_ROWS_V0_DECLARED_ARTIFACT_ONLY, None)

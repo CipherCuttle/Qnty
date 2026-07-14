@@ -20323,7 +20323,7 @@ class TestEconomicAccountingRowsV0V1:
         assert all(row["accounting_amount_value"] == 0 for row in result["economic_accounting_rows"])
         assert result["final_offline_verdict_remains"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
-    @pytest.mark.parametrize("value", [1, -1, 0.01, "0", None, float("nan"), float("inf"), {}, []])
+    @pytest.mark.parametrize("value", [False, 1, -1, 0.01, "0", None, float("nan"), float("inf"), {}, []])
     def test_non_neutral_amount_fails_closed(self, tmp_path, value):
         result = self._build(tmp_path)
         result["economic_accounting_rows"][0]["accounting_amount_value"] = value
@@ -20334,6 +20334,17 @@ class TestEconomicAccountingRowsV0V1:
         result = self._build(tmp_path)
         result["economic_accounting_rows"][0][key] = "x"
         assert real_validation._derive_economic_accounting_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_FORBIDDEN_KEY
+
+    @pytest.mark.parametrize("field", ["amount_values_emitted", "economic_values_emitted"])
+    def test_required_emission_evidence_false_fails_closed(self, tmp_path, field):
+        result = self._build(tmp_path)
+        result[field] = False
+        assert real_validation._derive_economic_accounting_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_ECONOMIC_ACCOUNTING_ROWS_V0_EVIDENCE
+
+    def test_forbidden_row_value_fails_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["economic_accounting_rows"][0]["accounting_entry_name"] = "profit"
+        assert real_validation._derive_economic_accounting_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_ECONOMIC_ACCOUNTING_FORBIDDEN_VALUE
 
     def test_schema_count_order_and_authorization_mutations_fail_closed(self, tmp_path):
         result = self._build(tmp_path)
