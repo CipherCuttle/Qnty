@@ -167,6 +167,17 @@ from quantbot.experiment.offline_edge_real_validation import (
     _build_no_output_runner_invocation_diagnostics,
     _derive_no_output_runner_invocation_gate,
     _NO_OUTPUT_RUNNER_INVOCATION_AUTHORIZATION_FIELDS,
+    ALLOWED_RUNNER_INPUT_PROJECTION_VERSION,
+    ALLOWED_RUNNER_INPUT_PROJECTION_SCOPE,
+    ALLOWED_RUNNER_INPUT_PROJECTION_DECLARED_DIAGNOSTIC_ONLY,
+    ALLOWED_RUNNER_INPUT_PROJECTION_METADATA_ONLY,
+    ALLOWED_RUNNER_INPUT_PROJECTION_OUTPUT_POLICY_FROZEN,
+    ALLOWED_RUNNER_INPUT_PROJECTION_MATERIALIZATION_POLICY_FROZEN,
+    BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE,
+    BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE,
+    _build_allowed_runner_input_projection_diagnostics,
+    _derive_allowed_runner_input_projection_gate,
+    _ALLOWED_RUNNER_INPUT_PROJECTION_AUTHORIZATION_FIELDS,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -17498,3 +17509,398 @@ class TestNoOutputRunnerInvocationM1:
             "gate_passed"
         ] is True
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
+class TestAllowedRunnerInputProjectionN1:
+    """Lane N1: allowed runner input projection diagnostics.
+
+    A derived, diagnostic-only projection over the M1 no-output runner
+    invocation gate. Records only metadata for the future runner input view,
+    emits no row values or rule outputs, and authorizes nothing.
+    """
+
+    def _m1(self):
+        return TestNoOutputRunnerInvocationM1()
+
+    def _full_chain_diags(self):
+        diags = self._m1()._full_chain_diags()
+        runner_diag = _build_no_output_runner_invocation_diagnostics(**diags)
+        diags["no_output_runner_invocation_diagnostics"] = runner_diag
+        return diags
+
+    def _absence_diags(self):
+        diags = self._m1()._absence_diags()
+        runner_diag = _build_no_output_runner_invocation_diagnostics(**diags)
+        diags["no_output_runner_invocation_diagnostics"] = runner_diag
+        return diags
+
+    def _result(self):
+        return _build_allowed_runner_input_projection_diagnostics(
+            **self._full_chain_diags()
+        )
+
+    # ── Test 1: no-args / M1 failed fails closed ───────────────────────────────
+    def test_input_projection_diagnostic_no_args_runner_invocation_failed(self):
+        diags = self._absence_diags()
+        result = _build_allowed_runner_input_projection_diagnostics(**diags)
+        gate = result["allowed_runner_input_projection_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE
+        for field in _ALLOWED_RUNNER_INPUT_PROJECTION_AUTHORIZATION_FIELDS:
+            assert result[field] is False
+
+    # ── Test 2: full happy path ────────────────────────────────────────────────
+    def test_input_projection_diagnostic_full_happy_path(self):
+        result = self._result()
+        assert result["diagnostic_kind"] == "allowed_runner_input_projection_scaffold"
+        assert result["allowed_runner_input_projection_version"] == (
+            ALLOWED_RUNNER_INPUT_PROJECTION_VERSION
+        )
+        assert result["allowed_runner_input_projection_scope"] == (
+            ALLOWED_RUNNER_INPUT_PROJECTION_SCOPE
+        )
+        assert result["allowed_runner_input_projection_status"] == (
+            ALLOWED_RUNNER_INPUT_PROJECTION_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert result["runner_input_projection_mode"] == "METADATA_ONLY"
+        assert result["runner_input_projection_policy"] == (
+            ALLOWED_RUNNER_INPUT_PROJECTION_METADATA_ONLY
+        )
+        assert result["allowed_input_roles"] == ["bars", "funding"]
+        assert result["allowed_bar_columns"] == ["close", "timestamp"]
+        assert result["allowed_funding_columns"] == ["fundingRate", "fundingTime"]
+        assert result["excluded_bar_columns"] == ["open", "high", "low", "volume"]
+        assert result["excluded_funding_columns"] == ["markPrice"]
+        assert result["input_projection_values_emitted"] is False
+        assert result["input_projection_row_values_emitted"] is False
+        assert result["rule_output_rows_emitted"] is False
+        assert result["future_runner_output_policy"] == (
+            ALLOWED_RUNNER_INPUT_PROJECTION_OUTPUT_POLICY_FROZEN
+        )
+        assert result["future_runner_materialization_policy"] == (
+            ALLOWED_RUNNER_INPUT_PROJECTION_MATERIALIZATION_POLICY_FROZEN
+        )
+        for field in _ALLOWED_RUNNER_INPUT_PROJECTION_AUTHORIZATION_FIELDS:
+            assert result[field] is False
+        assert result["final_offline_verdict_remains"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    # ── Test 3: gate happy path ────────────────────────────────────────────────
+    def test_input_projection_gate_happy_path(self):
+        gate = self._result()["allowed_runner_input_projection_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            ALLOWED_RUNNER_INPUT_PROJECTION_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+        assert gate["blocked_reason"] is None
+
+    # ── Tests 4-7: upstream gates fail closed ─────────────────────────────────
+    def test_no_output_runner_invocation_gate_missing_fails_closed(self):
+        diags = self._full_chain_diags()
+        runner_diag = dict(diags["no_output_runner_invocation_diagnostics"])
+        del runner_diag["no_output_runner_invocation_gate"]
+        diags["no_output_runner_invocation_diagnostics"] = runner_diag
+        gate = _build_allowed_runner_input_projection_diagnostics(**diags)[
+            "allowed_runner_input_projection_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE
+
+    def test_no_output_runner_invocation_gate_failed_fails_closed(self):
+        diags = self._full_chain_diags()
+        runner_diag = dict(diags["no_output_runner_invocation_diagnostics"])
+        failed_gate = dict(runner_diag["no_output_runner_invocation_gate"])
+        failed_gate["gate_passed"] = False
+        runner_diag["no_output_runner_invocation_gate"] = failed_gate
+        diags["no_output_runner_invocation_diagnostics"] = runner_diag
+        gate = _build_allowed_runner_input_projection_diagnostics(**diags)[
+            "allowed_runner_input_projection_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE
+
+    def test_implementation_boundary_gate_missing_fails_closed(self):
+        diags = self._full_chain_diags()
+        boundary = dict(diags["implementation_boundary_diagnostics"])
+        del boundary["implementation_boundary_gate"]
+        diags["implementation_boundary_diagnostics"] = boundary
+        gate = _build_allowed_runner_input_projection_diagnostics(**diags)[
+            "allowed_runner_input_projection_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE"
+
+    def test_implementation_boundary_gate_failed_fails_closed(self):
+        diags = self._full_chain_diags()
+        boundary = dict(diags["implementation_boundary_diagnostics"])
+        failed_gate = dict(boundary["implementation_boundary_gate"])
+        failed_gate["gate_passed"] = False
+        boundary["implementation_boundary_gate"] = failed_gate
+        diags["implementation_boundary_diagnostics"] = boundary
+        gate = _build_allowed_runner_input_projection_diagnostics(**diags)[
+            "allowed_runner_input_projection_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE"
+
+    def test_contract_packet_gate_missing_fails_closed(self):
+        diags = self._full_chain_diags()
+        contract_diag = dict(diags["strategy_rule_contract_diagnostics"])
+        del contract_diag["contract_packet_gate"]
+        diags["strategy_rule_contract_diagnostics"] = contract_diag
+        gate = _build_allowed_runner_input_projection_diagnostics(**diags)[
+            "allowed_runner_input_projection_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_REQUIRED_UPSTREAM_GATE"
+
+    def test_contract_packet_gate_failed_fails_closed(self):
+        diags = self._full_chain_diags()
+        contract_diag = dict(diags["strategy_rule_contract_diagnostics"])
+        failed_gate = dict(contract_diag["contract_packet_gate"])
+        failed_gate["gate_passed"] = False
+        contract_diag["contract_packet_gate"] = failed_gate
+        diags["strategy_rule_contract_diagnostics"] = contract_diag
+        gate = _build_allowed_runner_input_projection_diagnostics(**diags)[
+            "allowed_runner_input_projection_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_REQUIRED_UPSTREAM_GATE"
+
+    def test_trial_manifest_gate_missing_fails_closed(self):
+        diags = self._full_chain_diags()
+        manifest_diag = dict(diags["trial_manifest_diagnostics"])
+        del manifest_diag["trial_manifest_preregistration_gate"]
+        diags["trial_manifest_diagnostics"] = manifest_diag
+        gate = _build_allowed_runner_input_projection_diagnostics(**diags)[
+            "allowed_runner_input_projection_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_REQUIRED_UPSTREAM_GATE"
+
+    def test_trial_manifest_gate_failed_fails_closed(self):
+        diags = self._full_chain_diags()
+        manifest_diag = dict(diags["trial_manifest_diagnostics"])
+        failed_gate = dict(manifest_diag["trial_manifest_preregistration_gate"])
+        failed_gate["gate_passed"] = False
+        manifest_diag["trial_manifest_preregistration_gate"] = failed_gate
+        diags["trial_manifest_diagnostics"] = manifest_diag
+        gate = _build_allowed_runner_input_projection_diagnostics(**diags)[
+            "allowed_runner_input_projection_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_REQUIRED_UPSTREAM_GATE"
+
+    # ── Tests 8-18: projection evidence fails closed ──────────────────────────
+    def test_missing_projection_declared_fails_closed(self):
+        result = self._result()
+        del result["runner_input_projection_declared"]
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_false_projection_declared_fails_closed(self):
+        result = self._result()
+        result["runner_input_projection_declared"] = False
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_mutated_projection_mode_fails_closed(self):
+        result = self._result()
+        result["runner_input_projection_mode"] = "ROW_VALUES"
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_mutated_projection_policy_fails_closed(self):
+        result = self._result()
+        result["runner_input_projection_policy"] = "EMIT_ROW_VALUES_NOW"
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_mutated_allowed_input_roles_fails_closed(self):
+        result = self._result()
+        result["allowed_input_roles"] = ["bars", "funding", "volume"]
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_removed_allowed_input_role_fails_closed(self):
+        result = self._result()
+        result["allowed_input_roles"] = ["bars"]
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_mutated_allowed_bar_columns_fails_closed(self):
+        result = self._result()
+        result["allowed_bar_columns"] = ["close", "open", "timestamp"]
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_removed_allowed_bar_column_fails_closed(self):
+        result = self._result()
+        result["allowed_bar_columns"] = ["timestamp"]
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_mutated_allowed_funding_columns_fails_closed(self):
+        result = self._result()
+        result["allowed_funding_columns"] = [
+            "fundingRate",
+            "fundingTime",
+            "markPrice",
+        ]
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_removed_allowed_funding_column_fails_closed(self):
+        result = self._result()
+        result["allowed_funding_columns"] = ["fundingTime"]
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_empty_excluded_columns_fail_closed(self):
+        result = self._result()
+        result["excluded_bar_columns"] = []
+        result["excluded_funding_columns"] = []
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_any_emitted_flag_true_fails_closed(self):
+        for field in (
+            "input_projection_values_emitted",
+            "input_projection_row_values_emitted",
+            "rule_output_rows_emitted",
+        ):
+            result = self._result()
+            result[field] = True
+            gate = _derive_allowed_runner_input_projection_gate(result)
+            assert gate["gate_passed"] is False
+            assert gate["gate_status"] == "BLOCKED_BY_UNEXPECTED_OUTPUT_EMISSION"
+
+    def test_missing_mutated_output_policy_fails_closed(self):
+        result = self._result()
+        del result["future_runner_output_policy"]
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+        result = self._result()
+        result["future_runner_output_policy"] = "EMIT_OUTPUT_ROWS_NOW"
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_missing_mutated_materialization_policy_fails_closed(self):
+        result = self._result()
+        del result["future_runner_materialization_policy"]
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+        result = self._result()
+        result["future_runner_materialization_policy"] = "MATERIALIZE_RULES_NOW"
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE
+        )
+
+    def test_unexpected_authorization_fails_closed(self):
+        result = self._result()
+        result["decision_row_generation_authorized"] = True
+        gate = _derive_allowed_runner_input_projection_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_UNEXPECTED_AUTHORIZATION"
+        assert "decision_row_generation_authorized" in gate["blocked_reason"]
+
+    # ── Tests 19-20: receipt integration ──────────────────────────────────────
+    def test_receipt_integration_no_packet_args(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(self._m1()._cli_base_args(output_dir))
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        projection = receipt["allowed_runner_input_projection_diagnostics"]
+        gate = projection["allowed_runner_input_projection_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_receipt_integration_full_path(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = self._m1()
+        exit_code = real_validation.main(
+            m1._cli_base_args(output_dir) + m1._cli_full_chain_args()
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        assert receipt["prerequisite_closure_diagnostics"][
+            "prerequisite_closure_gate"
+        ]["gate_passed"] is True
+        assert receipt["implementation_boundary_diagnostics"][
+            "implementation_boundary_gate"
+        ]["gate_passed"] is True
+        assert receipt["no_output_runner_invocation_diagnostics"][
+            "no_output_runner_invocation_gate"
+        ]["gate_passed"] is True
+        projection = receipt["allowed_runner_input_projection_diagnostics"]
+        assert projection["allowed_runner_input_projection_gate"][
+            "gate_passed"
+        ] is True
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    # ── Test 21: forbidden key scan ───────────────────────────────────────────
+    def test_no_forbidden_calculation_keys(self):
+        result = self._result()
+        all_keys = _all_dict_keys(result)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
