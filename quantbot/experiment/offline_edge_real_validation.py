@@ -1185,7 +1185,8 @@ _NULL_REFERENCE_COMPARISON_W0_UPSTREAM_GATE_FIELDS = (
     "implementation_boundary_gate_passed",
 )
 _NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS = (
-    "null_reference_comparison_output_emitted", "statistical_values_emitted",
+    "null_reference_comparison_output_emitted", "null_comparison_values_emitted",
+    "statistical_values_emitted",
     "scoring_values_emitted", "live_integration_values_emitted",
     "paper_integration_values_emitted", "final_verdict_values_emitted",
 )

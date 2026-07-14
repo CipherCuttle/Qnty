@@ -20423,7 +20423,8 @@ class TestNullReferenceComparisonSchemaLockW0:
         assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_COMPARISON_VALUES
 
     @pytest.mark.parametrize("field", [
-        "statistical_values_emitted", "scoring_values_emitted", "live_integration_values_emitted",
+        "null_comparison_values_emitted", "statistical_values_emitted",
+        "scoring_values_emitted", "live_integration_values_emitted",
         "paper_integration_values_emitted", "final_verdict_values_emitted",
     ])
     def test_downstream_output_fails_closed(self, tmp_path, field):
