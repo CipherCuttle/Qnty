@@ -920,3 +920,38 @@ remain, and `final_offline_verdict` remains
 ```bash
 .venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k ProjectedInputShapeInventoryO1 -q
 ```
+
+### Lane P1 — Projected Input Row-Count / Column-Presence Diagnostics
+
+**Lane P1 is not implementation.** It adds no new frozen packet or sidecar. It
+is a **derived, diagnostic-only projection** over the Lane O1 projected input
+shape inventory, the Lane N1 allowed runner input projection, the Lane M1
+no-output runner invocation gate, and the Lane L1 implementation boundary gate.
+
+It answers exactly one question:
+
+> Can the receipt verify projected input availability and allowed-column
+> presence by role/symbol/split using only counts and column names?
+
+P1 declares a metadata-only projected input row-count and column-presence
+summary for roles `bars` and `funding`, allowed bar columns `close` and
+`timestamp`, allowed funding columns `fundingRate` and `fundingTime`, excluded
+bar columns `open`, `high`, `low`, and `volume`, and excluded funding column
+`markPrice`. It depends on the O1 projected input shape inventory gate.
+
+It emits no row values, no projected input row values, no timestamp values, no
+price values, no funding values, and no rule outputs. It does not implement
+the runner, materialize rules, compute decisions, signals, simulated events,
+economic values, statistics, or final verdict, and it does not authorize
+scoring, live/paper integration, or final verdict advancement.
+
+Even when the P1 gate passes, `gate_downstream_unlocks` is always `[]`, every
+authorization remains `false`, `EDGE_UNPROVEN` and `BLOCK_LIVE_INTEGRATION`
+remain, and `final_offline_verdict` remains
+`BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+
+#### Verification
+
+```bash
+.venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k ProjectedInputRowCountP1 -q
+```
