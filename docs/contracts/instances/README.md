@@ -773,3 +773,84 @@ always `BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
 ```bash
 .venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k ImplementationBoundaryL1 -q
 ```
+
+### Lane M1 — No-Output Runner Invocation Scaffold
+
+**Lane M1 is not implementation.** It adds no new frozen packet or sidecar. It
+is a **derived, diagnostic-only projection** over the Lane L1 implementation
+boundary gate and the contract-packet / trial-manifest gates it depends on —
+a pure function of diagnostics already produced upstream, with no file
+reads, no hashing, no git calls, and no decision/simulated-event/economic/
+statistical computation.
+
+It answers exactly one question:
+
+> Can the receipt represent a future runner invocation in a bounded,
+> fail-closed way?
+
+It does **not** implement the runner, materialize rule outputs, or compute
+decisions, signals, simulated events, economic values, or statistics — and it
+does **not** authorize scoring, live/paper integration, or final verdict
+advancement.
+
+#### What Lane M1 does
+
+- Adds `_build_no_output_runner_invocation_diagnostics(...)` — a pure builder
+  that reads the L1 `implementation_boundary_gate`, the strategy contract's
+  `contract_packet_gate`, and the trial manifest's
+  `trial_manifest_preregistration_gate`, and records a diagnostic-only
+  invocation record: `future_runner_invocation_declared = true`,
+  `future_runner_implementation_status = NO_OUTPUT_RUNNER_NOT_IMPLEMENTED`,
+  `future_runner_invocation_mode = DIAGNOSTIC_RECORD_ONLY`, and reiterates
+  the frozen output (`NO_OUTPUT_ROWS_EMITTED_IN_THIS_LANE`) and
+  materialization (`NO_RULE_MATERIALIZATION_IN_THIS_LANE`) policies.
+- Adds `_derive_no_output_runner_invocation_gate(...)` — a pure gate
+  projection that fails closed, in priority order: any authorization field
+  unexpectedly `true` -> `BLOCKED_BY_UNEXPECTED_AUTHORIZATION`; the
+  implementation boundary gate missing or not passed ->
+  `BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE`; the contract-packet or
+  trial-manifest gate missing or not passed ->
+  `BLOCKED_BY_REQUIRED_UPSTREAM_GATE`; invocation-declaration,
+  implementation-status, or output/materialization policy evidence
+  missing/empty/mutated -> `BLOCKED_BY_INCOMPLETE_RUNNER_INVOCATION_EVIDENCE`;
+  otherwise `NO_OUTPUT_RUNNER_INVOCATION_DECLARED_DIAGNOSTIC_ONLY` with
+  `gate_passed = true`.
+- Wires both into `build_real_validation_receipt(...)` under
+  `no_output_runner_invocation_diagnostics` and into `main()`'s build order
+  (after the implementation boundary diagnostics, before the final verdict
+  logic diagnostics).
+
+Even when the gate passes, every authorization field remains `false`:
+`runner_invocation_readiness`, `implementation_authorized`,
+`runner_implementation_authorized`, `rule_materialization_authorized`,
+`decision_row_generation_authorized`, `simulated_event_generation_authorized`,
+`economic_value_generation_authorized`, `statistical_value_generation_authorized`,
+`candidate_comparison_authorized`, `null_generation_authorized`,
+`scoring_authorization`, `live_integration_authorized`,
+`paper_integration_authorized`, `final_verdict_authorization`, and
+`gate_downstream_unlocks` is always `[]`. `final_offline_verdict_remains` is
+always `BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+
+#### What Lane M1 does NOT do
+
+- Does not implement a runner or invoke one — it declares only a diagnostic
+  invocation record.
+- Does not materialize rule outputs, or compute decisions, signals,
+  simulated events, orders, fills, positions, executions, PnL, returns,
+  Sharpe, edge, equity curve, risk metrics, drawdown, economic values,
+  p-values, confidence intervals, null benchmark computation,
+  candidate-vs-null comparison, or multiple-testing math.
+- No live/paper/exchange integration.
+- Does not authorize scoring/implementation/simulation/economic/statistical
+  values or final verdict advancement.
+- Does not advance `final_offline_verdict`; it remains
+  `BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+- Does not change `FORBIDDEN_CALCULATION_KEYS` or `ALLOWED_FINAL_VERDICTS`.
+- Does not edit any frozen upstream JSON or sidecar.
+- `EDGE_UNPROVEN` and `BLOCK_LIVE_INTEGRATION` remain.
+
+#### Verification
+
+```bash
+.venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k NoOutputRunnerInvocationM1 -q
+```

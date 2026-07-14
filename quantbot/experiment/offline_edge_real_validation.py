@@ -92,6 +92,8 @@ __all__ = [
     "_derive_prerequisite_closure_gate",
     "_build_implementation_boundary_diagnostics",
     "_derive_implementation_boundary_gate",
+    "_build_no_output_runner_invocation_diagnostics",
+    "_derive_no_output_runner_invocation_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -600,6 +602,31 @@ FUTURE_RUNNER_DECISION_TIME_POLICY_FROZEN = (
 )
 BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE = (
     "BLOCKED_BY_INCOMPLETE_IMPLEMENTATION_BOUNDARY_EVIDENCE"
+)
+
+# === Lane M1: no-output runner invocation scaffold constants ===
+# A pure, derived diagnostic that projects the L1 implementation boundary
+# gate (together with the contract-packet and trial-manifest gates it
+# depends on) into a record of how a *future* strategy-rule runner would be
+# invoked, without implementing that runner. It performs no I/O, no hashing,
+# no git calls, and computes no decision rows, simulated events, economic
+# values, or statistics. It never authorizes implementation, rule
+# materialization, decision-row generation, simulated events,
+# economic/statistical value generation, candidate comparison, null
+# generation, live/paper integration, scoring, or final verdict advancement.
+NO_OUTPUT_RUNNER_INVOCATION_VERSION = "no-output-runner-invocation-0.1"
+NO_OUTPUT_RUNNER_INVOCATION_SCOPE = "RUNNER_INVOCATION_RECORD_ONLY"
+NO_OUTPUT_RUNNER_INVOCATION_DECLARED_DIAGNOSTIC_ONLY = (
+    "NO_OUTPUT_RUNNER_INVOCATION_DECLARED_DIAGNOSTIC_ONLY"
+)
+NO_OUTPUT_RUNNER_NOT_IMPLEMENTED = "NO_OUTPUT_RUNNER_NOT_IMPLEMENTED"
+NO_OUTPUT_RUNNER_OUTPUT_POLICY_FROZEN = "NO_OUTPUT_ROWS_EMITTED_IN_THIS_LANE"
+NO_OUTPUT_RUNNER_MATERIALIZATION_POLICY_FROZEN = (
+    "NO_RULE_MATERIALIZATION_IN_THIS_LANE"
+)
+BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE = "BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE"
+BLOCKED_BY_INCOMPLETE_RUNNER_INVOCATION_EVIDENCE = (
+    "BLOCKED_BY_INCOMPLETE_RUNNER_INVOCATION_EVIDENCE"
 )
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
@@ -11325,6 +11352,257 @@ def _derive_implementation_boundary_gate(
     return gate
 
 
+_NO_OUTPUT_RUNNER_INVOCATION_AUTHORIZATION_FIELDS = (
+    "runner_invocation_readiness",
+    "implementation_authorized",
+    "runner_implementation_authorized",
+    "rule_materialization_authorized",
+    "decision_row_generation_authorized",
+    "simulated_event_generation_authorized",
+    "economic_value_generation_authorized",
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+)
+
+
+def _build_no_output_runner_invocation_diagnostics(
+    *,
+    implementation_boundary_diagnostics: dict[str, Any],
+    strategy_rule_contract_diagnostics: dict[str, Any],
+    trial_manifest_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a derived, diagnostic-only no-output runner invocation scaffold.
+
+    This is a **pure projection** over the L1 implementation boundary gate
+    and the contract-packet / trial-manifest gates it depends on. It
+    performs no file reads, no hashing, no git calls, no scoring, and no
+    mutation of its inputs, and it computes no decision rows, simulated
+    events, or economic/statistical value.
+
+    It answers exactly one question: given the implementation boundary is
+    declared, how would a future runner be *invoked*? It records a
+    diagnostic-only invocation mode and reiterates the frozen output and
+    materialization policies, but does not implement the runner, invoke it,
+    materialize rule outputs, or authorize implementation, simulation,
+    scoring, live/paper integration, or final verdict advancement — those
+    flags are always ``False`` regardless of upstream gate state.
+    """
+    implementation_boundary_gate = implementation_boundary_diagnostics.get(
+        "implementation_boundary_gate"
+    )
+    contract_packet_gate = strategy_rule_contract_diagnostics.get(
+        "contract_packet_gate"
+    )
+    trial_manifest_preregistration_gate = trial_manifest_diagnostics.get(
+        "trial_manifest_preregistration_gate"
+    )
+
+    implementation_boundary_gate_passed = bool(
+        implementation_boundary_gate is not None
+        and implementation_boundary_gate.get("gate_passed") is True
+    )
+    contract_packet_gate_passed = bool(
+        contract_packet_gate is not None
+        and contract_packet_gate.get("gate_passed") is True
+    )
+    trial_manifest_gate_passed = bool(
+        trial_manifest_preregistration_gate is not None
+        and trial_manifest_preregistration_gate.get("gate_passed") is True
+    )
+
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "no_output_runner_invocation_scaffold",
+        "no_output_runner_invocation_version": (
+            NO_OUTPUT_RUNNER_INVOCATION_VERSION
+        ),
+        "no_output_runner_invocation_scope": NO_OUTPUT_RUNNER_INVOCATION_SCOPE,
+        "no_output_runner_invocation_status": (
+            NO_OUTPUT_RUNNER_INVOCATION_DECLARED_DIAGNOSTIC_ONLY
+        ),
+        "implementation_boundary_gate_required": True,
+        "implementation_boundary_gate_passed": (
+            implementation_boundary_gate_passed
+        ),
+        "contract_packet_gate_required": True,
+        "contract_packet_gate_passed": contract_packet_gate_passed,
+        "trial_manifest_gate_required": True,
+        "trial_manifest_gate_passed": trial_manifest_gate_passed,
+        "future_runner_invocation_declared": True,
+        "future_runner_implementation_status": (
+            NO_OUTPUT_RUNNER_NOT_IMPLEMENTED
+        ),
+        "future_runner_invocation_mode": "DIAGNOSTIC_RECORD_ONLY",
+        "future_runner_allowed_input_roles": ["bars", "funding"],
+        "future_runner_allowed_bar_columns": sorted(_CONTRACT_BARS_ALLOWED),
+        "future_runner_allowed_funding_columns": sorted(
+            _CONTRACT_FUNDING_ALLOWED
+        ),
+        "future_runner_output_policy": NO_OUTPUT_RUNNER_OUTPUT_POLICY_FROZEN,
+        "future_runner_materialization_policy": (
+            NO_OUTPUT_RUNNER_MATERIALIZATION_POLICY_FROZEN
+        ),
+        "runner_invocation_readiness": False,
+        "implementation_authorized": False,
+        "runner_implementation_authorized": False,
+        "rule_materialization_authorized": False,
+        "decision_row_generation_authorized": False,
+        "simulated_event_generation_authorized": False,
+        "economic_value_generation_authorized": False,
+        "statistical_value_generation_authorized": False,
+        "candidate_comparison_authorized": False,
+        "null_generation_authorized": False,
+        "scoring_authorization": False,
+        "live_integration_authorized": False,
+        "paper_integration_authorized": False,
+        "final_verdict_authorization": False,
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+
+    diagnostics["no_output_runner_invocation_gate"] = (
+        _derive_no_output_runner_invocation_gate(diagnostics)
+    )
+    return diagnostics
+
+
+def _derive_no_output_runner_invocation_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive a narrow no-output runner invocation gate from *diagnostics*.
+
+    This is a pure function: it never reads files, never calls git, never
+    mutates *diagnostics*, and is fully deterministic.
+
+    The gate does **not** authorize implementation, rule materialization,
+    decision-row generation, simulated events, economic/statistical values,
+    candidate comparison, null generation, scoring, live/paper integration,
+    or final verdict advancement — even when ``gate_passed`` is ``True``,
+    every authorization field and ``gate_downstream_unlocks`` remain
+    empty/``False``.
+
+    Fails closed, in priority order:
+    * any authorization field unexpectedly ``True`` ->
+      ``BLOCKED_BY_UNEXPECTED_AUTHORIZATION``
+    * implementation boundary gate missing/not passed ->
+      ``BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE``
+    * contract-packet or trial-manifest gate missing/not passed ->
+      ``BLOCKED_BY_REQUIRED_UPSTREAM_GATE``
+    * invocation-declaration, implementation-status, or output/
+      materialization policy evidence missing/empty/mutated relative to
+      their frozen values -> ``BLOCKED_BY_INCOMPLETE_RUNNER_INVOCATION_EVIDENCE``
+    """
+    evidence = {
+        "implementation_boundary_gate_passed": diagnostics.get(
+            "implementation_boundary_gate_passed"
+        ),
+        "contract_packet_gate_passed": diagnostics.get(
+            "contract_packet_gate_passed"
+        ),
+        "trial_manifest_gate_passed": diagnostics.get(
+            "trial_manifest_gate_passed"
+        ),
+        "future_runner_invocation_declared": (
+            diagnostics.get("future_runner_invocation_declared") is True
+        ),
+        "future_runner_implementation_status_not_implemented": (
+            diagnostics.get("future_runner_implementation_status")
+            == NO_OUTPUT_RUNNER_NOT_IMPLEMENTED
+        ),
+        "future_runner_output_policy_matches_frozen_value": (
+            diagnostics.get("future_runner_output_policy")
+            == NO_OUTPUT_RUNNER_OUTPUT_POLICY_FROZEN
+        ),
+        "future_runner_materialization_policy_matches_frozen_value": (
+            diagnostics.get("future_runner_materialization_policy")
+            == NO_OUTPUT_RUNNER_MATERIALIZATION_POLICY_FROZEN
+        ),
+        "runner_invocation_readiness": diagnostics.get(
+            "runner_invocation_readiness", False
+        ),
+        "runner_implementation_authorized": diagnostics.get(
+            "runner_implementation_authorized", False
+        ),
+        "rule_materialization_authorized": diagnostics.get(
+            "rule_materialization_authorized", False
+        ),
+        "decision_row_generation_authorized": diagnostics.get(
+            "decision_row_generation_authorized", False
+        ),
+    }
+
+    invocation_evidence_passed = all(
+        value is True
+        for key, value in evidence.items()
+        if key.endswith("_declared")
+        or key.endswith("_matches_frozen_value")
+        or key.endswith("_not_implemented")
+    )
+
+    def _base_gate(gate_status: str, blocked_reason: str | None) -> dict[str, Any]:
+        return {
+            "gate_kind": "no_output_runner_invocation_gate",
+            "gate_scope": NO_OUTPUT_RUNNER_INVOCATION_SCOPE,
+            "gate_status": gate_status,
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": evidence,
+            "blocked_reason": blocked_reason,
+        }
+
+    offending_authorizations = [
+        field
+        for field in _NO_OUTPUT_RUNNER_INVOCATION_AUTHORIZATION_FIELDS
+        if diagnostics.get(field) is True
+    ]
+    if offending_authorizations:
+        return _base_gate(
+            "BLOCKED_BY_UNEXPECTED_AUTHORIZATION",
+            "UNEXPECTED_AUTHORIZATION_FIELDS_TRUE: "
+            + ", ".join(sorted(offending_authorizations)),
+        )
+
+    if not diagnostics.get("implementation_boundary_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE,
+            "IMPLEMENTATION_BOUNDARY_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    missing_or_failed_upstream_gates = [
+        name
+        for name, passed in (
+            ("contract_packet_gate", diagnostics.get("contract_packet_gate_passed")),
+            (
+                "trial_manifest_preregistration_gate",
+                diagnostics.get("trial_manifest_gate_passed"),
+            ),
+        )
+        if not passed
+    ]
+    if missing_or_failed_upstream_gates:
+        return _base_gate(
+            "BLOCKED_BY_REQUIRED_UPSTREAM_GATE",
+            "MISSING_OR_FAILED_UPSTREAM_GATES: "
+            + ", ".join(sorted(missing_or_failed_upstream_gates)),
+        )
+
+    if not invocation_evidence_passed:
+        return _base_gate(
+            BLOCKED_BY_INCOMPLETE_RUNNER_INVOCATION_EVIDENCE,
+            "RUNNER_INVOCATION_EVIDENCE_INCOMPLETE_OR_MUTATED",
+        )
+
+    gate = _base_gate(NO_OUTPUT_RUNNER_INVOCATION_DECLARED_DIAGNOSTIC_ONLY, None)
+    gate["gate_passed"] = True
+    return gate
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -11444,6 +11722,7 @@ def build_real_validation_receipt(
     economic_accounting_policy_diagnostics: dict | None = None,
     prerequisite_closure_diagnostics: dict | None = None,
     implementation_boundary_diagnostics: dict | None = None,
+    no_output_runner_invocation_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -11594,6 +11873,10 @@ def build_real_validation_receipt(
     if implementation_boundary_diagnostics is not None:
         receipt["implementation_boundary_diagnostics"] = (
             implementation_boundary_diagnostics
+        )
+    if no_output_runner_invocation_diagnostics is not None:
+        receipt["no_output_runner_invocation_diagnostics"] = (
+            no_output_runner_invocation_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -12282,6 +12565,17 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
             )
+            no_output_runner_invocation_diagnostics = (
+                _build_no_output_runner_invocation_diagnostics(
+                    implementation_boundary_diagnostics=(
+                        implementation_boundary_diagnostics
+                    ),
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -12356,6 +12650,9 @@ def main(argv: list[str] | None = None) -> int:
             prerequisite_closure_diagnostics=prerequisite_closure_diagnostics,
             implementation_boundary_diagnostics=(
                 implementation_boundary_diagnostics
+            ),
+            no_output_runner_invocation_diagnostics=(
+                no_output_runner_invocation_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -12505,6 +12802,17 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
             )
+            no_output_runner_invocation_diagnostics = (
+                _build_no_output_runner_invocation_diagnostics(
+                    implementation_boundary_diagnostics=(
+                        implementation_boundary_diagnostics
+                    ),
+                    strategy_rule_contract_diagnostics=(
+                        strategy_rule_contract_diagnostics
+                    ),
+                    trial_manifest_diagnostics=trial_manifest_diagnostics,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -12544,6 +12852,9 @@ def main(argv: list[str] | None = None) -> int:
             prerequisite_closure_diagnostics=prerequisite_closure_diagnostics,
             implementation_boundary_diagnostics=(
                 implementation_boundary_diagnostics
+            ),
+            no_output_runner_invocation_diagnostics=(
+                no_output_runner_invocation_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
