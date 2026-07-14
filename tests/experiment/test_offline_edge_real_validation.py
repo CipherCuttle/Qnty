@@ -20895,6 +20895,106 @@ class TestStatisticalOutputSchemaLockX0:
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
 
+class TestStatisticalValueContractLockY0:
+    """Lane Y0: declare a zero-value statistical contract and fail closed."""
+
+    def _parts(self, tmp_path):
+        v1 = TestEconomicAccountingRowsV0V1()._build(tmp_path)
+        w0 = real_validation._build_null_reference_comparison_schema_lock_diagnostics(economic_accounting_rows_v0_diagnostics=v1)
+        w1 = real_validation._build_null_reference_comparison_rows_v0_diagnostics(null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1)
+        x0 = real_validation._build_statistical_output_schema_lock_diagnostics(null_reference_comparison_rows_v0_diagnostics=w1, null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1)
+        x1 = real_validation._build_statistical_metadata_rows_v0_diagnostics(statistical_output_schema_lock_diagnostics=x0, null_reference_comparison_rows_v0_diagnostics=w1)
+        return v1, w0, w1, x0, x1
+
+    def _build(self, tmp_path):
+        v1, w0, w1, x0, x1 = self._parts(tmp_path)
+        return real_validation._build_statistical_value_contract_lock_y0_diagnostics(statistical_metadata_rows_v0_diagnostics=x1, statistical_output_schema_lock_diagnostics=x0, null_reference_comparison_rows_v0_diagnostics=w1, null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1)
+
+    def test_contract_declared_zero_values_and_gate_passes(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["diagnostic_kind"] == "statistical_value_contract_lock_y0"
+        assert result["statistical_value_contract_lock_gate"]["gate_passed"] is True
+        assert result["declared_statistical_value_contract_keys"] == list(real_validation._ALLOWED_STATISTICAL_VALUE_CONTRACT_KEYS)
+        assert result["declared_statistical_value_kind_names"] == ["not_computed"]
+        assert result["statistical_values"] == []
+        assert result["statistical_value_count"] == 0
+        assert result["statistical_values_emitted"] is False
+        assert result["statistical_rows_observed_count"] > 0
+
+    @pytest.mark.parametrize("field, status", [
+        ("statistical_metadata_rows_v0_gate_passed", real_validation.BLOCKED_BY_STATISTICAL_METADATA_ROWS_V0_FOR_Y0_GATE),
+        ("statistical_output_schema_lock_gate_passed", real_validation.BLOCKED_BY_STATISTICAL_OUTPUT_SCHEMA_LOCK_X0_FOR_Y0_GATE),
+        ("null_reference_comparison_rows_v0_gate_passed", real_validation.BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FOR_Y0_GATE),
+        ("null_reference_comparison_schema_lock_gate_passed", real_validation.BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_FOR_Y0_GATE),
+        ("economic_accounting_rows_v0_gate_passed", real_validation.BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_Y0_GATE),
+        ("implementation_boundary_gate_passed", real_validation.BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_UPSTREAM_GATE),
+    ])
+    def test_dependencies_fail_closed(self, tmp_path, field, status):
+        result = self._build(tmp_path); result[field] = False
+        assert real_validation._derive_statistical_value_contract_lock_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("field, mutation, status", [
+        ("declared_statistical_value_contract_keys", "remove", real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_CONTRACT_KEY_MUTATION),
+        ("declared_statistical_value_contract_keys", "extra", real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_CONTRACT_KEY_MUTATION),
+        ("declared_statistical_value_kind_names", "remove", real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_KIND_MUTATION),
+        ("declared_statistical_value_kind_names", "extra", real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_KIND_MUTATION),
+        ("declared_statistical_value_kind_names", "change", real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_KIND_MUTATION),
+    ])
+    def test_contract_mutations_fail_closed(self, tmp_path, field, mutation, status):
+        result = self._build(tmp_path)
+        if mutation == "remove": result[field].pop()
+        elif mutation == "extra": result[field].append("unexpected")
+        else: result[field][0] = "computed"
+        assert real_validation._derive_statistical_value_contract_lock_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("field, value", [("statistical_values", ["unexpected"]), ("statistical_value_count", 1), ("statistical_values_emitted", True)])
+    def test_statistical_value_emission_fails_closed(self, tmp_path, field, value):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_statistical_value_contract_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Y0
+
+    @pytest.mark.parametrize("field", ["inferential_values_emitted", "uncertainty_values_emitted", "candidate_comparison_values_emitted"])
+    def test_inferential_outputs_fail_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_statistical_value_contract_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_INFERENTIAL_OUTPUT
+
+    @pytest.mark.parametrize("field", ["scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted"])
+    def test_downstream_outputs_fail_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_statistical_value_contract_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT
+
+    @pytest.mark.parametrize("field", real_validation._STATISTICAL_VALUE_CONTRACT_Y0_AUTHORIZATION_FIELDS)
+    def test_downstream_authorizations_fail_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_statistical_value_contract_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_DOWNSTREAM_AUTHORIZATION
+
+    @pytest.mark.parametrize("field", real_validation._STATISTICAL_VALUE_CONTRACT_Y0_OUTPUT_FIELDS + real_validation._STATISTICAL_VALUE_CONTRACT_Y0_AUTHORIZATION_FIELDS)
+    @pytest.mark.parametrize("value", [None, 1])
+    def test_downstream_evidence_requires_exact_false(self, tmp_path, field, value):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_statistical_value_contract_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_EVIDENCE
+
+    @pytest.mark.parametrize("field", real_validation._STATISTICAL_VALUE_CONTRACT_Y0_OUTPUT_FIELDS + real_validation._STATISTICAL_VALUE_CONTRACT_Y0_AUTHORIZATION_FIELDS)
+    def test_missing_downstream_evidence_fails_closed(self, tmp_path, field):
+        result = self._build(tmp_path); del result[field]
+        assert real_validation._derive_statistical_value_contract_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_EVIDENCE
+
+    def test_missing_downstream_evidence_unlocks_and_verdict_fail_closed(self, tmp_path):
+        result = self._build(tmp_path); result["downstream_unlocks"] = ["unexpected"]
+        assert real_validation._derive_statistical_value_contract_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_EVIDENCE
+        result = self._build(tmp_path); result["final_offline_verdict_remains"] = "MUTATED"
+        assert real_validation._derive_statistical_value_contract_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_FINAL_VERDICT_ADVANCEMENT
+
+    def test_forbidden_keys_are_absent(self, tmp_path):
+        result = self._build(tmp_path); forbidden = {"p_value", "confidence_interval", "score", "metric", "performance", "pnl", "profit", "edge", "return", "returns"}
+        def keys(value):
+            if isinstance(value, dict):
+                yield from value
+                for child in value.values(): yield from keys(child)
+            elif isinstance(value, list):
+                for child in value: yield from keys(child)
+        assert not (set(keys(result)) & forbidden)
+
+
 class TestProjectedInputShapeInventoryO1:
     """Lane O1: projected input shape inventory diagnostics."""
 

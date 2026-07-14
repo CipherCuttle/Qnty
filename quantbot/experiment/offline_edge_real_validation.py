@@ -126,6 +126,8 @@ __all__ = [
     "_derive_statistical_output_schema_lock_gate",
     "_build_statistical_metadata_rows_v0_diagnostics",
     "_derive_statistical_metadata_rows_v0_gate",
+    "_build_statistical_value_contract_lock_y0_diagnostics",
+    "_derive_statistical_value_contract_lock_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -1330,6 +1332,37 @@ _STATISTICAL_METADATA_ROWS_V0_FIXED_ROW_CONSTANTS = {
 }
 _STATISTICAL_METADATA_ROWS_X1_OUTPUT_FIELDS = _STATISTICAL_OUTPUT_SCHEMA_X0_OUTPUT_FIELDS
 _STATISTICAL_METADATA_ROWS_X1_AUTHORIZATION_FIELDS = _STATISTICAL_OUTPUT_SCHEMA_X0_AUTHORIZATION_FIELDS
+
+# === Lane Y0: statistical value contract lock diagnostics ===
+STATISTICAL_VALUE_CONTRACT_LOCK_Y0_VERSION = "statistical-value-contract-lock-y0-0.1"
+STATISTICAL_VALUE_CONTRACT_LOCK_Y0_SCOPE = "FUTURE_STATISTICAL_VALUE_CONTRACT_ONLY_NO_VALUES_EMITTED"
+STATISTICAL_VALUE_CONTRACT_LOCK_Y0_DECLARED_DIAGNOSTIC_ONLY = "STATISTICAL_VALUE_CONTRACT_LOCK_Y0_DECLARED_DIAGNOSTIC_ONLY"
+BLOCKED_BY_STATISTICAL_METADATA_ROWS_V0_FOR_Y0_GATE = "BLOCKED_BY_STATISTICAL_METADATA_ROWS_V0_FOR_Y0_GATE"
+BLOCKED_BY_STATISTICAL_OUTPUT_SCHEMA_LOCK_X0_FOR_Y0_GATE = "BLOCKED_BY_STATISTICAL_OUTPUT_SCHEMA_LOCK_X0_FOR_Y0_GATE"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FOR_Y0_GATE = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FOR_Y0_GATE"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_FOR_Y0_GATE = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_FOR_Y0_GATE"
+BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_Y0_GATE = "BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_Y0_GATE"
+BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_UPSTREAM_GATE = "BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_UPSTREAM_GATE"
+BLOCKED_BY_INCOMPLETE_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_EVIDENCE"
+BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_CONTRACT_KEY_MUTATION = "BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_CONTRACT_KEY_MUTATION"
+BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_KIND_MUTATION = "BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_KIND_MUTATION"
+BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Y0 = "BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Y0"
+BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_INFERENTIAL_OUTPUT = "BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_INFERENTIAL_OUTPUT"
+BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT = "BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT"
+BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_DOWNSTREAM_AUTHORIZATION = "BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_DOWNSTREAM_AUTHORIZATION"
+BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_FINAL_VERDICT_ADVANCEMENT = "BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_FINAL_VERDICT_ADVANCEMENT"
+_ALLOWED_STATISTICAL_VALUE_CONTRACT_KEYS = (
+    "contract_version", "contract_kind", "source_schema_kind", "source_row_kind",
+    "allowed_value_kind_names", "required_value_absence_policy",
+    "required_metadata_only_policy", "disallowed_inferential_output_policy",
+    "disallowed_uncertainty_output_policy", "disallowed_candidate_comparison_policy",
+    "disallowed_scoring_policy", "disallowed_live_integration_policy",
+    "disallowed_paper_integration_policy", "disallowed_final_verdict_policy",
+)
+_ALLOWED_STATISTICAL_VALUE_KIND_NAMES_Y0 = ("not_computed",)
+_STATISTICAL_VALUE_CONTRACT_Y0_UPSTREAM_GATE_FIELDS = _STATISTICAL_OUTPUT_SCHEMA_X0_UPSTREAM_GATE_FIELDS
+_STATISTICAL_VALUE_CONTRACT_Y0_OUTPUT_FIELDS = _STATISTICAL_OUTPUT_SCHEMA_X0_OUTPUT_FIELDS
+_STATISTICAL_VALUE_CONTRACT_Y0_AUTHORIZATION_FIELDS = _STATISTICAL_OUTPUT_SCHEMA_X0_AUTHORIZATION_FIELDS
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -17348,6 +17381,114 @@ def _derive_statistical_metadata_rows_v0_gate(diagnostics: dict[str, Any]) -> di
     return result
 
 
+def _build_statistical_value_contract_lock_y0_diagnostics(
+    *, statistical_metadata_rows_v0_diagnostics: dict[str, Any],
+    statistical_output_schema_lock_diagnostics: dict[str, Any],
+    null_reference_comparison_rows_v0_diagnostics: dict[str, Any],
+    null_reference_comparison_schema_lock_diagnostics: dict[str, Any],
+    economic_accounting_rows_v0_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Declare Y0's future statistical-value policy without generating values."""
+    def passed(section: dict[str, Any], gate_name: str) -> bool:
+        gate = section.get(gate_name)
+        return bool(isinstance(gate, dict) and gate.get("gate_passed") is True)
+
+    rows = statistical_metadata_rows_v0_diagnostics.get("statistical_rows")
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "statistical_value_contract_lock_y0",
+        "statistical_value_contract_lock_version": STATISTICAL_VALUE_CONTRACT_LOCK_Y0_VERSION,
+        "statistical_value_contract_lock_scope": STATISTICAL_VALUE_CONTRACT_LOCK_Y0_SCOPE,
+        "statistical_value_contract_lock_status": STATISTICAL_VALUE_CONTRACT_LOCK_Y0_DECLARED_DIAGNOSTIC_ONLY,
+        "statistical_metadata_rows_v0_gate_required": True,
+        "statistical_metadata_rows_v0_gate_passed": passed(statistical_metadata_rows_v0_diagnostics, "statistical_metadata_rows_v0_gate"),
+        "statistical_output_schema_lock_gate_required": True,
+        "statistical_output_schema_lock_gate_passed": passed(statistical_output_schema_lock_diagnostics, "statistical_output_schema_lock_gate"),
+        "null_reference_comparison_rows_v0_gate_required": True,
+        "null_reference_comparison_rows_v0_gate_passed": passed(null_reference_comparison_rows_v0_diagnostics, "null_reference_comparison_rows_v0_gate"),
+        "null_reference_comparison_schema_lock_gate_required": True,
+        "null_reference_comparison_schema_lock_gate_passed": passed(null_reference_comparison_schema_lock_diagnostics, "null_reference_comparison_schema_lock_gate"),
+        "economic_accounting_rows_v0_gate_required": True,
+        "economic_accounting_rows_v0_gate_passed": passed(economic_accounting_rows_v0_diagnostics, "economic_accounting_rows_v0_gate"),
+        **{field.replace("_passed", "_required"): True for field in _STATISTICAL_VALUE_CONTRACT_Y0_UPSTREAM_GATE_FIELDS},
+        **{field: economic_accounting_rows_v0_diagnostics.get(field) is True for field in _STATISTICAL_VALUE_CONTRACT_Y0_UPSTREAM_GATE_FIELDS},
+        "statistical_value_contract_lock_declared": True,
+        "declared_statistical_value_contract_keys": list(_ALLOWED_STATISTICAL_VALUE_CONTRACT_KEYS),
+        "declared_statistical_value_contract_key_count": len(_ALLOWED_STATISTICAL_VALUE_CONTRACT_KEYS),
+        "declared_statistical_value_kind_names": list(_ALLOWED_STATISTICAL_VALUE_KIND_NAMES_Y0),
+        "declared_statistical_value_kind_count": len(_ALLOWED_STATISTICAL_VALUE_KIND_NAMES_Y0),
+        "statistical_rows_observed_count": len(rows) if isinstance(rows, list) else 0,
+        "statistical_values": [], "statistical_values_emitted": False, "statistical_value_count": 0,
+        **{field: False for field in _STATISTICAL_VALUE_CONTRACT_Y0_OUTPUT_FIELDS},
+        **{field: False for field in _STATISTICAL_VALUE_CONTRACT_Y0_AUTHORIZATION_FIELDS},
+        "downstream_unlocks": [],
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["statistical_value_contract_lock_gate"] = _derive_statistical_value_contract_lock_gate(diagnostics)
+    return diagnostics
+
+
+def _derive_statistical_value_contract_lock_gate(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    """Fail closed unless Y0's exact contract is declared and value-free."""
+    values = diagnostics.get("statistical_values")
+    upstream_fields = _STATISTICAL_VALUE_CONTRACT_Y0_UPSTREAM_GATE_FIELDS
+    output_fields = _STATISTICAL_VALUE_CONTRACT_Y0_OUTPUT_FIELDS
+    authorization_fields = _STATISTICAL_VALUE_CONTRACT_Y0_AUTHORIZATION_FIELDS
+    evidence = {
+        "metadata_rows_gate_passed": diagnostics.get("statistical_metadata_rows_v0_gate_passed") is True,
+        "schema_lock_gate_passed": diagnostics.get("statistical_output_schema_lock_gate_passed") is True,
+        "comparison_rows_gate_passed": diagnostics.get("null_reference_comparison_rows_v0_gate_passed") is True,
+        "comparison_schema_gate_passed": diagnostics.get("null_reference_comparison_schema_lock_gate_passed") is True,
+        "accounting_rows_gate_passed": diagnostics.get("economic_accounting_rows_v0_gate_passed") is True,
+        **{field: diagnostics.get(field) is True for field in upstream_fields},
+        "contract_lock_declared": diagnostics.get("statistical_value_contract_lock_declared") is True,
+        "contract_status_matches": diagnostics.get("statistical_value_contract_lock_status") == STATISTICAL_VALUE_CONTRACT_LOCK_Y0_DECLARED_DIAGNOSTIC_ONLY,
+        "declared_contract_keys_match": diagnostics.get("declared_statistical_value_contract_keys") == list(_ALLOWED_STATISTICAL_VALUE_CONTRACT_KEYS),
+        "declared_contract_key_count_matches": diagnostics.get("declared_statistical_value_contract_key_count") == len(_ALLOWED_STATISTICAL_VALUE_CONTRACT_KEYS),
+        "declared_value_kind_names_match": diagnostics.get("declared_statistical_value_kind_names") == list(_ALLOWED_STATISTICAL_VALUE_KIND_NAMES_Y0),
+        "declared_value_kind_count_matches": diagnostics.get("declared_statistical_value_kind_count") == len(_ALLOWED_STATISTICAL_VALUE_KIND_NAMES_Y0),
+        "statistical_values_are_empty_list": values == [],
+        "statistical_value_count_zero": diagnostics.get("statistical_value_count") == 0,
+        "statistical_values_not_emitted": diagnostics.get("statistical_values_emitted") is False,
+        **{f"{field}_is_exactly_false": diagnostics.get(field) is False for field in output_fields + authorization_fields},
+        "downstream_unlocks_empty": diagnostics.get("downstream_unlocks") == [],
+        "final_offline_verdict_remains": diagnostics.get("final_offline_verdict_remains"),
+    }
+    def gate(status: str, reason: str | None) -> dict[str, Any]:
+        return {"gate_kind": "statistical_value_contract_lock_gate", "gate_scope": STATISTICAL_VALUE_CONTRACT_LOCK_Y0_SCOPE, "gate_status": status, "gate_passed": False, "gate_scoring_authorization": False, "gate_live_authorization": False, "gate_final_verdict_authorization": False, "gate_downstream_unlocks": [], "evidence": evidence, "blocked_reason": reason}
+    if not evidence["metadata_rows_gate_passed"]:
+        return gate(BLOCKED_BY_STATISTICAL_METADATA_ROWS_V0_FOR_Y0_GATE, "STATISTICAL_METADATA_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["schema_lock_gate_passed"]:
+        return gate(BLOCKED_BY_STATISTICAL_OUTPUT_SCHEMA_LOCK_X0_FOR_Y0_GATE, "STATISTICAL_OUTPUT_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["comparison_rows_gate_passed"]:
+        return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_FOR_Y0_GATE, "NULL_REFERENCE_COMPARISON_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["comparison_schema_gate_passed"]:
+        return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_FOR_Y0_GATE, "NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["accounting_rows_gate_passed"]:
+        return gate(BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_Y0_GATE, "ECONOMIC_ACCOUNTING_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not all(evidence[field] is True for field in upstream_fields):
+        return gate(BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_UPSTREAM_GATE, "REQUIRED_UPSTREAM_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["declared_contract_keys_match"] or not evidence["declared_contract_key_count_matches"]:
+        return gate(BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_CONTRACT_KEY_MUTATION, "DECLARED_CONTRACT_KEYS_DO_NOT_EXACTLY_MATCH_Y0_ALLOWED_KEYS")
+    if not evidence["declared_value_kind_names_match"] or not evidence["declared_value_kind_count_matches"]:
+        return gate(BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_KIND_MUTATION, "DECLARED_VALUE_KIND_NAMES_DO_NOT_EXACTLY_MATCH_Y0_ALLOWED_NAMES")
+    if diagnostics.get("statistical_values_emitted") is True or diagnostics.get("statistical_value_count") != 0 or values != []:
+        return gate(BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Y0, "STATISTICAL_VALUES_MUST_NOT_BE_EMITTED_IN_Y0")
+    if any(diagnostics.get(field) is True for field in ("inferential_values_emitted", "uncertainty_values_emitted", "candidate_comparison_values_emitted")):
+        return gate(BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_INFERENTIAL_OUTPUT, "UNEXPECTED_INFERENTIAL_UNCERTAINTY_OR_CANDIDATE_OUTPUT")
+    if any(diagnostics.get(field) is True for field in ("scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted")):
+        return gate(BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_DOWNSTREAM_OUTPUT, "UNEXPECTED_DOWNSTREAM_OUTPUT")
+    if any(diagnostics.get(field) is True for field in authorization_fields):
+        return gate(BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_DOWNSTREAM_AUTHORIZATION, "UNEXPECTED_DOWNSTREAM_AUTHORIZATION")
+    if diagnostics.get("final_offline_verdict_remains") != BLOCKED_BY_VALIDATION_IMPLEMENTATION:
+        return gate(BLOCKED_BY_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_FINAL_VERDICT_ADVANCEMENT, "FINAL_OFFLINE_VERDICT_MUST_REMAIN_BLOCKED")
+    required = ("contract_lock_declared", "contract_status_matches", "declared_contract_keys_match", "declared_contract_key_count_matches", "declared_value_kind_names_match", "declared_value_kind_count_matches", "statistical_values_are_empty_list", "statistical_value_count_zero", "statistical_values_not_emitted", "downstream_unlocks_empty") + tuple(f"{field}_is_exactly_false" for field in output_fields + authorization_fields)
+    if not all(evidence.get(field) is True for field in required):
+        return gate(BLOCKED_BY_INCOMPLETE_STATISTICAL_VALUE_CONTRACT_LOCK_Y0_EVIDENCE, "STATISTICAL_VALUE_CONTRACT_LOCK_Y0_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    result = gate(STATISTICAL_VALUE_CONTRACT_LOCK_Y0_DECLARED_DIAGNOSTIC_ONLY, None)
+    result["gate_passed"] = True
+    return result
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -17484,6 +17625,7 @@ def build_real_validation_receipt(
     null_reference_comparison_rows_v0_diagnostics: dict | None = None,
     statistical_output_schema_lock_diagnostics: dict | None = None,
     statistical_metadata_rows_v0_diagnostics: dict | None = None,
+    statistical_value_contract_lock_y0_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -17700,6 +17842,10 @@ def build_real_validation_receipt(
     if statistical_metadata_rows_v0_diagnostics is not None:
         receipt["statistical_metadata_rows_v0_diagnostics"] = (
             statistical_metadata_rows_v0_diagnostics
+        )
+    if statistical_value_contract_lock_y0_diagnostics is not None:
+        receipt["statistical_value_contract_lock_y0_diagnostics"] = (
+            statistical_value_contract_lock_y0_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -18693,6 +18839,15 @@ def main(argv: list[str] | None = None) -> int:
                     null_reference_comparison_rows_v0_diagnostics=null_reference_comparison_rows_v0_diagnostics,
                 )
             )
+            statistical_value_contract_lock_y0_diagnostics = (
+                _build_statistical_value_contract_lock_y0_diagnostics(
+                    statistical_metadata_rows_v0_diagnostics=statistical_metadata_rows_v0_diagnostics,
+                    statistical_output_schema_lock_diagnostics=statistical_output_schema_lock_diagnostics,
+                    null_reference_comparison_rows_v0_diagnostics=null_reference_comparison_rows_v0_diagnostics,
+                    null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
+                    economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -18816,6 +18971,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             statistical_metadata_rows_v0_diagnostics=(
                 statistical_metadata_rows_v0_diagnostics
+            ),
+            statistical_value_contract_lock_y0_diagnostics=(
+                statistical_value_contract_lock_y0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -19266,6 +19424,15 @@ def main(argv: list[str] | None = None) -> int:
                     null_reference_comparison_rows_v0_diagnostics=null_reference_comparison_rows_v0_diagnostics,
                 )
             )
+            statistical_value_contract_lock_y0_diagnostics = (
+                _build_statistical_value_contract_lock_y0_diagnostics(
+                    statistical_metadata_rows_v0_diagnostics=statistical_metadata_rows_v0_diagnostics,
+                    statistical_output_schema_lock_diagnostics=statistical_output_schema_lock_diagnostics,
+                    null_reference_comparison_rows_v0_diagnostics=null_reference_comparison_rows_v0_diagnostics,
+                    null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
+                    economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -19354,6 +19521,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             statistical_metadata_rows_v0_diagnostics=(
                 statistical_metadata_rows_v0_diagnostics
+            ),
+            statistical_value_contract_lock_y0_diagnostics=(
+                statistical_value_contract_lock_y0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
