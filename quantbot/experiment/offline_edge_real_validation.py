@@ -917,6 +917,7 @@ def _build_role_inventory(
         min_timestamp_dt: datetime | None = None
         max_timestamp_dt: datetime | None = None
         has_timestamp_column: bool = False
+        column_names: list[str] = []
 
         with open(resolved_csv, newline="") as f:
             reader = csv.DictReader(f)
@@ -924,6 +925,7 @@ def _build_role_inventory(
                 # Empty file — no columns at all.
                 pass
             else:
+                column_names = list(reader.fieldnames)
                 # Case-insensitive column lookup.
                 col_lower_map = {h.lower(): h for h in reader.fieldnames}
                 target_lower = timestamp_column.lower()
@@ -968,6 +970,7 @@ def _build_role_inventory(
                 else None
             ),
             "has_timestamp_column": has_timestamp_column,
+            "column_names": column_names,
         }
         files.append(file_entry)
 
@@ -12102,6 +12105,101 @@ def _extract_shape_inventory_role_summary(
     }
 
 
+def _extract_required_role_presence_from_inventory(
+    inventory_diagnostics: dict[str, Any] | None,
+) -> dict[str, bool]:
+    """Return whether required input roles are present in inventory metadata."""
+    role_presence = {"bars": False, "funding": False}
+    if not isinstance(inventory_diagnostics, dict):
+        return role_presence
+
+    roles = inventory_diagnostics.get("roles")
+    if not isinstance(roles, list):
+        return role_presence
+
+    for role_entry in roles:
+        if not isinstance(role_entry, dict):
+            continue
+        role_name = role_entry.get("role")
+        if role_name not in role_presence:
+            continue
+        files = role_entry.get("files")
+        role_presence[role_name] = isinstance(files, list) and bool(files)
+    return role_presence
+
+
+def _extract_columns_from_metadata_entry(entry: dict[str, Any]) -> set[str] | None:
+    """Extract safe column/header metadata from one inventory role/file entry."""
+    for key in ("columns", "header", "column_names", "observed_columns"):
+        raw_columns = entry.get(key)
+        if not isinstance(raw_columns, list):
+            continue
+        columns: set[str] = set()
+        for column in raw_columns:
+            if isinstance(column, str) and column:
+                columns.add(column.lower())
+        return columns
+    return None
+
+
+def _extract_role_column_presence_from_inventory(
+    inventory_diagnostics: dict[str, Any] | None,
+) -> dict[str, dict[str, bool | str]]:
+    """Derive allowed-column presence from safe inventory header metadata only."""
+    allowed_columns_by_role = {
+        "bars": ["close", "timestamp"],
+        "funding": ["fundingRate", "fundingTime"],
+    }
+    unknown_presence: dict[str, dict[str, bool | str]] = {
+        role_name: {column: "UNKNOWN" for column in allowed_columns}
+        for role_name, allowed_columns in allowed_columns_by_role.items()
+    }
+    if not isinstance(inventory_diagnostics, dict):
+        return unknown_presence
+
+    roles = inventory_diagnostics.get("roles")
+    if not isinstance(roles, list):
+        return unknown_presence
+
+    seen_roles: set[str] = set()
+    for role_entry in roles:
+        if not isinstance(role_entry, dict):
+            continue
+        role_name = role_entry.get("role")
+        if role_name not in allowed_columns_by_role:
+            continue
+        seen_roles.add(role_name)
+        role_columns = _extract_columns_from_metadata_entry(role_entry)
+        files = role_entry.get("files")
+        file_entries = files if isinstance(files, list) else []
+        file_metadata_seen = role_columns is not None
+        observed_columns = set(role_columns or set())
+        for file_entry in file_entries:
+            if not isinstance(file_entry, dict):
+                continue
+            file_columns = _extract_columns_from_metadata_entry(file_entry)
+            if file_columns is None:
+                continue
+            file_metadata_seen = True
+            observed_columns.update(file_columns)
+
+        if not file_metadata_seen:
+            continue
+
+        unknown_presence[role_name] = {
+            column: column.lower() in observed_columns
+            for column in allowed_columns_by_role[role_name]
+        }
+
+    for role_name in allowed_columns_by_role:
+        if role_name not in seen_roles:
+            unknown_presence[role_name] = {
+                column: False for column in allowed_columns_by_role[role_name]
+            }
+
+    return unknown_presence
+
+
 def _build_projected_input_shape_inventory_diagnostics(
     *,
     allowed_runner_input_projection_diagnostics: dict[str, Any],
@@ -12437,6 +12535,23 @@ def _extract_projected_input_row_count_summary(
     role_symbol_counts: dict[str, int] = {}
     role_split_counts: dict[str, int] = {}
     role_empty_status: dict[str, str] = {}
+    required_role_presence_by_role = _extract_required_role_presence_from_inventory(
+        inventory_diagnostics
+    )
+    column_presence_by_role = _extract_role_column_presence_from_inventory(
+        inventory_diagnostics
+    )
+    column_presence_complete = (
+        required_role_presence_by_role == {"bars": True, "funding": True}
+        and column_presence_by_role
+        == {
+            "bars": {"close": True, "timestamp": True},
+            "funding": {"fundingRate": True, "fundingTime": True},
+        }
+    )
+    column_presence_source = (
+        "inventory_metadata" if isinstance(inventory_diagnostics, dict) else "unavailable"
+    )
 
     role_symbols: dict[str, set[str]] = {}
     if isinstance(inventory_diagnostics, dict):
@@ -12499,8 +12614,14 @@ def _extract_projected_input_row_count_summary(
             "funding": ["markPrice"],
         },
         "allowed_column_presence_by_role": {
-            "bars": {"close": True, "timestamp": True},
-            "funding": {"fundingRate": True, "fundingTime": True},
+            "bars": {
+                "close": column_presence_by_role["bars"]["close"],
+                "timestamp": column_presence_by_role["bars"]["timestamp"],
+            },
+            "funding": {
+                "fundingRate": column_presence_by_role["funding"]["fundingRate"],
+                "fundingTime": column_presence_by_role["funding"]["fundingTime"],
+            },
         },
         "forbidden_column_presence_by_role": {
             "bars": {
@@ -12515,6 +12636,9 @@ def _extract_projected_input_row_count_summary(
         "role_symbol_counts": role_symbol_counts,
         "role_split_counts": role_split_counts,
         "role_empty_status": role_empty_status,
+        "required_role_presence_by_role": required_role_presence_by_role,
+        "column_presence_source": column_presence_source,
+        "column_presence_complete": column_presence_complete,
     }
 
 
@@ -12699,6 +12823,10 @@ def _derive_projected_input_row_count_gate(
                 "bars": {"close": True, "timestamp": True},
                 "funding": {"fundingRate": True, "fundingTime": True},
             }
+            and summary.get("required_role_presence_by_role")
+            == {"bars": True, "funding": True}
+            and summary.get("column_presence_source") == "inventory_metadata"
+            and summary.get("column_presence_complete") is True
             and summary.get("forbidden_column_presence_by_role")
             == {
                 "bars": {

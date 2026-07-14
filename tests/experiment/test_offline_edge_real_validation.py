@@ -731,6 +731,14 @@ class TestBuildRealValidationInputInventory:
         assert file_entry["filename"] == csv_path.name
         assert isinstance(file_entry["sha256"], str)
         assert len(file_entry["sha256"]) == 64
+        assert file_entry["column_names"] == [
+            "timestamp",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ]
 
     def test_aggregate_fingerprint_deterministic(self, tmp_path):
         _write_tiny_bars_csv(tmp_path, "bars_a.csv")
@@ -18248,9 +18256,48 @@ class TestProjectedInputRowCountP1:
     def _o1(self):
         return TestProjectedInputShapeInventoryO1()
 
-    def _full_chain_diags(self):
+    def _valid_inventory(self):
+        return {
+            "roles": [
+                {
+                    "role": "bars",
+                    "files": [
+                        {
+                            "filename": "BTCUSDT_8h_ohlcv.csv",
+                            "symbol": "BTCUSDT",
+                            "row_count": 3,
+                            "column_names": [
+                                "timestamp",
+                                "open",
+                                "high",
+                                "low",
+                                "close",
+                                "volume",
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "role": "funding",
+                    "files": [
+                        {
+                            "filename": "BTCUSDT_8h_funding.csv",
+                            "symbol": "BTCUSDT",
+                            "row_count": 2,
+                            "column_names": [
+                                "fundingTime",
+                                "fundingRate",
+                                "markPrice",
+                            ],
+                        }
+                    ],
+                },
+            ]
+        }
+
+    def _full_chain_diags(self, inventory_diagnostics=None):
         diags = self._o1()._full_chain_diags()
-        inventory = _build_projected_input_shape_inventory_diagnostics(
+        shape_inventory = _build_projected_input_shape_inventory_diagnostics(
             allowed_runner_input_projection_diagnostics=diags[
                 "allowed_runner_input_projection_diagnostics"
             ],
@@ -18260,8 +18307,9 @@ class TestProjectedInputRowCountP1:
             implementation_boundary_diagnostics=diags[
                 "implementation_boundary_diagnostics"
             ],
+            inventory_diagnostics=inventory_diagnostics or self._valid_inventory(),
         )
-        diags["projected_input_shape_inventory_diagnostics"] = inventory
+        diags["projected_input_shape_inventory_diagnostics"] = shape_inventory
         return diags
 
     def _absence_diags(self):
@@ -18280,7 +18328,7 @@ class TestProjectedInputRowCountP1:
         diags["projected_input_shape_inventory_diagnostics"] = inventory
         return diags
 
-    def _build(self, diags):
+    def _build(self, diags, inventory=None):
         return _build_projected_input_row_count_diagnostics(
             projected_input_shape_inventory_diagnostics=diags[
                 "projected_input_shape_inventory_diagnostics"
@@ -18294,10 +18342,26 @@ class TestProjectedInputRowCountP1:
             implementation_boundary_diagnostics=diags[
                 "implementation_boundary_diagnostics"
             ],
+            inventory_diagnostics=inventory or self._valid_inventory(),
         )
 
     def _result(self):
         return self._build(self._full_chain_diags())
+
+    def _build_with_inventory(self, inventory):
+        return self._build(self._full_chain_diags(inventory), inventory)
+
+    def _assert_row_count_gate_blocked_by_incomplete_evidence(self, result):
+        gate = result["projected_input_row_count_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_ROW_COUNT_EVIDENCE
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        for field in _PROJECTED_INPUT_ROW_COUNT_AUTHORIZATION_FIELDS:
+            assert result[field] is False
 
     def test_row_count_no_args_shape_inventory_failed_fails_closed(self):
         result = self._build(self._absence_diags())
@@ -18354,6 +18418,12 @@ class TestProjectedInputRowCountP1:
             "bars": {"close": True, "timestamp": True},
             "funding": {"fundingRate": True, "fundingTime": True},
         }
+        assert summary["required_role_presence_by_role"] == {
+            "bars": True,
+            "funding": True,
+        }
+        assert summary["column_presence_source"] == "inventory_metadata"
+        assert summary["column_presence_complete"] is True
         assert summary["forbidden_column_presence_by_role"] == {
             "bars": {
                 "open": False,
@@ -18383,6 +18453,121 @@ class TestProjectedInputRowCountP1:
         assert gate["gate_final_verdict_authorization"] is False
         assert gate["gate_downstream_unlocks"] == []
         assert gate["blocked_reason"] is None
+
+    def test_bars_only_inventory_does_not_claim_funding_columns_present(self):
+        inventory = {
+            "roles": [
+                {
+                    "role": "bars",
+                    "files": [
+                        {
+                            "filename": "BTCUSDT_8h_ohlcv.csv",
+                            "symbol": "BTCUSDT",
+                            "row_count": 3,
+                            "column_names": ["timestamp", "close"],
+                        }
+                    ],
+                }
+            ]
+        }
+        result = self._build_with_inventory(inventory)
+        summary = result["row_count_summary"]
+        assert summary["required_role_presence_by_role"]["funding"] is False
+        assert summary["allowed_column_presence_by_role"]["funding"] == {
+            "fundingRate": False,
+            "fundingTime": False,
+        }
+        assert summary["column_presence_complete"] is False
+        self._assert_row_count_gate_blocked_by_incomplete_evidence(result)
+
+    def test_missing_funding_role_fails_closed_even_when_upstream_gates_pass(self):
+        inventory = self._valid_inventory()
+        inventory["roles"] = [
+            role for role in inventory["roles"] if role["role"] != "funding"
+        ]
+        result = self._build_with_inventory(inventory)
+        assert result["projected_input_shape_inventory_gate_passed"] is True
+        assert result["allowed_runner_input_projection_gate_passed"] is True
+        assert result["no_output_runner_invocation_gate_passed"] is True
+        assert result["implementation_boundary_gate_passed"] is True
+        self._assert_row_count_gate_blocked_by_incomplete_evidence(result)
+
+    def test_missing_bars_allowed_column_fails_closed(self):
+        inventory = self._valid_inventory()
+        bars_role = next(role for role in inventory["roles"] if role["role"] == "bars")
+        bars_role["files"][0]["column_names"] = ["timestamp", "open", "high"]
+        result = self._build_with_inventory(inventory)
+        summary = result["row_count_summary"]
+        assert summary["allowed_column_presence_by_role"]["bars"]["close"] is False
+        assert summary["column_presence_complete"] is False
+        self._assert_row_count_gate_blocked_by_incomplete_evidence(result)
+
+    def test_missing_funding_allowed_column_fails_closed(self):
+        inventory = self._valid_inventory()
+        funding_role = next(
+            role for role in inventory["roles"] if role["role"] == "funding"
+        )
+        funding_role["files"][0]["column_names"] = ["fundingTime", "markPrice"]
+        result = self._build_with_inventory(inventory)
+        summary = result["row_count_summary"]
+        assert (
+            summary["allowed_column_presence_by_role"]["funding"]["fundingRate"]
+            is False
+        )
+        assert summary["column_presence_complete"] is False
+        self._assert_row_count_gate_blocked_by_incomplete_evidence(result)
+
+    def test_no_column_metadata_available_does_not_silently_pass(self):
+        inventory = self._valid_inventory()
+        for role in inventory["roles"]:
+            for file_entry in role["files"]:
+                del file_entry["column_names"]
+        result = self._build_with_inventory(inventory)
+        summary = result["row_count_summary"]
+        assert summary["allowed_column_presence_by_role"]["bars"] == {
+            "close": "UNKNOWN",
+            "timestamp": "UNKNOWN",
+        }
+        assert summary["allowed_column_presence_by_role"]["funding"] == {
+            "fundingRate": "UNKNOWN",
+            "fundingTime": "UNKNOWN",
+        }
+        assert summary["column_presence_complete"] is False
+        self._assert_row_count_gate_blocked_by_incomplete_evidence(result)
+
+    def test_full_valid_inventory_with_required_columns_passes(self):
+        result = self._build_with_inventory(self._valid_inventory())
+        summary = result["row_count_summary"]
+        assert summary["required_role_presence_by_role"] == {
+            "bars": True,
+            "funding": True,
+        }
+        assert summary["allowed_column_presence_by_role"] == {
+            "bars": {"close": True, "timestamp": True},
+            "funding": {"fundingRate": True, "fundingTime": True},
+        }
+        assert summary["column_presence_complete"] is True
+        assert result["projected_input_row_count_gate"]["gate_passed"] is True
+
+    def test_forbidden_columns_remain_excluded_from_projected_metadata(self):
+        result = self._build_with_inventory(self._valid_inventory())
+        summary = result["row_count_summary"]
+        assert summary["allowed_column_presence_by_role"] == {
+            "bars": {"close": True, "timestamp": True},
+            "funding": {"fundingRate": True, "fundingTime": True},
+        }
+        assert "open" not in summary["allowed_column_presence_by_role"]["bars"]
+        assert "markPrice" not in summary["allowed_column_presence_by_role"]["funding"]
+        assert summary["forbidden_column_presence_by_role"] == {
+            "bars": {
+                "open": False,
+                "high": False,
+                "low": False,
+                "volume": False,
+            },
+            "funding": {"markPrice": False},
+        }
+        assert result["projected_input_row_count_gate"]["gate_passed"] is True
 
     def test_projected_input_shape_inventory_gate_missing_fails_closed(self):
         diags = self._full_chain_diags()
@@ -18576,11 +18761,24 @@ class TestProjectedInputRowCountP1:
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
     def test_receipt_integration_full_path(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
         output_dir = tmp_path / "output"
         output_dir.mkdir()
         m1 = self._o1()._n1()._m1()
         exit_code = real_validation.main(
-            m1._cli_base_args(output_dir) + m1._cli_full_chain_args()
+            m1._cli_base_args(output_dir)
+            + m1._cli_full_chain_args()
+            + [
+                "--bars-dir",
+                str(bars_dir),
+                "--funding-dir",
+                str(funding_dir),
+            ]
         )
         assert exit_code == 0
         receipt = json.loads(
@@ -18605,6 +18803,53 @@ class TestProjectedInputRowCountP1:
         assert diagnostics["projected_input_row_count_gate"][
             "gate_passed"
         ] is True
+        summary = diagnostics["row_count_summary"]
+        assert summary["required_role_presence_by_role"] == {
+            "bars": True,
+            "funding": True,
+        }
+        assert summary["allowed_column_presence_by_role"] == {
+            "bars": {"close": True, "timestamp": True},
+            "funding": {"fundingRate": True, "fundingTime": True},
+        }
+        assert summary["column_presence_source"] == "inventory_metadata"
+        assert summary["column_presence_complete"] is True
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_receipt_integration_no_funding_path_fails_p1_closed(
+        self, tmp_path
+    ):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = self._o1()._n1()._m1()
+        exit_code = real_validation.main(
+            m1._cli_base_args(output_dir)
+            + m1._cli_full_chain_args()
+            + ["--bars-dir", str(bars_dir)]
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        diagnostics = receipt["projected_input_row_count_diagnostics"]
+        summary = diagnostics["row_count_summary"]
+        assert summary["required_role_presence_by_role"] == {
+            "bars": True,
+            "funding": False,
+        }
+        assert summary["allowed_column_presence_by_role"]["funding"] == {
+            "fundingRate": False,
+            "fundingTime": False,
+        }
+        assert summary["column_presence_complete"] is False
+        gate = diagnostics["projected_input_row_count_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_ROW_COUNT_EVIDENCE
+        )
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
     def test_no_forbidden_calculation_keys(self):
