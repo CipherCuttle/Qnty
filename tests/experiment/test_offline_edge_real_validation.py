@@ -21285,6 +21285,16 @@ class TestDescriptiveStatisticalValueSchemaLockZ0:
         result = self._build(tmp_path); result[field] = value
         assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_EVIDENCE
 
+    @pytest.mark.parametrize("field", real_validation._DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_AUTHORIZATION_FIELDS)
+    def test_downstream_authorizations_fail_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_AUTHORIZATION
+
+    @pytest.mark.parametrize("field", real_validation._DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_OUTPUT_FIELDS + real_validation._DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_AUTHORIZATION_FIELDS)
+    def test_downstream_evidence_requires_all_fields(self, tmp_path, field):
+        result = self._build(tmp_path); del result[field]
+        assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_EVIDENCE
+
     def test_authorizations_unlocks_verdict_and_forbidden_keys_fail_closed(self, tmp_path):
         result = self._build(tmp_path); result["statistical_value_generation_authorized"] = True
         assert real_validation._derive_descriptive_statistical_value_schema_lock_z0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_VALUE_DOWNSTREAM_AUTHORIZATION
@@ -21309,7 +21319,16 @@ class TestDescriptiveStatisticalValueSchemaLockZ0:
         m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
         assert real_validation.main(m1._cli_base_args(output_dir)) == 0
         receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
-        assert receipt["descriptive_statistical_value_schema_lock_z0_diagnostics"]["descriptive_statistical_value_schema_lock_z0_gate"]["gate_passed"] is False
+        diagnostics = receipt["descriptive_statistical_value_schema_lock_z0_diagnostics"]
+        assert diagnostics["descriptive_statistical_value_schema_lock_z0_gate"]["gate_passed"] is False
+        assert diagnostics["descriptive_value_rows"] == []
+        assert diagnostics["descriptive_value_rows_emitted"] is False
+        assert diagnostics["descriptive_value_row_count"] == 0
+        assert diagnostics["descriptive_values_emitted"] is False
+        assert diagnostics["descriptive_value_count"] == 0
+        assert diagnostics["statistical_values"] == []
+        assert diagnostics["statistical_values_emitted"] is False
+        assert diagnostics["statistical_value_count"] == 0
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
     def test_full_cli_receipt_includes_passing_z0_with_zero_rows_and_values(self, tmp_path):
