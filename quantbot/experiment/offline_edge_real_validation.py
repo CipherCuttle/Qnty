@@ -118,6 +118,8 @@ __all__ = [
     "_derive_economic_output_schema_lock_gate",
     "_build_economic_accounting_rows_v0_diagnostics",
     "_derive_economic_accounting_rows_v0_gate",
+    "_build_null_reference_comparison_schema_lock_diagnostics",
+    "_derive_null_reference_comparison_schema_lock_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -1148,6 +1150,50 @@ _ECONOMIC_ACCOUNTING_ROWS_V0_DOWNSTREAM_OUTPUT_FIELDS = (
     "return_values_emitted", "profit_values_emitted", "statistical_values_emitted",
     "null_comparison_values_emitted", "scoring_values_emitted", "live_integration_values_emitted",
     "paper_integration_values_emitted", "final_verdict_values_emitted",
+)
+
+# === Lane W0: null/reference comparison schema lock diagnostics ===
+NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_VERSION = "null-reference-comparison-schema-lock-w0-0.1"
+NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_SCOPE = "FUTURE_NULL_REFERENCE_COMPARISON_SCHEMA_ONLY_NO_ROWS_OR_VALUES_EMITTED"
+NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_DECLARED_DIAGNOSTIC_ONLY = "NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_DECLARED_DIAGNOSTIC_ONLY"
+BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_GATE = "BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_GATE"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_UPSTREAM_GATE = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_UPSTREAM_GATE"
+BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE"
+BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_SCHEMA_MUTATION = "BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_SCHEMA_MUTATION"
+BLOCKED_BY_UNEXPECTED_EMITTED_COMPARISON_ROWS = "BLOCKED_BY_UNEXPECTED_EMITTED_COMPARISON_ROWS"
+BLOCKED_BY_UNEXPECTED_EMITTED_COMPARISON_VALUES = "BLOCKED_BY_UNEXPECTED_EMITTED_COMPARISON_VALUES"
+BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_DOWNSTREAM_OUTPUT = "BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_DOWNSTREAM_OUTPUT"
+BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_DOWNSTREAM_AUTHORIZATION = "BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_DOWNSTREAM_AUTHORIZATION"
+BLOCKED_BY_NULL_REFERENCE_COMPARISON_FINAL_VERDICT_ADVANCEMENT = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_FINAL_VERDICT_ADVANCEMENT"
+_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS = (
+    "schema_version", "schema_kind", "run_id", "comparison_sequence_id",
+    "source_accounting_sequence_id", "source_event_sequence_id",
+    "source_rule_row_sequence_id", "symbol", "split_id", "split_partition",
+    "comparison_time_utc", "source_accounting_time_utc", "source_event_time_utc",
+    "comparison_family", "comparison_variant", "comparison_revision",
+    "comparison_entry_name", "comparison_entry_code", "comparison_basis_name",
+    "comparison_basis_code", "comparison_unit", "comparison_value_kind",
+    "comparison_value_present", "comparison_value", "comparison_metadata_only",
+)
+_NULL_REFERENCE_COMPARISON_W0_UPSTREAM_GATE_FIELDS = (
+    "economic_output_schema_lock_gate_passed", "simulated_events_v0_gate_passed",
+    "simulated_event_schema_lock_gate_passed", "materialized_rule_rows_v0_gate_passed",
+    "materialized_rule_row_schema_lock_gate_passed", "no_output_runner_dry_harness_gate_passed",
+    "projected_input_joinability_gate_passed", "projected_input_temporal_sequence_gate_passed",
+    "projected_input_row_count_gate_passed", "projected_input_shape_inventory_gate_passed",
+    "allowed_runner_input_projection_gate_passed", "no_output_runner_invocation_gate_passed",
+    "implementation_boundary_gate_passed",
+)
+_NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS = (
+    "null_reference_comparison_output_emitted", "null_comparison_values_emitted",
+    "statistical_values_emitted",
+    "scoring_values_emitted", "live_integration_values_emitted",
+    "paper_integration_values_emitted", "final_verdict_values_emitted",
+)
+_NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS = (
+    "statistical_value_generation_authorized", "candidate_comparison_authorized",
+    "null_generation_authorized", "scoring_authorization", "live_integration_authorized",
+    "paper_integration_authorized", "final_verdict_authorization",
 )
 _ECONOMIC_ACCOUNTING_ROWS_V0_DOWNSTREAM_AUTHORIZATION_FIELDS = (
     "statistical_value_generation_authorized", "candidate_comparison_authorized",
@@ -16649,6 +16695,122 @@ def _derive_economic_accounting_rows_v0_gate(diagnostics: dict[str, Any]) -> dic
     return result
 
 
+def _build_null_reference_comparison_schema_lock_diagnostics(
+    *, economic_accounting_rows_v0_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Build W0's future comparison schema declaration without emitting artifacts."""
+    def passed(section: dict[str, Any], gate_name: str) -> bool:
+        gate = section.get(gate_name)
+        return bool(isinstance(gate, dict) and gate.get("gate_passed") is True)
+
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "null_reference_comparison_schema_lock_w0",
+        "null_reference_comparison_schema_lock_version": NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_VERSION,
+        "null_reference_comparison_schema_lock_scope": NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_SCOPE,
+        "null_reference_comparison_schema_lock_status": NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_DECLARED_DIAGNOSTIC_ONLY,
+        "economic_accounting_rows_v0_gate_required": True,
+        "economic_accounting_rows_v0_gate_passed": passed(
+            economic_accounting_rows_v0_diagnostics, "economic_accounting_rows_v0_gate"
+        ),
+        **{field.replace("_passed", "_required"): True for field in _NULL_REFERENCE_COMPARISON_W0_UPSTREAM_GATE_FIELDS},
+        **{field: economic_accounting_rows_v0_diagnostics.get(field) is True for field in _NULL_REFERENCE_COMPARISON_W0_UPSTREAM_GATE_FIELDS},
+        "null_reference_comparison_schema_lock_declared": True,
+        "declared_null_reference_comparison_schema_keys": list(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS),
+        "declared_null_reference_comparison_schema_key_count": len(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS),
+        "comparison_rows": [],
+        "comparison_rows_emitted": False,
+        "comparison_row_count": 0,
+        "comparison_values": [],
+        "comparison_values_emitted": False,
+        "comparison_value_count": 0,
+        **{field: False for field in _NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS},
+        **{field: False for field in _NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS},
+        "downstream_unlocks": [],
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["null_reference_comparison_schema_lock_gate"] = (
+        _derive_null_reference_comparison_schema_lock_gate(diagnostics)
+    )
+    return diagnostics
+
+
+def _derive_null_reference_comparison_schema_lock_gate(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    """Fail closed unless W0 declares the exact future schema and emits nothing."""
+    rows = diagnostics.get("comparison_rows")
+    values = diagnostics.get("comparison_values")
+    upstream_fields = ("economic_accounting_rows_v0_gate_passed",) + _NULL_REFERENCE_COMPARISON_W0_UPSTREAM_GATE_FIELDS
+    output_evidence_fields = tuple(
+        f"{field}_is_exactly_false"
+        for field in _NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS
+    )
+    authorization_evidence_fields = tuple(
+        f"{field}_is_exactly_false"
+        for field in _NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS
+    )
+    output_offenders = [field for field in _NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS if diagnostics.get(field) is True]
+    authorization_offenders = [field for field in _NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS if diagnostics.get(field) is True]
+    evidence = {
+        **{field: diagnostics.get(field) is True for field in upstream_fields},
+        **{
+            f"{field}_is_exactly_false": diagnostics.get(field) is False
+            for field in _NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS
+        },
+        **{
+            f"{field}_is_exactly_false": diagnostics.get(field) is False
+            for field in _NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS
+        },
+        "schema_lock_declared": diagnostics.get("null_reference_comparison_schema_lock_declared") is True,
+        "schema_status_matches": diagnostics.get("null_reference_comparison_schema_lock_status") == NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_DECLARED_DIAGNOSTIC_ONLY,
+        "declared_schema_keys_match": diagnostics.get("declared_null_reference_comparison_schema_keys") == list(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS),
+        "declared_schema_key_count_matches": diagnostics.get("declared_null_reference_comparison_schema_key_count") == len(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS),
+        "comparison_rows_are_empty_list": rows == [],
+        "comparison_row_count_zero": diagnostics.get("comparison_row_count") == 0,
+        "comparison_rows_not_emitted": diagnostics.get("comparison_rows_emitted") is False,
+        "comparison_values_are_empty_list": values == [],
+        "comparison_value_count_zero": diagnostics.get("comparison_value_count") == 0,
+        "comparison_values_not_emitted": diagnostics.get("comparison_values_emitted") is False,
+        "downstream_unlocks_empty": diagnostics.get("downstream_unlocks") == [],
+        "final_offline_verdict_remains": diagnostics.get("final_offline_verdict_remains"),
+    }
+    def gate(status: str, reason: str | None) -> dict[str, Any]:
+        return {
+            "gate_kind": "null_reference_comparison_schema_lock_gate",
+            "gate_scope": NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_SCOPE,
+            "gate_status": status, "gate_passed": False,
+            "gate_scoring_authorization": False, "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False, "gate_downstream_unlocks": [],
+            "evidence": evidence, "blocked_reason": reason,
+        }
+    if not diagnostics.get("economic_accounting_rows_v0_gate_passed"):
+        return gate(BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_GATE, "ECONOMIC_ACCOUNTING_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not all(diagnostics.get(field) is True for field in _NULL_REFERENCE_COMPARISON_W0_UPSTREAM_GATE_FIELDS):
+        return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_UPSTREAM_GATE, "REQUIRED_UPSTREAM_GATE_MISSING_OR_NOT_PASSED")
+    if diagnostics.get("declared_null_reference_comparison_schema_keys") != list(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS):
+        return gate(BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_SCHEMA_MUTATION, "DECLARED_SCHEMA_KEYS_DO_NOT_EXACTLY_MATCH_W0_ALLOWED_SCHEMA_KEYS")
+    if diagnostics.get("comparison_rows_emitted") is True or diagnostics.get("comparison_row_count") != 0 or rows != []:
+        return gate(BLOCKED_BY_UNEXPECTED_EMITTED_COMPARISON_ROWS, "COMPARISON_ROWS_MUST_NOT_BE_EMITTED_IN_W0")
+    if diagnostics.get("comparison_values_emitted") is True or diagnostics.get("comparison_value_count") != 0 or values != []:
+        return gate(BLOCKED_BY_UNEXPECTED_EMITTED_COMPARISON_VALUES, "COMPARISON_VALUES_MUST_NOT_BE_EMITTED_IN_W0")
+    if output_offenders:
+        return gate(BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_DOWNSTREAM_OUTPUT, "UNEXPECTED_DOWNSTREAM_OUTPUT_FIELDS_TRUE")
+    if authorization_offenders:
+        return gate(BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_DOWNSTREAM_AUTHORIZATION, "UNEXPECTED_DOWNSTREAM_AUTHORIZATION_FIELDS_TRUE")
+    if diagnostics.get("final_offline_verdict_remains") != BLOCKED_BY_VALIDATION_IMPLEMENTATION:
+        return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_FINAL_VERDICT_ADVANCEMENT, "FINAL_OFFLINE_VERDICT_MUST_REMAIN_BLOCKED")
+    required = (
+        "schema_lock_declared", "schema_status_matches", "declared_schema_keys_match",
+        "declared_schema_key_count_matches", "comparison_rows_are_empty_list",
+        "comparison_row_count_zero", "comparison_rows_not_emitted",
+        "comparison_values_are_empty_list", "comparison_value_count_zero",
+        "comparison_values_not_emitted", "downstream_unlocks_empty",
+    ) + output_evidence_fields + authorization_evidence_fields
+    if not all(evidence.get(field) is True for field in upstream_fields + required):
+        return gate(BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE, "NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    result = gate(NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_DECLARED_DIAGNOSTIC_ONLY, None)
+    result["gate_passed"] = True
+    return result
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -16781,6 +16943,7 @@ def build_real_validation_receipt(
     simulated_events_v0_diagnostics: dict | None = None,
     economic_output_schema_lock_diagnostics: dict | None = None,
     economic_accounting_rows_v0_diagnostics: dict | None = None,
+    null_reference_comparison_schema_lock_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -16981,6 +17144,10 @@ def build_real_validation_receipt(
     if economic_accounting_rows_v0_diagnostics is not None:
         receipt["economic_accounting_rows_v0_diagnostics"] = (
             economic_accounting_rows_v0_diagnostics
+        )
+    if null_reference_comparison_schema_lock_diagnostics is not None:
+        receipt["null_reference_comparison_schema_lock_diagnostics"] = (
+            null_reference_comparison_schema_lock_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -17950,6 +18117,11 @@ def main(argv: list[str] | None = None) -> int:
                     economic_accounting_policy_diagnostics=net_pnl_equity_risk_contract_diagnostics.get("economic_accounting_policy_diagnostics"),
                 )
             )
+            null_reference_comparison_schema_lock_diagnostics = (
+                _build_null_reference_comparison_schema_lock_diagnostics(
+                    economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -18061,6 +18233,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             economic_accounting_rows_v0_diagnostics=(
                 economic_accounting_rows_v0_diagnostics
+            ),
+            null_reference_comparison_schema_lock_diagnostics=(
+                null_reference_comparison_schema_lock_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -18487,6 +18662,11 @@ def main(argv: list[str] | None = None) -> int:
                     economic_accounting_policy_diagnostics=net_pnl_equity_risk_contract_diagnostics.get("economic_accounting_policy_diagnostics"),
                 )
             )
+            null_reference_comparison_schema_lock_diagnostics = (
+                _build_null_reference_comparison_schema_lock_diagnostics(
+                    economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -18563,6 +18743,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             economic_accounting_rows_v0_diagnostics=(
                 economic_accounting_rows_v0_diagnostics
+            ),
+            null_reference_comparison_schema_lock_diagnostics=(
+                null_reference_comparison_schema_lock_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics

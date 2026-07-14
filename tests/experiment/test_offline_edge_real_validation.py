@@ -20369,6 +20369,144 @@ class TestEconomicAccountingRowsV0V1:
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
 
+class TestNullReferenceComparisonSchemaLockW0:
+    """Lane W0: declare the future comparison schema and emit nothing."""
+
+    def _build(self, tmp_path):
+        v1 = TestEconomicAccountingRowsV0V1()._build(tmp_path)
+        return real_validation._build_null_reference_comparison_schema_lock_diagnostics(
+            economic_accounting_rows_v0_diagnostics=v1,
+        )
+
+    def test_schema_declared_with_zero_rows_and_values(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["diagnostic_kind"] == "null_reference_comparison_schema_lock_w0"
+        assert result["declared_null_reference_comparison_schema_keys"] == list(
+            real_validation._ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS
+        )
+        assert result["comparison_rows"] == result["comparison_values"] == []
+        assert result["comparison_row_count"] == result["comparison_value_count"] == 0
+        assert result["comparison_rows_emitted"] is result["comparison_values_emitted"] is False
+        assert result["null_reference_comparison_schema_lock_gate"]["gate_passed"] is True
+        assert result["final_offline_verdict_remains"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_v1_and_older_upstream_failures_fail_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["economic_accounting_rows_v0_gate_passed"] = False
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_GATE
+        result = self._build(tmp_path)
+        result["implementation_boundary_gate_passed"] = False
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_NULL_REFERENCE_COMPARISON_UPSTREAM_GATE
+
+    def test_schema_key_removal_or_addition_fails_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["declared_null_reference_comparison_schema_keys"].pop()
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_SCHEMA_MUTATION
+        result = self._build(tmp_path)
+        result["declared_null_reference_comparison_schema_keys"].append("unexpected")
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_SCHEMA_MUTATION
+
+    @pytest.mark.parametrize("field, value", [
+        ("comparison_row_count", 1), ("comparison_rows", [{"safe": "metadata"}]),
+    ])
+    def test_emitted_comparison_rows_fail_closed(self, tmp_path, field, value):
+        result = self._build(tmp_path)
+        result[field] = value
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_COMPARISON_ROWS
+
+    @pytest.mark.parametrize("field, value", [
+        ("comparison_value_count", 1), ("comparison_values_emitted", True),
+    ])
+    def test_emitted_comparison_values_fail_closed(self, tmp_path, field, value):
+        result = self._build(tmp_path)
+        result[field] = value
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_COMPARISON_VALUES
+
+    @pytest.mark.parametrize(
+        "field", real_validation._NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS
+    )
+    def test_downstream_output_fails_closed(self, tmp_path, field):
+        result = self._build(tmp_path)
+        result[field] = True
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_DOWNSTREAM_OUTPUT
+
+    @pytest.mark.parametrize(
+        "field", real_validation._NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS
+    )
+    def test_downstream_authorization_fails_closed(self, tmp_path, field):
+        result = self._build(tmp_path)
+        result[field] = True
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_DOWNSTREAM_AUTHORIZATION
+
+    @pytest.mark.parametrize("mutation", ["remove", "none"])
+    def test_downstream_output_missing_or_none_fails_closed(self, tmp_path, mutation):
+        result = self._build(tmp_path)
+        field = "null_comparison_values_emitted"
+        if mutation == "remove":
+            del result[field]
+        else:
+            result[field] = None
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE
+
+    def test_downstream_output_non_false_value_fails_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["null_comparison_values_emitted"] = 1
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE
+
+    @pytest.mark.parametrize("mutation", ["remove", "none"])
+    def test_downstream_authorization_missing_or_none_fails_closed(self, tmp_path, mutation):
+        result = self._build(tmp_path)
+        field = "candidate_comparison_authorized"
+        if mutation == "remove":
+            del result[field]
+        else:
+            result[field] = None
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE
+
+    def test_downstream_authorization_non_false_value_fails_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["candidate_comparison_authorized"] = 1
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE
+
+    def test_final_verdict_mutation_fails_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["final_offline_verdict_remains"] = "MUTATED"
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_NULL_REFERENCE_COMPARISON_FINAL_VERDICT_ADVANCEMENT
+
+    def test_no_input_cli_receipt_includes_failed_w0_gate(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        assert real_validation.main(m1._cli_base_args(output_dir)) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        diagnostics = receipt["null_reference_comparison_schema_lock_diagnostics"]
+        assert diagnostics["null_reference_comparison_schema_lock_gate"]["gate_passed"] is False
+        assert diagnostics["comparison_rows"] == diagnostics["comparison_values"] == []
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_full_cli_receipt_includes_w0_and_remains_blocked(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+        j1 = TestEconomicAccountingPolicyPreregistrationJ1()
+        assert real_validation.main(
+            j1._cli_base_args(output_dir)
+            + j1._cli_upstream_args()
+            + j1._cli_eap_args()
+            + ["--bars-dir", str(bars_dir), "--funding-dir", str(funding_dir)]
+        ) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        diagnostics = receipt["null_reference_comparison_schema_lock_diagnostics"]
+        assert diagnostics["diagnostic_kind"] == "null_reference_comparison_schema_lock_w0"
+        assert diagnostics["comparison_row_count"] == diagnostics["comparison_value_count"] == 0
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
 class TestProjectedInputShapeInventoryO1:
     """Lane O1: projected input shape inventory diagnostics."""
 
