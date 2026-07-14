@@ -18095,9 +18095,12 @@ class TestDescriptiveStatisticalMetadataRowsV0Z1:
         (lambda row: row.pop("schema_kind"), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_ROW_SCHEMA),
         (lambda row: row.update({"schema_kind": "mutated"}), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_ROW_CONSTANTS),
         (lambda row: row.update({"descriptive_value_kind": "computed"}), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_ROW_CONSTANTS),
+        (lambda row: row.update({"descriptive_variant": "actual_descriptive_value"}), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_ROW_CONSTANTS),
+        (lambda row: row.update({"descriptive_entry_code": "COMPUTED_DESCRIPTIVE_VALUE"}), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_ROW_CONSTANTS),
         (lambda row: row.update({"descriptive_value": 0}), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_METADATA_VALUE),
         (lambda row: row.update({"descriptive_value_present": True}), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_DESCRIPTIVE_STATISTICAL_METADATA_VALUE),
         (lambda row: row.update({"descriptive_metadata_only": False}), real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_EVIDENCE),
+        (lambda row: row.update({"descriptive_metadata_only": None}), real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_EVIDENCE),
     ])
     def test_row_mutations_fail_closed(self, tmp_path, mutation, status):
         result = self._build(tmp_path); mutation(result["descriptive_value_rows"][0])
@@ -18110,11 +18113,42 @@ class TestDescriptiveStatisticalMetadataRowsV0Z1:
         ("statistical_values_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Z1),
         ("statistical_value_count", 1, real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_Z1),
         ("inferential_values_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_INFERENTIAL_OUTPUT),
+        ("uncertainty_values_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_INFERENTIAL_OUTPUT),
+        ("candidate_comparison_values_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_INFERENTIAL_OUTPUT),
         ("scoring_values_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_DOWNSTREAM_OUTPUT),
+        ("live_integration_values_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_DOWNSTREAM_OUTPUT),
+        ("paper_integration_values_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_DOWNSTREAM_OUTPUT),
+        ("final_verdict_values_emitted", True, real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_DOWNSTREAM_OUTPUT),
     ])
     def test_output_mutations_fail_closed(self, tmp_path, field, value, status):
         result = self._build(tmp_path); result[field] = value
         assert real_validation._derive_descriptive_statistical_metadata_rows_v0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize(
+        "field",
+        real_validation._DESCRIPTIVE_STATISTICAL_METADATA_ROWS_Z1_OUTPUT_FIELDS
+        + real_validation._DESCRIPTIVE_STATISTICAL_METADATA_ROWS_Z1_AUTHORIZATION_FIELDS,
+    )
+    @pytest.mark.parametrize("value", [None, 1])
+    def test_downstream_fields_must_be_exactly_false(self, tmp_path, field, value):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_descriptive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_EVIDENCE
+
+    @pytest.mark.parametrize(
+        "field",
+        real_validation._DESCRIPTIVE_STATISTICAL_METADATA_ROWS_Z1_OUTPUT_FIELDS
+        + real_validation._DESCRIPTIVE_STATISTICAL_METADATA_ROWS_Z1_AUTHORIZATION_FIELDS,
+    )
+    def test_downstream_fields_must_be_present(self, tmp_path, field):
+        result = self._build(tmp_path); del result[field]
+        assert real_validation._derive_descriptive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_EVIDENCE
+
+    @pytest.mark.parametrize(
+        "field", real_validation._DESCRIPTIVE_STATISTICAL_METADATA_ROWS_Z1_AUTHORIZATION_FIELDS
+    )
+    def test_downstream_authorization_fields_fail_closed_when_true(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_descriptive_statistical_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_STATISTICAL_METADATA_DOWNSTREAM_AUTHORIZATION
 
     def test_identity_order_count_cap_unlocks_verdict_and_forbidden_keys_fail_closed(self, tmp_path):
         result = self._build(tmp_path); result["descriptive_value_rows"].append(result["descriptive_value_rows"][0].copy())
@@ -18144,7 +18178,9 @@ class TestDescriptiveStatisticalMetadataRowsV0Z1:
         assert empty["descriptive_values_emitted"] is False
         assert empty["descriptive_value_count"] == 0
         assert empty["statistical_values"] == []
+        assert empty["statistical_values_emitted"] is False
         assert empty["statistical_value_count"] == 0
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
         output_dir = tmp_path / "full-output"; output_dir.mkdir()
         bars_dir = tmp_path / "bars"; funding_dir = tmp_path / "funding"
         bars_dir.mkdir(); funding_dir.mkdir()
