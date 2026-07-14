@@ -18029,6 +18029,106 @@ class TestAllowedRunnerInputProjectionN1:
         )
 
 
+class TestInferentialUncertaintySchemaLockAB0:
+    """Lane AB0: declare future inferential schema and emit nothing."""
+
+    def _build(self, tmp_path):
+        v1, w0, w1, x0, x1, y0, y1, z0, z1, aa0 = TestDescriptiveCountValuesV0AA1()._parts(tmp_path)
+        aa1 = real_validation._build_descriptive_count_values_v0_diagnostics(
+            descriptive_statistical_value_policy_lock_aa0_diagnostics=aa0, descriptive_statistical_metadata_rows_v0_diagnostics=z1,
+            descriptive_statistical_value_schema_lock_z0_diagnostics=z0, statistical_value_readiness_rows_v0_diagnostics=y1,
+            statistical_value_contract_lock_y0_diagnostics=y0, statistical_metadata_rows_v0_diagnostics=x1,
+            statistical_output_schema_lock_diagnostics=x0, null_reference_comparison_rows_v0_diagnostics=w1,
+            null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1,
+        )
+        return real_validation._build_inferential_uncertainty_schema_lock_ab0_diagnostics(
+            descriptive_count_values_v0_diagnostics=aa1, descriptive_statistical_value_policy_lock_aa0_diagnostics=aa0,
+            descriptive_statistical_metadata_rows_v0_diagnostics=z1, descriptive_statistical_value_schema_lock_z0_diagnostics=z0,
+            statistical_value_readiness_rows_v0_diagnostics=y1, statistical_value_contract_lock_y0_diagnostics=y0,
+            statistical_metadata_rows_v0_diagnostics=x1, statistical_output_schema_lock_diagnostics=x0,
+            null_reference_comparison_rows_v0_diagnostics=w1, null_reference_comparison_schema_lock_diagnostics=w0,
+            economic_accounting_rows_v0_diagnostics=v1,
+        )
+
+    def test_happy_path_declares_schema_and_emits_zero_values(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["inferential_uncertainty_schema_lock_ab0_gate"]["gate_passed"] is True
+        assert result["declared_inferential_uncertainty_row_keys"] == list(real_validation._ALLOWED_INFERENTIAL_UNCERTAINTY_ROW_KEYS_AB0)
+        assert result["declared_inferential_uncertainty_value_kind_names"] == ["not_computed"]
+        assert result["inferential_uncertainty_rows"] == []
+        assert result["inferential_values_emitted"] is result["uncertainty_values_emitted"] is False
+        assert result["statistical_values"] == []
+
+    @pytest.mark.parametrize("field,status", [
+        ("descriptive_count_values_v0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_FOR_AB0_GATE),
+        ("descriptive_statistical_value_policy_lock_aa0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_FOR_AB0_GATE),
+        ("descriptive_statistical_metadata_rows_v0_gate_passed", real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE),
+        ("descriptive_statistical_value_schema_lock_z0_gate_passed", real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE),
+        ("statistical_value_readiness_rows_v0_gate_passed", real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE),
+        ("statistical_value_contract_lock_gate_passed", real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE),
+        ("statistical_metadata_rows_v0_gate_passed", real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE),
+        ("statistical_output_schema_lock_gate_passed", real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE),
+        ("null_reference_comparison_rows_v0_gate_passed", real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE),
+        ("null_reference_comparison_schema_lock_gate_passed", real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE),
+        ("economic_accounting_rows_v0_gate_passed", real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE),
+        ("implementation_boundary_gate_passed", real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE),
+    ])
+    def test_dependencies_fail_closed(self, tmp_path, field, status):
+        result = self._build(tmp_path); result[field] = False
+        assert real_validation._derive_inferential_uncertainty_schema_lock_ab0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("mutation,status", [
+        (lambda r: r["declared_inferential_uncertainty_row_keys"].pop(), real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_ROW_SCHEMA_MUTATION),
+        (lambda r: r["declared_inferential_uncertainty_row_keys"].append("extra"), real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_ROW_SCHEMA_MUTATION),
+        (lambda r: r["declared_inferential_uncertainty_value_kind_names"].clear(), real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_VALUE_KIND_MUTATION),
+        (lambda r: r["declared_inferential_uncertainty_value_kind_names"].append("extra"), real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_VALUE_KIND_MUTATION),
+        (lambda r: r["declared_inferential_uncertainty_value_kind_names"].__setitem__(0, "p_value"), real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_VALUE_KIND_MUTATION),
+        (lambda r: r["declared_inferential_uncertainty_value_kind_names"].__setitem__(0, "confidence_interval"), real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_VALUE_KIND_MUTATION),
+        (lambda r: r.__setitem__("inferential_uncertainty_rows", [{}]), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_INFERENTIAL_UNCERTAINTY_ROWS),
+        (lambda r: r.__setitem__("inferential_uncertainty_rows_emitted", True), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_INFERENTIAL_UNCERTAINTY_ROWS),
+        (lambda r: r.__setitem__("inferential_uncertainty_row_count", 1), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_INFERENTIAL_UNCERTAINTY_ROWS),
+        (lambda r: r.__setitem__("inferential_values_emitted", True), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_INFERENTIAL_VALUES),
+        (lambda r: r.__setitem__("inferential_value_count", 1), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_INFERENTIAL_VALUES),
+        (lambda r: r.__setitem__("uncertainty_values_emitted", True), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_UNCERTAINTY_VALUES),
+        (lambda r: r.__setitem__("uncertainty_value_count", 1), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_UNCERTAINTY_VALUES),
+        (lambda r: r.__setitem__("statistical_values", [1]), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AB0),
+        (lambda r: r.__setitem__("statistical_values_emitted", True), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AB0),
+        (lambda r: r.__setitem__("statistical_value_count", 1), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AB0),
+        (lambda r: r.__setitem__("candidate_comparison_values_emitted", True), real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_CANDIDATE_OUTPUT),
+        (lambda r: r.__setitem__("final_offline_verdict_remains", "MUTATED"), real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_FINAL_VERDICT_ADVANCEMENT),
+    ])
+    def test_mutations_fail_closed(self, tmp_path, mutation, status):
+        result = self._build(tmp_path); mutation(result)
+        assert real_validation._derive_inferential_uncertainty_schema_lock_ab0_gate(result)["gate_status"] == status
+
+    @pytest.mark.parametrize("field", real_validation._INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_OUTPUT_FIELDS + real_validation._INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_AUTHORIZATION_FIELDS)
+    @pytest.mark.parametrize("value", [None, 1])
+    def test_downstream_evidence_requires_exact_false(self, tmp_path, field, value):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_inferential_uncertainty_schema_lock_ab0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_EVIDENCE
+
+    @pytest.mark.parametrize("field", real_validation._INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_OUTPUT_FIELDS + real_validation._INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_AUTHORIZATION_FIELDS)
+    def test_downstream_fields_must_be_present_and_authorizations_false(self, tmp_path, field):
+        result = self._build(tmp_path); del result[field]
+        assert real_validation._derive_inferential_uncertainty_schema_lock_ab0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_EVIDENCE
+        if field in real_validation._INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_AUTHORIZATION_FIELDS:
+            result = self._build(tmp_path); result[field] = True
+            assert real_validation._derive_inferential_uncertainty_schema_lock_ab0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_DOWNSTREAM_AUTHORIZATION
+
+    @pytest.mark.parametrize("field", ["scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted"])
+    def test_downstream_outputs_fail_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_inferential_uncertainty_schema_lock_ab0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_DOWNSTREAM_OUTPUT
+
+    def test_unlocks_and_forbidden_exact_keys_are_absent(self, tmp_path):
+        result = self._build(tmp_path); result["downstream_unlocks"] = ["unexpected"]
+        assert real_validation._derive_inferential_uncertainty_schema_lock_ab0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_EVIDENCE
+        result = self._build(tmp_path)
+        forbidden = {"p_value", "confidence_interval", "score", "metric", "performance", "pnl", "profit", "edge", "return", "returns"}
+        assert not (set(_all_dict_keys(result)) & forbidden)
+        assert not (set(result["declared_inferential_uncertainty_row_keys"]) & forbidden)
+
+
 class TestDescriptiveStatisticalMetadataRowsV0Z1:
     """Lane Z1: exact-schema descriptive metadata rows; no values are emitted."""
 
