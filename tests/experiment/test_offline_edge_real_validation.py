@@ -19787,6 +19787,32 @@ class TestMaterializedRuleRowsV0T1:
         )
         assert field in gate["blocked_reason"]
 
+    # ── Test 16b: emission/value flags flip fails closed ────────────────────
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "rule_row_price_values_emitted",
+            "rule_row_funding_rate_values_emitted",
+            "rule_row_economic_values_emitted",
+            "rule_row_statistical_values_emitted",
+            "rule_row_scoring_values_emitted",
+            "simulated_events_emitted",
+            "economic_values_emitted",
+            "statistical_values_emitted",
+            "null_comparison_values_emitted",
+            "scoring_values_emitted",
+            "live_integration_values_emitted",
+            "final_verdict_values_emitted",
+        ],
+    )
+    def test_emission_value_flags_true_fail_closed(self, tmp_path, field):
+        result = self._result(tmp_path)
+        result[field] = True
+        gate = _derive_materialized_rule_rows_v0_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_UNEXPECTED_RULE_ROW_EMISSION
+        assert field in gate["blocked_reason"]
+
     # ── Test 17: receipt integration full valid path via main() ─────────────
     def test_receipt_integration_full_valid_path(self, tmp_path):
         bars_dir = tmp_path / "bars"

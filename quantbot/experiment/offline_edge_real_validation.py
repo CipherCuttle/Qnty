@@ -908,6 +908,20 @@ _MATERIALIZED_RULE_ROWS_V0_DISALLOWED_AUTHORIZATION_FIELDS = (
     "paper_integration_authorized",
     "final_verdict_authorization",
 )
+_MATERIALIZED_RULE_ROWS_V0_DISALLOWED_EMISSION_FIELDS = (
+    "rule_row_price_values_emitted",
+    "rule_row_funding_rate_values_emitted",
+    "rule_row_economic_values_emitted",
+    "rule_row_statistical_values_emitted",
+    "rule_row_scoring_values_emitted",
+    "simulated_events_emitted",
+    "economic_values_emitted",
+    "statistical_values_emitted",
+    "null_comparison_values_emitted",
+    "scoring_values_emitted",
+    "live_integration_values_emitted",
+    "final_verdict_values_emitted",
+)
 
 _ALLOWED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS = (
     "schema_version",
@@ -15522,6 +15536,11 @@ def _derive_materialized_rule_rows_v0_gate(
         for field in _MATERIALIZED_RULE_ROWS_V0_DISALLOWED_AUTHORIZATION_FIELDS
         if diagnostics.get(field) is True
     ]
+    offending_emissions = [
+        field
+        for field in _MATERIALIZED_RULE_ROWS_V0_DISALLOWED_EMISSION_FIELDS
+        if diagnostics.get(field) is True
+    ]
 
     evidence = {
         "materialized_rule_row_schema_lock_gate_passed": diagnostics.get(
@@ -15566,6 +15585,36 @@ def _derive_materialized_rule_rows_v0_gate(
         "final_offline_verdict_remains": diagnostics.get(
             "final_offline_verdict_remains"
         ),
+        "rule_row_price_values_emitted": diagnostics.get(
+            "rule_row_price_values_emitted"
+        ),
+        "rule_row_funding_rate_values_emitted": diagnostics.get(
+            "rule_row_funding_rate_values_emitted"
+        ),
+        "rule_row_economic_values_emitted": diagnostics.get(
+            "rule_row_economic_values_emitted"
+        ),
+        "rule_row_statistical_values_emitted": diagnostics.get(
+            "rule_row_statistical_values_emitted"
+        ),
+        "rule_row_scoring_values_emitted": diagnostics.get(
+            "rule_row_scoring_values_emitted"
+        ),
+        "simulated_events_emitted": diagnostics.get("simulated_events_emitted"),
+        "economic_values_emitted": diagnostics.get("economic_values_emitted"),
+        "statistical_values_emitted": diagnostics.get(
+            "statistical_values_emitted"
+        ),
+        "null_comparison_values_emitted": diagnostics.get(
+            "null_comparison_values_emitted"
+        ),
+        "scoring_values_emitted": diagnostics.get("scoring_values_emitted"),
+        "live_integration_values_emitted": diagnostics.get(
+            "live_integration_values_emitted"
+        ),
+        "final_verdict_values_emitted": diagnostics.get(
+            "final_verdict_values_emitted"
+        ),
     }
 
     def _base_gate(gate_status: str, blocked_reason: str | None) -> dict[str, Any]:
@@ -15587,6 +15636,13 @@ def _derive_materialized_rule_rows_v0_gate(
             BLOCKED_BY_UNEXPECTED_ECONOMIC_OR_SCORING_AUTHORIZATION,
             "UNEXPECTED_AUTHORIZATION_FIELDS_TRUE: "
             + ", ".join(sorted(offending_authorizations)),
+        )
+
+    if offending_emissions:
+        return _base_gate(
+            BLOCKED_BY_UNEXPECTED_RULE_ROW_EMISSION,
+            "UNEXPECTED_EMISSION_FIELDS_TRUE: "
+            + ", ".join(sorted(offending_emissions)),
         )
 
     if not diagnostics.get("materialized_rule_row_schema_lock_gate_passed"):
