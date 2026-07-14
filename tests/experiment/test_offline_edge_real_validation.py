@@ -20551,6 +20551,17 @@ class TestNullReferenceComparisonRowsV0W1:
             del result["comparison_rows"][0]["comparison_unit"]
         assert real_validation._derive_null_reference_comparison_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_SCHEMA
 
+    @pytest.mark.parametrize("field, value", [
+        ("schema_kind", "mutated"),
+        ("comparison_value_kind", "computed"),
+        ("comparison_variant", "actual_reference_comparison"),
+        ("comparison_entry_code", "COMPUTED_COMPARISON"),
+    ])
+    def test_schema_locked_row_constant_mutations_fail_closed(self, tmp_path, field, value):
+        result = self._build(tmp_path)
+        result["comparison_rows"][0][field] = value
+        assert real_validation._derive_null_reference_comparison_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_CONSTANTS
+
     @pytest.mark.parametrize("field, value, status", [
         ("comparison_value", 0, real_validation.BLOCKED_BY_UNEXPECTED_NON_METADATA_NULL_REFERENCE_COMPARISON_VALUE),
         ("comparison_value_present", True, real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_NULL_REFERENCE_COMPARISON_VALUES),

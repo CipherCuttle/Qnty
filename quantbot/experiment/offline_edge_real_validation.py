@@ -1215,6 +1215,7 @@ BLOCKED_BY_ECONOMIC_ACCOUNTING_ROWS_V0_FOR_W1_GATE = "BLOCKED_BY_ECONOMIC_ACCOUN
 BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_UPSTREAM_GATE = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROWS_V0_UPSTREAM_GATE"
 BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE"
 BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_SCHEMA = "BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_SCHEMA"
+BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_CONSTANTS = "BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_CONSTANTS"
 BLOCKED_BY_UNEXPECTED_EMITTED_NULL_REFERENCE_COMPARISON_VALUES = "BLOCKED_BY_UNEXPECTED_EMITTED_NULL_REFERENCE_COMPARISON_VALUES"
 BLOCKED_BY_UNEXPECTED_NON_METADATA_NULL_REFERENCE_COMPARISON_VALUE = "BLOCKED_BY_UNEXPECTED_NON_METADATA_NULL_REFERENCE_COMPARISON_VALUE"
 BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROWS_V0_DOWNSTREAM_OUTPUT = "BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROWS_V0_DOWNSTREAM_OUTPUT"
@@ -1224,6 +1225,19 @@ BLOCKED_BY_DUPLICATE_NULL_REFERENCE_COMPARISON_ROW_IDENTITY = "BLOCKED_BY_DUPLIC
 BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_ORDERING_MUTATION = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_ORDERING_MUTATION"
 BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_SOURCE_COUNT_MISMATCH = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_SOURCE_COUNT_MISMATCH"
 BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_CAP_EXCEEDED = "BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_CAP_EXCEEDED"
+_NULL_REFERENCE_COMPARISON_ROWS_V0_FIXED_ROW_CONSTANTS = {
+    "schema_version": NULL_REFERENCE_COMPARISON_ROWS_V0_SCHEMA_VERSION,
+    "schema_kind": NULL_REFERENCE_COMPARISON_ROWS_V0_SCHEMA_KIND,
+    "comparison_family": "neutral_comparison_metadata_v0",
+    "comparison_variant": "noop_no_comparison_value",
+    "comparison_revision": "w1-0.1",
+    "comparison_entry_name": "metadata_only_comparison_artifact",
+    "comparison_entry_code": "NOOP_COMPARISON_METADATA_ONLY",
+    "comparison_basis_name": "schema_locked_accounting_row_projection",
+    "comparison_basis_code": "ACCOUNTING_METADATA_ONLY",
+    "comparison_unit": "unitless",
+    "comparison_value_kind": "not_computed",
+}
 _NULL_REFERENCE_COMPARISON_W1_OUTPUT_FIELDS = (
     "comparison_values_emitted", "null_comparison_values_emitted",
     "statistical_values_emitted", "scoring_values_emitted",
@@ -16936,6 +16950,10 @@ def _derive_null_reference_comparison_rows_v0_gate(diagnostics: dict[str, Any]) 
     rows_are_list = isinstance(rows, list)
     every_row_is_dict = rows_are_list and all(isinstance(row, dict) for row in rows)
     schema_exact = every_row_is_dict and all(set(row) == set(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS) for row in rows)
+    row_constants_match = every_row_is_dict and all(
+        all(row.get(field) == expected for field, expected in _NULL_REFERENCE_COMPARISON_ROWS_V0_FIXED_ROW_CONSTANTS.items())
+        for row in rows
+    )
     values_absent = every_row_is_dict and all(row.get("comparison_value") is None for row in rows)
     values_not_present = every_row_is_dict and all(row.get("comparison_value_present") is False for row in rows)
     rows_metadata_only = every_row_is_dict and all(row.get("comparison_metadata_only") is True for row in rows)
@@ -16957,7 +16975,8 @@ def _derive_null_reference_comparison_rows_v0_gate(diagnostics: dict[str, Any]) 
         "rows_are_list": rows_are_list, "rows_emitted": diagnostics.get("comparison_rows_emitted") is True,
         "count_positive": rows_are_list and len(rows) > 0,
         "count_matches": rows_are_list and diagnostics.get("comparison_row_count") == len(rows) == diagnostics.get("source_accounting_row_count") and diagnostics.get("comparison_row_count_matches_source_accounting_row_count") is True,
-        "schema_exact": schema_exact, "values_absent": values_absent, "values_not_present": values_not_present,
+        "schema_exact": schema_exact, "row_constants_match": row_constants_match,
+        "values_absent": values_absent, "values_not_present": values_not_present,
         "rows_metadata_only": rows_metadata_only,
         "values_not_emitted": diagnostics.get("comparison_values_emitted") is False and diagnostics.get("comparison_value_count") == 0,
         "identities_unique": len(identities) == len(set(identities)), "rows_in_order": in_order,
@@ -16977,6 +16996,8 @@ def _derive_null_reference_comparison_rows_v0_gate(diagnostics: dict[str, Any]) 
         return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_CAP_EXCEEDED, "COMPARISON_ROW_CAP_EXCEEDED")
     if every_row_is_dict and not schema_exact:
         return gate(BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_SCHEMA, "ROW_KEYS_DO_NOT_EXACTLY_MATCH_W0_ALLOWED_SCHEMA_KEYS")
+    if every_row_is_dict and not row_constants_match:
+        return gate(BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_ROW_CONSTANTS, "ROW_CONSTANTS_DO_NOT_MATCH_W1_SCHEMA_LOCKED_METADATA_PROJECTION")
     if every_row_is_dict and not values_absent:
         return gate(BLOCKED_BY_UNEXPECTED_NON_METADATA_NULL_REFERENCE_COMPARISON_VALUE, "COMPARISON_VALUE_MUST_BE_NONE")
     if every_row_is_dict and not values_not_present:
@@ -16995,7 +17016,7 @@ def _derive_null_reference_comparison_rows_v0_gate(diagnostics: dict[str, Any]) 
         return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_ORDERING_MUTATION, "COMPARISON_ROWS_NOT_DETERMINISTICALLY_ORDERED")
     if rows_are_list and not evidence["count_matches"]:
         return gate(BLOCKED_BY_NULL_REFERENCE_COMPARISON_ROW_SOURCE_COUNT_MISMATCH, "COMPARISON_ROW_COUNT_DOES_NOT_MATCH_SOURCE_ACCOUNTING_ROW_COUNT")
-    required = ("declared", "status_matches", "rows_are_list", "rows_emitted", "count_positive", "count_matches", "schema_exact", "values_absent", "values_not_present", "rows_metadata_only", "values_not_emitted", "identities_unique", "rows_in_order", "cap_not_exceeded") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
+    required = ("declared", "status_matches", "rows_are_list", "rows_emitted", "count_positive", "count_matches", "schema_exact", "row_constants_match", "values_absent", "values_not_present", "rows_metadata_only", "values_not_emitted", "identities_unique", "rows_in_order", "cap_not_exceeded") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
     if not all(evidence.get(field) is True for field in required):
         return gate(BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE, "NULL_REFERENCE_COMPARISON_ROWS_V0_EVIDENCE_INCOMPLETE_OR_MUTATED")
     result = gate(NULL_REFERENCE_COMPARISON_ROWS_V0_DECLARED_ARTIFACT_ONLY, None)
