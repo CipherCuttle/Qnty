@@ -18420,13 +18420,21 @@ def _derive_descriptive_count_values_v0_gate(diagnostics: dict[str, Any]) -> dic
     exact_false_fields = output_fields + authorization_fields
     fixed_constants_match = every_row_is_dict and all(all(row.get(field) == expected for field, expected in _DESCRIPTIVE_COUNT_VALUES_V0_FIXED_ROW_CONSTANTS.items()) for row in rows)
     row_schema_exact = every_row_is_dict and all(set(row) == set(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_KEYS) for row in rows)
-    value_kinds = [row.get("descriptive_value_kind") for row in rows] if every_row_is_dict else []
+    row_value_kinds_ordered = [row.get("descriptive_value_kind") for row in rows] if every_row_is_dict else []
     source_rows = diagnostics.get("source_descriptive_metadata_rows")
     source_rows = source_rows if isinstance(source_rows, list) else None
     # The authoritative source rows are attached only for gate recomputation by the builder.
-    expected_counts = None
+    expected_counts_by_kind = None
     if source_rows is not None and all(isinstance(row, dict) for row in source_rows):
-        expected_counts = [len(source_rows), len({row.get("symbol") for row in source_rows}), len({(row.get("split_id"), row.get("split_partition")) for row in source_rows})]
+        expected_counts_by_kind = {
+            "source_metadata_row_count": len(source_rows),
+            "source_symbol_count": len({row.get("symbol") for row in source_rows}),
+            "source_split_partition_count": len({(row.get("split_id"), row.get("split_partition")) for row in source_rows}),
+        }
+    emitted_counts_by_kind = (
+        {row.get("descriptive_value_kind"): row.get("descriptive_value") for row in rows}
+        if every_row_is_dict else {}
+    )
     emitted_counts = [row.get("descriptive_value") for row in rows] if every_row_is_dict else []
     identities = [(row.get("run_id"), row.get("symbol"), row.get("split_id"), row.get("split_partition"), row.get("descriptive_sequence_id")) for row in rows] if every_row_is_dict else []
     evidence = {
@@ -18450,11 +18458,11 @@ def _derive_descriptive_count_values_v0_gate(diagnostics: dict[str, Any]) -> dic
         "values_emitted": diagnostics.get("descriptive_values_emitted") is True,
         "value_count_matches": diagnostics.get("descriptive_value_count") == 3,
         "row_schema_exact": row_schema_exact, "fixed_constants_match": fixed_constants_match,
-        "value_kinds_match": set(value_kinds) == set(_ALLOWED_DESCRIPTIVE_COUNT_VALUE_KIND_NAMES_AA1) and len(value_kinds) == len(_ALLOWED_DESCRIPTIVE_COUNT_VALUE_KIND_NAMES_AA1),
+        "row_value_kinds_ordered_match": row_value_kinds_ordered == list(_ALLOWED_DESCRIPTIVE_COUNT_VALUE_KIND_NAMES_AA1),
         "values_are_non_negative_ints": every_row_is_dict and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in emitted_counts),
         "values_present": every_row_is_dict and all(row.get("descriptive_value_present") is True for row in rows),
         "rows_not_metadata_only": every_row_is_dict and all(row.get("descriptive_metadata_only") is False for row in rows),
-        "counts_match": expected_counts is not None and emitted_counts == expected_counts and diagnostics.get("source_descriptive_metadata_row_count") == expected_counts[0],
+        "counts_by_kind_match": expected_counts_by_kind is not None and emitted_counts_by_kind == expected_counts_by_kind and diagnostics.get("source_descriptive_metadata_row_count") == expected_counts_by_kind["source_metadata_row_count"],
         "identities_unique": len(identities) == len(set(identities)),
         "rows_in_order": every_row_is_dict and [row.get("descriptive_sequence_id") for row in rows] == [1, 2, 3],
         "statistical_values_not_emitted": diagnostics.get("statistical_values") == [] and diagnostics.get("statistical_values_emitted") is False and diagnostics.get("statistical_value_count") == 0,
@@ -18471,18 +18479,19 @@ def _derive_descriptive_count_values_v0_gate(diagnostics: dict[str, Any]) -> dic
     if not evidence["allowed_kind_names_match"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_KIND_MUTATION, "ALLOWED_VALUE_KIND_NAMES_DO_NOT_EXACTLY_MATCH_AA0")
     if every_row_is_dict and not evidence["row_schema_exact"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_SCHEMA, "ROW_KEYS_DO_NOT_EXACTLY_MATCH_Z0_ALLOWED_SCHEMA_KEYS")
     if every_row_is_dict and not evidence["fixed_constants_match"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_CONSTANTS, "ROW_CONSTANTS_DO_NOT_EXACTLY_MATCH_AA1")
-    if every_row_is_dict and not evidence["value_kinds_match"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_KIND, "ROW_VALUE_KINDS_DO_NOT_EXACTLY_MATCH_AA0_ALLOWED_NAMES")
+    if every_row_is_dict and not evidence["rows_in_order"]: return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_ROW_ORDERING_MUTATION, "DESCRIPTIVE_COUNT_VALUE_ROWS_NOT_ORDERED_BY_SEQUENCE")
+    if every_row_is_dict and not evidence["row_value_kinds_ordered_match"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_KIND, "ROW_VALUE_KINDS_DO_NOT_EXACTLY_MATCH_AA0_ALLOWED_NAMES")
     if every_row_is_dict and not evidence["values_are_non_negative_ints"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE, "DESCRIPTIVE_VALUES_MUST_BE_NON_NEGATIVE_INTS")
     if every_row_is_dict and (not evidence["values_present"] or not evidence["rows_not_metadata_only"]): return gate(BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE, "DESCRIPTIVE_VALUE_PRESENCE_OR_METADATA_ONLY_EVIDENCE_MUTATED")
-    if every_row_is_dict and not evidence["rows_in_order"]: return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_ROW_ORDERING_MUTATION, "DESCRIPTIVE_COUNT_VALUE_ROWS_NOT_ORDERED_BY_SEQUENCE")
-    if every_row_is_dict and not evidence["counts_match"]: return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_MISMATCH, "DESCRIPTIVE_COUNTS_DO_NOT_MATCH_Z1_METADATA_ROWS")
+    if every_row_is_dict and not evidence["counts_by_kind_match"]: return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_MISMATCH, "DESCRIPTIVE_COUNTS_DO_NOT_MATCH_Z1_METADATA_ROWS")
+    if any(diagnostics.get(field) is not False and diagnostics.get(field) is not True for field in exact_false_fields): return gate(BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE, "DESCRIPTIVE_COUNT_VALUES_V0_DOWNSTREAM_EVIDENCE_NOT_EXACTLY_BOOLEAN")
     if not evidence["statistical_values_not_emitted"]: return gate(BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AA1, "STATISTICAL_VALUES_MUST_NOT_BE_EMITTED_IN_AA1")
     if any(diagnostics.get(field) is True for field in ("inferential_values_emitted", "uncertainty_values_emitted", "candidate_comparison_values_emitted")): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_INFERENTIAL_OUTPUT, "UNEXPECTED_INFERENTIAL_UNCERTAINTY_OR_CANDIDATE_OUTPUT")
     if any(diagnostics.get(field) is True for field in ("scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted")): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_OUTPUT, "UNEXPECTED_DOWNSTREAM_OUTPUT")
     if any(diagnostics.get(field) is True for field in authorization_fields): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_AUTHORIZATION, "UNEXPECTED_DOWNSTREAM_AUTHORIZATION")
     if diagnostics.get("final_offline_verdict_remains") != BLOCKED_BY_VALIDATION_IMPLEMENTATION: return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_FINAL_VERDICT_ADVANCEMENT, "FINAL_OFFLINE_VERDICT_MUST_REMAIN_BLOCKED")
     if every_row_is_dict and not evidence["identities_unique"]: return gate(BLOCKED_BY_DUPLICATE_DESCRIPTIVE_COUNT_VALUE_ROW_IDENTITY, "DUPLICATE_DESCRIPTIVE_COUNT_VALUE_ROW_IDENTITY")
-    required = ("declared", "status_matches", "aa0_policy_literal_accepted", "allowed_kind_names_match", "rows_are_list", "rows_emitted", "row_count_matches", "values_emitted", "value_count_matches", "row_schema_exact", "fixed_constants_match", "value_kinds_match", "values_are_non_negative_ints", "values_present", "rows_not_metadata_only", "counts_match", "identities_unique", "rows_in_order", "statistical_values_not_emitted", "downstream_unlocks_empty") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
+    required = ("declared", "status_matches", "aa0_policy_literal_accepted", "allowed_kind_names_match", "rows_are_list", "rows_emitted", "row_count_matches", "values_emitted", "value_count_matches", "row_schema_exact", "fixed_constants_match", "row_value_kinds_ordered_match", "values_are_non_negative_ints", "values_present", "rows_not_metadata_only", "counts_by_kind_match", "identities_unique", "rows_in_order", "statistical_values_not_emitted", "downstream_unlocks_empty") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
     if not all(evidence.get(field) is True for field in required): return gate(BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE, "DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE_INCOMPLETE_OR_MUTATED")
     result = gate(DESCRIPTIVE_COUNT_VALUES_V0_DECLARED_ARTIFACT, None)
     result["gate_passed"] = True

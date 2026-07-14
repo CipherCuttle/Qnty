@@ -21633,6 +21633,13 @@ class TestDescriptiveCountValuesV0AA1:
         ("descriptive_statistical_value_policy_lock_aa0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_FOR_AA1_GATE),
         ("descriptive_statistical_metadata_rows_v0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_FOR_AA1_GATE),
         ("descriptive_statistical_value_schema_lock_z0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
+        ("statistical_value_readiness_rows_v0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
+        ("statistical_value_contract_lock_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
+        ("statistical_metadata_rows_v0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
+        ("statistical_output_schema_lock_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
+        ("null_reference_comparison_rows_v0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
+        ("null_reference_comparison_schema_lock_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
+        ("economic_accounting_rows_v0_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
         ("implementation_boundary_gate_passed", real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE),
     ])
     def test_dependencies_fail_closed(self, tmp_path, field, status):
@@ -21645,13 +21652,63 @@ class TestDescriptiveCountValuesV0AA1:
         (lambda r: r["descriptive_value_rows"][0].__setitem__("extra", True), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_SCHEMA),
         (lambda r: r["descriptive_value_rows"][0].pop("schema_kind"), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_SCHEMA),
         (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_variant", "mutated"), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_CONSTANTS),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_entry_code", "mutated"), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_CONSTANTS),
         (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value_kind", "sample_size"), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_KIND),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value_kind", "coverage"), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_KIND),
         (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value", -1), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE),
         (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value", 1.5), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value", None), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value", "1"), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value", True), real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value_present", False), real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_value_present", None), real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_metadata_only", True), real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE),
+        (lambda r: r["descriptive_value_rows"][0].__setitem__("descriptive_metadata_only", None), real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE),
         (lambda r: r["descriptive_value_rows"].reverse(), real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_ROW_ORDERING_MUTATION),
     ])
     def test_row_mutations_fail_closed(self, tmp_path, mutation, status):
         result = self._build(tmp_path); mutation(result)
+        assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == status
+
+    def test_swapped_row_kind_labels_fail_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        rows = result["descriptive_value_rows"]
+        rows[0]["descriptive_value_kind"], rows[1]["descriptive_value_kind"] = rows[1]["descriptive_value_kind"], rows[0]["descriptive_value_kind"]
+        gate = real_validation._derive_descriptive_count_values_v0_gate(result)
+        assert gate["gate_status"] in (real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_KIND, real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_MISMATCH)
+
+    def test_allowed_kind_order_mutation_fails_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["allowed_descriptive_value_kind_names"].reverse()
+        assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_KIND_MUTATION
+
+    @pytest.mark.parametrize("field", real_validation._DESCRIPTIVE_COUNT_VALUES_V0_OUTPUT_FIELDS + real_validation._DESCRIPTIVE_COUNT_VALUES_V0_AUTHORIZATION_FIELDS)
+    @pytest.mark.parametrize("value", [None, 1])
+    def test_downstream_evidence_requires_exact_false(self, tmp_path, field, value):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE
+
+    @pytest.mark.parametrize("field", real_validation._DESCRIPTIVE_COUNT_VALUES_V0_OUTPUT_FIELDS + real_validation._DESCRIPTIVE_COUNT_VALUES_V0_AUTHORIZATION_FIELDS)
+    def test_downstream_evidence_requires_all_fields(self, tmp_path, field):
+        result = self._build(tmp_path); del result[field]
+        assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE
+
+    @pytest.mark.parametrize("field", real_validation._DESCRIPTIVE_COUNT_VALUES_V0_AUTHORIZATION_FIELDS)
+    def test_downstream_authorizations_fail_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_AUTHORIZATION
+
+    @pytest.mark.parametrize("field,status", [
+        ("inferential_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_INFERENTIAL_OUTPUT),
+        ("uncertainty_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_INFERENTIAL_OUTPUT),
+        ("candidate_comparison_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_INFERENTIAL_OUTPUT),
+        ("scoring_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_OUTPUT),
+        ("live_integration_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_OUTPUT),
+        ("paper_integration_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_OUTPUT),
+        ("final_verdict_values_emitted", real_validation.BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_OUTPUT),
+    ])
+    def test_downstream_outputs_fail_closed(self, tmp_path, field, status):
+        result = self._build(tmp_path); result[field] = True
         assert real_validation._derive_descriptive_count_values_v0_gate(result)["gate_status"] == status
 
     def test_count_statistical_output_and_authorization_regressions_fail_closed(self, tmp_path):
@@ -21669,9 +21726,18 @@ class TestDescriptiveCountValuesV0AA1:
         output_dir = tmp_path / "empty-output"; output_dir.mkdir()
         m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
         assert real_validation.main(m1._cli_base_args(output_dir)) == 0
-        empty = json.loads((output_dir / "real_validation_receipt.json").read_text())["descriptive_count_values_v0_diagnostics"]
+        empty_receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        empty = empty_receipt["descriptive_count_values_v0_diagnostics"]
         assert empty["descriptive_count_values_v0_gate"]["gate_passed"] is False
-        assert empty["descriptive_value_rows"] == [] and empty["descriptive_value_count"] == 0
+        assert empty["descriptive_value_rows"] == []
+        assert empty["descriptive_value_rows_emitted"] is False
+        assert empty["descriptive_value_row_count"] == 0
+        assert empty["descriptive_values_emitted"] is False
+        assert empty["descriptive_value_count"] == 0
+        assert empty["statistical_values"] == []
+        assert empty["statistical_values_emitted"] is False
+        assert empty["statistical_value_count"] == 0
+        assert empty_receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
         output_dir = tmp_path / "full-output"; output_dir.mkdir(); bars_dir = tmp_path / "bars"; funding_dir = tmp_path / "funding"
         bars_dir.mkdir(); funding_dir.mkdir(); _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
         funding_path = _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
@@ -21683,10 +21749,24 @@ class TestDescriptiveCountValuesV0AA1:
         )
         j1 = TestEconomicAccountingPolicyPreregistrationJ1()
         assert real_validation.main(j1._cli_base_args(output_dir) + j1._cli_upstream_args() + j1._cli_eap_args() + ["--bars-dir", str(bars_dir), "--funding-dir", str(funding_dir)]) == 0
-        full = json.loads((output_dir / "real_validation_receipt.json").read_text())["descriptive_count_values_v0_diagnostics"]
+        full_receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        full = full_receipt["descriptive_count_values_v0_diagnostics"]
         assert full["descriptive_count_values_v0_gate"]["gate_passed"] is True
+        assert full["descriptive_value_rows_emitted"] is True
+        assert full["descriptive_values_emitted"] is True
         assert full["descriptive_value_row_count"] == full["descriptive_value_count"] == 3
-        assert full["statistical_values"] == [] and full["final_offline_verdict_remains"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        assert [row["descriptive_value_kind"] for row in full["descriptive_value_rows"]] == list(real_validation._ALLOWED_DESCRIPTIVE_COUNT_VALUE_KIND_NAMES_AA1)
+        source_rows = full["source_descriptive_metadata_rows"]
+        assert {row["descriptive_value_kind"]: row["descriptive_value"] for row in full["descriptive_value_rows"]} == {
+            "source_metadata_row_count": len(source_rows),
+            "source_symbol_count": len({row["symbol"] for row in source_rows}),
+            "source_split_partition_count": len({(row["split_id"], row["split_partition"]) for row in source_rows}),
+        }
+        assert full["statistical_values"] == []
+        assert full["statistical_values_emitted"] is False
+        assert full["statistical_value_count"] == 0
+        assert all(full[field] is False for field in real_validation._DESCRIPTIVE_COUNT_VALUES_V0_AUTHORIZATION_FIELDS)
+        assert full_receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
 
 class TestDescriptiveStatisticalValueSchemaLockZ0:
