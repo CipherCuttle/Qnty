@@ -21113,6 +21113,17 @@ class TestStatisticalValueReadinessRowsV0Y1:
         result = self._build(tmp_path); result[field] = True
         assert real_validation._derive_statistical_value_readiness_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_STATISTICAL_VALUE_READINESS_DOWNSTREAM_AUTHORIZATION
 
+    @pytest.mark.parametrize("field", real_validation._STATISTICAL_VALUE_READINESS_Y1_OUTPUT_FIELDS + real_validation._STATISTICAL_VALUE_READINESS_Y1_AUTHORIZATION_FIELDS)
+    @pytest.mark.parametrize("value", [None, 1])
+    def test_downstream_evidence_requires_exact_false(self, tmp_path, field, value):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_statistical_value_readiness_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_STATISTICAL_VALUE_READINESS_ROWS_V0_EVIDENCE
+
+    @pytest.mark.parametrize("field", real_validation._STATISTICAL_VALUE_READINESS_Y1_OUTPUT_FIELDS + real_validation._STATISTICAL_VALUE_READINESS_Y1_AUTHORIZATION_FIELDS)
+    def test_missing_downstream_evidence_fails_closed(self, tmp_path, field):
+        result = self._build(tmp_path); del result[field]
+        assert real_validation._derive_statistical_value_readiness_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_STATISTICAL_VALUE_READINESS_ROWS_V0_EVIDENCE
+
     def test_count_identity_order_cap_unlocks_and_verdict_fail_closed(self, tmp_path):
         result = self._build(tmp_path); result["readiness_row_count"] += 1
         assert real_validation._derive_statistical_value_readiness_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_STATISTICAL_VALUE_READINESS_ROW_SOURCE_COUNT_MISMATCH
@@ -21136,6 +21147,56 @@ class TestStatisticalValueReadinessRowsV0Y1:
             elif isinstance(value, list):
                 for child in value: yield from keys(child)
         assert not (set(keys(result)) & forbidden)
+
+    def test_no_input_cli_receipt_includes_failed_y1_gate(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        assert real_validation.main(m1._cli_base_args(output_dir)) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        diagnostics = receipt["statistical_value_readiness_rows_v0_diagnostics"]
+        assert diagnostics["statistical_value_readiness_rows_v0_gate"]["gate_passed"] is False
+        assert diagnostics["statistical_values"] == []
+        assert diagnostics["statistical_values_emitted"] is False
+        assert diagnostics["statistical_value_count"] == 0
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_full_cli_receipt_includes_y1_and_remains_blocked(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        funding_path = _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+        funding_path.write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,0.0003,50200.0\n"
+        )
+        j1 = TestEconomicAccountingPolicyPreregistrationJ1()
+        assert real_validation.main(
+            j1._cli_base_args(output_dir)
+            + j1._cli_upstream_args()
+            + j1._cli_eap_args()
+            + ["--bars-dir", str(bars_dir), "--funding-dir", str(funding_dir)]
+        ) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        diagnostics = receipt["statistical_value_readiness_rows_v0_diagnostics"]
+        assert diagnostics["diagnostic_kind"] == "statistical_value_readiness_rows_v0"
+        assert diagnostics["readiness_rows_emitted"] is True
+        assert diagnostics["readiness_row_count"] > 0
+        assert diagnostics["statistical_values"] == []
+        assert diagnostics["statistical_values_emitted"] is False
+        assert diagnostics["statistical_value_count"] == 0
+        assert diagnostics["inferential_values_emitted"] is False
+        assert diagnostics["uncertainty_values_emitted"] is False
+        assert diagnostics["candidate_comparison_values_emitted"] is False
+        assert diagnostics["statistical_value_generation_authorized"] is False
+        assert diagnostics["final_verdict_authorization"] is False
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
 
 class TestProjectedInputShapeInventoryO1:
