@@ -18175,6 +18175,7 @@ class TestDescriptiveStatisticalMetadataRowsV0Z1:
         empty = receipt["descriptive_statistical_metadata_rows_v0_diagnostics"]
         assert empty["descriptive_statistical_metadata_rows_v0_gate"]["gate_passed"] is False
         assert empty["descriptive_value_rows"] == []
+        assert empty["descriptive_value_rows_emitted"] is False
         assert empty["descriptive_values_emitted"] is False
         assert empty["descriptive_value_count"] == 0
         assert empty["statistical_values"] == []
