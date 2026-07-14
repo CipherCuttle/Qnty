@@ -108,6 +108,8 @@ __all__ = [
     "_derive_no_output_runner_dry_harness_gate",
     "_build_materialized_rule_row_schema_lock_diagnostics",
     "_derive_materialized_rule_row_schema_lock_gate",
+    "_build_materialized_rule_rows_v0_diagnostics",
+    "_derive_materialized_rule_rows_v0_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -825,6 +827,102 @@ BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROW_SCHEMA_EVIDENCE = (
 BLOCKED_BY_UNEXPECTED_RULE_ROW_EMISSION = (
     "BLOCKED_BY_UNEXPECTED_RULE_ROW_EMISSION"
 )
+
+# === Lane T1: materialized rule rows v0 ===
+# The first real output-producing lane. It depends on the T0 schema lock, S1
+# dry harness, and R1 joinability gates and emits deterministic, schema-
+# locked rule rows -- artifact-only, no economics/scoring/statistics/live
+# integration, and never advances the final offline verdict.
+MATERIALIZED_RULE_ROWS_V0_VERSION = "materialized-rule-rows-v0-0.1"
+MATERIALIZED_RULE_ROWS_V0_SCOPE = "RULE_ROW_ARTIFACT_ONLY_NO_ECONOMICS_OR_SCORING"
+MATERIALIZED_RULE_ROWS_V0_DECLARED_ARTIFACT_ONLY = (
+    "MATERIALIZED_RULE_ROWS_V0_DECLARED_ARTIFACT_ONLY"
+)
+MATERIALIZED_RULE_ROWS_V0_POLICY = (
+    "EMIT_SCHEMA_LOCKED_RULE_ROWS_ONLY_NO_ECONOMICS_OR_SCORING"
+)
+MATERIALIZED_RULE_ROWS_V0_RULE_FAMILY = "frozen_contract_rule_v0"
+MATERIALIZED_RULE_ROWS_V0_RULE_VARIANT = "schema_smoke"
+MATERIALIZED_RULE_ROWS_V0_RULE_REVISION = "t1-0.1"
+MATERIALIZED_RULE_ROWS_V0_SCHEMA_VERSION = "materialized-rule-rows-v0-0.1"
+MATERIALIZED_RULE_ROWS_V0_SCHEMA_KIND = "materialized_rule_row_v0"
+MATERIALIZED_RULE_ROWS_V0_MAX_ROWS = 100
+BLOCKED_BY_MATERIALIZED_RULE_ROW_SCHEMA_LOCK_GATE = (
+    "BLOCKED_BY_MATERIALIZED_RULE_ROW_SCHEMA_LOCK_GATE"
+)
+BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROWS_V0_EVIDENCE = (
+    "BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROWS_V0_EVIDENCE"
+)
+BLOCKED_BY_UNEXPECTED_RULE_ROW_SCHEMA = "BLOCKED_BY_UNEXPECTED_RULE_ROW_SCHEMA"
+BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_KEY = (
+    "BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_KEY"
+)
+BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_VALUE = (
+    "BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_VALUE"
+)
+BLOCKED_BY_UNEXPECTED_ECONOMIC_OR_SCORING_AUTHORIZATION = (
+    "BLOCKED_BY_UNEXPECTED_ECONOMIC_OR_SCORING_AUTHORIZATION"
+)
+# Row-level values/keys that must never appear on a materialized rule row,
+# beyond the module-wide FORBIDDEN_CALCULATION_KEYS set.
+_MATERIALIZED_RULE_ROWS_V0_FORBIDDEN_ROW_KEY_NAMES = frozenset(
+    {
+        "close",
+        "fundingRate",
+        "open",
+        "high",
+        "low",
+        "volume",
+        "markPrice",
+        "pnl",
+        "signal",
+        "order",
+        "execution",
+        "price_value",
+        "economic_value",
+        "scoring_value",
+    }
+)
+_MATERIALIZED_RULE_ROWS_V0_AUTHORIZATION_FIELDS = (
+    "rule_materialization_authorized",
+    "decision_row_generation_authorized",
+    "simulated_event_generation_authorized",
+    "economic_value_generation_authorized",
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+)
+_MATERIALIZED_RULE_ROWS_V0_DISALLOWED_AUTHORIZATION_FIELDS = (
+    "decision_row_generation_authorized",
+    "simulated_event_generation_authorized",
+    "economic_value_generation_authorized",
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+)
+_MATERIALIZED_RULE_ROWS_V0_DISALLOWED_EMISSION_FIELDS = (
+    "rule_row_price_values_emitted",
+    "rule_row_funding_rate_values_emitted",
+    "rule_row_economic_values_emitted",
+    "rule_row_statistical_values_emitted",
+    "rule_row_scoring_values_emitted",
+    "simulated_events_emitted",
+    "economic_values_emitted",
+    "statistical_values_emitted",
+    "null_comparison_values_emitted",
+    "scoring_values_emitted",
+    "live_integration_values_emitted",
+    "final_verdict_values_emitted",
+)
+
 _ALLOWED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS = (
     "schema_version",
     "schema_kind",
@@ -15105,6 +15203,526 @@ def _derive_materialized_rule_row_schema_lock_gate(
     return gate
 
 
+def _extract_materialized_rule_rows_v0(
+    *,
+    inventory_diagnostics: dict[str, Any] | None,
+    split_diagnostics: dict[str, Any] | None,
+    run_id: str = "materialized-rule-rows-v0",
+) -> tuple[list[dict[str, Any]], bool]:
+    """Load bars/funding timestamps and emit T0-schema-locked T1 rule rows.
+
+    Reuses the exact same inventoried-file reload/validation helpers as Lane
+    R1's joinability summary (SHA256 + row-count re-check, strict monotonic
+    timestamp parsing) so this lane never re-derives a different notion of
+    "joinable" than the upstream gate it depends on. Only the ``timestamp``
+    (bars) and ``fundingTime`` (funding) columns are ever read here -- no
+    price, funding-rate, or other economic column is read or emitted.
+
+    Returns ``(rows, exceeded_cap)``. ``rows`` is empty and
+    ``exceeded_cap`` is ``True`` if the natural (uncapped) row count would
+    exceed ``MATERIALIZED_RULE_ROWS_V0_MAX_ROWS`` -- callers must fail
+    closed in that case rather than silently truncating.
+    """
+    if not isinstance(inventory_diagnostics, dict) or not isinstance(
+        split_diagnostics, dict
+    ):
+        return [], False
+
+    roles = inventory_diagnostics.get("roles")
+    role_entries_list = roles if isinstance(roles, list) else []
+    entries_by_role = {
+        entry.get("role"): entry
+        for entry in role_entries_list
+        if isinstance(entry, dict)
+    }
+    if "bars" not in entries_by_role or "funding" not in entries_by_role:
+        return [], False
+
+    split_definitions = split_diagnostics.get("split_definitions")
+    if not isinstance(split_definitions, list) or not split_definitions:
+        return [], False
+
+    try:
+        windows = _build_split_windows_for_joinability(split_definitions)
+        bars_by_symbol = _load_role_symbol_timestamps(
+            role_entry=entries_by_role["bars"],
+            filename_suffix="_8h_ohlcv.csv",
+            timestamp_column="timestamp",
+            role="bars",
+        )
+        funding_by_symbol = _load_role_symbol_timestamps(
+            role_entry=entries_by_role["funding"],
+            filename_suffix="_funding.csv",
+            timestamp_column="fundingTime",
+            role="funding",
+        )
+    except ValueError:
+        return [], False
+
+    common_symbols = sorted(set(bars_by_symbol) & set(funding_by_symbol))
+    matches: list[dict[str, Any]] = []
+    for symbol in common_symbols:
+        bars_set = set(bars_by_symbol[symbol]["timestamps"])
+        funding_set = set(funding_by_symbol[symbol]["timestamps"])
+        for window in windows:
+            for partition, start_key, end_key, include_end in (
+                ("train", "train_start", "train_end", False),
+                (
+                    "validation",
+                    "validation_start",
+                    "validation_end",
+                    window["include_validation_end"],
+                ),
+            ):
+                bars_window = sorted(
+                    ts
+                    for ts in bars_set
+                    if _timestamp_in_window(
+                        ts,
+                        start=window[start_key],
+                        end=window[end_key],
+                        include_end=include_end,
+                    )
+                )
+                funding_window = {
+                    ts
+                    for ts in funding_set
+                    if _timestamp_in_window(
+                        ts,
+                        start=window[start_key],
+                        end=window[end_key],
+                        include_end=include_end,
+                    )
+                }
+                for timestamp in bars_window:
+                    if timestamp not in funding_window:
+                        continue
+                    decision_time_utc = _format_timestamp(timestamp)
+                    matches.append(
+                        {
+                            "schema_version": MATERIALIZED_RULE_ROWS_V0_SCHEMA_VERSION,
+                            "schema_kind": MATERIALIZED_RULE_ROWS_V0_SCHEMA_KIND,
+                            "run_id": run_id,
+                            "symbol": symbol,
+                            "split_id": window["split_id"],
+                            "split_partition": partition,
+                            "decision_time_utc": decision_time_utc,
+                            "source_bar_time_utc": decision_time_utc,
+                            "source_funding_time_utc": decision_time_utc,
+                            "rule_family": MATERIALIZED_RULE_ROWS_V0_RULE_FAMILY,
+                            "rule_variant": MATERIALIZED_RULE_ROWS_V0_RULE_VARIANT,
+                            "rule_revision": MATERIALIZED_RULE_ROWS_V0_RULE_REVISION,
+                            "rule_input_roles": ["bars", "funding"],
+                            "rule_input_columns": [
+                                "timestamp",
+                                "fundingTime",
+                            ],
+                            "rule_condition_name": "joinable_input_row_present",
+                            "rule_condition_result": "OBSERVED",
+                            "rule_action_name": "NO_ECONOMIC_ACTION",
+                            "rule_action_code": "NOOP_RULE_ROW_ONLY",
+                            "rule_metadata_only": True,
+                        }
+                    )
+
+    if not matches:
+        return [], False
+    if len(matches) > MATERIALIZED_RULE_ROWS_V0_MAX_ROWS:
+        return [], True
+
+    matches.sort(
+        key=lambda row: (
+            row["symbol"],
+            row["split_id"],
+            row["split_partition"],
+            row["decision_time_utc"],
+        )
+    )
+    rows: list[dict[str, Any]] = []
+    for sequence, row in enumerate(matches, start=1):
+        row["row_sequence_id"] = sequence
+        rows.append(row)
+    return rows, False
+
+
+def _build_materialized_rule_rows_v0_diagnostics(
+    *,
+    materialized_rule_row_schema_lock_diagnostics: dict[str, Any],
+    no_output_runner_dry_harness_diagnostics: dict[str, Any],
+    projected_input_joinability_diagnostics: dict[str, Any],
+    projected_input_temporal_sequence_diagnostics: dict[str, Any],
+    projected_input_row_count_diagnostics: dict[str, Any],
+    projected_input_shape_inventory_diagnostics: dict[str, Any],
+    allowed_runner_input_projection_diagnostics: dict[str, Any],
+    no_output_runner_invocation_diagnostics: dict[str, Any],
+    implementation_boundary_diagnostics: dict[str, Any],
+    split_diagnostics: dict[str, Any] | None = None,
+    inventory_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build Lane T1 materialized rule rows v0 diagnostics.
+
+    This is the first *real output-producing* lane: when every upstream
+    gate (T0 schema lock, S1 dry harness, R1 joinability, and their own
+    upstream chain) has passed, it emits deterministic, T0-schema-locked
+    rule rows -- artifact-only, no economics/scoring/statistics/live
+    integration, and it never advances ``final_offline_verdict``.
+    """
+    materialized_rule_row_schema_lock_gate = (
+        materialized_rule_row_schema_lock_diagnostics.get(
+            "materialized_rule_row_schema_lock_gate"
+        )
+    )
+    no_output_runner_dry_harness_gate = (
+        no_output_runner_dry_harness_diagnostics.get(
+            "no_output_runner_dry_harness_gate"
+        )
+    )
+    projected_input_joinability_gate = (
+        projected_input_joinability_diagnostics.get(
+            "projected_input_joinability_gate"
+        )
+    )
+
+    schema_lock_passed = bool(
+        materialized_rule_row_schema_lock_gate is not None
+        and materialized_rule_row_schema_lock_gate.get("gate_passed") is True
+    )
+    dry_harness_passed = bool(
+        no_output_runner_dry_harness_gate is not None
+        and no_output_runner_dry_harness_gate.get("gate_passed") is True
+    )
+    joinability_passed = bool(
+        projected_input_joinability_gate is not None
+        and projected_input_joinability_gate.get("gate_passed") is True
+    )
+
+    materialized_rule_rows: list[dict[str, Any]] = []
+    row_cap_exceeded = False
+    if schema_lock_passed and dry_harness_passed and joinability_passed:
+        materialized_rule_rows, row_cap_exceeded = (
+            _extract_materialized_rule_rows_v0(
+                inventory_diagnostics=inventory_diagnostics,
+                split_diagnostics=split_diagnostics,
+            )
+        )
+
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "materialized_rule_rows_v0",
+        "materialized_rule_rows_v0_version": MATERIALIZED_RULE_ROWS_V0_VERSION,
+        "materialized_rule_rows_v0_scope": MATERIALIZED_RULE_ROWS_V0_SCOPE,
+        "materialized_rule_rows_v0_status": (
+            MATERIALIZED_RULE_ROWS_V0_DECLARED_ARTIFACT_ONLY
+        ),
+        "materialized_rule_row_schema_lock_gate_required": True,
+        "materialized_rule_row_schema_lock_gate_passed": schema_lock_passed,
+        "no_output_runner_dry_harness_gate_required": True,
+        "no_output_runner_dry_harness_gate_passed": dry_harness_passed,
+        "projected_input_joinability_gate_required": True,
+        "projected_input_joinability_gate_passed": joinability_passed,
+        "materialized_rule_rows_v0_declared": True,
+        "materialized_rule_rows_v0_mode": "SCHEMA_LOCKED_RULE_ROW_ARTIFACT_ONLY",
+        "materialized_rule_rows_v0_policy": MATERIALIZED_RULE_ROWS_V0_POLICY,
+        "materialized_rule_rows_v0_row_cap": MATERIALIZED_RULE_ROWS_V0_MAX_ROWS,
+        "materialized_rule_rows_v0_row_cap_exceeded": row_cap_exceeded,
+        "materialized_rule_rows_emitted": bool(materialized_rule_rows),
+        "materialized_rule_row_count": len(materialized_rule_rows),
+        "materialized_rule_rows": materialized_rule_rows,
+        "rule_row_schema_keys": list(_ALLOWED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS),
+        "rule_row_schema_key_count": len(_ALLOWED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS),
+        "rule_row_forbidden_key_names_absent": True,
+        "rule_row_price_values_emitted": False,
+        "rule_row_funding_rate_values_emitted": False,
+        "rule_row_economic_values_emitted": False,
+        "rule_row_statistical_values_emitted": False,
+        "rule_row_scoring_values_emitted": False,
+        "simulated_events_emitted": False,
+        "economic_values_emitted": False,
+        "statistical_values_emitted": False,
+        "null_comparison_values_emitted": False,
+        "scoring_values_emitted": False,
+        "live_integration_values_emitted": False,
+        "final_verdict_values_emitted": False,
+        "rule_materialization_authorized": True,
+        "decision_row_generation_authorized": False,
+        "simulated_event_generation_authorized": False,
+        "economic_value_generation_authorized": False,
+        "statistical_value_generation_authorized": False,
+        "candidate_comparison_authorized": False,
+        "null_generation_authorized": False,
+        "scoring_authorization": False,
+        "live_integration_authorized": False,
+        "paper_integration_authorized": False,
+        "final_verdict_authorization": False,
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["materialized_rule_rows_v0_gate"] = (
+        _derive_materialized_rule_rows_v0_gate(diagnostics)
+    )
+    return diagnostics
+
+
+def _derive_materialized_rule_rows_v0_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive the Lane T1 materialized rule rows v0 gate."""
+    rows = diagnostics.get("materialized_rule_rows")
+    rows_is_list = isinstance(rows, list)
+    row_count = diagnostics.get("materialized_rule_row_count")
+    allowed_key_set = set(_ALLOWED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS)
+
+    every_row_is_dict = rows_is_list and all(
+        isinstance(row, dict) for row in rows
+    )
+    every_row_schema_exact = every_row_is_dict and all(
+        set(row.keys()) == allowed_key_set for row in rows  # type: ignore[union-attr]
+    )
+    forbidden_row_key_names = (
+        set(FORBIDDEN_CALCULATION_KEYS)
+        | _MATERIALIZED_RULE_ROWS_V0_FORBIDDEN_ROW_KEY_NAMES
+    )
+    no_forbidden_row_keys = every_row_is_dict and not any(
+        forbidden_row_key_names & set(row.keys())  # type: ignore[union-attr]
+        for row in rows
+    )
+
+    def _row_contains_forbidden_value(row: dict[str, Any]) -> bool:
+        for value in row.values():
+            values_to_check = value if isinstance(value, list) else [value]
+            for item in values_to_check:
+                if isinstance(item, str) and item in forbidden_row_key_names:
+                    return True
+        return False
+
+    no_forbidden_row_values = every_row_is_dict and not any(
+        _row_contains_forbidden_value(row) for row in rows  # type: ignore[arg-type]
+    )
+    def _order_sort_key(row: dict[str, Any]) -> tuple[str, str, str, str, int]:
+        return (
+            str(row.get("symbol", "")),
+            str(row.get("split_id", "")),
+            str(row.get("split_partition", "")),
+            str(row.get("decision_time_utc", "")),
+            row.get("row_sequence_id")
+            if isinstance(row.get("row_sequence_id"), int)
+            else -1,
+        )
+
+    expected_order = (
+        sorted(rows, key=_order_sort_key) if every_row_is_dict else None
+    )
+    rows_in_order = every_row_is_dict and rows == expected_order
+    identity_tuples = (
+        [
+            (
+                row.get("run_id"),
+                row.get("symbol"),
+                row.get("split_id"),
+                row.get("split_partition"),
+                row.get("row_sequence_id"),
+            )
+            for row in rows
+        ]
+        if every_row_is_dict
+        else []
+    )
+    no_duplicate_identities = every_row_is_dict and len(
+        identity_tuples
+    ) == len(set(identity_tuples))
+
+    forbidden_dict_key_collisions = _find_forbidden_contract_dict_keys(diagnostics)
+
+    offending_authorizations = [
+        field
+        for field in _MATERIALIZED_RULE_ROWS_V0_DISALLOWED_AUTHORIZATION_FIELDS
+        if diagnostics.get(field) is True
+    ]
+    offending_emissions = [
+        field
+        for field in _MATERIALIZED_RULE_ROWS_V0_DISALLOWED_EMISSION_FIELDS
+        if diagnostics.get(field) is True
+    ]
+
+    evidence = {
+        "materialized_rule_row_schema_lock_gate_passed": diagnostics.get(
+            "materialized_rule_row_schema_lock_gate_passed"
+        ),
+        "no_output_runner_dry_harness_gate_passed": diagnostics.get(
+            "no_output_runner_dry_harness_gate_passed"
+        ),
+        "projected_input_joinability_gate_passed": diagnostics.get(
+            "projected_input_joinability_gate_passed"
+        ),
+        "materialized_rule_rows_v0_declared": (
+            diagnostics.get("materialized_rule_rows_v0_declared") is True
+        ),
+        "materialized_rule_rows_v0_mode_matches": (
+            diagnostics.get("materialized_rule_rows_v0_mode")
+            == "SCHEMA_LOCKED_RULE_ROW_ARTIFACT_ONLY"
+        ),
+        "materialized_rule_rows_v0_status_matches": (
+            diagnostics.get("materialized_rule_rows_v0_status")
+            == MATERIALIZED_RULE_ROWS_V0_DECLARED_ARTIFACT_ONLY
+        ),
+        "materialized_rule_rows_v0_policy_matches": (
+            diagnostics.get("materialized_rule_rows_v0_policy")
+            == MATERIALIZED_RULE_ROWS_V0_POLICY
+        ),
+        "rows_is_list": rows_is_list,
+        "row_count_matches_list_length": (
+            rows_is_list and row_count == len(rows)  # type: ignore[arg-type]
+        ),
+        "row_count_positive": bool(rows_is_list and row_count and row_count > 0),
+        "every_row_is_dict": every_row_is_dict,
+        "every_row_schema_exact": every_row_schema_exact,
+        "no_forbidden_row_keys": no_forbidden_row_keys,
+        "no_forbidden_row_values": no_forbidden_row_values,
+        "rows_in_order": rows_in_order,
+        "no_duplicate_row_identities": no_duplicate_identities,
+        "forbidden_dict_key_collisions_absent": not forbidden_dict_key_collisions,
+        "row_cap_not_exceeded": diagnostics.get(
+            "materialized_rule_rows_v0_row_cap_exceeded"
+        ) is False,
+        "final_offline_verdict_remains": diagnostics.get(
+            "final_offline_verdict_remains"
+        ),
+        "rule_row_price_values_emitted": diagnostics.get(
+            "rule_row_price_values_emitted"
+        ),
+        "rule_row_funding_rate_values_emitted": diagnostics.get(
+            "rule_row_funding_rate_values_emitted"
+        ),
+        "rule_row_economic_values_emitted": diagnostics.get(
+            "rule_row_economic_values_emitted"
+        ),
+        "rule_row_statistical_values_emitted": diagnostics.get(
+            "rule_row_statistical_values_emitted"
+        ),
+        "rule_row_scoring_values_emitted": diagnostics.get(
+            "rule_row_scoring_values_emitted"
+        ),
+        "simulated_events_emitted": diagnostics.get("simulated_events_emitted"),
+        "economic_values_emitted": diagnostics.get("economic_values_emitted"),
+        "statistical_values_emitted": diagnostics.get(
+            "statistical_values_emitted"
+        ),
+        "null_comparison_values_emitted": diagnostics.get(
+            "null_comparison_values_emitted"
+        ),
+        "scoring_values_emitted": diagnostics.get("scoring_values_emitted"),
+        "live_integration_values_emitted": diagnostics.get(
+            "live_integration_values_emitted"
+        ),
+        "final_verdict_values_emitted": diagnostics.get(
+            "final_verdict_values_emitted"
+        ),
+    }
+
+    def _base_gate(gate_status: str, blocked_reason: str | None) -> dict[str, Any]:
+        return {
+            "gate_kind": "materialized_rule_rows_v0_gate",
+            "gate_scope": MATERIALIZED_RULE_ROWS_V0_SCOPE,
+            "gate_status": gate_status,
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": evidence,
+            "blocked_reason": blocked_reason,
+        }
+
+    if offending_authorizations:
+        return _base_gate(
+            BLOCKED_BY_UNEXPECTED_ECONOMIC_OR_SCORING_AUTHORIZATION,
+            "UNEXPECTED_AUTHORIZATION_FIELDS_TRUE: "
+            + ", ".join(sorted(offending_authorizations)),
+        )
+
+    if offending_emissions:
+        return _base_gate(
+            BLOCKED_BY_UNEXPECTED_RULE_ROW_EMISSION,
+            "UNEXPECTED_EMISSION_FIELDS_TRUE: "
+            + ", ".join(sorted(offending_emissions)),
+        )
+
+    if not diagnostics.get("materialized_rule_row_schema_lock_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_MATERIALIZED_RULE_ROW_SCHEMA_LOCK_GATE,
+            "MATERIALIZED_RULE_ROW_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("no_output_runner_dry_harness_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_NO_OUTPUT_RUNNER_DRY_HARNESS_GATE,
+            "NO_OUTPUT_RUNNER_DRY_HARNESS_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("projected_input_joinability_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_PROJECTED_INPUT_JOINABILITY_GATE,
+            "PROJECTED_INPUT_JOINABILITY_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not evidence["no_forbidden_row_keys"] and evidence["every_row_is_dict"]:
+        return _base_gate(
+            BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_KEY,
+            "FORBIDDEN_KEY_NAME_PRESENT_ON_A_MATERIALIZED_RULE_ROW",
+        )
+
+    if not evidence["no_forbidden_row_values"] and evidence["every_row_is_dict"]:
+        return _base_gate(
+            BLOCKED_BY_UNEXPECTED_RULE_ROW_FORBIDDEN_VALUE,
+            "FORBIDDEN_VALUE_PRESENT_ON_A_MATERIALIZED_RULE_ROW",
+        )
+
+    if not evidence["every_row_schema_exact"] and evidence["every_row_is_dict"]:
+        return _base_gate(
+            BLOCKED_BY_UNEXPECTED_RULE_ROW_SCHEMA,
+            "ROW_KEYS_DO_NOT_EXACTLY_MATCH_ALLOWED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS",
+        )
+
+    baseline_evidence_passed = all(
+        evidence.get(key) is True
+        for key in (
+            "materialized_rule_rows_v0_declared",
+            "materialized_rule_rows_v0_mode_matches",
+            "materialized_rule_rows_v0_status_matches",
+            "materialized_rule_rows_v0_policy_matches",
+            "rows_is_list",
+            "row_count_matches_list_length",
+            "row_count_positive",
+            "every_row_is_dict",
+            "every_row_schema_exact",
+            "no_forbidden_row_keys",
+            "no_forbidden_row_values",
+            "rows_in_order",
+            "no_duplicate_row_identities",
+            "forbidden_dict_key_collisions_absent",
+            "row_cap_not_exceeded",
+        )
+    )
+    if (
+        not baseline_evidence_passed
+        or diagnostics.get("final_offline_verdict_remains")
+        != BLOCKED_BY_VALIDATION_IMPLEMENTATION
+    ):
+        blocked_reason = "MATERIALIZED_RULE_ROWS_V0_EVIDENCE_INCOMPLETE_OR_MUTATED"
+        if forbidden_dict_key_collisions:
+            blocked_reason += ": FORBIDDEN_DICT_KEYS_PRESENT: " + ", ".join(
+                sorted(
+                    collision["key"] for collision in forbidden_dict_key_collisions
+                )
+            )
+        return _base_gate(
+            BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROWS_V0_EVIDENCE,
+            blocked_reason,
+        )
+
+    gate = _base_gate(MATERIALIZED_RULE_ROWS_V0_DECLARED_ARTIFACT_ONLY, None)
+    gate["gate_passed"] = True
+    return gate
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -15232,6 +15850,7 @@ def build_real_validation_receipt(
     projected_input_joinability_diagnostics: dict | None = None,
     no_output_runner_dry_harness_diagnostics: dict | None = None,
     materialized_rule_row_schema_lock_diagnostics: dict | None = None,
+    materialized_rule_rows_v0_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -15414,6 +16033,10 @@ def build_real_validation_receipt(
     if materialized_rule_row_schema_lock_diagnostics is not None:
         receipt["materialized_rule_row_schema_lock_diagnostics"] = (
             materialized_rule_row_schema_lock_diagnostics
+        )
+    if materialized_rule_rows_v0_diagnostics is not None:
+        receipt["materialized_rule_rows_v0_diagnostics"] = (
+            materialized_rule_rows_v0_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -16266,6 +16889,41 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
             )
+            materialized_rule_rows_v0_diagnostics = (
+                _build_materialized_rule_rows_v0_diagnostics(
+                    materialized_rule_row_schema_lock_diagnostics=(
+                        materialized_rule_row_schema_lock_diagnostics
+                    ),
+                    no_output_runner_dry_harness_diagnostics=(
+                        no_output_runner_dry_harness_diagnostics
+                    ),
+                    projected_input_joinability_diagnostics=(
+                        projected_input_joinability_diagnostics
+                    ),
+                    projected_input_temporal_sequence_diagnostics=(
+                        projected_input_temporal_sequence_diagnostics
+                    ),
+                    projected_input_row_count_diagnostics=(
+                        projected_input_row_count_diagnostics
+                    ),
+                    projected_input_shape_inventory_diagnostics=(
+                        projected_input_shape_inventory_diagnostics
+                    ),
+                    allowed_runner_input_projection_diagnostics=(
+                        allowed_runner_input_projection_diagnostics
+                    ),
+                    no_output_runner_invocation_diagnostics=(
+                        no_output_runner_invocation_diagnostics
+                    ),
+                    implementation_boundary_diagnostics=(
+                        implementation_boundary_diagnostics
+                    ),
+                    split_diagnostics={
+                        "split_definitions": split_definitions,
+                    },
+                    inventory_diagnostics=inventory,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -16364,6 +17022,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             materialized_rule_row_schema_lock_diagnostics=(
                 materialized_rule_row_schema_lock_diagnostics
+            ),
+            materialized_rule_rows_v0_diagnostics=(
+                materialized_rule_rows_v0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -16673,6 +17334,41 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
             )
+            materialized_rule_rows_v0_diagnostics = (
+                _build_materialized_rule_rows_v0_diagnostics(
+                    materialized_rule_row_schema_lock_diagnostics=(
+                        materialized_rule_row_schema_lock_diagnostics
+                    ),
+                    no_output_runner_dry_harness_diagnostics=(
+                        no_output_runner_dry_harness_diagnostics
+                    ),
+                    projected_input_joinability_diagnostics=(
+                        projected_input_joinability_diagnostics
+                    ),
+                    projected_input_temporal_sequence_diagnostics=(
+                        projected_input_temporal_sequence_diagnostics
+                    ),
+                    projected_input_row_count_diagnostics=(
+                        projected_input_row_count_diagnostics
+                    ),
+                    projected_input_shape_inventory_diagnostics=(
+                        projected_input_shape_inventory_diagnostics
+                    ),
+                    allowed_runner_input_projection_diagnostics=(
+                        allowed_runner_input_projection_diagnostics
+                    ),
+                    no_output_runner_invocation_diagnostics=(
+                        no_output_runner_invocation_diagnostics
+                    ),
+                    implementation_boundary_diagnostics=(
+                        implementation_boundary_diagnostics
+                    ),
+                    split_diagnostics={
+                        "split_definitions": split_definitions,
+                    },
+                    inventory_diagnostics=None,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -16736,6 +17432,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             materialized_rule_row_schema_lock_diagnostics=(
                 materialized_rule_row_schema_lock_diagnostics
+            ),
+            materialized_rule_rows_v0_diagnostics=(
+                materialized_rule_rows_v0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
