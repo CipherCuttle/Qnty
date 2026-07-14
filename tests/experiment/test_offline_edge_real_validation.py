@@ -229,6 +229,19 @@ from quantbot.experiment.offline_edge_real_validation import (
     _build_no_output_runner_dry_harness_diagnostics,
     _derive_no_output_runner_dry_harness_gate,
     _NO_OUTPUT_RUNNER_DRY_HARNESS_AUTHORIZATION_FIELDS,
+    MATERIALIZED_RULE_ROW_SCHEMA_LOCK_VERSION,
+    MATERIALIZED_RULE_ROW_SCHEMA_LOCK_SCOPE,
+    MATERIALIZED_RULE_ROW_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY,
+    MATERIALIZED_RULE_ROW_SCHEMA_LOCK_POLICY,
+    BLOCKED_BY_NO_OUTPUT_RUNNER_DRY_HARNESS_GATE,
+    BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROW_SCHEMA_EVIDENCE,
+    BLOCKED_BY_UNEXPECTED_RULE_ROW_EMISSION,
+    _ALLOWED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS,
+    _REQUIRED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS,
+    _FORBIDDEN_MATERIALIZED_RULE_ROW_SCHEMA_KEY_NAMES,
+    _build_materialized_rule_row_schema_lock_diagnostics,
+    _derive_materialized_rule_row_schema_lock_gate,
+    _MATERIALIZED_RULE_ROW_SCHEMA_LOCK_AUTHORIZATION_FIELDS,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -19051,6 +19064,405 @@ class TestNoOutputRunnerDryHarnessS1:
             "close",
         ):
             assert forbidden not in serialized
+
+
+class TestMaterializedRuleRowSchemaLockT0:
+    def _s1(self):
+        return TestNoOutputRunnerDryHarnessS1()
+
+    def _full_chain_diags(self, tmp_path):
+        diags, inventory = self._s1()._full_chain_diags(tmp_path)
+        diags["no_output_runner_dry_harness_diagnostics"] = self._s1()._build(
+            diags
+        )
+        return diags, inventory
+
+    def _absence_diags(self):
+        diags = self._s1()._absence_diags()
+        diags["no_output_runner_dry_harness_diagnostics"] = self._s1()._build(
+            diags
+        )
+        return diags
+
+    def _build(self, diags):
+        return _build_materialized_rule_row_schema_lock_diagnostics(
+            no_output_runner_dry_harness_diagnostics=diags[
+                "no_output_runner_dry_harness_diagnostics"
+            ],
+            projected_input_joinability_diagnostics=diags[
+                "projected_input_joinability_diagnostics"
+            ],
+            projected_input_temporal_sequence_diagnostics=diags[
+                "projected_input_temporal_sequence_diagnostics"
+            ],
+            projected_input_row_count_diagnostics=diags[
+                "projected_input_row_count_diagnostics"
+            ],
+            projected_input_shape_inventory_diagnostics=diags[
+                "projected_input_shape_inventory_diagnostics"
+            ],
+            allowed_runner_input_projection_diagnostics=diags[
+                "allowed_runner_input_projection_diagnostics"
+            ],
+            no_output_runner_invocation_diagnostics=diags[
+                "no_output_runner_invocation_diagnostics"
+            ],
+            implementation_boundary_diagnostics=diags[
+                "implementation_boundary_diagnostics"
+            ],
+        )
+
+    def _result(self, tmp_path):
+        diags, _inventory = self._full_chain_diags(tmp_path)
+        return self._build(diags)
+
+    def test_schema_lock_happy_path_after_s1_passes(self, tmp_path):
+        result = self._result(tmp_path)
+        assert result["diagnostic_kind"] == "materialized_rule_row_schema_lock"
+        assert result["materialized_rule_row_schema_lock_version"] == (
+            MATERIALIZED_RULE_ROW_SCHEMA_LOCK_VERSION
+        )
+        assert result["materialized_rule_row_schema_lock_scope"] == (
+            MATERIALIZED_RULE_ROW_SCHEMA_LOCK_SCOPE
+        )
+        assert result["materialized_rule_row_schema_lock_status"] == (
+            MATERIALIZED_RULE_ROW_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert result["materialized_rule_row_schema_mode"] == "SCHEMA_ONLY"
+        assert result["materialized_rule_row_schema_policy"] == (
+            MATERIALIZED_RULE_ROW_SCHEMA_LOCK_POLICY
+        )
+        assert result["allowed_materialized_rule_row_schema_keys"] == list(
+            _ALLOWED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS
+        )
+        required = result["required_materialized_rule_row_schema_keys"]
+        assert required == list(_REQUIRED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS)
+        assert set(required) <= set(result["allowed_materialized_rule_row_schema_keys"])
+        assert result["forbidden_materialized_rule_row_key_names"] == list(
+            _FORBIDDEN_MATERIALIZED_RULE_ROW_SCHEMA_KEY_NAMES
+        )
+        assert result["materialized_rule_rows_emitted"] is False
+        assert result["materialized_rule_row_count"] == 0
+        assert result["runner_logic_executed"] is False
+        assert result["runner_callable_invoked"] is False
+        assert result["runner_inputs_materialized_as_rows"] is False
+        for field in (
+            "decision_rows_emitted",
+            "signals_emitted",
+            "rule_output_rows_emitted",
+            "simulated_events_emitted",
+            "economic_values_emitted",
+            "statistical_values_emitted",
+            "joined_rows_emitted",
+            "timestamp_values_emitted",
+            "price_values_emitted",
+            "funding_values_emitted",
+            "row_value_samples_emitted",
+            "projected_input_row_values_emitted",
+        ):
+            assert result[field] is False
+        for field in _MATERIALIZED_RULE_ROW_SCHEMA_LOCK_AUTHORIZATION_FIELDS:
+            assert result[field] is False
+        assert result["final_offline_verdict_remains"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_schema_lock_gate_happy_path(self, tmp_path):
+        gate = self._result(tmp_path)["materialized_rule_row_schema_lock_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            MATERIALIZED_RULE_ROW_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    def test_no_packet_no_input_receipt_integration_fails_closed(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(
+            self._s1()._r1()._q1()._p1()._o1()._n1()._m1()._cli_base_args(
+                output_dir
+            )
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        diagnostics = receipt["materialized_rule_row_schema_lock_diagnostics"]
+        gate = diagnostics["materialized_rule_row_schema_lock_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_NO_OUTPUT_RUNNER_DRY_HARNESS_GATE
+        for field in _MATERIALIZED_RULE_ROW_SCHEMA_LOCK_AUTHORIZATION_FIELDS:
+            assert diagnostics[field] is False
+        assert diagnostics["final_offline_verdict_remains"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_s1_gate_missing_or_failed_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["no_output_runner_dry_harness_gate_passed"] = False
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_NO_OUTPUT_RUNNER_DRY_HARNESS_GATE
+
+        diags, _inventory = self._full_chain_diags(tmp_path)
+        s1_diagnostics = dict(diags["no_output_runner_dry_harness_diagnostics"])
+        s1_diagnostics.pop("no_output_runner_dry_harness_gate")
+        diags["no_output_runner_dry_harness_diagnostics"] = s1_diagnostics
+        gate = self._build(diags)["materialized_rule_row_schema_lock_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_NO_OUTPUT_RUNNER_DRY_HARNESS_GATE
+
+    def test_r1_gate_missing_or_failed_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["projected_input_joinability_gate_passed"] = False
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_JOINABILITY_GATE
+
+    @pytest.mark.parametrize(
+        ("flag", "expected_status"),
+        [
+            (
+                "projected_input_temporal_sequence_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE,
+            ),
+            (
+                "projected_input_row_count_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE,
+            ),
+            (
+                "projected_input_shape_inventory_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_SHAPE_INVENTORY_GATE,
+            ),
+            (
+                "allowed_runner_input_projection_gate_passed",
+                BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE,
+            ),
+            (
+                "no_output_runner_invocation_gate_passed",
+                BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE,
+            ),
+            (
+                "implementation_boundary_gate_passed",
+                BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE,
+            ),
+        ],
+    )
+    def test_q1_p1_o1_n1_m1_l1_upstream_failed_fail_closed(
+        self, tmp_path, flag, expected_status
+    ):
+        result = self._result(tmp_path)
+        result[flag] = False
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == expected_status
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("materialized_rule_row_schema_mode", "ROW_EMISSION"),
+            ("materialized_rule_row_schema_mode", "MATERIALIZE_NOW"),
+            ("materialized_rule_row_schema_policy", "EMIT_RULE_ROWS_NOW"),
+        ],
+    )
+    def test_mutated_schema_mode_or_policy_fails_closed(
+        self, tmp_path, field, value
+    ):
+        result = self._result(tmp_path)
+        result[field] = value
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROW_SCHEMA_EVIDENCE
+        )
+
+    def test_missing_allowed_schema_key_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["allowed_materialized_rule_row_schema_keys"] = result[
+            "allowed_materialized_rule_row_schema_keys"
+        ][:-1]
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROW_SCHEMA_EVIDENCE
+        )
+
+    def test_extra_allowed_schema_key_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["allowed_materialized_rule_row_schema_keys"] = (
+            result["allowed_materialized_rule_row_schema_keys"] + ["extra_safe_key"]
+        )
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROW_SCHEMA_EVIDENCE
+        )
+
+    def test_missing_required_schema_key_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["required_materialized_rule_row_schema_keys"] = result[
+            "required_materialized_rule_row_schema_keys"
+        ][:-1]
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROW_SCHEMA_EVIDENCE
+        )
+
+    def test_required_key_not_subset_of_allowed_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["required_materialized_rule_row_schema_keys"] = list(
+            _REQUIRED_MATERIALIZED_RULE_ROW_SCHEMA_KEYS
+        ) + ["missing_from_allowed"]
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROW_SCHEMA_EVIDENCE
+        )
+
+    def test_forbidden_key_as_actual_dict_key_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["pnl"] = "not allowed as a dict key"
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_MATERIALIZED_RULE_ROW_SCHEMA_EVIDENCE
+        )
+        assert "pnl" in gate["blocked_reason"]
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("materialized_rule_rows_emitted", True),
+            ("materialized_rule_row_count", 1),
+            ("runner_logic_executed", True),
+            ("runner_callable_invoked", True),
+            ("runner_inputs_materialized_as_rows", True),
+        ],
+    )
+    def test_row_or_runner_output_flags_fail_closed(
+        self, tmp_path, field, value
+    ):
+        result = self._result(tmp_path)
+        result[field] = value
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_UNEXPECTED_RULE_ROW_EMISSION
+        assert field in gate["blocked_reason"]
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "decision_rows_emitted",
+            "signals_emitted",
+            "rule_output_rows_emitted",
+            "simulated_events_emitted",
+            "economic_values_emitted",
+            "statistical_values_emitted",
+            "joined_rows_emitted",
+            "timestamp_values_emitted",
+            "price_values_emitted",
+            "funding_values_emitted",
+            "row_value_samples_emitted",
+            "projected_input_row_values_emitted",
+        ],
+    )
+    def test_every_output_flag_true_fails_closed(self, tmp_path, field):
+        result = self._result(tmp_path)
+        result[field] = True
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_UNEXPECTED_RULE_ROW_EMISSION
+        assert field in gate["blocked_reason"]
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "rule_materialization_authorized",
+            "decision_row_generation_authorized",
+            "scoring_authorization",
+            "live_integration_authorized",
+            "final_verdict_authorization",
+        ],
+    )
+    def test_authorization_flip_fails_closed(self, tmp_path, field):
+        result = self._result(tmp_path)
+        result[field] = True
+        gate = _derive_materialized_rule_row_schema_lock_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_UNEXPECTED_AUTHORIZATION"
+        assert field in gate["blocked_reason"]
+
+    def test_full_valid_bars_funding_receipt_passes_t0_verdict_blocked(
+        self, tmp_path
+    ):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        funding_path = _write_tiny_funding_csv(
+            funding_dir,
+            "BTCUSDT_8h_funding.csv",
+        )
+        funding_path.write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,0.0003,50200.0\n"
+        )
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = self._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        exit_code = real_validation.main(
+            m1._cli_base_args(output_dir)
+            + m1._cli_full_chain_args()
+            + [
+                "--bars-dir",
+                str(bars_dir),
+                "--funding-dir",
+                str(funding_dir),
+            ]
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        assert receipt["no_output_runner_dry_harness_diagnostics"][
+            "no_output_runner_dry_harness_gate"
+        ]["gate_passed"] is True
+        diagnostics = receipt["materialized_rule_row_schema_lock_diagnostics"]
+        gate = diagnostics["materialized_rule_row_schema_lock_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            MATERIALIZED_RULE_ROW_SCHEMA_LOCK_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert diagnostics["materialized_rule_rows_emitted"] is False
+        assert diagnostics["materialized_rule_row_count"] == 0
+        assert diagnostics["runner_logic_executed"] is False
+        assert diagnostics["runner_callable_invoked"] is False
+        assert diagnostics["decision_rows_emitted"] is False
+        assert diagnostics["signals_emitted"] is False
+        assert diagnostics["final_offline_verdict_remains"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_forbidden_key_scan(self, tmp_path):
+        result = self._result(tmp_path)
+        all_keys = _all_dict_keys(result)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
+        assert set(_FORBIDDEN_MATERIALIZED_RULE_ROW_SCHEMA_KEY_NAMES) <= set(
+            result["forbidden_materialized_rule_row_key_names"]
+        )
+        assert "forbidden_materialized_rule_row_key_names" in all_keys
 
 
 class TestProjectedInputShapeInventoryO1:

@@ -955,3 +955,34 @@ remain, and `final_offline_verdict` remains
 ```bash
 .venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k ProjectedInputRowCountP1 -q
 ```
+
+### Lane T0 — Materialized Rule-Row Schema Lock Diagnostics
+
+**Lane T0 is not implementation.** It adds no new frozen packet or sidecar. It
+is a derived, diagnostic-only schema lock over the Lane S1 no-output runner
+dry-harness gate and the R1/Q1/P1/O1/N1/M1/L1 upstream gates.
+
+It answers exactly one question:
+
+> What exact row shape may T1 emit later, and what is still forbidden?
+
+T0 declares the future materialized rule-row schema keys only. It emits no
+materialized rows, invokes no runner logic, materializes no runner inputs as
+rows, and does not generate decisions, signals, simulated events, economic
+values, statistical values, null/comparison values, scoring, live readiness,
+or final verdict advancement.
+
+Even when the T0 gate passes, `gate_downstream_unlocks` is always `[]`, every
+authorization remains `false`, `EDGE_UNPROVEN` and `BLOCK_LIVE_INTEGRATION`
+remain, and `final_offline_verdict` remains
+`BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+
+T0 does not change `FORBIDDEN_CALCULATION_KEYS` or `ALLOWED_FINAL_VERDICTS`.
+Forbidden future row key names are declared only as list values under
+`forbidden_materialized_rule_row_key_names`; they are not emitted as dict keys.
+
+#### Verification
+
+```bash
+.venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k MaterializedRuleRowSchemaLockT0 -q
+```
