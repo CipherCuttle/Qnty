@@ -854,3 +854,36 @@ always `BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
 ```bash
 .venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k NoOutputRunnerInvocationM1 -q
 ```
+
+### Lane N1 — Allowed Runner Input Projection Diagnostics
+
+**Lane N1 is not implementation.** It adds no new frozen packet or sidecar. It
+is a **derived, diagnostic-only projection** over the Lane M1 no-output runner
+invocation gate, the Lane L1 implementation boundary gate, and the
+contract-packet / trial-manifest gates they depend on.
+
+It answers exactly one question:
+
+> Can the receipt represent the future runner input projection using only the
+> frozen allowed input roles and columns?
+
+N1 declares a metadata-only future runner input projection: allowed input
+roles `bars` and `funding`; allowed bar columns `close` and `timestamp`;
+allowed funding columns `fundingRate` and `fundingTime`; excluded bar columns
+`open`, `high`, `low`, and `volume`; and excluded funding column `markPrice`.
+
+It emits no row values and no rule outputs. It does not implement the runner,
+materialize rules, compute decisions, signals, simulated events, economic
+values, statistics, or final verdict, and it does not authorize scoring,
+live/paper integration, or final verdict advancement.
+
+Even when the N1 gate passes, `gate_downstream_unlocks` is always `[]`, every
+authorization remains `false`, `EDGE_UNPROVEN` and `BLOCK_LIVE_INTEGRATION`
+remain, and `final_offline_verdict` remains
+`BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+
+#### Verification
+
+```bash
+.venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k AllowedRunnerInputProjectionN1 -q
+```
