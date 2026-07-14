@@ -155,6 +155,7 @@ from quantbot.experiment.offline_edge_real_validation import (
     IMPLEMENTATION_BOUNDARY_VERSION,
     IMPLEMENTATION_BOUNDARY_SCOPE,
     IMPLEMENTATION_BOUNDARY_DECLARED_DIAGNOSTIC_ONLY,
+    BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE,
     _build_implementation_boundary_diagnostics,
     _derive_implementation_boundary_gate,
     _IMPLEMENTATION_BOUNDARY_AUTHORIZATION_FIELDS,
@@ -197,6 +198,16 @@ from quantbot.experiment.offline_edge_real_validation import (
     _build_projected_input_row_count_diagnostics,
     _derive_projected_input_row_count_gate,
     _PROJECTED_INPUT_ROW_COUNT_AUTHORIZATION_FIELDS,
+    PROJECTED_INPUT_TEMPORAL_SEQUENCE_VERSION,
+    PROJECTED_INPUT_TEMPORAL_SEQUENCE_SCOPE,
+    PROJECTED_INPUT_TEMPORAL_SEQUENCE_DECLARED_DIAGNOSTIC_ONLY,
+    PROJECTED_INPUT_TEMPORAL_SEQUENCE_METADATA_ONLY_POLICY,
+    BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE,
+    BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE,
+    BLOCKED_BY_UNEXPECTED_TIME_VALUE_EMISSION,
+    _build_projected_input_temporal_sequence_diagnostics,
+    _derive_projected_input_temporal_sequence_gate,
+    _PROJECTED_INPUT_TEMPORAL_SEQUENCE_AUTHORIZATION_FIELDS,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -17926,6 +17937,393 @@ class TestAllowedRunnerInputProjectionN1:
     # ── Test 21: forbidden key scan ───────────────────────────────────────────
     def test_no_forbidden_calculation_keys(self):
         result = self._result()
+        all_keys = _all_dict_keys(result)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
+
+
+class TestProjectedInputTemporalSequenceQ1:
+    def _p1(self):
+        return TestProjectedInputRowCountP1()
+
+    def _write_inventory(self, tmp_path, *, include_funding=True):
+        root = tmp_path / uuid.uuid4().hex
+        bars_dir = root / "bars"
+        funding_dir = root / "funding"
+        root.mkdir()
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        if include_funding:
+            _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+        return build_real_validation_input_inventory(
+            bars_dir=bars_dir,
+            funding_dir=funding_dir if include_funding else None,
+        )
+
+    def _refresh_inventory_file(self, inventory, *, role, filename):
+        role_entry = next(entry for entry in inventory["roles"] if entry["role"] == role)
+        file_entry = next(
+            entry for entry in role_entry["files"] if entry["filename"] == filename
+        )
+        path = Path(role_entry["directory"]) / filename
+        file_entry["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        file_entry["size_bytes"] = path.stat().st_size
+        file_entry["row_count"] = max(0, len(path.read_text().splitlines()) - 1)
+
+    def _full_chain_diags(self, inventory):
+        p1 = self._p1()
+        diags = p1._full_chain_diags(inventory)
+        diags["projected_input_row_count_diagnostics"] = p1._build(
+            diags,
+            inventory=inventory,
+        )
+        return diags
+
+    def _absence_diags(self):
+        p1 = self._p1()
+        diags = p1._absence_diags()
+        diags["projected_input_row_count_diagnostics"] = p1._build(diags)
+        return diags
+
+    def _build(self, diags, inventory=None):
+        return _build_projected_input_temporal_sequence_diagnostics(
+            projected_input_row_count_diagnostics=diags[
+                "projected_input_row_count_diagnostics"
+            ],
+            projected_input_shape_inventory_diagnostics=diags[
+                "projected_input_shape_inventory_diagnostics"
+            ],
+            allowed_runner_input_projection_diagnostics=diags[
+                "allowed_runner_input_projection_diagnostics"
+            ],
+            no_output_runner_invocation_diagnostics=diags[
+                "no_output_runner_invocation_diagnostics"
+            ],
+            implementation_boundary_diagnostics=diags[
+                "implementation_boundary_diagnostics"
+            ],
+            inventory_diagnostics=inventory,
+        )
+
+    def _result(self, tmp_path):
+        inventory = self._write_inventory(tmp_path)
+        return self._build(self._full_chain_diags(inventory), inventory)
+
+    def _assert_all_authorizations_false(self, result):
+        for field in _PROJECTED_INPUT_TEMPORAL_SEQUENCE_AUTHORIZATION_FIELDS:
+            assert result[field] is False
+
+    def test_temporal_sequence_no_args_row_count_failed_fails_closed(self):
+        result = self._build(self._absence_diags())
+        gate = result["projected_input_temporal_sequence_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE
+        self._assert_all_authorizations_false(result)
+
+    def test_temporal_sequence_diagnostic_full_happy_path(self, tmp_path):
+        result = self._result(tmp_path)
+        assert result["diagnostic_kind"] == (
+            "projected_input_temporal_sequence_inventory"
+        )
+        assert result["projected_input_temporal_sequence_version"] == (
+            PROJECTED_INPUT_TEMPORAL_SEQUENCE_VERSION
+        )
+        assert result["projected_input_temporal_sequence_scope"] == (
+            PROJECTED_INPUT_TEMPORAL_SEQUENCE_SCOPE
+        )
+        assert result["projected_input_temporal_sequence_status"] == (
+            PROJECTED_INPUT_TEMPORAL_SEQUENCE_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert result["projected_input_temporal_sequence_mode"] == "METADATA_ONLY"
+        assert result["projected_input_temporal_sequence_policy"] == (
+            PROJECTED_INPUT_TEMPORAL_SEQUENCE_METADATA_ONLY_POLICY
+        )
+        assert result["time_column_names_by_role"] == {
+            "bars": "timestamp",
+            "funding": "fundingTime",
+        }
+        for field in (
+            "time_values_emitted",
+            "timestamp_values_emitted",
+            "funding_time_values_emitted",
+            "price_values_emitted",
+            "funding_values_emitted",
+            "row_value_samples_emitted",
+            "projected_input_values_emitted",
+            "projected_input_row_values_emitted",
+            "rule_output_rows_emitted",
+        ):
+            assert result[field] is False
+        summary = result["temporal_sequence_summary"]
+        assert summary["summary_kind"] == "metadata_only_temporal_sequence_summary"
+        assert summary["time_values_included"] is False
+        assert summary["row_values_included"] is False
+        assert summary["projected_row_values_included"] is False
+        assert summary["rule_outputs_included"] is False
+        assert summary["roles_declared"] == ["bars", "funding"]
+        assert summary["role_time_parse_failure_counts"] == {
+            "bars": 0,
+            "funding": 0,
+        }
+        assert summary["role_time_missing_value_counts"] == {
+            "bars": 0,
+            "funding": 0,
+        }
+        assert summary["role_duplicate_time_counts"] == {"bars": 0, "funding": 0}
+        assert summary["role_non_monotonic_transition_counts"] == {
+            "bars": 0,
+            "funding": 0,
+        }
+        assert summary["temporal_sequence_complete"] is True
+        self._assert_all_authorizations_false(result)
+        assert result["final_offline_verdict_remains"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_temporal_sequence_gate_happy_path(self, tmp_path):
+        gate = self._result(tmp_path)["projected_input_temporal_sequence_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            PROJECTED_INPUT_TEMPORAL_SEQUENCE_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    @pytest.mark.parametrize(
+        ("flag", "expected_status"),
+        [
+            (
+                "projected_input_row_count_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE,
+            ),
+            (
+                "projected_input_shape_inventory_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_SHAPE_INVENTORY_GATE,
+            ),
+            (
+                "allowed_runner_input_projection_gate_passed",
+                BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE,
+            ),
+            (
+                "no_output_runner_invocation_gate_passed",
+                BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE,
+            ),
+            (
+                "implementation_boundary_gate_passed",
+                BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE,
+            ),
+        ],
+    )
+    def test_required_upstream_gate_failed_fails_closed(
+        self, tmp_path, flag, expected_status
+    ):
+        result = self._result(tmp_path)
+        result[flag] = False
+        gate = _derive_projected_input_temporal_sequence_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == expected_status
+
+    def test_missing_or_false_temporal_declared_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        del result["projected_input_temporal_sequence_declared"]
+        gate = _derive_projected_input_temporal_sequence_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE
+        )
+
+        result = self._result(tmp_path)
+        result["projected_input_temporal_sequence_declared"] = False
+        gate = _derive_projected_input_temporal_sequence_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE
+        )
+
+    def test_mutated_temporal_mode_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["projected_input_temporal_sequence_mode"] = "TIME_VALUES"
+        gate = _derive_projected_input_temporal_sequence_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE
+        )
+
+    def test_mutated_temporal_policy_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["projected_input_temporal_sequence_policy"] = "EMIT_TIME_VALUES_NOW"
+        gate = _derive_projected_input_temporal_sequence_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE
+        )
+
+    def test_any_emitted_time_or_value_flag_true_fails_closed(self, tmp_path):
+        for field in (
+            "time_values_emitted",
+            "timestamp_values_emitted",
+            "funding_time_values_emitted",
+            "price_values_emitted",
+            "funding_values_emitted",
+            "row_value_samples_emitted",
+            "projected_input_values_emitted",
+            "projected_input_row_values_emitted",
+            "rule_output_rows_emitted",
+        ):
+            result = self._result(tmp_path)
+            result[field] = True
+            gate = _derive_projected_input_temporal_sequence_gate(result)
+            assert gate["gate_passed"] is False
+            assert gate["gate_status"] == BLOCKED_BY_UNEXPECTED_TIME_VALUE_EMISSION
+
+    def test_unexpected_authorization_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["decision_row_generation_authorized"] = True
+        gate = _derive_projected_input_temporal_sequence_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_UNEXPECTED_AUTHORIZATION"
+        assert "decision_row_generation_authorized" in gate["blocked_reason"]
+
+    def test_parse_failure_fails_closed_without_emitting_values(self, tmp_path):
+        inventory = self._write_inventory(tmp_path)
+        bars_path = Path(inventory["roles"][0]["directory"]) / "BTCUSDT_8h_ohlcv.csv"
+        bars_path.write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "not-a-time,100.0,101.0,99.0,100.5,1000\n"
+        )
+        self._refresh_inventory_file(
+            inventory, role="bars", filename="BTCUSDT_8h_ohlcv.csv"
+        )
+        result = self._build(self._full_chain_diags(inventory), inventory)
+        summary = result["temporal_sequence_summary"]
+        assert summary["role_time_parse_failure_counts"]["bars"] == 1
+        assert summary["temporal_sequence_complete"] is False
+        gate = result["projected_input_temporal_sequence_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE
+        )
+        assert result["timestamp_values_emitted"] is False
+
+    def test_missing_duplicate_and_non_monotonic_times_fail_closed(self, tmp_path):
+        inventory = self._write_inventory(tmp_path)
+        bars_path = Path(inventory["roles"][0]["directory"]) / "BTCUSDT_8h_ohlcv.csv"
+        bars_path.write_text(
+            "timestamp,open,high,low,close,volume\n"
+            "2026-01-02T00:00:00Z,100.0,101.0,99.0,100.5,1000\n"
+            ",100.5,102.0,100.0,101.0,1200\n"
+            "2026-01-02T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+            "2026-01-01T00:00:00Z,101.0,103.0,100.5,102.0,1100\n"
+        )
+        self._refresh_inventory_file(
+            inventory, role="bars", filename="BTCUSDT_8h_ohlcv.csv"
+        )
+        result = self._build(self._full_chain_diags(inventory), inventory)
+        summary = result["temporal_sequence_summary"]
+        assert summary["role_time_missing_value_counts"]["bars"] == 1
+        assert summary["role_duplicate_time_counts"]["bars"] == 1
+        assert summary["role_non_monotonic_transition_counts"]["bars"] == 1
+        assert summary["temporal_sequence_complete"] is False
+        assert result["projected_input_temporal_sequence_gate"][
+            "gate_status"
+        ] == BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE
+
+    def test_receipt_integration_no_packet_args(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(
+            self._p1()._o1()._n1()._m1()._cli_base_args(output_dir)
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        diagnostics = receipt["projected_input_temporal_sequence_diagnostics"]
+        gate = diagnostics["projected_input_temporal_sequence_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_receipt_integration_full_path(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = self._p1()._o1()._n1()._m1()
+        exit_code = real_validation.main(
+            m1._cli_base_args(output_dir)
+            + m1._cli_full_chain_args()
+            + [
+                "--bars-dir",
+                str(bars_dir),
+                "--funding-dir",
+                str(funding_dir),
+            ]
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        diagnostics = receipt["projected_input_temporal_sequence_diagnostics"]
+        gate = diagnostics["projected_input_temporal_sequence_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            PROJECTED_INPUT_TEMPORAL_SEQUENCE_DECLARED_DIAGNOSTIC_ONLY
+        )
+        summary = diagnostics["temporal_sequence_summary"]
+        assert summary["role_time_parse_failure_counts"] == {
+            "bars": 0,
+            "funding": 0,
+        }
+        assert summary["role_time_missing_value_counts"] == {
+            "bars": 0,
+            "funding": 0,
+        }
+        assert summary["role_duplicate_time_counts"] == {"bars": 0, "funding": 0}
+        assert summary["role_non_monotonic_transition_counts"] == {
+            "bars": 0,
+            "funding": 0,
+        }
+        assert summary["temporal_sequence_complete"] is True
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_receipt_integration_bars_only_fails_q1_closed(self, tmp_path):
+        bars_dir = tmp_path / "bars"
+        bars_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = self._p1()._o1()._n1()._m1()
+        exit_code = real_validation.main(
+            m1._cli_base_args(output_dir)
+            + m1._cli_full_chain_args()
+            + ["--bars-dir", str(bars_dir)]
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        row_gate = receipt["projected_input_row_count_diagnostics"][
+            "projected_input_row_count_gate"
+        ]
+        temporal_gate = receipt["projected_input_temporal_sequence_diagnostics"][
+            "projected_input_temporal_sequence_gate"
+        ]
+        assert row_gate["gate_passed"] is False
+        assert temporal_gate["gate_passed"] is False
+        assert temporal_gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE
+
+    def test_no_forbidden_calculation_keys(self, tmp_path):
+        result = self._result(tmp_path)
         all_keys = _all_dict_keys(result)
         assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
             f"Forbidden keys found: "

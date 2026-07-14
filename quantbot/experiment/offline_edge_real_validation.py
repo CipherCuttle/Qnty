@@ -100,6 +100,8 @@ __all__ = [
     "_derive_projected_input_shape_inventory_gate",
     "_build_projected_input_row_count_diagnostics",
     "_derive_projected_input_row_count_gate",
+    "_build_projected_input_temporal_sequence_diagnostics",
+    "_derive_projected_input_temporal_sequence_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -711,6 +713,34 @@ BLOCKED_BY_PROJECTED_INPUT_SHAPE_INVENTORY_GATE = (
 )
 BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_ROW_COUNT_EVIDENCE = (
     "BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_ROW_COUNT_EVIDENCE"
+)
+
+# === Lane Q1: projected input temporal-sequence diagnostics ===
+# A diagnostic-only projection over P1/O1/N1/M1/L1 that inspects only the
+# allowed time columns when inventory files are available. It emits no time
+# values, row values, projected row values, prices, funding values, or rule
+# outputs. It never implements a runner or authorizes implementation, rule
+# materialization, decision-row generation, simulated events,
+# economic/statistical value generation, candidate comparison, null generation,
+# live/paper integration, scoring, or final verdict advancement.
+PROJECTED_INPUT_TEMPORAL_SEQUENCE_VERSION = "projected-input-temporal-sequence-0.1"
+PROJECTED_INPUT_TEMPORAL_SEQUENCE_SCOPE = (
+    "PROJECTED_INPUT_TEMPORAL_SEQUENCE_METADATA_ONLY"
+)
+PROJECTED_INPUT_TEMPORAL_SEQUENCE_DECLARED_DIAGNOSTIC_ONLY = (
+    "PROJECTED_INPUT_TEMPORAL_SEQUENCE_DECLARED_DIAGNOSTIC_ONLY"
+)
+PROJECTED_INPUT_TEMPORAL_SEQUENCE_METADATA_ONLY_POLICY = (
+    "NO_TIME_VALUES_OR_RULE_OUTPUTS_EMITTED_IN_THIS_LANE"
+)
+BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE = (
+    "BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE"
+)
+BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE = (
+    "BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE"
+)
+BLOCKED_BY_UNEXPECTED_TIME_VALUE_EMISSION = (
+    "BLOCKED_BY_UNEXPECTED_TIME_VALUE_EMISSION"
 )
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
@@ -11511,6 +11541,24 @@ _PROJECTED_INPUT_ROW_COUNT_AUTHORIZATION_FIELDS = (
 )
 
 
+_PROJECTED_INPUT_TEMPORAL_SEQUENCE_AUTHORIZATION_FIELDS = (
+    "runner_input_temporal_sequence_readiness",
+    "implementation_authorized",
+    "runner_implementation_authorized",
+    "rule_materialization_authorized",
+    "decision_row_generation_authorized",
+    "simulated_event_generation_authorized",
+    "economic_value_generation_authorized",
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+)
+
+
 def _build_no_output_runner_invocation_diagnostics(
     *,
     implementation_boundary_diagnostics: dict[str, Any],
@@ -12974,6 +13022,504 @@ def _derive_projected_input_row_count_gate(
     return gate
 
 
+def _extract_projected_input_temporal_sequence_summary(
+    *,
+    inventory_diagnostics: dict[str, Any] | None,
+    split_diagnostics: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build metadata-only parseability and monotonicity counts.
+
+    When inventory files are available, this helper reopens only the frozen
+    time columns (``timestamp`` for bars and ``fundingTime`` for funding).
+    It retains no parsed datetimes and no source cell values.
+    """
+    split_identifiers = _extract_shape_inventory_split_identifiers(
+        split_diagnostics
+    )
+    role_time_parse_failure_counts: dict[str, int] = {}
+    role_time_missing_value_counts: dict[str, int] = {}
+    role_duplicate_time_counts: dict[str, int] = {}
+    role_non_monotonic_transition_counts: dict[str, int] = {}
+    role_temporal_sequence_status: dict[str, str] = {}
+    role_symbol_counts: dict[str, int] = {}
+    role_split_counts: dict[str, int] = {}
+
+    if isinstance(inventory_diagnostics, dict):
+        roles = inventory_diagnostics.get("roles")
+    else:
+        roles = None
+
+    role_entries = roles if isinstance(roles, list) else []
+    entries_by_role = {
+        entry.get("role"): entry for entry in role_entries if isinstance(entry, dict)
+    }
+
+    temporal_sequence_complete = True
+    for role in ("bars", "funding"):
+        parse_failures = 0
+        missing_values = 0
+        duplicate_values = 0
+        non_monotonic_transitions = 0
+        symbols: set[str] = set()
+        role_entry = entries_by_role.get(role)
+        timestamp_column = _ROLE_TIMESTAMP_COLUMNS[role]
+
+        if not isinstance(role_entry, dict):
+            role_time_parse_failure_counts[role] = 0
+            role_time_missing_value_counts[role] = 0
+            role_duplicate_time_counts[role] = 0
+            role_non_monotonic_transition_counts[role] = 0
+            role_temporal_sequence_status[role] = "MISSING_ROLE_METADATA"
+            role_symbol_counts[role] = 0
+            role_split_counts[role] = len(split_identifiers)
+            temporal_sequence_complete = False
+            continue
+
+        role_directory = Path(str(role_entry.get("directory", ""))).resolve()
+        files = role_entry.get("files")
+        file_entries = files if isinstance(files, list) else []
+        if not role_directory.is_dir():
+            role_time_parse_failure_counts[role] = 0
+            role_time_missing_value_counts[role] = 0
+            role_duplicate_time_counts[role] = 0
+            role_non_monotonic_transition_counts[role] = 0
+            role_temporal_sequence_status[role] = "MISSING_ROLE_DIRECTORY"
+            role_symbol_counts[role] = 0
+            role_split_counts[role] = len(split_identifiers)
+            temporal_sequence_complete = False
+            continue
+
+        _refuse_if_prod_path(role_directory)
+        for file_entry in file_entries:
+            if not isinstance(file_entry, dict):
+                temporal_sequence_complete = False
+                continue
+            symbol = file_entry.get("symbol")
+            if isinstance(symbol, str) and symbol:
+                symbols.add(symbol)
+            filename = file_entry.get("filename")
+            if not isinstance(filename, str) or not filename:
+                temporal_sequence_complete = False
+                continue
+            filename_path = Path(filename)
+            if filename_path.is_absolute() or "/" in filename or ".." in filename:
+                raise ValueError(
+                    f"Inventoried filename must be a simple filename: {filename!r}"
+                )
+
+            inventoried_path = role_directory / filename
+            if inventoried_path.parent != role_directory:
+                raise ValueError(
+                    f"Inventoried file path is outside role directory: {filename}"
+                )
+            if not inventoried_path.exists():
+                temporal_sequence_complete = False
+                continue
+
+            resolved_file = inventoried_path.resolve()
+            _refuse_if_prod_path(resolved_file)
+            if (
+                not _is_under(resolved_file, role_directory)
+                and not inventoried_path.is_symlink()
+            ):
+                raise ValueError(
+                    f"Inventoried file resolves outside role directory: {filename}"
+                )
+            if not resolved_file.is_file():
+                temporal_sequence_complete = False
+                continue
+
+            inventoried_sha256 = file_entry.get("sha256")
+            reopened_sha256 = hashlib.sha256(resolved_file.read_bytes()).hexdigest()
+            if reopened_sha256 != inventoried_sha256:
+                raise ValueError(
+                    f"Inventoried SHA256 changed for {filename}: "
+                    f"expected {inventoried_sha256}, found {reopened_sha256}"
+                )
+
+            seen: set[datetime] = set()
+            previous_timestamp: datetime | None = None
+            with open(resolved_file, newline="") as csv_file:
+                reader = csv.reader(csv_file)
+                header = next(reader, None)
+                timestamp_index: int | None = None
+                if header is not None:
+                    header_lookup = {name.lower(): i for i, name in enumerate(header)}
+                    timestamp_index = header_lookup.get(timestamp_column.lower())
+
+                for row in reader:
+                    timestamp_value = (
+                        row[timestamp_index].strip()
+                        if timestamp_index is not None and timestamp_index < len(row)
+                        else ""
+                    )
+                    if not timestamp_value:
+                        missing_values += 1
+                        continue
+                    try:
+                        timestamp = _parse_timestamp(timestamp_value)
+                    except (OverflowError, OSError, ValueError):
+                        parse_failures += 1
+                        continue
+                    if timestamp in seen:
+                        duplicate_values += 1
+                    elif (
+                        previous_timestamp is not None
+                        and timestamp <= previous_timestamp
+                    ):
+                        non_monotonic_transitions += 1
+                    seen.add(timestamp)
+                    previous_timestamp = timestamp
+
+        role_time_parse_failure_counts[role] = parse_failures
+        role_time_missing_value_counts[role] = missing_values
+        role_duplicate_time_counts[role] = duplicate_values
+        role_non_monotonic_transition_counts[role] = non_monotonic_transitions
+        role_symbol_counts[role] = len(symbols)
+        role_split_counts[role] = len(split_identifiers)
+        role_ok = (
+            parse_failures == 0
+            and missing_values == 0
+            and duplicate_values == 0
+            and non_monotonic_transitions == 0
+            and bool(file_entries)
+        )
+        role_temporal_sequence_status[role] = (
+            "SEQUENCE_SAFE" if role_ok else "SEQUENCE_UNSAFE"
+        )
+        temporal_sequence_complete = temporal_sequence_complete and role_ok
+
+    return {
+        "summary_kind": "metadata_only_temporal_sequence_summary",
+        "time_values_included": False,
+        "row_values_included": False,
+        "projected_row_values_included": False,
+        "rule_outputs_included": False,
+        "roles_declared": ["bars", "funding"],
+        "time_column_names_by_role": {
+            "bars": "timestamp",
+            "funding": "fundingTime",
+        },
+        "role_time_parse_failure_counts": role_time_parse_failure_counts,
+        "role_time_missing_value_counts": role_time_missing_value_counts,
+        "role_duplicate_time_counts": role_duplicate_time_counts,
+        "role_non_monotonic_transition_counts": (
+            role_non_monotonic_transition_counts
+        ),
+        "role_temporal_sequence_status": role_temporal_sequence_status,
+        "role_symbol_counts": role_symbol_counts,
+        "role_split_counts": role_split_counts,
+        "temporal_sequence_complete": temporal_sequence_complete,
+    }
+
+
+def _build_projected_input_temporal_sequence_diagnostics(
+    *,
+    projected_input_row_count_diagnostics: dict[str, Any],
+    projected_input_shape_inventory_diagnostics: dict[str, Any],
+    allowed_runner_input_projection_diagnostics: dict[str, Any],
+    no_output_runner_invocation_diagnostics: dict[str, Any],
+    implementation_boundary_diagnostics: dict[str, Any],
+    split_diagnostics: dict[str, Any] | None = None,
+    inventory_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build Lane Q1 projected input temporal-sequence diagnostics."""
+    projected_input_row_count_gate = projected_input_row_count_diagnostics.get(
+        "projected_input_row_count_gate"
+    )
+    projected_input_shape_inventory_gate = (
+        projected_input_shape_inventory_diagnostics.get(
+            "projected_input_shape_inventory_gate"
+        )
+    )
+    allowed_runner_input_projection_gate = (
+        allowed_runner_input_projection_diagnostics.get(
+            "allowed_runner_input_projection_gate"
+        )
+    )
+    no_output_runner_invocation_gate = (
+        no_output_runner_invocation_diagnostics.get(
+            "no_output_runner_invocation_gate"
+        )
+    )
+    implementation_boundary_gate = implementation_boundary_diagnostics.get(
+        "implementation_boundary_gate"
+    )
+    temporal_sequence_summary = _extract_projected_input_temporal_sequence_summary(
+        inventory_diagnostics=inventory_diagnostics,
+        split_diagnostics=split_diagnostics,
+    )
+
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "projected_input_temporal_sequence_inventory",
+        "projected_input_temporal_sequence_version": (
+            PROJECTED_INPUT_TEMPORAL_SEQUENCE_VERSION
+        ),
+        "projected_input_temporal_sequence_scope": (
+            PROJECTED_INPUT_TEMPORAL_SEQUENCE_SCOPE
+        ),
+        "projected_input_temporal_sequence_status": (
+            PROJECTED_INPUT_TEMPORAL_SEQUENCE_DECLARED_DIAGNOSTIC_ONLY
+        ),
+        "projected_input_row_count_gate_required": True,
+        "projected_input_row_count_gate_passed": bool(
+            projected_input_row_count_gate is not None
+            and projected_input_row_count_gate.get("gate_passed") is True
+        ),
+        "projected_input_shape_inventory_gate_required": True,
+        "projected_input_shape_inventory_gate_passed": bool(
+            projected_input_shape_inventory_gate is not None
+            and projected_input_shape_inventory_gate.get("gate_passed") is True
+        ),
+        "allowed_runner_input_projection_gate_required": True,
+        "allowed_runner_input_projection_gate_passed": bool(
+            allowed_runner_input_projection_gate is not None
+            and allowed_runner_input_projection_gate.get("gate_passed") is True
+        ),
+        "no_output_runner_invocation_gate_required": True,
+        "no_output_runner_invocation_gate_passed": bool(
+            no_output_runner_invocation_gate is not None
+            and no_output_runner_invocation_gate.get("gate_passed") is True
+        ),
+        "implementation_boundary_gate_required": True,
+        "implementation_boundary_gate_passed": bool(
+            implementation_boundary_gate is not None
+            and implementation_boundary_gate.get("gate_passed") is True
+        ),
+        "projected_input_temporal_sequence_declared": True,
+        "projected_input_temporal_sequence_mode": "METADATA_ONLY",
+        "projected_input_temporal_sequence_policy": (
+            PROJECTED_INPUT_TEMPORAL_SEQUENCE_METADATA_ONLY_POLICY
+        ),
+        "time_column_names_by_role": {
+            "bars": "timestamp",
+            "funding": "fundingTime",
+        },
+        "temporal_sequence_summary_kind": (
+            "metadata_only_temporal_sequence_summary"
+        ),
+        "time_values_emitted": False,
+        "timestamp_values_emitted": False,
+        "funding_time_values_emitted": False,
+        "price_values_emitted": False,
+        "funding_values_emitted": False,
+        "row_value_samples_emitted": False,
+        "projected_input_values_emitted": False,
+        "projected_input_row_values_emitted": False,
+        "rule_output_rows_emitted": False,
+        "temporal_sequence_summary": temporal_sequence_summary,
+        "runner_input_temporal_sequence_readiness": False,
+        "implementation_authorized": False,
+        "runner_implementation_authorized": False,
+        "rule_materialization_authorized": False,
+        "decision_row_generation_authorized": False,
+        "simulated_event_generation_authorized": False,
+        "economic_value_generation_authorized": False,
+        "statistical_value_generation_authorized": False,
+        "candidate_comparison_authorized": False,
+        "null_generation_authorized": False,
+        "scoring_authorization": False,
+        "live_integration_authorized": False,
+        "paper_integration_authorized": False,
+        "final_verdict_authorization": False,
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["projected_input_temporal_sequence_gate"] = (
+        _derive_projected_input_temporal_sequence_gate(diagnostics)
+    )
+    return diagnostics
+
+
+def _derive_projected_input_temporal_sequence_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive the Lane Q1 projected input temporal-sequence gate."""
+    summary = diagnostics.get("temporal_sequence_summary")
+    summary_is_mapping = isinstance(summary, dict)
+    evidence = {
+        "projected_input_row_count_gate_passed": diagnostics.get(
+            "projected_input_row_count_gate_passed"
+        ),
+        "projected_input_shape_inventory_gate_passed": diagnostics.get(
+            "projected_input_shape_inventory_gate_passed"
+        ),
+        "allowed_runner_input_projection_gate_passed": diagnostics.get(
+            "allowed_runner_input_projection_gate_passed"
+        ),
+        "no_output_runner_invocation_gate_passed": diagnostics.get(
+            "no_output_runner_invocation_gate_passed"
+        ),
+        "implementation_boundary_gate_passed": diagnostics.get(
+            "implementation_boundary_gate_passed"
+        ),
+        "projected_input_temporal_sequence_declared": (
+            diagnostics.get("projected_input_temporal_sequence_declared") is True
+        ),
+        "projected_input_temporal_sequence_metadata_only": (
+            diagnostics.get("projected_input_temporal_sequence_mode")
+            == "METADATA_ONLY"
+            and diagnostics.get("projected_input_temporal_sequence_policy")
+            == PROJECTED_INPUT_TEMPORAL_SEQUENCE_METADATA_ONLY_POLICY
+        ),
+        "temporal_sequence_summary_metadata_only": (
+            summary_is_mapping
+            and diagnostics.get("temporal_sequence_summary_kind")
+            == "metadata_only_temporal_sequence_summary"
+            and summary.get("summary_kind")
+            == "metadata_only_temporal_sequence_summary"
+            and summary.get("roles_declared") == ["bars", "funding"]
+            and summary.get("time_column_names_by_role")
+            == {"bars": "timestamp", "funding": "fundingTime"}
+            and summary.get("time_values_included") is False
+            and summary.get("row_values_included") is False
+            and summary.get("projected_row_values_included") is False
+            and summary.get("rule_outputs_included") is False
+            and isinstance(summary.get("role_time_parse_failure_counts"), dict)
+            and isinstance(summary.get("role_time_missing_value_counts"), dict)
+            and isinstance(summary.get("role_duplicate_time_counts"), dict)
+            and isinstance(
+                summary.get("role_non_monotonic_transition_counts"), dict
+            )
+            and isinstance(summary.get("role_temporal_sequence_status"), dict)
+        ),
+        "temporal_sequence_complete": (
+            summary_is_mapping
+            and summary.get("temporal_sequence_complete") is True
+        ),
+        "time_values_emitted": diagnostics.get("time_values_emitted"),
+        "timestamp_values_emitted": diagnostics.get("timestamp_values_emitted"),
+        "funding_time_values_emitted": diagnostics.get(
+            "funding_time_values_emitted"
+        ),
+        "price_values_emitted": diagnostics.get("price_values_emitted"),
+        "funding_values_emitted": diagnostics.get("funding_values_emitted"),
+        "row_value_samples_emitted": diagnostics.get("row_value_samples_emitted"),
+        "projected_input_values_emitted": diagnostics.get(
+            "projected_input_values_emitted"
+        ),
+        "projected_input_row_values_emitted": diagnostics.get(
+            "projected_input_row_values_emitted"
+        ),
+        "rule_output_rows_emitted": diagnostics.get("rule_output_rows_emitted"),
+        "runner_input_temporal_sequence_readiness": diagnostics.get(
+            "runner_input_temporal_sequence_readiness", False
+        ),
+        "implementation_authorized": diagnostics.get(
+            "implementation_authorized", False
+        ),
+        "runner_implementation_authorized": diagnostics.get(
+            "runner_implementation_authorized", False
+        ),
+        "rule_materialization_authorized": diagnostics.get(
+            "rule_materialization_authorized", False
+        ),
+        "decision_row_generation_authorized": diagnostics.get(
+            "decision_row_generation_authorized", False
+        ),
+    }
+
+    temporal_evidence_keys = (
+        "projected_input_temporal_sequence_declared",
+        "projected_input_temporal_sequence_metadata_only",
+        "temporal_sequence_summary_metadata_only",
+        "temporal_sequence_complete",
+    )
+    temporal_evidence_passed = all(
+        evidence.get(key) is True for key in temporal_evidence_keys
+    )
+
+    emitted_flags = (
+        "time_values_emitted",
+        "timestamp_values_emitted",
+        "funding_time_values_emitted",
+        "price_values_emitted",
+        "funding_values_emitted",
+        "row_value_samples_emitted",
+        "projected_input_values_emitted",
+        "projected_input_row_values_emitted",
+        "rule_output_rows_emitted",
+    )
+
+    def _base_gate(gate_status: str, blocked_reason: str | None) -> dict[str, Any]:
+        return {
+            "gate_kind": "projected_input_temporal_sequence_gate",
+            "gate_scope": PROJECTED_INPUT_TEMPORAL_SEQUENCE_SCOPE,
+            "gate_status": gate_status,
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": evidence,
+            "blocked_reason": blocked_reason,
+        }
+
+    offending_authorizations = [
+        field
+        for field in _PROJECTED_INPUT_TEMPORAL_SEQUENCE_AUTHORIZATION_FIELDS
+        if diagnostics.get(field) is True
+    ]
+    if offending_authorizations:
+        return _base_gate(
+            "BLOCKED_BY_UNEXPECTED_AUTHORIZATION",
+            "UNEXPECTED_AUTHORIZATION_FIELDS_TRUE: "
+            + ", ".join(sorted(offending_authorizations)),
+        )
+
+    if not diagnostics.get("projected_input_row_count_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE,
+            "PROJECTED_INPUT_ROW_COUNT_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("projected_input_shape_inventory_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_PROJECTED_INPUT_SHAPE_INVENTORY_GATE,
+            "PROJECTED_INPUT_SHAPE_INVENTORY_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("allowed_runner_input_projection_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE,
+            "ALLOWED_RUNNER_INPUT_PROJECTION_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("no_output_runner_invocation_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE,
+            "NO_OUTPUT_RUNNER_INVOCATION_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("implementation_boundary_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE,
+            "IMPLEMENTATION_BOUNDARY_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    emitted_true = [
+        field for field in emitted_flags if diagnostics.get(field) is True
+    ]
+    if emitted_true:
+        return _base_gate(
+            BLOCKED_BY_UNEXPECTED_TIME_VALUE_EMISSION,
+            "UNEXPECTED_TIME_VALUE_EMISSION_FIELDS_TRUE: "
+            + ", ".join(sorted(emitted_true)),
+        )
+
+    if not temporal_evidence_passed:
+        return _base_gate(
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE,
+            "PROJECTED_INPUT_TEMPORAL_SEQUENCE_EVIDENCE_INCOMPLETE_OR_MUTATED",
+        )
+
+    gate = _base_gate(
+        PROJECTED_INPUT_TEMPORAL_SEQUENCE_DECLARED_DIAGNOSTIC_ONLY,
+        None,
+    )
+    gate["gate_passed"] = True
+    return gate
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -13097,6 +13643,7 @@ def build_real_validation_receipt(
     allowed_runner_input_projection_diagnostics: dict | None = None,
     projected_input_shape_inventory_diagnostics: dict | None = None,
     projected_input_row_count_diagnostics: dict | None = None,
+    projected_input_temporal_sequence_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -13263,6 +13810,10 @@ def build_real_validation_receipt(
     if projected_input_row_count_diagnostics is not None:
         receipt["projected_input_row_count_diagnostics"] = (
             projected_input_row_count_diagnostics
+        )
+    if projected_input_temporal_sequence_diagnostics is not None:
+        receipt["projected_input_temporal_sequence_diagnostics"] = (
+            projected_input_temporal_sequence_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -14013,6 +14564,29 @@ def main(argv: list[str] | None = None) -> int:
                     inventory_diagnostics=inventory,
                 )
             )
+            projected_input_temporal_sequence_diagnostics = (
+                _build_projected_input_temporal_sequence_diagnostics(
+                    projected_input_row_count_diagnostics=(
+                        projected_input_row_count_diagnostics
+                    ),
+                    projected_input_shape_inventory_diagnostics=(
+                        projected_input_shape_inventory_diagnostics
+                    ),
+                    allowed_runner_input_projection_diagnostics=(
+                        allowed_runner_input_projection_diagnostics
+                    ),
+                    no_output_runner_invocation_diagnostics=(
+                        no_output_runner_invocation_diagnostics
+                    ),
+                    implementation_boundary_diagnostics=(
+                        implementation_boundary_diagnostics
+                    ),
+                    split_diagnostics={
+                        "split_definitions": split_definitions,
+                    },
+                    inventory_diagnostics=inventory,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -14099,6 +14673,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             projected_input_row_count_diagnostics=(
                 projected_input_row_count_diagnostics
+            ),
+            projected_input_temporal_sequence_diagnostics=(
+                projected_input_temporal_sequence_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -14308,6 +14885,28 @@ def main(argv: list[str] | None = None) -> int:
                     },
                 )
             )
+            projected_input_temporal_sequence_diagnostics = (
+                _build_projected_input_temporal_sequence_diagnostics(
+                    projected_input_row_count_diagnostics=(
+                        projected_input_row_count_diagnostics
+                    ),
+                    projected_input_shape_inventory_diagnostics=(
+                        projected_input_shape_inventory_diagnostics
+                    ),
+                    allowed_runner_input_projection_diagnostics=(
+                        allowed_runner_input_projection_diagnostics
+                    ),
+                    no_output_runner_invocation_diagnostics=(
+                        no_output_runner_invocation_diagnostics
+                    ),
+                    implementation_boundary_diagnostics=(
+                        implementation_boundary_diagnostics
+                    ),
+                    split_diagnostics={
+                        "split_definitions": split_definitions,
+                    },
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -14359,6 +14958,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             projected_input_row_count_diagnostics=(
                 projected_input_row_count_diagnostics
+            ),
+            projected_input_temporal_sequence_diagnostics=(
+                projected_input_temporal_sequence_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
