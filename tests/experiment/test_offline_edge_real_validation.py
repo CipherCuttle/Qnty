@@ -20994,6 +20994,48 @@ class TestStatisticalValueContractLockY0:
                 for child in value: yield from keys(child)
         assert not (set(keys(result)) & forbidden)
 
+    def test_no_input_cli_receipt_includes_failed_y0_gate(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        assert real_validation.main(m1._cli_base_args(output_dir)) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        diagnostics = receipt["statistical_value_contract_lock_y0_diagnostics"]
+        assert diagnostics["statistical_value_contract_lock_gate"]["gate_passed"] is False
+        assert diagnostics["statistical_values"] == []
+        assert diagnostics["statistical_values_emitted"] is False
+        assert diagnostics["statistical_value_count"] == 0
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_full_cli_receipt_includes_y0_and_remains_blocked(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+        j1 = TestEconomicAccountingPolicyPreregistrationJ1()
+        assert real_validation.main(
+            j1._cli_base_args(output_dir)
+            + j1._cli_upstream_args()
+            + j1._cli_eap_args()
+            + ["--bars-dir", str(bars_dir), "--funding-dir", str(funding_dir)]
+        ) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        diagnostics = receipt["statistical_value_contract_lock_y0_diagnostics"]
+        assert diagnostics["diagnostic_kind"] == "statistical_value_contract_lock_y0"
+        assert diagnostics["statistical_values"] == []
+        assert diagnostics["statistical_values_emitted"] is False
+        assert diagnostics["statistical_value_count"] == 0
+        assert diagnostics["inferential_values_emitted"] is False
+        assert diagnostics["uncertainty_values_emitted"] is False
+        assert diagnostics["candidate_comparison_values_emitted"] is False
+        assert diagnostics["statistical_value_generation_authorized"] is False
+        assert diagnostics["final_verdict_authorization"] is False
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
 
 class TestProjectedInputShapeInventoryO1:
     """Lane O1: projected input shape inventory diagnostics."""
