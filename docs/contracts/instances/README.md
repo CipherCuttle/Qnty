@@ -887,3 +887,36 @@ remain, and `final_offline_verdict` remains
 ```bash
 .venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k AllowedRunnerInputProjectionN1 -q
 ```
+
+### Lane O1 — Projected Input Shape Inventory Diagnostics
+
+**Lane O1 is not implementation.** It adds no new frozen packet or sidecar. It
+is a **derived, diagnostic-only projection** over the Lane N1 allowed runner
+input projection, the Lane M1 no-output runner invocation gate, and the Lane
+L1 implementation boundary gate.
+
+It answers exactly one question:
+
+> Can the receipt describe the shape of allowed projected runner inputs without
+> exposing row values or producing rule outputs?
+
+O1 declares a metadata-only projected input shape inventory for roles `bars`
+and `funding`, allowed bar columns `close` and `timestamp`, allowed funding
+columns `fundingRate` and `fundingTime`, excluded bar columns `open`, `high`,
+`low`, and `volume`, and excluded funding column `markPrice`.
+
+It emits no row values, no projected input row values, and no rule outputs. It
+does not implement the runner, materialize rules, compute decisions, signals,
+simulated events, economic values, statistics, or final verdict, and it does
+not authorize scoring, live/paper integration, or final verdict advancement.
+
+Even when the O1 gate passes, `gate_downstream_unlocks` is always `[]`, every
+authorization remains `false`, `EDGE_UNPROVEN` and `BLOCK_LIVE_INTEGRATION`
+remain, and `final_offline_verdict` remains
+`BLOCKED_BY_VALIDATION_IMPLEMENTATION`.
+
+#### Verification
+
+```bash
+.venv/bin/python -m pytest tests/experiment/test_offline_edge_real_validation.py -k ProjectedInputShapeInventoryO1 -q
+```

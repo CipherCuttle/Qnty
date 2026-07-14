@@ -96,6 +96,8 @@ __all__ = [
     "_derive_no_output_runner_invocation_gate",
     "_build_allowed_runner_input_projection_diagnostics",
     "_derive_allowed_runner_input_projection_gate",
+    "_build_projected_input_shape_inventory_diagnostics",
+    "_derive_projected_input_shape_inventory_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -658,6 +660,32 @@ BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE = (
 )
 BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE = (
     "BLOCKED_BY_INCOMPLETE_RUNNER_INPUT_PROJECTION_EVIDENCE"
+)
+
+# === Lane O1: projected input shape inventory constants ===
+# A pure, derived diagnostic that projects the N1 allowed runner input
+# projection into a metadata-only inventory of the future runner input shape.
+# It emits no row values, no projected row values, and no rule outputs. It
+# never implements a runner or authorizes implementation, rule materialization,
+# decision-row generation, simulated events, economic/statistical value
+# generation, candidate comparison, null generation, live/paper integration,
+# scoring, or final verdict advancement.
+PROJECTED_INPUT_SHAPE_INVENTORY_VERSION = "projected-input-shape-inventory-0.1"
+PROJECTED_INPUT_SHAPE_INVENTORY_SCOPE = "PROJECTED_INPUT_SHAPE_METADATA_ONLY"
+PROJECTED_INPUT_SHAPE_INVENTORY_DECLARED_DIAGNOSTIC_ONLY = (
+    "PROJECTED_INPUT_SHAPE_INVENTORY_DECLARED_DIAGNOSTIC_ONLY"
+)
+PROJECTED_INPUT_SHAPE_METADATA_ONLY_POLICY = (
+    "NO_ROW_VALUES_OR_RULE_OUTPUTS_EMITTED_IN_THIS_LANE"
+)
+BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE = (
+    "BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE"
+)
+BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE = (
+    "BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE"
+)
+BLOCKED_BY_UNEXPECTED_INPUT_VALUE_EMISSION = (
+    "BLOCKED_BY_UNEXPECTED_INPUT_VALUE_EMISSION"
 )
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
@@ -11419,6 +11447,24 @@ _ALLOWED_RUNNER_INPUT_PROJECTION_AUTHORIZATION_FIELDS = (
 )
 
 
+_PROJECTED_INPUT_SHAPE_INVENTORY_AUTHORIZATION_FIELDS = (
+    "runner_input_shape_readiness",
+    "implementation_authorized",
+    "runner_implementation_authorized",
+    "rule_materialization_authorized",
+    "decision_row_generation_authorized",
+    "simulated_event_generation_authorized",
+    "economic_value_generation_authorized",
+    "statistical_value_generation_authorized",
+    "candidate_comparison_authorized",
+    "null_generation_authorized",
+    "scoring_authorization",
+    "live_integration_authorized",
+    "paper_integration_authorized",
+    "final_verdict_authorization",
+)
+
+
 def _build_no_output_runner_invocation_diagnostics(
     *,
     implementation_boundary_diagnostics: dict[str, Any],
@@ -11945,6 +11991,379 @@ def _derive_allowed_runner_input_projection_gate(
     return gate
 
 
+def _extract_shape_inventory_split_identifiers(
+    split_diagnostics: dict[str, Any] | None,
+) -> list[str]:
+    """Return split identifiers only; never include split row boundaries."""
+    if not isinstance(split_diagnostics, dict):
+        return []
+
+    split_entries = split_diagnostics.get("split_definitions")
+    if not isinstance(split_entries, list):
+        split_entries = split_diagnostics.get("splits")
+    if not isinstance(split_entries, list):
+        return []
+
+    identifiers: list[str] = []
+    for index, entry in enumerate(split_entries):
+        if not isinstance(entry, dict):
+            continue
+        identifier = (
+            entry.get("split_id")
+            or entry.get("id")
+            or entry.get("name")
+            or entry.get("label")
+            or f"split_{index + 1}"
+        )
+        identifiers.append(str(identifier))
+    return identifiers
+
+
+def _extract_shape_inventory_role_summary(
+    inventory_diagnostics: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Summarize inventory metadata without copying paths or row values."""
+    if not isinstance(inventory_diagnostics, dict):
+        return {
+            "inventory_metadata_available": False,
+            "role_file_counts": {},
+            "symbol_identifiers_by_role": {},
+        }
+
+    role_file_counts: dict[str, int] = {}
+    symbol_identifiers_by_role: dict[str, list[str]] = {}
+    roles = inventory_diagnostics.get("roles")
+    if isinstance(roles, list):
+        for role_entry in roles:
+            if not isinstance(role_entry, dict):
+                continue
+            role_name = role_entry.get("role")
+            if not isinstance(role_name, str) or not role_name:
+                continue
+            files = role_entry.get("files")
+            file_entries = files if isinstance(files, list) else []
+            role_file_counts[role_name] = len(file_entries)
+            symbols: set[str] = set()
+            for file_entry in file_entries:
+                if not isinstance(file_entry, dict):
+                    continue
+                symbol = file_entry.get("symbol")
+                if isinstance(symbol, str) and symbol:
+                    symbols.add(symbol)
+            symbol_identifiers_by_role[role_name] = sorted(symbols)
+
+    return {
+        "inventory_metadata_available": bool(role_file_counts),
+        "role_file_counts": role_file_counts,
+        "symbol_identifiers_by_role": symbol_identifiers_by_role,
+    }
+
+
+def _build_projected_input_shape_inventory_diagnostics(
+    *,
+    allowed_runner_input_projection_diagnostics: dict[str, Any],
+    no_output_runner_invocation_diagnostics: dict[str, Any],
+    implementation_boundary_diagnostics: dict[str, Any],
+    split_diagnostics: dict[str, Any] | None = None,
+    inventory_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build Lane O1 projected input shape inventory diagnostics.
+
+    This is a pure projection over already-built diagnostics. It performs no
+    file reads, no hashing, no git calls, no mutation of inputs, and emits no
+    row values, projected row values, or rule outputs. Optional split and
+    inventory inputs are summarized only as metadata such as counts and
+    identifiers.
+    """
+    allowed_runner_input_projection_gate = (
+        allowed_runner_input_projection_diagnostics.get(
+            "allowed_runner_input_projection_gate"
+        )
+    )
+    no_output_runner_invocation_gate = (
+        no_output_runner_invocation_diagnostics.get(
+            "no_output_runner_invocation_gate"
+        )
+    )
+    implementation_boundary_gate = implementation_boundary_diagnostics.get(
+        "implementation_boundary_gate"
+    )
+
+    split_identifiers = _extract_shape_inventory_split_identifiers(
+        split_diagnostics
+    )
+    inventory_role_summary = _extract_shape_inventory_role_summary(
+        inventory_diagnostics
+    )
+
+    shape_inventory_summary = {
+        "summary_kind": "metadata_only_shape_summary",
+        "roles_declared": ["bars", "funding"],
+        "allowed_column_names_by_role": {
+            "bars": ["close", "timestamp"],
+            "funding": ["fundingRate", "fundingTime"],
+        },
+        "excluded_column_names_by_role": {
+            "bars": ["open", "high", "low", "volume"],
+            "funding": ["markPrice"],
+        },
+        "split_count": len(split_identifiers),
+        "split_identifiers": split_identifiers,
+        "inventory_role_file_counts": inventory_role_summary["role_file_counts"],
+        "inventory_symbol_identifiers_by_role": (
+            inventory_role_summary["symbol_identifiers_by_role"]
+        ),
+        "row_values_included": False,
+        "rule_outputs_included": False,
+    }
+
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "projected_input_shape_inventory",
+        "projected_input_shape_inventory_version": (
+            PROJECTED_INPUT_SHAPE_INVENTORY_VERSION
+        ),
+        "projected_input_shape_inventory_scope": (
+            PROJECTED_INPUT_SHAPE_INVENTORY_SCOPE
+        ),
+        "projected_input_shape_inventory_status": (
+            PROJECTED_INPUT_SHAPE_INVENTORY_DECLARED_DIAGNOSTIC_ONLY
+        ),
+        "allowed_runner_input_projection_gate_required": True,
+        "allowed_runner_input_projection_gate_passed": bool(
+            allowed_runner_input_projection_gate is not None
+            and allowed_runner_input_projection_gate.get("gate_passed") is True
+        ),
+        "no_output_runner_invocation_gate_required": True,
+        "no_output_runner_invocation_gate_passed": bool(
+            no_output_runner_invocation_gate is not None
+            and no_output_runner_invocation_gate.get("gate_passed") is True
+        ),
+        "implementation_boundary_gate_required": True,
+        "implementation_boundary_gate_passed": bool(
+            implementation_boundary_gate is not None
+            and implementation_boundary_gate.get("gate_passed") is True
+        ),
+        "projected_input_shape_inventory_declared": True,
+        "projected_input_shape_inventory_mode": "METADATA_ONLY",
+        "projected_input_shape_inventory_policy": (
+            PROJECTED_INPUT_SHAPE_METADATA_ONLY_POLICY
+        ),
+        "allowed_input_roles": ["bars", "funding"],
+        "allowed_bar_columns": sorted(_CONTRACT_BARS_ALLOWED),
+        "allowed_funding_columns": sorted(_CONTRACT_FUNDING_ALLOWED),
+        "excluded_bar_columns": list(_IMPLEMENTATION_BOUNDARY_FORBIDDEN_BAR_COLUMNS),
+        "excluded_funding_columns": list(
+            _IMPLEMENTATION_BOUNDARY_FORBIDDEN_FUNDING_COLUMNS
+        ),
+        "shape_inventory_values_emitted": False,
+        "shape_inventory_row_values_emitted": False,
+        "projected_input_values_emitted": False,
+        "projected_input_row_values_emitted": False,
+        "rule_output_rows_emitted": False,
+        "shape_inventory_summary": shape_inventory_summary,
+        "runner_input_shape_readiness": False,
+        "implementation_authorized": False,
+        "runner_implementation_authorized": False,
+        "rule_materialization_authorized": False,
+        "decision_row_generation_authorized": False,
+        "simulated_event_generation_authorized": False,
+        "economic_value_generation_authorized": False,
+        "statistical_value_generation_authorized": False,
+        "candidate_comparison_authorized": False,
+        "null_generation_authorized": False,
+        "scoring_authorization": False,
+        "live_integration_authorized": False,
+        "paper_integration_authorized": False,
+        "final_verdict_authorization": False,
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+
+    diagnostics["projected_input_shape_inventory_gate"] = (
+        _derive_projected_input_shape_inventory_gate(diagnostics)
+    )
+    return diagnostics
+
+
+def _derive_projected_input_shape_inventory_gate(
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive the Lane O1 projected input shape inventory gate."""
+    summary = diagnostics.get("shape_inventory_summary")
+    summary_is_mapping = isinstance(summary, dict)
+    evidence = {
+        "allowed_runner_input_projection_gate_passed": diagnostics.get(
+            "allowed_runner_input_projection_gate_passed"
+        ),
+        "no_output_runner_invocation_gate_passed": diagnostics.get(
+            "no_output_runner_invocation_gate_passed"
+        ),
+        "implementation_boundary_gate_passed": diagnostics.get(
+            "implementation_boundary_gate_passed"
+        ),
+        "projected_input_shape_inventory_declared": (
+            diagnostics.get("projected_input_shape_inventory_declared") is True
+        ),
+        "projected_input_shape_inventory_metadata_only": (
+            diagnostics.get("projected_input_shape_inventory_mode")
+            == "METADATA_ONLY"
+            and diagnostics.get("projected_input_shape_inventory_policy")
+            == PROJECTED_INPUT_SHAPE_METADATA_ONLY_POLICY
+        ),
+        "allowed_input_roles_match_frozen_value": (
+            diagnostics.get("allowed_input_roles") == ["bars", "funding"]
+        ),
+        "allowed_bar_columns_match_frozen_value": (
+            diagnostics.get("allowed_bar_columns") == ["close", "timestamp"]
+        ),
+        "allowed_funding_columns_match_frozen_value": (
+            diagnostics.get("allowed_funding_columns")
+            == ["fundingRate", "fundingTime"]
+        ),
+        "excluded_bar_columns_declared": (
+            diagnostics.get("excluded_bar_columns")
+            == list(_IMPLEMENTATION_BOUNDARY_FORBIDDEN_BAR_COLUMNS)
+        ),
+        "excluded_funding_columns_declared": (
+            diagnostics.get("excluded_funding_columns")
+            == list(_IMPLEMENTATION_BOUNDARY_FORBIDDEN_FUNDING_COLUMNS)
+        ),
+        "shape_inventory_values_emitted": diagnostics.get(
+            "shape_inventory_values_emitted"
+        ),
+        "shape_inventory_row_values_emitted": diagnostics.get(
+            "shape_inventory_row_values_emitted"
+        ),
+        "projected_input_values_emitted": diagnostics.get(
+            "projected_input_values_emitted"
+        ),
+        "projected_input_row_values_emitted": diagnostics.get(
+            "projected_input_row_values_emitted"
+        ),
+        "rule_output_rows_emitted": diagnostics.get("rule_output_rows_emitted"),
+        "shape_summary_metadata_only": (
+            summary_is_mapping
+            and summary.get("summary_kind") == "metadata_only_shape_summary"
+            and summary.get("roles_declared") == ["bars", "funding"]
+            and summary.get("allowed_column_names_by_role")
+            == {
+                "bars": ["close", "timestamp"],
+                "funding": ["fundingRate", "fundingTime"],
+            }
+            and summary.get("excluded_column_names_by_role")
+            == {
+                "bars": ["open", "high", "low", "volume"],
+                "funding": ["markPrice"],
+            }
+            and summary.get("row_values_included") is False
+            and summary.get("rule_outputs_included") is False
+        ),
+        "runner_input_shape_readiness": diagnostics.get(
+            "runner_input_shape_readiness", False
+        ),
+        "implementation_authorized": diagnostics.get(
+            "implementation_authorized", False
+        ),
+        "runner_implementation_authorized": diagnostics.get(
+            "runner_implementation_authorized", False
+        ),
+        "rule_materialization_authorized": diagnostics.get(
+            "rule_materialization_authorized", False
+        ),
+        "decision_row_generation_authorized": diagnostics.get(
+            "decision_row_generation_authorized", False
+        ),
+    }
+
+    shape_evidence_keys = (
+        "projected_input_shape_inventory_declared",
+        "projected_input_shape_inventory_metadata_only",
+        "allowed_input_roles_match_frozen_value",
+        "allowed_bar_columns_match_frozen_value",
+        "allowed_funding_columns_match_frozen_value",
+        "excluded_bar_columns_declared",
+        "excluded_funding_columns_declared",
+        "shape_summary_metadata_only",
+    )
+    shape_evidence_passed = all(
+        evidence.get(key) is True for key in shape_evidence_keys
+    )
+
+    emitted_flags = (
+        "shape_inventory_values_emitted",
+        "shape_inventory_row_values_emitted",
+        "projected_input_values_emitted",
+        "projected_input_row_values_emitted",
+        "rule_output_rows_emitted",
+    )
+
+    def _base_gate(gate_status: str, blocked_reason: str | None) -> dict[str, Any]:
+        return {
+            "gate_kind": "projected_input_shape_inventory_gate",
+            "gate_scope": PROJECTED_INPUT_SHAPE_INVENTORY_SCOPE,
+            "gate_status": gate_status,
+            "gate_passed": False,
+            "gate_scoring_authorization": False,
+            "gate_live_authorization": False,
+            "gate_final_verdict_authorization": False,
+            "gate_downstream_unlocks": [],
+            "evidence": evidence,
+            "blocked_reason": blocked_reason,
+        }
+
+    offending_authorizations = [
+        field
+        for field in _PROJECTED_INPUT_SHAPE_INVENTORY_AUTHORIZATION_FIELDS
+        if diagnostics.get(field) is True
+    ]
+    if offending_authorizations:
+        return _base_gate(
+            "BLOCKED_BY_UNEXPECTED_AUTHORIZATION",
+            "UNEXPECTED_AUTHORIZATION_FIELDS_TRUE: "
+            + ", ".join(sorted(offending_authorizations)),
+        )
+
+    if not diagnostics.get("allowed_runner_input_projection_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE,
+            "ALLOWED_RUNNER_INPUT_PROJECTION_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("no_output_runner_invocation_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE,
+            "NO_OUTPUT_RUNNER_INVOCATION_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    if not diagnostics.get("implementation_boundary_gate_passed"):
+        return _base_gate(
+            BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE,
+            "IMPLEMENTATION_BOUNDARY_GATE_MISSING_OR_NOT_PASSED",
+        )
+
+    emitted_true = [
+        field for field in emitted_flags if diagnostics.get(field) is True
+    ]
+    if emitted_true:
+        return _base_gate(
+            BLOCKED_BY_UNEXPECTED_INPUT_VALUE_EMISSION,
+            "UNEXPECTED_INPUT_VALUE_EMISSION_FIELDS_TRUE: "
+            + ", ".join(sorted(emitted_true)),
+        )
+
+    if not shape_evidence_passed:
+        return _base_gate(
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE,
+            "PROJECTED_INPUT_SHAPE_EVIDENCE_INCOMPLETE_OR_MUTATED",
+        )
+
+    gate = _base_gate(
+        PROJECTED_INPUT_SHAPE_INVENTORY_DECLARED_DIAGNOSTIC_ONLY,
+        None,
+    )
+    gate["gate_passed"] = True
+    return gate
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -12066,6 +12485,7 @@ def build_real_validation_receipt(
     implementation_boundary_diagnostics: dict | None = None,
     no_output_runner_invocation_diagnostics: dict | None = None,
     allowed_runner_input_projection_diagnostics: dict | None = None,
+    projected_input_shape_inventory_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -12224,6 +12644,10 @@ def build_real_validation_receipt(
     if allowed_runner_input_projection_diagnostics is not None:
         receipt["allowed_runner_input_projection_diagnostics"] = (
             allowed_runner_input_projection_diagnostics
+        )
+    if projected_input_shape_inventory_diagnostics is not None:
+        receipt["projected_input_shape_inventory_diagnostics"] = (
+            projected_input_shape_inventory_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -12937,6 +13361,23 @@ def main(argv: list[str] | None = None) -> int:
                     trial_manifest_diagnostics=trial_manifest_diagnostics,
                 )
             )
+            projected_input_shape_inventory_diagnostics = (
+                _build_projected_input_shape_inventory_diagnostics(
+                    allowed_runner_input_projection_diagnostics=(
+                        allowed_runner_input_projection_diagnostics
+                    ),
+                    no_output_runner_invocation_diagnostics=(
+                        no_output_runner_invocation_diagnostics
+                    ),
+                    implementation_boundary_diagnostics=(
+                        implementation_boundary_diagnostics
+                    ),
+                    split_diagnostics={
+                        "split_definitions": split_definitions,
+                    },
+                    inventory_diagnostics=inventory,
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -13017,6 +13458,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             allowed_runner_input_projection_diagnostics=(
                 allowed_runner_input_projection_diagnostics
+            ),
+            projected_input_shape_inventory_diagnostics=(
+                projected_input_shape_inventory_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -13191,6 +13635,22 @@ def main(argv: list[str] | None = None) -> int:
                     trial_manifest_diagnostics=trial_manifest_diagnostics,
                 )
             )
+            projected_input_shape_inventory_diagnostics = (
+                _build_projected_input_shape_inventory_diagnostics(
+                    allowed_runner_input_projection_diagnostics=(
+                        allowed_runner_input_projection_diagnostics
+                    ),
+                    no_output_runner_invocation_diagnostics=(
+                        no_output_runner_invocation_diagnostics
+                    ),
+                    implementation_boundary_diagnostics=(
+                        implementation_boundary_diagnostics
+                    ),
+                    split_diagnostics={
+                        "split_definitions": split_definitions,
+                    },
+                )
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -13236,6 +13696,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             allowed_runner_input_projection_diagnostics=(
                 allowed_runner_input_projection_diagnostics
+            ),
+            projected_input_shape_inventory_diagnostics=(
+                projected_input_shape_inventory_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics

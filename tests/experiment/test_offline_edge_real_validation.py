@@ -178,6 +178,16 @@ from quantbot.experiment.offline_edge_real_validation import (
     _build_allowed_runner_input_projection_diagnostics,
     _derive_allowed_runner_input_projection_gate,
     _ALLOWED_RUNNER_INPUT_PROJECTION_AUTHORIZATION_FIELDS,
+    PROJECTED_INPUT_SHAPE_INVENTORY_VERSION,
+    PROJECTED_INPUT_SHAPE_INVENTORY_SCOPE,
+    PROJECTED_INPUT_SHAPE_INVENTORY_DECLARED_DIAGNOSTIC_ONLY,
+    PROJECTED_INPUT_SHAPE_METADATA_ONLY_POLICY,
+    BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE,
+    BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE,
+    BLOCKED_BY_UNEXPECTED_INPUT_VALUE_EMISSION,
+    _build_projected_input_shape_inventory_diagnostics,
+    _derive_projected_input_shape_inventory_gate,
+    _PROJECTED_INPUT_SHAPE_INVENTORY_AUTHORIZATION_FIELDS,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -17897,6 +17907,323 @@ class TestAllowedRunnerInputProjectionN1:
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
     # ── Test 21: forbidden key scan ───────────────────────────────────────────
+    def test_no_forbidden_calculation_keys(self):
+        result = self._result()
+        all_keys = _all_dict_keys(result)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
+
+
+class TestProjectedInputShapeInventoryO1:
+    """Lane O1: projected input shape inventory diagnostics."""
+
+    def _n1(self):
+        return TestAllowedRunnerInputProjectionN1()
+
+    def _full_chain_diags(self):
+        diags = self._n1()._full_chain_diags()
+        projection = _build_allowed_runner_input_projection_diagnostics(**diags)
+        diags["allowed_runner_input_projection_diagnostics"] = projection
+        return diags
+
+    def _absence_diags(self):
+        diags = self._n1()._absence_diags()
+        projection = _build_allowed_runner_input_projection_diagnostics(**diags)
+        diags["allowed_runner_input_projection_diagnostics"] = projection
+        return diags
+
+    def _build(self, diags):
+        return _build_projected_input_shape_inventory_diagnostics(
+            allowed_runner_input_projection_diagnostics=diags[
+                "allowed_runner_input_projection_diagnostics"
+            ],
+            no_output_runner_invocation_diagnostics=diags[
+                "no_output_runner_invocation_diagnostics"
+            ],
+            implementation_boundary_diagnostics=diags[
+                "implementation_boundary_diagnostics"
+            ],
+        )
+
+    def _result(self):
+        return self._build(self._full_chain_diags())
+
+    def test_shape_inventory_no_args_projection_failed_fails_closed(self):
+        result = self._build(self._absence_diags())
+        gate = result["projected_input_shape_inventory_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE
+        for field in _PROJECTED_INPUT_SHAPE_INVENTORY_AUTHORIZATION_FIELDS:
+            assert result[field] is False
+
+    def test_shape_inventory_diagnostic_full_happy_path(self):
+        result = self._result()
+        assert result["diagnostic_kind"] == "projected_input_shape_inventory"
+        assert result["projected_input_shape_inventory_version"] == (
+            PROJECTED_INPUT_SHAPE_INVENTORY_VERSION
+        )
+        assert result["projected_input_shape_inventory_scope"] == (
+            PROJECTED_INPUT_SHAPE_INVENTORY_SCOPE
+        )
+        assert result["projected_input_shape_inventory_status"] == (
+            PROJECTED_INPUT_SHAPE_INVENTORY_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert result["projected_input_shape_inventory_mode"] == "METADATA_ONLY"
+        assert result["projected_input_shape_inventory_policy"] == (
+            PROJECTED_INPUT_SHAPE_METADATA_ONLY_POLICY
+        )
+        assert result["allowed_input_roles"] == ["bars", "funding"]
+        assert result["allowed_bar_columns"] == ["close", "timestamp"]
+        assert result["allowed_funding_columns"] == ["fundingRate", "fundingTime"]
+        assert result["excluded_bar_columns"] == ["open", "high", "low", "volume"]
+        assert result["excluded_funding_columns"] == ["markPrice"]
+        assert result["shape_inventory_values_emitted"] is False
+        assert result["shape_inventory_row_values_emitted"] is False
+        assert result["projected_input_values_emitted"] is False
+        assert result["projected_input_row_values_emitted"] is False
+        assert result["rule_output_rows_emitted"] is False
+        summary = result["shape_inventory_summary"]
+        assert summary["summary_kind"] == "metadata_only_shape_summary"
+        assert summary["roles_declared"] == ["bars", "funding"]
+        assert summary["allowed_column_names_by_role"] == {
+            "bars": ["close", "timestamp"],
+            "funding": ["fundingRate", "fundingTime"],
+        }
+        assert summary["excluded_column_names_by_role"] == {
+            "bars": ["open", "high", "low", "volume"],
+            "funding": ["markPrice"],
+        }
+        assert summary["row_values_included"] is False
+        assert summary["rule_outputs_included"] is False
+        for field in _PROJECTED_INPUT_SHAPE_INVENTORY_AUTHORIZATION_FIELDS:
+            assert result[field] is False
+        assert result["final_offline_verdict_remains"] == (
+            BLOCKED_BY_VALIDATION_IMPLEMENTATION
+        )
+
+    def test_shape_inventory_gate_happy_path(self):
+        gate = self._result()["projected_input_shape_inventory_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            PROJECTED_INPUT_SHAPE_INVENTORY_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+        assert gate["blocked_reason"] is None
+
+    def test_allowed_runner_input_projection_gate_missing_fails_closed(self):
+        diags = self._full_chain_diags()
+        projection = dict(diags["allowed_runner_input_projection_diagnostics"])
+        del projection["allowed_runner_input_projection_gate"]
+        diags["allowed_runner_input_projection_diagnostics"] = projection
+        gate = self._build(diags)[
+            "projected_input_shape_inventory_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE
+
+    def test_allowed_runner_input_projection_gate_failed_fails_closed(self):
+        diags = self._full_chain_diags()
+        projection = dict(diags["allowed_runner_input_projection_diagnostics"])
+        failed_gate = dict(projection["allowed_runner_input_projection_gate"])
+        failed_gate["gate_passed"] = False
+        projection["allowed_runner_input_projection_gate"] = failed_gate
+        diags["allowed_runner_input_projection_diagnostics"] = projection
+        gate = self._build(diags)[
+            "projected_input_shape_inventory_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE
+
+    def test_no_output_runner_invocation_gate_missing_fails_closed(self):
+        diags = self._full_chain_diags()
+        runner_diag = dict(diags["no_output_runner_invocation_diagnostics"])
+        del runner_diag["no_output_runner_invocation_gate"]
+        diags["no_output_runner_invocation_diagnostics"] = runner_diag
+        gate = self._build(diags)[
+            "projected_input_shape_inventory_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE
+
+    def test_implementation_boundary_gate_missing_fails_closed(self):
+        diags = self._full_chain_diags()
+        boundary = dict(diags["implementation_boundary_diagnostics"])
+        del boundary["implementation_boundary_gate"]
+        diags["implementation_boundary_diagnostics"] = boundary
+        gate = self._build(diags)[
+            "projected_input_shape_inventory_gate"
+        ]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE"
+
+    def test_missing_or_false_declared_fails_closed(self):
+        result = self._result()
+        del result["projected_input_shape_inventory_declared"]
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE
+        )
+
+        result = self._result()
+        result["projected_input_shape_inventory_declared"] = False
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE
+        )
+
+    def test_mutated_shape_mode_fails_closed(self):
+        result = self._result()
+        result["projected_input_shape_inventory_mode"] = "ROW_VALUES"
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE
+        )
+
+    def test_mutated_shape_policy_fails_closed(self):
+        result = self._result()
+        result["projected_input_shape_inventory_policy"] = "EMIT_ROW_VALUES_NOW"
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE
+        )
+
+    def test_mutated_allowed_input_roles_fails_closed(self):
+        result = self._result()
+        result["allowed_input_roles"] = ["bars", "funding", "other"]
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE
+        )
+
+    def test_mutated_allowed_bar_columns_fails_closed(self):
+        result = self._result()
+        result["allowed_bar_columns"] = ["close", "open", "timestamp"]
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE
+        )
+
+    def test_mutated_allowed_funding_columns_fails_closed(self):
+        result = self._result()
+        result["allowed_funding_columns"] = [
+            "fundingRate",
+            "fundingTime",
+            "markPrice",
+        ]
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE
+        )
+
+    def test_missing_excluded_columns_fail_closed(self):
+        result = self._result()
+        result["excluded_bar_columns"] = []
+        result["excluded_funding_columns"] = []
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE
+        )
+
+    def test_any_emitted_flag_true_fails_closed(self):
+        for field in (
+            "shape_inventory_values_emitted",
+            "shape_inventory_row_values_emitted",
+            "projected_input_values_emitted",
+            "projected_input_row_values_emitted",
+            "rule_output_rows_emitted",
+        ):
+            result = self._result()
+            result[field] = True
+            gate = _derive_projected_input_shape_inventory_gate(result)
+            assert gate["gate_passed"] is False
+            assert gate["gate_status"] == BLOCKED_BY_UNEXPECTED_INPUT_VALUE_EMISSION
+
+    def test_shape_summary_row_values_included_fails_closed(self):
+        result = self._result()
+        summary = dict(result["shape_inventory_summary"])
+        summary["row_values_included"] = True
+        result["shape_inventory_summary"] = summary
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE
+        )
+
+    def test_shape_summary_rule_outputs_included_fails_closed(self):
+        result = self._result()
+        summary = dict(result["shape_inventory_summary"])
+        summary["rule_outputs_included"] = True
+        result["shape_inventory_summary"] = summary
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_PROJECTED_INPUT_SHAPE_EVIDENCE
+        )
+
+    def test_unexpected_authorization_fails_closed(self):
+        result = self._result()
+        result["decision_row_generation_authorized"] = True
+        gate = _derive_projected_input_shape_inventory_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_UNEXPECTED_AUTHORIZATION"
+        assert "decision_row_generation_authorized" in gate["blocked_reason"]
+
+    def test_receipt_integration_no_packet_args(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(self._n1()._m1()._cli_base_args(output_dir))
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        inventory = receipt["projected_input_shape_inventory_diagnostics"]
+        gate = inventory["projected_input_shape_inventory_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_receipt_integration_full_path(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = self._n1()._m1()
+        exit_code = real_validation.main(
+            m1._cli_base_args(output_dir) + m1._cli_full_chain_args()
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        assert receipt["prerequisite_closure_diagnostics"][
+            "prerequisite_closure_gate"
+        ]["gate_passed"] is True
+        assert receipt["implementation_boundary_diagnostics"][
+            "implementation_boundary_gate"
+        ]["gate_passed"] is True
+        assert receipt["no_output_runner_invocation_diagnostics"][
+            "no_output_runner_invocation_gate"
+        ]["gate_passed"] is True
+        assert receipt["allowed_runner_input_projection_diagnostics"][
+            "allowed_runner_input_projection_gate"
+        ]["gate_passed"] is True
+        inventory = receipt["projected_input_shape_inventory_diagnostics"]
+        assert inventory["projected_input_shape_inventory_gate"][
+            "gate_passed"
+        ] is True
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
     def test_no_forbidden_calculation_keys(self):
         result = self._result()
         all_keys = _all_dict_keys(result)
