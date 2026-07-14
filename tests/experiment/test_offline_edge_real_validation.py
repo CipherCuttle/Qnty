@@ -219,6 +219,16 @@ from quantbot.experiment.offline_edge_real_validation import (
     _build_projected_input_joinability_diagnostics,
     _derive_projected_input_joinability_gate,
     _PROJECTED_INPUT_JOINABILITY_AUTHORIZATION_FIELDS,
+    NO_OUTPUT_RUNNER_DRY_HARNESS_VERSION,
+    NO_OUTPUT_RUNNER_DRY_HARNESS_SCOPE,
+    NO_OUTPUT_RUNNER_DRY_HARNESS_DECLARED_DIAGNOSTIC_ONLY,
+    NO_OUTPUT_RUNNER_DRY_HARNESS_POLICY,
+    BLOCKED_BY_PROJECTED_INPUT_JOINABILITY_GATE,
+    BLOCKED_BY_INCOMPLETE_NO_OUTPUT_RUNNER_DRY_HARNESS_EVIDENCE,
+    BLOCKED_BY_UNEXPECTED_RUNNER_OUTPUT_EMISSION,
+    _build_no_output_runner_dry_harness_diagnostics,
+    _derive_no_output_runner_dry_harness_gate,
+    _NO_OUTPUT_RUNNER_DRY_HARNESS_AUTHORIZATION_FIELDS,
     materialize_input_rows_for_splits,
     materialize_split_definitions_from_inventory,
     validate_real_validation_receipt,
@@ -18709,6 +18719,338 @@ class TestProjectedInputJoinabilityR1:
             f"Forbidden keys found: "
             f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
         )
+
+
+class TestNoOutputRunnerDryHarnessS1:
+    def _r1(self):
+        return TestProjectedInputJoinabilityR1()
+
+    def _full_chain_diags(self, tmp_path):
+        inventory = self._r1()._write_inventory(tmp_path)
+        diags = self._r1()._full_chain_diags(inventory)
+        diags["projected_input_joinability_diagnostics"] = self._r1()._build(
+            diags,
+            inventory=inventory,
+        )
+        return diags, inventory
+
+    def _absence_diags(self):
+        r1 = self._r1()
+        diags = r1._absence_diags()
+        diags["projected_input_joinability_diagnostics"] = r1._build(diags)
+        return diags
+
+    def _build(self, diags):
+        return _build_no_output_runner_dry_harness_diagnostics(
+            projected_input_joinability_diagnostics=diags[
+                "projected_input_joinability_diagnostics"
+            ],
+            projected_input_temporal_sequence_diagnostics=diags[
+                "projected_input_temporal_sequence_diagnostics"
+            ],
+            projected_input_row_count_diagnostics=diags[
+                "projected_input_row_count_diagnostics"
+            ],
+            projected_input_shape_inventory_diagnostics=diags[
+                "projected_input_shape_inventory_diagnostics"
+            ],
+            allowed_runner_input_projection_diagnostics=diags[
+                "allowed_runner_input_projection_diagnostics"
+            ],
+            no_output_runner_invocation_diagnostics=diags[
+                "no_output_runner_invocation_diagnostics"
+            ],
+            implementation_boundary_diagnostics=diags[
+                "implementation_boundary_diagnostics"
+            ],
+        )
+
+    def _result(self, tmp_path):
+        diags, _inventory = self._full_chain_diags(tmp_path)
+        return self._build(diags)
+
+    def test_harness_happy_path_after_full_r1_passes(self, tmp_path):
+        result = self._result(tmp_path)
+        assert result["diagnostic_kind"] == "no_output_runner_dry_harness"
+        assert result["no_output_runner_dry_harness_version"] == (
+            NO_OUTPUT_RUNNER_DRY_HARNESS_VERSION
+        )
+        assert result["no_output_runner_dry_harness_scope"] == (
+            NO_OUTPUT_RUNNER_DRY_HARNESS_SCOPE
+        )
+        assert result["no_output_runner_dry_harness_status"] == (
+            NO_OUTPUT_RUNNER_DRY_HARNESS_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert result["runner_dry_harness_declared"] is True
+        assert result["runner_dry_harness_mode"] == "NO_OUTPUT_BOUNDARY_ONLY"
+        assert result["runner_dry_harness_policy"] == (
+            NO_OUTPUT_RUNNER_DRY_HARNESS_POLICY
+        )
+        assert result["runner_logic_executed"] is False
+        assert result["runner_callable_invoked"] is False
+        assert result["runner_inputs_materialized_as_rows"] is False
+        summary = result["harness_summary"]
+        assert summary["summary_kind"] == (
+            "metadata_only_no_output_runner_dry_harness_summary"
+        )
+        assert summary["roles_declared"] == ["bars", "funding"]
+        assert summary["role_row_counts"] == {"bars": 3, "funding": 3}
+        assert summary["role_symbol_counts"] == {"bars": 1, "funding": 1}
+        assert summary["joinability_complete"] is True
+        assert summary["timestamp_values_included"] is False
+        assert summary["price_values_included"] is False
+        assert summary["funding_values_included"] is False
+        assert summary["joined_rows_included"] is False
+        for field in (
+            "decision_rows_emitted",
+            "signals_emitted",
+            "rule_output_rows_emitted",
+            "simulated_events_emitted",
+            "economic_values_emitted",
+            "statistical_values_emitted",
+            "joined_rows_emitted",
+            "timestamp_values_emitted",
+            "price_values_emitted",
+            "funding_values_emitted",
+            "row_value_samples_emitted",
+            "projected_input_row_values_emitted",
+        ):
+            assert result[field] is False
+        for field in _NO_OUTPUT_RUNNER_DRY_HARNESS_AUTHORIZATION_FIELDS:
+            assert result[field] is False
+
+    def test_harness_gate_happy_path(self, tmp_path):
+        gate = self._result(tmp_path)["no_output_runner_dry_harness_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            NO_OUTPUT_RUNNER_DRY_HARNESS_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert gate["gate_scoring_authorization"] is False
+        assert gate["gate_live_authorization"] is False
+        assert gate["gate_final_verdict_authorization"] is False
+        assert gate["gate_downstream_unlocks"] == []
+
+    def test_r1_gate_missing_or_failed_fails_closed(self, tmp_path):
+        result = self._result(tmp_path)
+        result["projected_input_joinability_gate_passed"] = False
+        gate = _derive_no_output_runner_dry_harness_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_JOINABILITY_GATE
+
+        diags, _inventory = self._full_chain_diags(tmp_path)
+        r1_diagnostics = dict(diags["projected_input_joinability_diagnostics"])
+        r1_diagnostics.pop("projected_input_joinability_gate")
+        diags["projected_input_joinability_diagnostics"] = r1_diagnostics
+        gate = self._build(diags)["no_output_runner_dry_harness_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_JOINABILITY_GATE
+
+    @pytest.mark.parametrize(
+        ("flag", "expected_status"),
+        [
+            (
+                "projected_input_temporal_sequence_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_TEMPORAL_SEQUENCE_GATE,
+            ),
+            (
+                "projected_input_row_count_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_ROW_COUNT_GATE,
+            ),
+            (
+                "projected_input_shape_inventory_gate_passed",
+                BLOCKED_BY_PROJECTED_INPUT_SHAPE_INVENTORY_GATE,
+            ),
+            (
+                "allowed_runner_input_projection_gate_passed",
+                BLOCKED_BY_ALLOWED_RUNNER_INPUT_PROJECTION_GATE,
+            ),
+            (
+                "no_output_runner_invocation_gate_passed",
+                BLOCKED_BY_NO_OUTPUT_RUNNER_INVOCATION_GATE,
+            ),
+            (
+                "implementation_boundary_gate_passed",
+                BLOCKED_BY_IMPLEMENTATION_BOUNDARY_GATE,
+            ),
+        ],
+    )
+    def test_q1_p1_o1_n1_m1_l1_upstream_failed_fail_closed(
+        self, tmp_path, flag, expected_status
+    ):
+        result = self._result(tmp_path)
+        result[flag] = False
+        gate = _derive_no_output_runner_dry_harness_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == expected_status
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("runner_dry_harness_mode", "RUNNER_EXECUTION"),
+            ("runner_dry_harness_policy", "RUN_RUNNER_LOGIC"),
+        ],
+    )
+    def test_mutated_harness_mode_or_policy_fails_closed(
+        self, tmp_path, field, value
+    ):
+        result = self._result(tmp_path)
+        result[field] = value
+        gate = _derive_no_output_runner_dry_harness_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == (
+            BLOCKED_BY_INCOMPLETE_NO_OUTPUT_RUNNER_DRY_HARNESS_EVIDENCE
+        )
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "runner_logic_executed",
+            "runner_callable_invoked",
+            "runner_inputs_materialized_as_rows",
+        ],
+    )
+    def test_runner_execution_flags_true_fail_closed(self, tmp_path, field):
+        result = self._result(tmp_path)
+        result[field] = True
+        gate = _derive_no_output_runner_dry_harness_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_UNEXPECTED_RUNNER_OUTPUT_EMISSION
+        assert field in gate["blocked_reason"]
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "decision_rows_emitted",
+            "signals_emitted",
+            "rule_output_rows_emitted",
+            "simulated_events_emitted",
+            "economic_values_emitted",
+            "statistical_values_emitted",
+            "joined_rows_emitted",
+            "timestamp_values_emitted",
+            "price_values_emitted",
+            "funding_values_emitted",
+            "row_value_samples_emitted",
+            "projected_input_row_values_emitted",
+        ],
+    )
+    def test_every_output_flag_true_fails_closed(self, tmp_path, field):
+        result = self._result(tmp_path)
+        result[field] = True
+        gate = _derive_no_output_runner_dry_harness_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_UNEXPECTED_RUNNER_OUTPUT_EMISSION
+        assert field in gate["blocked_reason"]
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "runner_dry_harness_readiness",
+            "implementation_authorized",
+            "runner_implementation_authorized",
+            "rule_materialization_authorized",
+            "decision_row_generation_authorized",
+            "simulated_event_generation_authorized",
+            "economic_value_generation_authorized",
+            "statistical_value_generation_authorized",
+            "candidate_comparison_authorized",
+            "null_generation_authorized",
+            "scoring_authorization",
+            "live_integration_authorized",
+            "paper_integration_authorized",
+            "final_verdict_authorization",
+        ],
+    )
+    def test_authorization_flip_fails_closed(self, tmp_path, field):
+        result = self._result(tmp_path)
+        result[field] = True
+        gate = _derive_no_output_runner_dry_harness_gate(result)
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == "BLOCKED_BY_UNEXPECTED_AUTHORIZATION"
+        assert field in gate["blocked_reason"]
+
+    def test_no_packet_no_input_receipt_integration_fails_closed(self, tmp_path):
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        exit_code = real_validation.main(
+            self._r1()._q1()._p1()._o1()._n1()._m1()._cli_base_args(output_dir)
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        diagnostics = receipt["no_output_runner_dry_harness_diagnostics"]
+        gate = diagnostics["no_output_runner_dry_harness_gate"]
+        assert gate["gate_passed"] is False
+        assert gate["gate_status"] == BLOCKED_BY_PROJECTED_INPUT_JOINABILITY_GATE
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_full_valid_bars_funding_receipt_passes_s1_verdict_blocked(
+        self, tmp_path
+    ):
+        bars_dir = tmp_path / "bars"
+        funding_dir = tmp_path / "funding"
+        bars_dir.mkdir()
+        funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        funding_path = _write_tiny_funding_csv(
+            funding_dir,
+            "BTCUSDT_8h_funding.csv",
+        )
+        funding_path.write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,0.0003,50200.0\n"
+        )
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        m1 = self._r1()._q1()._p1()._o1()._n1()._m1()
+        exit_code = real_validation.main(
+            m1._cli_base_args(output_dir)
+            + m1._cli_full_chain_args()
+            + [
+                "--bars-dir",
+                str(bars_dir),
+                "--funding-dir",
+                str(funding_dir),
+            ]
+        )
+        assert exit_code == 0
+        receipt = json.loads(
+            (output_dir / "real_validation_receipt.json").read_text()
+        )
+        r1_gate = receipt["projected_input_joinability_diagnostics"][
+            "projected_input_joinability_gate"
+        ]
+        assert r1_gate["gate_passed"] is True
+        diagnostics = receipt["no_output_runner_dry_harness_diagnostics"]
+        gate = diagnostics["no_output_runner_dry_harness_gate"]
+        assert gate["gate_passed"] is True
+        assert gate["gate_status"] == (
+            NO_OUTPUT_RUNNER_DRY_HARNESS_DECLARED_DIAGNOSTIC_ONLY
+        )
+        assert diagnostics["runner_logic_executed"] is False
+        assert diagnostics["decision_rows_emitted"] is False
+        assert diagnostics["signals_emitted"] is False
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_forbidden_key_scan(self, tmp_path):
+        result = self._result(tmp_path)
+        all_keys = _all_dict_keys(result)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
+        serialized = json.dumps(result)
+        for forbidden in (
+            "2026-01-01T00:00:00Z",
+            "100.5",
+            "0.0001",
+            "fundingTime",
+            "close",
+        ):
+            assert forbidden not in serialized
 
 
 class TestProjectedInputShapeInventoryO1:
