@@ -16739,10 +16739,26 @@ def _derive_null_reference_comparison_schema_lock_gate(diagnostics: dict[str, An
     rows = diagnostics.get("comparison_rows")
     values = diagnostics.get("comparison_values")
     upstream_fields = ("economic_accounting_rows_v0_gate_passed",) + _NULL_REFERENCE_COMPARISON_W0_UPSTREAM_GATE_FIELDS
+    output_evidence_fields = tuple(
+        f"{field}_is_exactly_false"
+        for field in _NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS
+    )
+    authorization_evidence_fields = tuple(
+        f"{field}_is_exactly_false"
+        for field in _NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS
+    )
     output_offenders = [field for field in _NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS if diagnostics.get(field) is True]
     authorization_offenders = [field for field in _NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS if diagnostics.get(field) is True]
     evidence = {
         **{field: diagnostics.get(field) is True for field in upstream_fields},
+        **{
+            f"{field}_is_exactly_false": diagnostics.get(field) is False
+            for field in _NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS
+        },
+        **{
+            f"{field}_is_exactly_false": diagnostics.get(field) is False
+            for field in _NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS
+        },
         "schema_lock_declared": diagnostics.get("null_reference_comparison_schema_lock_declared") is True,
         "schema_status_matches": diagnostics.get("null_reference_comparison_schema_lock_status") == NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_DECLARED_DIAGNOSTIC_ONLY,
         "declared_schema_keys_match": diagnostics.get("declared_null_reference_comparison_schema_keys") == list(_ALLOWED_NULL_REFERENCE_COMPARISON_SCHEMA_KEYS),
@@ -16787,7 +16803,7 @@ def _derive_null_reference_comparison_schema_lock_gate(diagnostics: dict[str, An
         "comparison_row_count_zero", "comparison_rows_not_emitted",
         "comparison_values_are_empty_list", "comparison_value_count_zero",
         "comparison_values_not_emitted", "downstream_unlocks_empty",
-    )
+    ) + output_evidence_fields + authorization_evidence_fields
     if not all(evidence.get(field) is True for field in upstream_fields + required):
         return gate(BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE, "NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE_INCOMPLETE_OR_MUTATED")
     result = gate(NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_DECLARED_DIAGNOSTIC_ONLY, None)

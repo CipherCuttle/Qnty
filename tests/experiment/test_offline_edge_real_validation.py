@@ -20422,24 +20422,51 @@ class TestNullReferenceComparisonSchemaLockW0:
         result[field] = value
         assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_COMPARISON_VALUES
 
-    @pytest.mark.parametrize("field", [
-        "null_comparison_values_emitted", "statistical_values_emitted",
-        "scoring_values_emitted", "live_integration_values_emitted",
-        "paper_integration_values_emitted", "final_verdict_values_emitted",
-    ])
+    @pytest.mark.parametrize(
+        "field", real_validation._NULL_REFERENCE_COMPARISON_W0_OUTPUT_FIELDS
+    )
     def test_downstream_output_fails_closed(self, tmp_path, field):
         result = self._build(tmp_path)
         result[field] = True
         assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_DOWNSTREAM_OUTPUT
 
-    @pytest.mark.parametrize("field", [
-        "candidate_comparison_authorized", "null_generation_authorized",
-        "scoring_authorization", "final_verdict_authorization",
-    ])
+    @pytest.mark.parametrize(
+        "field", real_validation._NULL_REFERENCE_COMPARISON_W0_AUTHORIZATION_FIELDS
+    )
     def test_downstream_authorization_fails_closed(self, tmp_path, field):
         result = self._build(tmp_path)
         result[field] = True
         assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_NULL_REFERENCE_COMPARISON_DOWNSTREAM_AUTHORIZATION
+
+    @pytest.mark.parametrize("mutation", ["remove", "none"])
+    def test_downstream_output_missing_or_none_fails_closed(self, tmp_path, mutation):
+        result = self._build(tmp_path)
+        field = "null_comparison_values_emitted"
+        if mutation == "remove":
+            del result[field]
+        else:
+            result[field] = None
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE
+
+    def test_downstream_output_non_false_value_fails_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["null_comparison_values_emitted"] = 1
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE
+
+    @pytest.mark.parametrize("mutation", ["remove", "none"])
+    def test_downstream_authorization_missing_or_none_fails_closed(self, tmp_path, mutation):
+        result = self._build(tmp_path)
+        field = "candidate_comparison_authorized"
+        if mutation == "remove":
+            del result[field]
+        else:
+            result[field] = None
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE
+
+    def test_downstream_authorization_non_false_value_fails_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["candidate_comparison_authorized"] = 1
+        assert real_validation._derive_null_reference_comparison_schema_lock_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_NULL_REFERENCE_COMPARISON_SCHEMA_LOCK_W0_EVIDENCE
 
     def test_final_verdict_mutation_fails_closed(self, tmp_path):
         result = self._build(tmp_path)
