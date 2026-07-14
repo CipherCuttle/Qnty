@@ -136,6 +136,8 @@ __all__ = [
     "_derive_descriptive_statistical_metadata_rows_v0_gate",
     "_build_descriptive_statistical_value_policy_lock_aa0_diagnostics",
     "_derive_descriptive_statistical_value_policy_lock_aa0_gate",
+    "_build_descriptive_count_values_v0_diagnostics",
+    "_derive_descriptive_count_values_v0_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -1573,6 +1575,47 @@ _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_AA0_EXPECTED = {
 _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_UPSTREAM_GATE_FIELDS = _DESCRIPTIVE_STATISTICAL_METADATA_ROWS_Z1_UPSTREAM_GATE_FIELDS
 _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_OUTPUT_FIELDS = _DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_OUTPUT_FIELDS
 _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_AUTHORIZATION_FIELDS = _DESCRIPTIVE_STATISTICAL_VALUE_SCHEMA_LOCK_Z0_AUTHORIZATION_FIELDS
+
+# === Lane AA1: policy-applied descriptive count values ===
+DESCRIPTIVE_COUNT_VALUES_V0_VERSION = "descriptive-count-values-v0-0.1"
+DESCRIPTIVE_COUNT_VALUES_V0_SCOPE = "AA0_POLICY_APPLIED_METADATA_COUNT_VALUES_ONLY"
+DESCRIPTIVE_COUNT_VALUES_V0_DECLARED_ARTIFACT = "DESCRIPTIVE_COUNT_VALUES_V0_DECLARED_ARTIFACT"
+BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_FOR_AA1_GATE = "BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_FOR_AA1_GATE"
+BLOCKED_BY_DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_FOR_AA1_GATE = "BLOCKED_BY_DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_FOR_AA1_GATE"
+BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE = "BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE"
+BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_POLICY_LITERAL = "BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_POLICY_LITERAL"
+BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_KIND_MUTATION = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_KIND_MUTATION"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_SCHEMA = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_SCHEMA"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_CONSTANTS = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_CONSTANTS"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_KIND = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_KIND"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE"
+BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_MISMATCH = "BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_MISMATCH"
+BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AA1 = "BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AA1"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_INFERENTIAL_OUTPUT = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_INFERENTIAL_OUTPUT"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_OUTPUT = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_OUTPUT"
+BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_AUTHORIZATION = "BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_AUTHORIZATION"
+BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_FINAL_VERDICT_ADVANCEMENT = "BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_FINAL_VERDICT_ADVANCEMENT"
+BLOCKED_BY_DUPLICATE_DESCRIPTIVE_COUNT_VALUE_ROW_IDENTITY = "BLOCKED_BY_DUPLICATE_DESCRIPTIVE_COUNT_VALUE_ROW_IDENTITY"
+BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_ROW_ORDERING_MUTATION = "BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_ROW_ORDERING_MUTATION"
+_ALLOWED_DESCRIPTIVE_COUNT_VALUE_KIND_NAMES_AA1 = (
+    "source_metadata_row_count", "source_symbol_count", "source_split_partition_count",
+)
+_DESCRIPTIVE_COUNT_VALUES_V0_FIXED_ROW_CONSTANTS = {
+    "schema_version": DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_SCHEMA_VERSION,
+    "schema_kind": DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_SCHEMA_KIND,
+    "descriptive_family": "policy_applied_descriptive_count_values_v0",
+    "descriptive_variant": "aa0_allowed_metadata_counts_only",
+    "descriptive_revision": "aa1-0.1",
+    "descriptive_entry_name": "policy_applied_metadata_count_value",
+    "descriptive_entry_code": "AA0_ALLOWED_METADATA_COUNT",
+    "descriptive_basis_name": "aa0_policy_applied_to_z1_metadata_rows",
+    "descriptive_basis_code": "AA0_POLICY_Z1_METADATA_COUNTS",
+    "descriptive_unit": "count",
+}
+_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE_FIELDS = _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_UPSTREAM_GATE_FIELDS
+_DESCRIPTIVE_COUNT_VALUES_V0_OUTPUT_FIELDS = _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_OUTPUT_FIELDS
+_DESCRIPTIVE_COUNT_VALUES_V0_AUTHORIZATION_FIELDS = _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_AUTHORIZATION_FIELDS
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -18261,6 +18304,200 @@ def _derive_descriptive_statistical_value_policy_lock_aa0_gate(diagnostics: dict
     return result
 
 
+def _build_descriptive_count_values_v0_diagnostics(
+    *, descriptive_statistical_value_policy_lock_aa0_diagnostics: dict[str, Any],
+    descriptive_statistical_metadata_rows_v0_diagnostics: dict[str, Any],
+    descriptive_statistical_value_schema_lock_z0_diagnostics: dict[str, Any],
+    statistical_value_readiness_rows_v0_diagnostics: dict[str, Any],
+    statistical_value_contract_lock_y0_diagnostics: dict[str, Any],
+    statistical_metadata_rows_v0_diagnostics: dict[str, Any],
+    statistical_output_schema_lock_diagnostics: dict[str, Any],
+    null_reference_comparison_rows_v0_diagnostics: dict[str, Any],
+    null_reference_comparison_schema_lock_diagnostics: dict[str, Any],
+    economic_accounting_rows_v0_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Emit AA0-authorized counts from already-materialized Z1 metadata rows."""
+    def passed(section: dict[str, Any], gate_name: str) -> bool:
+        gate = section.get(gate_name)
+        return bool(isinstance(gate, dict) and gate.get("gate_passed") is True)
+
+    source_rows = descriptive_statistical_metadata_rows_v0_diagnostics.get("descriptive_value_rows")
+    source_rows = source_rows if isinstance(source_rows, list) else []
+    upstream_fields = _DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE_FIELDS
+    upstream = {field: economic_accounting_rows_v0_diagnostics.get(field) is True for field in upstream_fields}
+    aa0_policy_literal_accepted = (
+        passed(descriptive_statistical_value_policy_lock_aa0_diagnostics, "descriptive_statistical_value_policy_lock_aa0_gate")
+        and descriptive_statistical_value_policy_lock_aa0_diagnostics.get("descriptive_value_policy") == _DESCRIPTIVE_STATISTICAL_VALUE_POLICY_AA0_EXPECTED
+    )
+    gates_passed = (
+        aa0_policy_literal_accepted
+        and passed(descriptive_statistical_metadata_rows_v0_diagnostics, "descriptive_statistical_metadata_rows_v0_gate")
+        and passed(descriptive_statistical_value_schema_lock_z0_diagnostics, "descriptive_statistical_value_schema_lock_z0_gate")
+        and passed(statistical_value_readiness_rows_v0_diagnostics, "statistical_value_readiness_rows_v0_gate")
+        and passed(statistical_value_contract_lock_y0_diagnostics, "statistical_value_contract_lock_gate")
+        and passed(statistical_metadata_rows_v0_diagnostics, "statistical_metadata_rows_v0_gate")
+        and passed(statistical_output_schema_lock_diagnostics, "statistical_output_schema_lock_gate")
+        and passed(null_reference_comparison_rows_v0_diagnostics, "null_reference_comparison_rows_v0_gate")
+        and passed(null_reference_comparison_schema_lock_diagnostics, "null_reference_comparison_schema_lock_gate")
+        and passed(economic_accounting_rows_v0_diagnostics, "economic_accounting_rows_v0_gate")
+        and all(upstream.values())
+    )
+    rows: list[dict[str, Any]] = []
+    if gates_passed and all(isinstance(row, dict) for row in source_rows):
+        run_id = source_rows[0].get("run_id") if source_rows else None
+        descriptive_time_utc = max((row.get("descriptive_time_utc") for row in source_rows), default=None)
+        count_values = (
+            ("source_metadata_row_count", len(source_rows)),
+            ("source_symbol_count", len({row.get("symbol") for row in source_rows})),
+            ("source_split_partition_count", len({(row.get("split_id"), row.get("split_partition")) for row in source_rows})),
+        )
+        for sequence, (value_kind, value) in enumerate(count_values, start=1):
+            rows.append({
+                **_DESCRIPTIVE_COUNT_VALUES_V0_FIXED_ROW_CONSTANTS,
+                "run_id": run_id, "descriptive_sequence_id": sequence,
+                "source_readiness_sequence_id": None, "source_statistical_sequence_id": None,
+                "source_comparison_sequence_id": None, "source_accounting_sequence_id": None,
+                "source_event_sequence_id": None, "source_rule_row_sequence_id": None,
+                "symbol": "__ALL_SYMBOLS__", "split_id": "__ALL_SPLITS__",
+                "split_partition": "__ALL_PARTITIONS__", "descriptive_time_utc": descriptive_time_utc,
+                "source_readiness_time_utc": None, "source_statistical_time_utc": None,
+                "source_comparison_time_utc": None, "source_accounting_time_utc": None,
+                "source_event_time_utc": None, "descriptive_value_kind": value_kind,
+                "descriptive_value_present": True, "descriptive_value": value,
+                "descriptive_metadata_only": False,
+            })
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "descriptive_count_values_v0",
+        "descriptive_count_values_v0_version": DESCRIPTIVE_COUNT_VALUES_V0_VERSION,
+        "descriptive_count_values_v0_scope": DESCRIPTIVE_COUNT_VALUES_V0_SCOPE,
+        "descriptive_count_values_v0_status": DESCRIPTIVE_COUNT_VALUES_V0_DECLARED_ARTIFACT,
+        "descriptive_count_values_v0_declared": True,
+        "descriptive_statistical_value_policy_lock_aa0_gate_required": True,
+        "descriptive_statistical_value_policy_lock_aa0_gate_passed": passed(descriptive_statistical_value_policy_lock_aa0_diagnostics, "descriptive_statistical_value_policy_lock_aa0_gate"),
+        "descriptive_statistical_metadata_rows_v0_gate_required": True,
+        "descriptive_statistical_metadata_rows_v0_gate_passed": passed(descriptive_statistical_metadata_rows_v0_diagnostics, "descriptive_statistical_metadata_rows_v0_gate"),
+        "descriptive_statistical_value_schema_lock_z0_gate_required": True,
+        "descriptive_statistical_value_schema_lock_z0_gate_passed": passed(descriptive_statistical_value_schema_lock_z0_diagnostics, "descriptive_statistical_value_schema_lock_z0_gate"),
+        "statistical_value_readiness_rows_v0_gate_required": True,
+        "statistical_value_readiness_rows_v0_gate_passed": passed(statistical_value_readiness_rows_v0_diagnostics, "statistical_value_readiness_rows_v0_gate"),
+        "statistical_value_contract_lock_gate_required": True,
+        "statistical_value_contract_lock_gate_passed": passed(statistical_value_contract_lock_y0_diagnostics, "statistical_value_contract_lock_gate"),
+        "statistical_metadata_rows_v0_gate_required": True,
+        "statistical_metadata_rows_v0_gate_passed": passed(statistical_metadata_rows_v0_diagnostics, "statistical_metadata_rows_v0_gate"),
+        "statistical_output_schema_lock_gate_required": True,
+        "statistical_output_schema_lock_gate_passed": passed(statistical_output_schema_lock_diagnostics, "statistical_output_schema_lock_gate"),
+        "null_reference_comparison_rows_v0_gate_required": True,
+        "null_reference_comparison_rows_v0_gate_passed": passed(null_reference_comparison_rows_v0_diagnostics, "null_reference_comparison_rows_v0_gate"),
+        "null_reference_comparison_schema_lock_gate_required": True,
+        "null_reference_comparison_schema_lock_gate_passed": passed(null_reference_comparison_schema_lock_diagnostics, "null_reference_comparison_schema_lock_gate"),
+        "economic_accounting_rows_v0_gate_required": True,
+        "economic_accounting_rows_v0_gate_passed": passed(economic_accounting_rows_v0_diagnostics, "economic_accounting_rows_v0_gate"),
+        **{field.replace("_passed", "_required"): True for field in upstream_fields}, **upstream,
+        "aa0_policy_literal_accepted": aa0_policy_literal_accepted,
+        "allowed_descriptive_value_kind_names": list(_ALLOWED_DESCRIPTIVE_COUNT_VALUE_KIND_NAMES_AA1),
+        "source_descriptive_metadata_rows": source_rows,
+        "source_descriptive_metadata_row_count": len(source_rows),
+        "descriptive_value_rows": rows, "descriptive_value_rows_emitted": bool(rows),
+        "descriptive_value_row_count": len(rows), "descriptive_values_emitted": bool(rows),
+        "descriptive_value_count": len(rows), "statistical_values": [],
+        "statistical_values_emitted": False, "statistical_value_count": 0,
+        **{field: False for field in _DESCRIPTIVE_COUNT_VALUES_V0_OUTPUT_FIELDS if field != "statistical_values_emitted"},
+        **{field: False for field in _DESCRIPTIVE_COUNT_VALUES_V0_AUTHORIZATION_FIELDS},
+        "downstream_unlocks": [], "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["descriptive_count_values_v0_gate"] = _derive_descriptive_count_values_v0_gate(diagnostics)
+    return diagnostics
+
+
+def _derive_descriptive_count_values_v0_gate(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    """Fail closed unless AA1 has only the exact AA0-approved metadata counts."""
+    rows = diagnostics.get("descriptive_value_rows")
+    rows_are_list = isinstance(rows, list)
+    every_row_is_dict = rows_are_list and all(isinstance(row, dict) for row in rows)
+    upstream_fields = _DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE_FIELDS
+    output_fields = _DESCRIPTIVE_COUNT_VALUES_V0_OUTPUT_FIELDS
+    authorization_fields = _DESCRIPTIVE_COUNT_VALUES_V0_AUTHORIZATION_FIELDS
+    exact_false_fields = output_fields + authorization_fields
+    fixed_constants_match = every_row_is_dict and all(all(row.get(field) == expected for field, expected in _DESCRIPTIVE_COUNT_VALUES_V0_FIXED_ROW_CONSTANTS.items()) for row in rows)
+    row_schema_exact = every_row_is_dict and all(set(row) == set(_ALLOWED_DESCRIPTIVE_STATISTICAL_VALUE_ROW_KEYS) for row in rows)
+    row_value_kinds_ordered = [row.get("descriptive_value_kind") for row in rows] if every_row_is_dict else []
+    source_rows = diagnostics.get("source_descriptive_metadata_rows")
+    source_rows = source_rows if isinstance(source_rows, list) else None
+    # The authoritative source rows are attached only for gate recomputation by the builder.
+    expected_counts_by_kind = None
+    if source_rows is not None and all(isinstance(row, dict) for row in source_rows):
+        expected_counts_by_kind = {
+            "source_metadata_row_count": len(source_rows),
+            "source_symbol_count": len({row.get("symbol") for row in source_rows}),
+            "source_split_partition_count": len({(row.get("split_id"), row.get("split_partition")) for row in source_rows}),
+        }
+    emitted_counts_by_kind = (
+        {row.get("descriptive_value_kind"): row.get("descriptive_value") for row in rows}
+        if every_row_is_dict else {}
+    )
+    emitted_counts = [row.get("descriptive_value") for row in rows] if every_row_is_dict else []
+    identities = [(row.get("run_id"), row.get("symbol"), row.get("split_id"), row.get("split_partition"), row.get("descriptive_sequence_id")) for row in rows] if every_row_is_dict else []
+    evidence = {
+        "aa0_gate_passed": diagnostics.get("descriptive_statistical_value_policy_lock_aa0_gate_passed") is True,
+        "z1_gate_passed": diagnostics.get("descriptive_statistical_metadata_rows_v0_gate_passed") is True,
+        "z0_gate_passed": diagnostics.get("descriptive_statistical_value_schema_lock_z0_gate_passed") is True,
+        "readiness_rows_gate_passed": diagnostics.get("statistical_value_readiness_rows_v0_gate_passed") is True,
+        "contract_lock_gate_passed": diagnostics.get("statistical_value_contract_lock_gate_passed") is True,
+        "metadata_rows_gate_passed": diagnostics.get("statistical_metadata_rows_v0_gate_passed") is True,
+        "schema_lock_gate_passed": diagnostics.get("statistical_output_schema_lock_gate_passed") is True,
+        "comparison_rows_gate_passed": diagnostics.get("null_reference_comparison_rows_v0_gate_passed") is True,
+        "comparison_schema_gate_passed": diagnostics.get("null_reference_comparison_schema_lock_gate_passed") is True,
+        "accounting_rows_gate_passed": diagnostics.get("economic_accounting_rows_v0_gate_passed") is True,
+        **{field: diagnostics.get(field) is True for field in upstream_fields},
+        "declared": diagnostics.get("descriptive_count_values_v0_declared") is True,
+        "status_matches": diagnostics.get("descriptive_count_values_v0_status") == DESCRIPTIVE_COUNT_VALUES_V0_DECLARED_ARTIFACT,
+        "aa0_policy_literal_accepted": diagnostics.get("aa0_policy_literal_accepted") is True,
+        "allowed_kind_names_match": diagnostics.get("allowed_descriptive_value_kind_names") == list(_ALLOWED_DESCRIPTIVE_COUNT_VALUE_KIND_NAMES_AA1),
+        "rows_are_list": rows_are_list, "rows_emitted": diagnostics.get("descriptive_value_rows_emitted") is True,
+        "row_count_matches": diagnostics.get("descriptive_value_row_count") == 3 and rows_are_list and len(rows) == 3,
+        "values_emitted": diagnostics.get("descriptive_values_emitted") is True,
+        "value_count_matches": diagnostics.get("descriptive_value_count") == 3,
+        "row_schema_exact": row_schema_exact, "fixed_constants_match": fixed_constants_match,
+        "row_value_kinds_ordered_match": row_value_kinds_ordered == list(_ALLOWED_DESCRIPTIVE_COUNT_VALUE_KIND_NAMES_AA1),
+        "values_are_non_negative_ints": every_row_is_dict and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in emitted_counts),
+        "values_present": every_row_is_dict and all(row.get("descriptive_value_present") is True for row in rows),
+        "rows_not_metadata_only": every_row_is_dict and all(row.get("descriptive_metadata_only") is False for row in rows),
+        "counts_by_kind_match": expected_counts_by_kind is not None and emitted_counts_by_kind == expected_counts_by_kind and diagnostics.get("source_descriptive_metadata_row_count") == expected_counts_by_kind["source_metadata_row_count"],
+        "identities_unique": len(identities) == len(set(identities)),
+        "rows_in_order": every_row_is_dict and [row.get("descriptive_sequence_id") for row in rows] == [1, 2, 3],
+        "statistical_values_not_emitted": diagnostics.get("statistical_values") == [] and diagnostics.get("statistical_values_emitted") is False and diagnostics.get("statistical_value_count") == 0,
+        **{f"{field}_is_exactly_false": diagnostics.get(field) is False for field in exact_false_fields},
+        "downstream_unlocks_empty": diagnostics.get("downstream_unlocks") == [],
+    }
+    def gate(status: str, reason: str | None) -> dict[str, Any]:
+        return {"gate_kind": "descriptive_count_values_v0_gate", "gate_scope": DESCRIPTIVE_COUNT_VALUES_V0_SCOPE, "gate_status": status, "gate_passed": False, "gate_scoring_authorization": False, "gate_live_authorization": False, "gate_final_verdict_authorization": False, "gate_downstream_unlocks": [], "evidence": evidence, "blocked_reason": reason}
+    if not evidence["aa0_gate_passed"]: return gate(BLOCKED_BY_DESCRIPTIVE_STATISTICAL_VALUE_POLICY_LOCK_AA0_FOR_AA1_GATE, "AA0_POLICY_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["z1_gate_passed"]: return gate(BLOCKED_BY_DESCRIPTIVE_STATISTICAL_METADATA_ROWS_V0_FOR_AA1_GATE, "Z1_METADATA_ROWS_GATE_MISSING_OR_NOT_PASSED")
+    if not all(evidence[field] is True for field in ("z0_gate_passed", "readiness_rows_gate_passed", "contract_lock_gate_passed", "metadata_rows_gate_passed", "schema_lock_gate_passed", "comparison_rows_gate_passed", "comparison_schema_gate_passed", "accounting_rows_gate_passed")): return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE, "REQUIRED_Z0_TO_V1_GATE_MISSING_OR_NOT_PASSED")
+    if not all(evidence[field] is True for field in upstream_fields): return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE, "REQUIRED_OLDER_UPSTREAM_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["aa0_policy_literal_accepted"]: return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_POLICY_LITERAL, "AA0_POLICY_LITERAL_NOT_ACCEPTED")
+    if not evidence["allowed_kind_names_match"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_KIND_MUTATION, "ALLOWED_VALUE_KIND_NAMES_DO_NOT_EXACTLY_MATCH_AA0")
+    if every_row_is_dict and not evidence["row_schema_exact"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_SCHEMA, "ROW_KEYS_DO_NOT_EXACTLY_MATCH_Z0_ALLOWED_SCHEMA_KEYS")
+    if every_row_is_dict and not evidence["fixed_constants_match"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_CONSTANTS, "ROW_CONSTANTS_DO_NOT_EXACTLY_MATCH_AA1")
+    if every_row_is_dict and not evidence["rows_in_order"]: return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_ROW_ORDERING_MUTATION, "DESCRIPTIVE_COUNT_VALUE_ROWS_NOT_ORDERED_BY_SEQUENCE")
+    if every_row_is_dict and not evidence["row_value_kinds_ordered_match"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_ROW_KIND, "ROW_VALUE_KINDS_DO_NOT_EXACTLY_MATCH_AA0_ALLOWED_NAMES")
+    if every_row_is_dict and not evidence["values_are_non_negative_ints"]: return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE, "DESCRIPTIVE_VALUES_MUST_BE_NON_NEGATIVE_INTS")
+    if every_row_is_dict and (not evidence["values_present"] or not evidence["rows_not_metadata_only"]): return gate(BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE, "DESCRIPTIVE_VALUE_PRESENCE_OR_METADATA_ONLY_EVIDENCE_MUTATED")
+    if every_row_is_dict and not evidence["counts_by_kind_match"]: return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUE_MISMATCH, "DESCRIPTIVE_COUNTS_DO_NOT_MATCH_Z1_METADATA_ROWS")
+    if any(diagnostics.get(field) is not False and diagnostics.get(field) is not True for field in exact_false_fields): return gate(BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE, "DESCRIPTIVE_COUNT_VALUES_V0_DOWNSTREAM_EVIDENCE_NOT_EXACTLY_BOOLEAN")
+    if not evidence["statistical_values_not_emitted"]: return gate(BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AA1, "STATISTICAL_VALUES_MUST_NOT_BE_EMITTED_IN_AA1")
+    if any(diagnostics.get(field) is True for field in ("inferential_values_emitted", "uncertainty_values_emitted", "candidate_comparison_values_emitted")): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_INFERENTIAL_OUTPUT, "UNEXPECTED_INFERENTIAL_UNCERTAINTY_OR_CANDIDATE_OUTPUT")
+    if any(diagnostics.get(field) is True for field in ("scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted")): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_OUTPUT, "UNEXPECTED_DOWNSTREAM_OUTPUT")
+    if any(diagnostics.get(field) is True for field in authorization_fields): return gate(BLOCKED_BY_UNEXPECTED_DESCRIPTIVE_COUNT_VALUE_DOWNSTREAM_AUTHORIZATION, "UNEXPECTED_DOWNSTREAM_AUTHORIZATION")
+    if diagnostics.get("final_offline_verdict_remains") != BLOCKED_BY_VALIDATION_IMPLEMENTATION: return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_FINAL_VERDICT_ADVANCEMENT, "FINAL_OFFLINE_VERDICT_MUST_REMAIN_BLOCKED")
+    if every_row_is_dict and not evidence["identities_unique"]: return gate(BLOCKED_BY_DUPLICATE_DESCRIPTIVE_COUNT_VALUE_ROW_IDENTITY, "DUPLICATE_DESCRIPTIVE_COUNT_VALUE_ROW_IDENTITY")
+    required = ("declared", "status_matches", "aa0_policy_literal_accepted", "allowed_kind_names_match", "rows_are_list", "rows_emitted", "row_count_matches", "values_emitted", "value_count_matches", "row_schema_exact", "fixed_constants_match", "row_value_kinds_ordered_match", "values_are_non_negative_ints", "values_present", "rows_not_metadata_only", "counts_by_kind_match", "identities_unique", "rows_in_order", "statistical_values_not_emitted", "downstream_unlocks_empty") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
+    if not all(evidence.get(field) is True for field in required): return gate(BLOCKED_BY_INCOMPLETE_DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE, "DESCRIPTIVE_COUNT_VALUES_V0_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    result = gate(DESCRIPTIVE_COUNT_VALUES_V0_DECLARED_ARTIFACT, None)
+    result["gate_passed"] = True
+    return result
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -18402,6 +18639,7 @@ def build_real_validation_receipt(
     descriptive_statistical_value_schema_lock_z0_diagnostics: dict | None = None,
     descriptive_statistical_metadata_rows_v0_diagnostics: dict | None = None,
     descriptive_statistical_value_policy_lock_aa0_diagnostics: dict | None = None,
+    descriptive_count_values_v0_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -18638,6 +18876,10 @@ def build_real_validation_receipt(
     if descriptive_statistical_value_policy_lock_aa0_diagnostics is not None:
         receipt["descriptive_statistical_value_policy_lock_aa0_diagnostics"] = (
             descriptive_statistical_value_policy_lock_aa0_diagnostics
+        )
+    if descriptive_count_values_v0_diagnostics is not None:
+        receipt["descriptive_count_values_v0_diagnostics"] = (
+            descriptive_count_values_v0_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -19686,6 +19928,18 @@ def main(argv: list[str] | None = None) -> int:
                     economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
                 )
             )
+            descriptive_count_values_v0_diagnostics = _build_descriptive_count_values_v0_diagnostics(
+                descriptive_statistical_value_policy_lock_aa0_diagnostics=descriptive_statistical_value_policy_lock_aa0_diagnostics,
+                descriptive_statistical_metadata_rows_v0_diagnostics=descriptive_statistical_metadata_rows_v0_diagnostics,
+                descriptive_statistical_value_schema_lock_z0_diagnostics=descriptive_statistical_value_schema_lock_z0_diagnostics,
+                statistical_value_readiness_rows_v0_diagnostics=statistical_value_readiness_rows_v0_diagnostics,
+                statistical_value_contract_lock_y0_diagnostics=statistical_value_contract_lock_y0_diagnostics,
+                statistical_metadata_rows_v0_diagnostics=statistical_metadata_rows_v0_diagnostics,
+                statistical_output_schema_lock_diagnostics=statistical_output_schema_lock_diagnostics,
+                null_reference_comparison_rows_v0_diagnostics=null_reference_comparison_rows_v0_diagnostics,
+                null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
+                economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -19824,6 +20078,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             descriptive_statistical_value_policy_lock_aa0_diagnostics=(
                 descriptive_statistical_value_policy_lock_aa0_diagnostics
+            ),
+            descriptive_count_values_v0_diagnostics=(
+                descriptive_count_values_v0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -20327,6 +20584,18 @@ def main(argv: list[str] | None = None) -> int:
                 null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
                 economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
             )
+            descriptive_count_values_v0_diagnostics = _build_descriptive_count_values_v0_diagnostics(
+                descriptive_statistical_value_policy_lock_aa0_diagnostics=descriptive_statistical_value_policy_lock_aa0_diagnostics,
+                descriptive_statistical_metadata_rows_v0_diagnostics=descriptive_statistical_metadata_rows_v0_diagnostics,
+                descriptive_statistical_value_schema_lock_z0_diagnostics=descriptive_statistical_value_schema_lock_z0_diagnostics,
+                statistical_value_readiness_rows_v0_diagnostics=statistical_value_readiness_rows_v0_diagnostics,
+                statistical_value_contract_lock_y0_diagnostics=statistical_value_contract_lock_y0_diagnostics,
+                statistical_metadata_rows_v0_diagnostics=statistical_metadata_rows_v0_diagnostics,
+                statistical_output_schema_lock_diagnostics=statistical_output_schema_lock_diagnostics,
+                null_reference_comparison_rows_v0_diagnostics=null_reference_comparison_rows_v0_diagnostics,
+                null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
+                economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -20430,6 +20699,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             descriptive_statistical_value_policy_lock_aa0_diagnostics=(
                 descriptive_statistical_value_policy_lock_aa0_diagnostics
+            ),
+            descriptive_count_values_v0_diagnostics=(
+                descriptive_count_values_v0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
