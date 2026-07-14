@@ -112,6 +112,8 @@ __all__ = [
     "_derive_materialized_rule_rows_v0_gate",
     "_build_simulated_event_schema_lock_diagnostics",
     "_derive_simulated_event_schema_lock_gate",
+    "_build_simulated_events_v0_diagnostics",
+    "_derive_simulated_events_v0_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
@@ -1038,6 +1040,43 @@ _FORBIDDEN_SIMULATED_EVENT_SCHEMA_KEY_NAMES = (
     "confidence_interval", "trade", "trades", "order", "orders", "fill",
     "fills", "execution", "executions", "position", "positions", "portfolio",
     "live_ready", "deploy_ready", "profitable",
+)
+
+SIMULATED_EVENTS_V0_VERSION = "simulated-events-v0-0.1"
+SIMULATED_EVENTS_V0_SCOPE = "SIMULATED_EVENT_ARTIFACT_ONLY_NO_ECONOMICS_OR_SCORING"
+SIMULATED_EVENTS_V0_DECLARED_ARTIFACT_ONLY = "SIMULATED_EVENTS_V0_DECLARED_ARTIFACT_ONLY"
+SIMULATED_EVENTS_V0_POLICY = "EMIT_SCHEMA_LOCKED_SIMULATED_EVENTS_ONLY_NO_ECONOMICS_OR_SCORING"
+SIMULATED_EVENTS_V0_SCHEMA_VERSION = "simulated-events-v0-0.1"
+SIMULATED_EVENTS_V0_SCHEMA_KIND = "simulated_event_v0"
+SIMULATED_EVENTS_V0_EVENT_FAMILY = "schema_locked_event_v0"
+SIMULATED_EVENTS_V0_EVENT_VARIANT = "noop_from_rule_row"
+SIMULATED_EVENTS_V0_EVENT_REVISION = "u1-0.1"
+SIMULATED_EVENTS_V0_MAX_EVENTS = 100
+BLOCKED_BY_SIMULATED_EVENT_SCHEMA_LOCK_GATE = "BLOCKED_BY_SIMULATED_EVENT_SCHEMA_LOCK_GATE"
+BLOCKED_BY_INCOMPLETE_SIMULATED_EVENTS_V0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_SIMULATED_EVENTS_V0_EVIDENCE"
+BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_SCHEMA = "BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_SCHEMA"
+BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_FORBIDDEN_KEY = "BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_FORBIDDEN_KEY"
+BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_FORBIDDEN_VALUE = "BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_FORBIDDEN_VALUE"
+BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_DOWNSTREAM_OUTPUT = "BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_DOWNSTREAM_OUTPUT"
+BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_DOWNSTREAM_AUTHORIZATION = "BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_DOWNSTREAM_AUTHORIZATION"
+_SIMULATED_EVENTS_V0_FORBIDDEN_EVENT_NAMES = frozenset(
+    set(_FORBIDDEN_SIMULATED_EVENT_SCHEMA_KEY_NAMES)
+    | {
+        "close", "fundingRate", "open", "high", "low", "volume", "markPrice",
+        "price_value", "funding_value", "economic_value", "scoring_value",
+    }
+)
+_SIMULATED_EVENTS_V0_DOWNSTREAM_OUTPUT_FIELDS = (
+    "price_values_emitted", "funding_rate_values_emitted", "economic_values_emitted",
+    "statistical_values_emitted", "null_comparison_values_emitted",
+    "scoring_values_emitted", "live_integration_values_emitted",
+    "paper_integration_values_emitted", "final_verdict_values_emitted",
+)
+_SIMULATED_EVENTS_V0_DOWNSTREAM_AUTHORIZATION_FIELDS = (
+    "economic_value_generation_authorized", "statistical_value_generation_authorized",
+    "candidate_comparison_authorized", "null_generation_authorized",
+    "scoring_authorization", "live_integration_authorized",
+    "paper_integration_authorized", "final_verdict_authorization",
 )
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
@@ -15978,6 +16017,235 @@ def _derive_simulated_event_schema_lock_gate(
     return result
 
 
+def _build_simulated_events_v0_diagnostics(
+    *,
+    simulated_event_schema_lock_diagnostics: dict[str, Any],
+    materialized_rule_rows_v0_diagnostics: dict[str, Any],
+    materialized_rule_row_schema_lock_diagnostics: dict[str, Any],
+    no_output_runner_dry_harness_diagnostics: dict[str, Any],
+    projected_input_joinability_diagnostics: dict[str, Any],
+    projected_input_temporal_sequence_diagnostics: dict[str, Any],
+    projected_input_row_count_diagnostics: dict[str, Any],
+    projected_input_shape_inventory_diagnostics: dict[str, Any],
+    allowed_runner_input_projection_diagnostics: dict[str, Any],
+    no_output_runner_invocation_diagnostics: dict[str, Any],
+    implementation_boundary_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Build Lane U1 simulated-event artifacts exclusively from T1 rows."""
+    def passed(section: dict[str, Any], gate_name: str) -> bool:
+        gate = section.get(gate_name)
+        return bool(isinstance(gate, dict) and gate.get("gate_passed") is True)
+
+    upstream = {
+        "simulated_event_schema_lock_gate_passed": passed(
+            simulated_event_schema_lock_diagnostics, "simulated_event_schema_lock_gate"
+        ),
+        "materialized_rule_rows_v0_gate_passed": passed(
+            materialized_rule_rows_v0_diagnostics, "materialized_rule_rows_v0_gate"
+        ),
+        "materialized_rule_row_schema_lock_gate_passed": passed(
+            materialized_rule_row_schema_lock_diagnostics,
+            "materialized_rule_row_schema_lock_gate",
+        ),
+        "no_output_runner_dry_harness_gate_passed": passed(
+            no_output_runner_dry_harness_diagnostics, "no_output_runner_dry_harness_gate"
+        ),
+        "projected_input_joinability_gate_passed": passed(
+            projected_input_joinability_diagnostics, "projected_input_joinability_gate"
+        ),
+        "projected_input_temporal_sequence_gate_passed": passed(
+            projected_input_temporal_sequence_diagnostics,
+            "projected_input_temporal_sequence_gate",
+        ),
+        "projected_input_row_count_gate_passed": passed(
+            projected_input_row_count_diagnostics, "projected_input_row_count_gate"
+        ),
+        "projected_input_shape_inventory_gate_passed": passed(
+            projected_input_shape_inventory_diagnostics,
+            "projected_input_shape_inventory_gate",
+        ),
+        "allowed_runner_input_projection_gate_passed": passed(
+            allowed_runner_input_projection_diagnostics,
+            "allowed_runner_input_projection_gate",
+        ),
+        "no_output_runner_invocation_gate_passed": passed(
+            no_output_runner_invocation_diagnostics, "no_output_runner_invocation_gate"
+        ),
+        "implementation_boundary_gate_passed": passed(
+            implementation_boundary_diagnostics, "implementation_boundary_gate"
+        ),
+    }
+    source_rows = materialized_rule_rows_v0_diagnostics.get("materialized_rule_rows")
+    source_rows = source_rows if isinstance(source_rows, list) else []
+    events: list[dict[str, Any]] = []
+    cap_exceeded = len(source_rows) > SIMULATED_EVENTS_V0_MAX_EVENTS
+    if all(upstream.values()) and not cap_exceeded:
+        for sequence, row in enumerate(source_rows, start=1):
+            if not isinstance(row, dict):
+                events = []
+                break
+            events.append(
+                {
+                    "schema_version": SIMULATED_EVENTS_V0_SCHEMA_VERSION,
+                    "schema_kind": SIMULATED_EVENTS_V0_SCHEMA_KIND,
+                    "run_id": row.get("run_id"),
+                    "event_sequence_id": sequence,
+                    "source_rule_row_sequence_id": row.get("row_sequence_id"),
+                    "symbol": row.get("symbol"),
+                    "split_id": row.get("split_id"),
+                    "split_partition": row.get("split_partition"),
+                    "event_time_utc": row.get("decision_time_utc"),
+                    "source_decision_time_utc": row.get("decision_time_utc"),
+                    "source_bar_time_utc": row.get("source_bar_time_utc"),
+                    "source_funding_time_utc": row.get("source_funding_time_utc"),
+                    "event_family": SIMULATED_EVENTS_V0_EVENT_FAMILY,
+                    "event_variant": SIMULATED_EVENTS_V0_EVENT_VARIANT,
+                    "event_revision": SIMULATED_EVENTS_V0_EVENT_REVISION,
+                    "event_trigger_name": "materialized_rule_row_present",
+                    "event_trigger_result": "OBSERVED",
+                    "event_action_name": "ARTIFACT_ONLY",
+                    "event_action_code": "NOOP_EVENT_ARTIFACT_ONLY",
+                    "event_metadata_only": True,
+                }
+            )
+
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "simulated_events_v0",
+        "simulated_events_v0_version": SIMULATED_EVENTS_V0_VERSION,
+        "simulated_events_v0_scope": SIMULATED_EVENTS_V0_SCOPE,
+        "simulated_events_v0_status": SIMULATED_EVENTS_V0_DECLARED_ARTIFACT_ONLY,
+        **{key.replace("_passed", "_required"): True for key in upstream},
+        **upstream,
+        "simulated_events_v0_declared": True,
+        "simulated_events_v0_mode": "SCHEMA_LOCKED_EVENT_ARTIFACT_ONLY",
+        "simulated_events_v0_policy": SIMULATED_EVENTS_V0_POLICY,
+        "simulated_events_emitted": bool(events),
+        "simulated_event_count": len(events),
+        "simulated_events": events,
+        "simulated_event_schema_keys": list(_ALLOWED_SIMULATED_EVENT_SCHEMA_KEYS),
+        "simulated_event_schema_key_count": len(_ALLOWED_SIMULATED_EVENT_SCHEMA_KEYS),
+        "simulated_event_forbidden_key_names_absent": True,
+        "simulated_event_forbidden_values_absent": True,
+        "source_materialized_rule_row_count": len(source_rows),
+        "event_count_matches_source_rule_row_count": len(events) == len(source_rows),
+        "simulated_event_cap": SIMULATED_EVENTS_V0_MAX_EVENTS,
+        "simulated_event_cap_exceeded": cap_exceeded,
+        **{field: False for field in _SIMULATED_EVENTS_V0_DOWNSTREAM_OUTPUT_FIELDS},
+        "rule_materialization_authorized": True,
+        "simulated_event_generation_authorized": True,
+        **{field: False for field in _SIMULATED_EVENTS_V0_DOWNSTREAM_AUTHORIZATION_FIELDS},
+        "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["simulated_events_v0_gate"] = _derive_simulated_events_v0_gate(
+        diagnostics
+    )
+    return diagnostics
+
+
+def _derive_simulated_events_v0_gate(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    """Derive U1's fail-closed artifact-only event gate."""
+    events = diagnostics.get("simulated_events")
+    events_are_list = isinstance(events, list)
+    every_event_is_dict = events_are_list and all(isinstance(event, dict) for event in events)
+    allowed_keys = set(_ALLOWED_SIMULATED_EVENT_SCHEMA_KEYS)
+    schema_exact = every_event_is_dict and all(
+        set(event.keys()) == allowed_keys for event in events
+    )
+    no_forbidden_keys = every_event_is_dict and not any(
+        _SIMULATED_EVENTS_V0_FORBIDDEN_EVENT_NAMES & set(event.keys())
+        for event in events
+    )
+    def contains_forbidden_value(event: dict[str, Any]) -> bool:
+        return any(
+            isinstance(value, str) and value in _SIMULATED_EVENTS_V0_FORBIDDEN_EVENT_NAMES
+            for value in event.values()
+        )
+    no_forbidden_values = every_event_is_dict and not any(
+        contains_forbidden_value(event) for event in events
+    )
+    def sort_key(event: dict[str, Any]) -> tuple[str, str, str, str, int]:
+        sequence = event.get("event_sequence_id")
+        return (
+            str(event.get("symbol", "")), str(event.get("split_id", "")),
+            str(event.get("split_partition", "")), str(event.get("event_time_utc", "")),
+            sequence if isinstance(sequence, int) else -1,
+        )
+    events_in_order = every_event_is_dict and events == sorted(events, key=sort_key)
+    identities = [
+        (event.get("run_id"), event.get("symbol"), event.get("split_id"),
+         event.get("split_partition"), event.get("event_sequence_id"))
+        for event in events
+    ] if every_event_is_dict else []
+    no_duplicate_identities = every_event_is_dict and len(identities) == len(set(identities))
+    upstream_fields = tuple(
+        key for key in diagnostics if key.endswith("_gate_passed")
+    )
+    output_offenders = [
+        field for field in _SIMULATED_EVENTS_V0_DOWNSTREAM_OUTPUT_FIELDS
+        if diagnostics.get(field) is True
+    ]
+    authorization_offenders = [
+        field for field in _SIMULATED_EVENTS_V0_DOWNSTREAM_AUTHORIZATION_FIELDS
+        if diagnostics.get(field) is True
+    ]
+    evidence = {
+        **{field: diagnostics.get(field) for field in upstream_fields},
+        "declared": diagnostics.get("simulated_events_v0_declared") is True,
+        "mode_matches": diagnostics.get("simulated_events_v0_mode") == "SCHEMA_LOCKED_EVENT_ARTIFACT_ONLY",
+        "status_matches": diagnostics.get("simulated_events_v0_status") == SIMULATED_EVENTS_V0_DECLARED_ARTIFACT_ONLY,
+        "policy_matches": diagnostics.get("simulated_events_v0_policy") == SIMULATED_EVENTS_V0_POLICY,
+        "simulated_events_emitted": diagnostics.get("simulated_events_emitted") is True,
+        "events_are_list": events_are_list,
+        "count_matches_list_length": events_are_list and diagnostics.get("simulated_event_count") == len(events),
+        "count_positive": bool(events_are_list and len(events) > 0),
+        "source_count_positive": diagnostics.get("source_materialized_rule_row_count", 0) > 0,
+        "count_matches_source": diagnostics.get("event_count_matches_source_rule_row_count") is True,
+        "every_event_is_dict": every_event_is_dict,
+        "every_event_schema_exact": schema_exact,
+        "no_forbidden_event_keys": no_forbidden_keys,
+        "no_forbidden_event_values": no_forbidden_values,
+        "events_in_order": events_in_order,
+        "no_duplicate_event_identities": no_duplicate_identities,
+        "cap_not_exceeded": diagnostics.get("simulated_event_cap_exceeded") is False,
+        "rule_materialization_authorized": diagnostics.get("rule_materialization_authorized") is True,
+        "simulated_event_generation_authorized": diagnostics.get("simulated_event_generation_authorized") is True,
+        "final_offline_verdict_remains": diagnostics.get("final_offline_verdict_remains"),
+    }
+    def gate(status: str, reason: str | None) -> dict[str, Any]:
+        return {"gate_kind": "simulated_events_v0_gate", "gate_scope": SIMULATED_EVENTS_V0_SCOPE,
+                "gate_status": status, "gate_passed": False, "gate_scoring_authorization": False,
+                "gate_live_authorization": False, "gate_final_verdict_authorization": False,
+                "gate_downstream_unlocks": [], "evidence": evidence, "blocked_reason": reason}
+    if not diagnostics.get("simulated_event_schema_lock_gate_passed"):
+        return gate(BLOCKED_BY_SIMULATED_EVENT_SCHEMA_LOCK_GATE, "SIMULATED_EVENT_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not diagnostics.get("materialized_rule_rows_v0_gate_passed"):
+        return gate(BLOCKED_BY_MATERIALIZED_RULE_ROWS_V0_GATE, "MATERIALIZED_RULE_ROWS_V0_GATE_MISSING_OR_NOT_PASSED")
+    if not diagnostics.get("materialized_rule_row_schema_lock_gate_passed"):
+        return gate(BLOCKED_BY_MATERIALIZED_RULE_ROW_SCHEMA_LOCK_GATE, "MATERIALIZED_RULE_ROW_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if output_offenders:
+        return gate(BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_DOWNSTREAM_OUTPUT, "UNEXPECTED_DOWNSTREAM_OUTPUT_FIELDS_TRUE: " + ", ".join(sorted(output_offenders)))
+    if authorization_offenders:
+        return gate(BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_DOWNSTREAM_AUTHORIZATION, "UNEXPECTED_DOWNSTREAM_AUTHORIZATION_FIELDS_TRUE: " + ", ".join(sorted(authorization_offenders)))
+    if not no_forbidden_keys and every_event_is_dict:
+        return gate(BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_FORBIDDEN_KEY, "FORBIDDEN_KEY_NAME_PRESENT_ON_A_SIMULATED_EVENT")
+    if not no_forbidden_values and every_event_is_dict:
+        return gate(BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_FORBIDDEN_VALUE, "FORBIDDEN_VALUE_PRESENT_ON_A_SIMULATED_EVENT")
+    if not schema_exact and every_event_is_dict:
+        return gate(BLOCKED_BY_UNEXPECTED_SIMULATED_EVENT_SCHEMA, "EVENT_KEYS_DO_NOT_EXACTLY_MATCH_ALLOWED_SIMULATED_EVENT_SCHEMA_KEYS")
+    required = ("declared", "mode_matches", "status_matches", "policy_matches", "simulated_events_emitted", "events_are_list",
+                "count_matches_list_length", "count_positive", "source_count_positive", "count_matches_source",
+                "every_event_is_dict", "every_event_schema_exact", "no_forbidden_event_keys",
+                "no_forbidden_event_values", "events_in_order", "no_duplicate_event_identities", "cap_not_exceeded",
+                "rule_materialization_authorized", "simulated_event_generation_authorized")
+    if (not all(evidence.get(field) is True for field in upstream_fields)
+            or not all(evidence.get(field) is True for field in required)
+            or evidence["final_offline_verdict_remains"] != BLOCKED_BY_VALIDATION_IMPLEMENTATION):
+        return gate(BLOCKED_BY_INCOMPLETE_SIMULATED_EVENTS_V0_EVIDENCE, "SIMULATED_EVENTS_V0_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    result = gate(SIMULATED_EVENTS_V0_DECLARED_ARTIFACT_ONLY, None)
+    result["gate_passed"] = True
+    return result
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -16107,6 +16375,7 @@ def build_real_validation_receipt(
     materialized_rule_row_schema_lock_diagnostics: dict | None = None,
     materialized_rule_rows_v0_diagnostics: dict | None = None,
     simulated_event_schema_lock_diagnostics: dict | None = None,
+    simulated_events_v0_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -16298,6 +16567,8 @@ def build_real_validation_receipt(
         receipt["simulated_event_schema_lock_diagnostics"] = (
             simulated_event_schema_lock_diagnostics
         )
+    if simulated_events_v0_diagnostics is not None:
+        receipt["simulated_events_v0_diagnostics"] = simulated_events_v0_diagnostics
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
             final_offline_edge_verdict_logic_diagnostics
@@ -17218,6 +17489,19 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
             )
+            simulated_events_v0_diagnostics = _build_simulated_events_v0_diagnostics(
+                simulated_event_schema_lock_diagnostics=simulated_event_schema_lock_diagnostics,
+                materialized_rule_rows_v0_diagnostics=materialized_rule_rows_v0_diagnostics,
+                materialized_rule_row_schema_lock_diagnostics=materialized_rule_row_schema_lock_diagnostics,
+                no_output_runner_dry_harness_diagnostics=no_output_runner_dry_harness_diagnostics,
+                projected_input_joinability_diagnostics=projected_input_joinability_diagnostics,
+                projected_input_temporal_sequence_diagnostics=projected_input_temporal_sequence_diagnostics,
+                projected_input_row_count_diagnostics=projected_input_row_count_diagnostics,
+                projected_input_shape_inventory_diagnostics=projected_input_shape_inventory_diagnostics,
+                allowed_runner_input_projection_diagnostics=allowed_runner_input_projection_diagnostics,
+                no_output_runner_invocation_diagnostics=no_output_runner_invocation_diagnostics,
+                implementation_boundary_diagnostics=implementation_boundary_diagnostics,
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -17323,6 +17607,7 @@ def main(argv: list[str] | None = None) -> int:
             simulated_event_schema_lock_diagnostics=(
                 simulated_event_schema_lock_diagnostics
             ),
+            simulated_events_v0_diagnostics=simulated_events_v0_diagnostics,
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
             ),
@@ -17700,6 +17985,19 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
             )
+            simulated_events_v0_diagnostics = _build_simulated_events_v0_diagnostics(
+                simulated_event_schema_lock_diagnostics=simulated_event_schema_lock_diagnostics,
+                materialized_rule_rows_v0_diagnostics=materialized_rule_rows_v0_diagnostics,
+                materialized_rule_row_schema_lock_diagnostics=materialized_rule_row_schema_lock_diagnostics,
+                no_output_runner_dry_harness_diagnostics=no_output_runner_dry_harness_diagnostics,
+                projected_input_joinability_diagnostics=projected_input_joinability_diagnostics,
+                projected_input_temporal_sequence_diagnostics=projected_input_temporal_sequence_diagnostics,
+                projected_input_row_count_diagnostics=projected_input_row_count_diagnostics,
+                projected_input_shape_inventory_diagnostics=projected_input_shape_inventory_diagnostics,
+                allowed_runner_input_projection_diagnostics=allowed_runner_input_projection_diagnostics,
+                no_output_runner_invocation_diagnostics=no_output_runner_invocation_diagnostics,
+                implementation_boundary_diagnostics=implementation_boundary_diagnostics,
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -17770,6 +18068,7 @@ def main(argv: list[str] | None = None) -> int:
             simulated_event_schema_lock_diagnostics=(
                 simulated_event_schema_lock_diagnostics
             ),
+            simulated_events_v0_diagnostics=simulated_events_v0_diagnostics,
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
             ),
