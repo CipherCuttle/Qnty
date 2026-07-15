@@ -9,7 +9,7 @@ receipt emitted from those inputs at commit
 
 ## Scope
 
-Two computations run in this example, both structural provenance only:
+Three computations run in this example, all structural provenance only:
 
 1. **Input integrity** — role-relative source-byte fingerprinting, matching that
    fingerprint to the single frozen registry entry, and checking the declared
@@ -20,12 +20,21 @@ Two computations run in this example, both structural provenance only:
    train/purge/embargo/holdout partitions are audited for disjointness, holdout
    ordering, and realized purge/embargo gaps. This is **structural leakage
    auditing only** — ordinal row counts and booleans over timestamp/row order.
+3. **Holdout seal fingerprint** — a SHA-256 hash of the exact raw row bytes of
+   the holdout partition identified by step 2 (`bars`, plus `funding` here
+   because its 8 rows align 1:1 with the bars rows), recorded as a
+   `holdout_seal_state` of `sealed` / `mismatch` / `not_sealed`. This is a
+   **content-blind, write-once attestation** that the holdout partition has
+   not been altered since it was sealed — it never decodes, compares, or
+   aggregates a price/value/outcome column, and it computes nothing about the
+   partition's contents beyond a byte digest.
 
-The split audit reads **only** the `timestamp` column and row position. It never
-dereferences a price/value/outcome column (`close`, `funding_rate`, `value`,
-`pnl`, `return`, `profit`, `edge`, `score`, ...). The two all-zero CLI provenance
-arguments are inert fixture values required by the enclosing receipt interface;
-they are not market results.
+The split audit reads **only** the `timestamp` column and row position, and the
+seal fingerprint hashes **only** opaque raw row bytes. Neither dereferences a
+price/value/outcome column (`close`, `funding_rate`, `value`, `pnl`, `return`,
+`profit`, `edge`, `score`, ...). The two all-zero CLI provenance arguments are
+inert fixture values required by the enclosing receipt interface; they are not
+market results.
 
 Nothing here computes returns, PnL, profit, edge, a score, performance,
 p-values, confidence intervals, Sharpe, drawdown, risk, a baseline/benchmark
@@ -116,6 +125,39 @@ audit additionally sets `leakage_audit_killed: true` (folded into
 - the registry has no split-boundary declaration, or its declaration does not
   match the execution argument (a changed split is a new trial).
 
+Whenever a split boundary was supplied, the holdout seal fingerprint additionally
+sets `holdout_seal_killed: true` (folded into `protocol_execution_killed`) when
+any of these occur:
+
+- the upstream split leakage audit is absent, killed, or not passed;
+- the holdout byte span cannot be resolved (row-count mismatch against the
+  audited split, missing/unreadable source rows);
+- a supplied non-bars role (e.g. `funding`) cannot be deterministically
+  aligned to the bars-derived holdout partition (different row count or
+  timestamp sequence) — the seal step fails closed rather than guessing;
+- no registry `holdout_seal_declaration` exists yet (the computed fingerprint
+  is only a candidate for a future append-only registry write, not a durable
+  seal — `holdout_seal_state: not_sealed`);
+- a registry `holdout_seal_declaration` is present but missing a required
+  field (`holdout_seal_fingerprint`, `sealed_at_boundary_index`,
+  `purge_intervals`, `embargo_intervals`);
+- a registry `holdout_seal_declaration` is bound to a different
+  boundary/purge/embargo than the one just audited;
+- a recomputed fingerprint diverges from a complete, matching registry
+  declaration (`holdout_seal_state: mismatch`) — this is the tamper-detection
+  case: the holdout bytes changed since the declaration was registered.
+
+Absent any registered `holdout_seal_declaration`, a passing run still computes
+the fingerprint, but it is only a **candidate** value, not a durable seal:
+`holdout_seal_state: not_sealed`, `holdout_seal_killed: true`,
+`kill_criteria.registry_declaration_absent: true`, `registry_seal_fingerprint:
+null`. The holdout only becomes `sealed` once that candidate fingerprint has
+been written to the registry as a `holdout_seal_declaration` (append-only,
+same trial, `honest_trial_count` unchanged) and a subsequent run's recomputed
+fingerprint matches it exactly, with a matching boundary/purge/embargo. This
+module never writes to the registry itself.
+
 Passing these checks is not evidence of an edge, profit, or performance. It only
-proves this small structural protocol slice had the declared synthetic inputs
-and a well-formed, leakage-free split.
+proves this small structural protocol slice had the declared synthetic inputs,
+a well-formed leakage-free split, and (for the seal) that the holdout bytes
+match what was last sealed.

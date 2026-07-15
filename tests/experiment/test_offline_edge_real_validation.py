@@ -23572,7 +23572,7 @@ class TestProtocolSplitLeakageAudit:
             split_boundary_index=4,
         )
         assert computed["deterministic_split_audit"]["leakage_audit_passed"] is True
-        assert computed["computed_input_integrity_result"]["protocol_execution_killed"] is False
+        assert computed["deterministic_split_audit"]["leakage_audit_killed"] is False
         computed["computed_input_integrity_result"]["live_integration_authorized"] = True
         receipt = real_validation.build_real_validation_receipt(
             input_manifest_fingerprint="a",
@@ -23603,3 +23603,358 @@ class TestProtocolSplitLeakageAudit:
             bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None
         )
         assert "deterministic_split_audit" not in result
+
+
+class TestHoldoutSealFingerprint:
+    """Structural byte-fingerprint seal over the leakage-audited holdout partition.
+
+    Content-blind: hashes raw row bytes only. No returns, PnL, edge, score,
+    or performance is computed anywhere in this section.
+    """
+
+    def _bars(self, tmp_path: Path, rows: int = 8, *, values: list[str] | None = None) -> Path:
+        bars = tmp_path / "bars"
+        bars.mkdir(exist_ok=True)
+        lines = ["timestamp,close"]
+        for i in range(rows):
+            value = values[i] if values is not None else str(10 + i)
+            lines.append(f"2024-01-01T{i:02d}:00:00Z,{value}")
+        (bars / "BTC.csv").write_text("\n".join(lines) + "\n")
+        return bars
+
+    def _registry_entry(self, *, boundary: int = 4, purge: int = 1, embargo: int = 1, seal_declaration=None) -> dict:
+        entry = {
+            "candidate_family": "FROZEN_SINGLE_CANDIDATE_FAMILY_V1",
+            "null_family": "FROZEN_SINGLE_NULL_FAMILY_V1",
+            "append_only": True,
+            "registered_before_execution": True,
+            "split_boundary_index": boundary,
+            "purge_intervals": purge,
+            "embargo_intervals": embargo,
+        }
+        if seal_declaration is not None:
+            entry["holdout_seal_declaration"] = seal_declaration
+        return entry
+
+    def _split_audit(self, tmp_path, bars_dir=None, **overrides):
+        kwargs = dict(
+            boundary_index=4,
+            purge_intervals=1,
+            embargo_intervals=1,
+            registry_entry=self._registry_entry(),
+        )
+        kwargs.update(overrides)
+        kwargs["bars_dir"] = bars_dir if bars_dir is not None else self._bars(tmp_path)
+        return real_validation.build_protocol_split_leakage_audit(**kwargs)
+
+    def _seal(self, tmp_path, bars_dir=None, split_audit=None, registry_entry=None, **kwargs):
+        bars = bars_dir if bars_dir is not None else self._bars(tmp_path)
+        audit = split_audit if split_audit is not None else self._split_audit(tmp_path, bars_dir=bars)
+        entry = registry_entry if registry_entry is not None else self._registry_entry()
+        return real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, split_audit=audit, registry_entry=entry, **kwargs
+        )
+
+    def test_first_seal_without_registry_declaration_is_candidate_only(self, tmp_path):
+        # No durable registry declaration exists yet: the fingerprint is
+        # computed as a candidate, but the holdout is not yet sealed.
+        seal = self._seal(tmp_path)
+        assert seal["holdout_seal_state"] == "not_sealed"
+        assert seal["holdout_seal_killed"] is True
+        assert seal["holdout_seal_fingerprint"] is not None
+        assert len(seal["holdout_seal_fingerprint"]) == 64
+        assert seal["sealed_role_count"] == 1
+        assert seal["sealed_row_count"] == 3
+        assert seal["sealed_at_boundary_index"] == 4
+        assert seal["registry_seal_fingerprint"] is None
+        assert seal["seal_fingerprint_matches_registry"] is None
+        assert seal["kill_criteria"]["registry_declaration_absent"] is True
+        assert all(
+            value is False
+            for key, value in seal["kill_criteria"].items()
+            if key != "registry_declaration_absent"
+        )
+
+    def test_deterministic_rerun_same_bytes_gives_same_fingerprint(self, tmp_path):
+        bars = self._bars(tmp_path)
+        first = self._seal(tmp_path, bars_dir=bars)
+        second = self._seal(tmp_path, bars_dir=bars)
+        assert first["holdout_seal_fingerprint"] == second["holdout_seal_fingerprint"]
+
+    def test_byte_changed_inside_holdout_changes_fingerprint_and_kills_mismatch(self, tmp_path):
+        bars = self._bars(tmp_path)
+        audit = self._split_audit(tmp_path, bars_dir=bars)
+        first = self._seal(tmp_path, bars_dir=bars, split_audit=audit)
+        declaration = {
+            "holdout_seal_fingerprint": first["holdout_seal_fingerprint"],
+            "sealed_at_boundary_index": first["sealed_at_boundary_index"],
+            "purge_intervals": audit["declared_purge_intervals"],
+            "embargo_intervals": audit["declared_embargo_intervals"],
+        }
+        registry_entry = self._registry_entry(seal_declaration=declaration)
+
+        # Row index 5 is inside the holdout partition (boundary=4, embargo=1
+        # -> holdout starts at row 5).
+        mutated_bars = self._bars(tmp_path, values=["10", "11", "12", "13", "14", "MUTATED", "16", "17"])
+        mutated_audit = self._split_audit(tmp_path, bars_dir=mutated_bars)
+        mutated = self._seal(tmp_path, bars_dir=mutated_bars, split_audit=mutated_audit, registry_entry=registry_entry)
+
+        assert mutated["holdout_seal_fingerprint"] != first["holdout_seal_fingerprint"]
+        assert mutated["holdout_seal_state"] == "mismatch"
+        assert mutated["holdout_seal_killed"] is True
+        assert mutated["kill_criteria"]["seal_fingerprint_mismatch"] is True
+        assert mutated["seal_fingerprint_matches_registry"] is False
+
+    def test_byte_changed_outside_holdout_does_not_affect_fingerprint(self, tmp_path):
+        bars = self._bars(tmp_path)
+        audit = self._split_audit(tmp_path, bars_dir=bars)
+        first = self._seal(tmp_path, bars_dir=bars, split_audit=audit)
+
+        # Row index 0 is in train, well outside the holdout partition.
+        mutated_bars = self._bars(tmp_path, values=["MUTATED", "11", "12", "13", "14", "15", "16", "17"])
+        mutated_audit = self._split_audit(tmp_path, bars_dir=mutated_bars)
+        mutated = self._seal(tmp_path, bars_dir=mutated_bars, split_audit=mutated_audit)
+
+        assert mutated["holdout_seal_fingerprint"] == first["holdout_seal_fingerprint"]
+
+    def test_absent_split_audit_does_not_seal(self, tmp_path):
+        bars = self._bars(tmp_path)
+        seal = real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, split_audit=None, registry_entry=self._registry_entry()
+        )
+        assert seal["holdout_seal_state"] == "not_sealed"
+        assert seal["holdout_seal_killed"] is True
+        assert seal["kill_criteria"]["split_audit_absent"] is True
+        assert seal["holdout_seal_fingerprint"] is None
+
+    def test_killed_leakage_audit_does_not_seal(self, tmp_path):
+        # boundary_index=None kills the upstream leakage audit.
+        audit = self._split_audit(
+            tmp_path, boundary_index=None, registry_entry=self._registry_entry(boundary=None)
+        )
+        assert audit["leakage_audit_killed"] is True
+        seal = self._seal(tmp_path, split_audit=audit, registry_entry=self._registry_entry(boundary=None))
+        assert seal["holdout_seal_state"] == "not_sealed"
+        assert seal["holdout_seal_killed"] is True
+        assert seal["kill_criteria"]["leakage_audit_killed"] is True
+
+    def test_leakage_audit_not_passed_does_not_seal(self, tmp_path):
+        audit = {"leakage_audit_passed": False, "leakage_audit_killed": False}
+        seal = self._seal(tmp_path, split_audit=audit)
+        assert seal["holdout_seal_state"] == "not_sealed"
+        assert seal["holdout_seal_killed"] is True
+        assert seal["kill_criteria"]["leakage_audit_not_passed"] is True
+
+    def test_boundary_declaration_mismatch_kills(self, tmp_path):
+        bars = self._bars(tmp_path)
+        audit = self._split_audit(tmp_path, bars_dir=bars)
+        declaration = {
+            "holdout_seal_fingerprint": "0" * 64,
+            "sealed_at_boundary_index": 2,
+            "purge_intervals": 1,
+            "embargo_intervals": 1,
+        }
+        seal = self._seal(
+            tmp_path, bars_dir=bars, split_audit=audit,
+            registry_entry=self._registry_entry(seal_declaration=declaration),
+        )
+        assert seal["holdout_seal_state"] == "not_sealed"
+        assert seal["holdout_seal_killed"] is True
+        assert seal["kill_criteria"]["boundary_declaration_mismatch"] is True
+
+    def test_missing_registry_declaration_fields_on_claimed_sealed_state_kills(self, tmp_path):
+        bars = self._bars(tmp_path)
+        audit = self._split_audit(tmp_path, bars_dir=bars)
+        declaration = {"holdout_seal_fingerprint": "0" * 64}  # missing required fields
+        seal = self._seal(
+            tmp_path, bars_dir=bars, split_audit=audit,
+            registry_entry=self._registry_entry(seal_declaration=declaration),
+        )
+        assert seal["holdout_seal_state"] == "not_sealed"
+        assert seal["holdout_seal_killed"] is True
+        assert seal["kill_criteria"]["registry_declaration_missing_required_fields"] is True
+
+    def test_matching_registry_declaration_confirms_seal(self, tmp_path):
+        bars = self._bars(tmp_path)
+        audit = self._split_audit(tmp_path, bars_dir=bars)
+        first = self._seal(tmp_path, bars_dir=bars, split_audit=audit)
+        declaration = {
+            "holdout_seal_fingerprint": first["holdout_seal_fingerprint"],
+            "sealed_at_boundary_index": first["sealed_at_boundary_index"],
+            "purge_intervals": audit["declared_purge_intervals"],
+            "embargo_intervals": audit["declared_embargo_intervals"],
+        }
+        confirmed = self._seal(
+            tmp_path, bars_dir=bars, split_audit=audit,
+            registry_entry=self._registry_entry(seal_declaration=declaration),
+        )
+        assert confirmed["holdout_seal_state"] == "sealed"
+        assert confirmed["holdout_seal_killed"] is False
+        assert confirmed["seal_fingerprint_matches_registry"] is True
+        assert confirmed["registry_seal_fingerprint"] == first["holdout_seal_fingerprint"]
+
+    def test_non_bars_role_misaligned_funding_kills(self, tmp_path):
+        bars = self._bars(tmp_path)
+        funding = tmp_path / "funding"
+        funding.mkdir()
+        # Only 3 funding rows vs 8 bars rows -- cannot be deterministically
+        # aligned to the bars-derived holdout partition.
+        funding.joinpath("BTC.csv").write_text(
+            "timestamp,funding_rate\n"
+            "2024-01-01T00:00:00Z,0\n2024-01-01T01:00:00Z,0\n2024-01-01T02:00:00Z,0\n"
+        )
+        audit = self._split_audit(tmp_path, bars_dir=bars)
+        seal = self._seal(tmp_path, bars_dir=bars, split_audit=audit, funding_dir=funding)
+        assert seal["holdout_seal_state"] == "not_sealed"
+        assert seal["holdout_seal_killed"] is True
+        assert seal["kill_criteria"]["non_bars_role_alignment_failed"] is True
+
+    def test_aligned_funding_role_seals_both_roles(self, tmp_path):
+        bars = self._bars(tmp_path)
+        funding = tmp_path / "funding"
+        funding.mkdir()
+        lines = ["timestamp,funding_rate"]
+        for i in range(8):
+            lines.append(f"2024-01-01T{i:02d}:00:00Z,0")
+        funding.joinpath("BTC.csv").write_text("\n".join(lines) + "\n")
+        audit = self._split_audit(tmp_path, bars_dir=bars)
+        seal = self._seal(tmp_path, bars_dir=bars, split_audit=audit, funding_dir=funding)
+        assert seal["holdout_seal_fingerprint"] is not None
+        assert seal["sealed_role_count"] == 2
+        assert seal["kill_criteria"]["registry_declaration_absent"] is True
+        assert all(
+            value is False
+            for key, value in seal["kill_criteria"].items()
+            if key != "registry_declaration_absent"
+        )
+
+    def test_no_price_value_outcome_column_is_decoded(self, tmp_path):
+        bars = tmp_path / "bars"
+        bars.mkdir()
+        lines = ["timestamp,close,value,outcome"]
+        for i in range(8):
+            lines.append(f"2024-01-01T{i:02d}:00:00Z,POISON-{i}!!,POISON-{i}!!,POISON-{i}!!")
+        (bars / "BTC.csv").write_text("\n".join(lines) + "\n")
+        audit = self._split_audit(tmp_path, bars_dir=bars)
+        seal = self._seal(tmp_path, bars_dir=bars, split_audit=audit)
+        assert seal["holdout_seal_fingerprint"] is not None
+        assert seal["kill_criteria"]["registry_declaration_absent"] is True
+        assert all(
+            value is False
+            for key, value in seal["kill_criteria"].items()
+            if key != "registry_declaration_absent"
+        )
+
+    def test_forbidden_exact_key_scan_remains_green(self, tmp_path):
+        seal = self._seal(tmp_path)
+        all_keys = _all_dict_keys(seal)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
+
+    def test_wired_into_protocol_computed_validation_slice_no_declaration_stays_not_sealed(self, tmp_path):
+        # First run against a registry entry with no holdout_seal_declaration
+        # yet: the slice must not accidentally advance to a sealed/unkilled
+        # state, even though the upstream leakage audit and fingerprint
+        # checks all pass.
+        bars = self._bars(tmp_path)
+        funding = tmp_path / "funding"
+        funding.mkdir()
+        (funding / "BTC.csv").write_text(
+            "timestamp,funding_rate\n"
+            + "\n".join(f"2024-01-01T{h:02d}:00:00Z,0" for h in range(8))
+            + "\n"
+        )
+        fingerprint = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None
+        )["immutable_data_cut"]["actual_sha256"]
+        registry = tmp_path / "registry.json"
+        entry = self._registry_entry()
+        entry["data_cut_fingerprint"] = fingerprint
+        registry.write_text(json.dumps([entry]))
+        computed = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=funding,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+        )
+        assert computed["holdout_seal_audit"]["holdout_seal_state"] == "not_sealed"
+        assert computed["holdout_seal_audit"]["holdout_seal_killed"] is True
+        assert computed["holdout_seal_audit"]["kill_criteria"]["registry_declaration_absent"] is True
+        assert computed["computed_input_integrity_result"]["protocol_execution_killed"] is True
+        assert computed["computed_input_integrity_result"]["paper_trade_authorized"] is False
+        assert computed["computed_input_integrity_result"]["live_integration_authorized"] is False
+
+        receipt = real_validation.build_real_validation_receipt(
+            input_manifest_fingerprint="a",
+            data_quality_receipt_sha256="b",
+            code_commit_sha="c",
+            split_definitions=[],
+            cost_cases=[],
+            protocol_computed_validation_slice=computed,
+        )
+        real_validation.validate_real_validation_receipt(receipt)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_wired_into_protocol_computed_validation_slice_matching_declaration_seals(self, tmp_path):
+        bars = self._bars(tmp_path)
+        funding = tmp_path / "funding"
+        funding.mkdir()
+        (funding / "BTC.csv").write_text(
+            "timestamp,funding_rate\n"
+            + "\n".join(f"2024-01-01T{h:02d}:00:00Z,0" for h in range(8))
+            + "\n"
+        )
+        fingerprint = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None
+        )["immutable_data_cut"]["actual_sha256"]
+
+        # First pass (no declaration yet) computes the candidate fingerprint
+        # that becomes the append-only registry declaration.
+        registry = tmp_path / "registry.json"
+        entry = self._registry_entry()
+        entry["data_cut_fingerprint"] = fingerprint
+        registry.write_text(json.dumps([entry]))
+        first_pass = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=funding,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+        )
+        candidate_fingerprint = first_pass["holdout_seal_audit"]["holdout_seal_fingerprint"]
+        assert candidate_fingerprint is not None
+
+        entry["holdout_seal_declaration"] = {
+            "holdout_seal_fingerprint": candidate_fingerprint,
+            "sealed_at_boundary_index": first_pass["holdout_seal_audit"]["sealed_at_boundary_index"],
+            "purge_intervals": entry["purge_intervals"],
+            "embargo_intervals": entry["embargo_intervals"],
+        }
+        registry.write_text(json.dumps([entry]))
+        computed = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=funding,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+        )
+        assert computed["holdout_seal_audit"]["holdout_seal_state"] == "sealed"
+        assert computed["holdout_seal_audit"]["holdout_seal_killed"] is False
+        assert computed["holdout_seal_audit"]["registry_seal_fingerprint"] == candidate_fingerprint
+        assert computed["holdout_seal_audit"]["seal_fingerprint_matches_registry"] is True
+        assert computed["computed_input_integrity_result"]["paper_trade_authorized"] is False
+        assert computed["computed_input_integrity_result"]["live_integration_authorized"] is False
+
+        receipt = real_validation.build_real_validation_receipt(
+            input_manifest_fingerprint="a",
+            data_quality_receipt_sha256="b",
+            code_commit_sha="c",
+            split_definitions=[],
+            cost_cases=[],
+            protocol_computed_validation_slice=computed,
+        )
+        real_validation.validate_real_validation_receipt(receipt)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
