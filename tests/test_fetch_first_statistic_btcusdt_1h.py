@@ -86,7 +86,7 @@ def test_paginates_with_frozen_params_and_writes_close_boundaries(helper, monkey
 
     assert [call[1]["startTime"] for call in calls] == [first, first + 2 * helper.HOUR_MS]
     assert all(call[0] == helper.ENDPOINT and call[1]["symbol"] == "BTCUSDT" for call in calls)
-    assert all(call[1]["interval"] == "1h" and call[1]["endTime"] == last + helper.HOUR_MS for call in calls)
+    assert all(call[1]["interval"] == "1h" and call[1]["endTime"] == last for call in calls)
     rows = output.read_text().splitlines()
     assert rows[1].startswith("2024-01-01T01:00:00Z,")
     assert "2024-01-01T00:00:00Z," not in rows[1]
@@ -94,6 +94,47 @@ def test_paginates_with_frozen_params_and_writes_close_boundaries(helper, monkey
     assert receipt["timestamp_convention"] == helper.TIMESTAMP_CONVENTION
     assert receipt["first_close_boundary_utc"] == "2024-01-01T01:00:00Z"
     assert receipt["last_close_boundary_utc"] == "2024-01-01T03:00:00Z"
+
+
+def test_final_rest_bound_excludes_close_boundary_open_time(helper, monkeypatch):
+    first, last = _small_window(monkeypatch, helper, count=3)
+    calls = []
+
+    def fake_get(url, *, params, timeout):
+        calls.append((url, params, timeout))
+        return FakeResponse(
+            [
+                _kline(helper, open_time_ms)
+                for open_time_ms in range(
+                    params["startTime"], params["endTime"] + helper.HOUR_MS, helper.HOUR_MS
+                )
+            ]
+        )
+
+    klines = helper._fetch_klines(fake_get)
+
+    assert [kline.open_time_ms for kline in klines] == [first, first + helper.HOUR_MS, last]
+    assert calls[0][1]["endTime"] == last
+
+
+def test_pair_publication_rolls_back_if_receipt_replace_fails(helper, monkeypatch, tmp_path):
+    output_path = tmp_path / "BTCUSDT_1h_ohlcv.csv"
+    receipt_path = output_path.with_suffix(".receipt.json")
+    real_replace = helper.os.replace
+
+    def fail_receipt_replace(source, destination):
+        if Path(destination) == receipt_path:
+            raise OSError("injected receipt publication failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(helper.os, "replace", fail_receipt_replace)
+
+    with pytest.raises(OSError, match="injected receipt publication failure"):
+        helper._write_atomic_pair(output_path, b"csv\n", {"receipt": "data"})
+
+    assert not output_path.exists()
+    assert not receipt_path.exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_rejects_page_boundary_duplicate(helper, monkeypatch):

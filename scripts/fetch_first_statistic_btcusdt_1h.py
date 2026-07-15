@@ -149,7 +149,7 @@ def _fetch_klines(http_get: Callable[..., object]) -> list[Kline]:
                 "symbol": SYMBOL,
                 "interval": INTERVAL,
                 "startTime": next_open_time_ms,
-                "endTime": LAST_CLOSE_BOUNDARY_MS,
+                "endTime": LAST_OPEN_TIME_MS,
                 "limit": 1000,
             },
             timeout=30,
@@ -205,9 +205,9 @@ def _write_atomic_pair(output_path: Path, csv_bytes: bytes, receipt: dict[str, o
         os.replace(csv_temp, output_path)
         os.replace(receipt_temp, receipt_path)
     except Exception:
-        for temporary in (csv_temp, receipt_temp):
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        for path in (csv_temp, receipt_temp, output_path, receipt_path):
+            if path is not None:
+                path.unlink(missing_ok=True)
         raise
     return receipt_path
 
