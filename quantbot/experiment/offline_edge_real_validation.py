@@ -140,6 +140,8 @@ __all__ = [
     "_derive_inferential_uncertainty_schema_lock_ab0_gate",
     "_build_inferential_uncertainty_metadata_rows_v0_diagnostics",
     "_derive_inferential_uncertainty_metadata_rows_v0_gate",
+    "_build_candidate_comparison_schema_lock_ac0_diagnostics",
+    "_derive_candidate_comparison_schema_lock_ac0_gate",
     "_derive_descriptive_count_values_v0_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
@@ -18863,6 +18865,113 @@ def _derive_inferential_uncertainty_metadata_rows_v0_gate(diagnostics: dict[str,
     return result
 
 
+# === Lane AC0: candidate-comparison schema lock diagnostics only ===
+CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_VERSION = "candidate-comparison-schema-lock-ac0-0.1"
+CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_SCOPE = "FUTURE_CANDIDATE_COMPARISON_SCHEMA_DECLARATION_ONLY"
+CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_DECLARED_DIAGNOSTIC_ONLY = "CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_DECLARED_DIAGNOSTIC_ONLY"
+BLOCKED_BY_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_UPSTREAM_GATE = "BLOCKED_BY_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_UPSTREAM_GATE"
+BLOCKED_BY_INCOMPLETE_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_EVIDENCE"
+BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_ROW_SCHEMA_AC0 = "BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_ROW_SCHEMA_AC0"
+BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_VALUE_KIND_AC0 = "BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_VALUE_KIND_AC0"
+BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_ROWS_AC0 = "BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_ROWS_AC0"
+BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_VALUES_AC0 = "BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_VALUES_AC0"
+BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AC0 = "BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AC0"
+BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_DOWNSTREAM_OUTPUT_AC0 = "BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_DOWNSTREAM_OUTPUT_AC0"
+BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_DOWNSTREAM_AUTHORIZATION_AC0 = "BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_DOWNSTREAM_AUTHORIZATION_AC0"
+BLOCKED_BY_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_FINAL_VERDICT_ADVANCEMENT = "BLOCKED_BY_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_FINAL_VERDICT_ADVANCEMENT"
+_ALLOWED_CANDIDATE_COMPARISON_ROW_KEYS_AC0 = (
+    "schema_version", "schema_kind", "run_id", "candidate_comparison_sequence_id",
+    "source_inferential_sequence_id", "source_descriptive_sequence_id", "source_readiness_sequence_id",
+    "source_statistical_sequence_id", "source_comparison_sequence_id", "source_accounting_sequence_id",
+    "source_event_sequence_id", "source_rule_row_sequence_id", "symbol", "split_id", "split_partition",
+    "candidate_comparison_time_utc", "source_inferential_time_utc", "source_descriptive_time_utc",
+    "source_readiness_time_utc", "source_statistical_time_utc", "source_comparison_time_utc",
+    "source_accounting_time_utc", "source_event_time_utc", "candidate_comparison_family",
+    "candidate_comparison_variant", "candidate_comparison_revision", "candidate_comparison_entry_name",
+    "candidate_comparison_entry_code", "candidate_comparison_basis_name", "candidate_comparison_basis_code",
+    "candidate_comparison_unit", "candidate_comparison_value_kind", "candidate_comparison_value_present",
+    "candidate_comparison_value", "candidate_comparison_metadata_only",
+)
+_ALLOWED_CANDIDATE_COMPARISON_VALUE_KIND_NAMES_AC0 = ("not_computed",)
+_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_UPSTREAM_GATE_FIELDS = _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_REQUIRED_GATE_FIELDS
+_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_OUTPUT_FIELDS = _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_OUTPUT_FIELDS
+_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_AUTHORIZATION_FIELDS = _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_AUTHORIZATION_FIELDS
+
+
+def _build_candidate_comparison_schema_lock_ac0_diagnostics(
+    *, inferential_uncertainty_metadata_rows_v0_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Declare AC0's future candidate-comparison schema without comparing candidates."""
+    def passed(section: dict[str, Any], gate_name: str) -> bool:
+        gate = section.get(gate_name)
+        return isinstance(gate, dict) and gate.get("gate_passed") is True
+
+    upstream_fields = _CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_UPSTREAM_GATE_FIELDS
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "candidate_comparison_schema_lock_ac0",
+        "candidate_comparison_schema_lock_version": CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_VERSION,
+        "candidate_comparison_schema_lock_scope": CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_SCOPE,
+        "candidate_comparison_schema_lock_status": CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_DECLARED_DIAGNOSTIC_ONLY,
+        "candidate_comparison_schema_lock_declared": True,
+        "inferential_uncertainty_metadata_rows_v0_gate_required": True,
+        "inferential_uncertainty_metadata_rows_v0_gate_passed": passed(inferential_uncertainty_metadata_rows_v0_diagnostics, "inferential_uncertainty_metadata_rows_v0_gate"),
+        **{field.replace("_passed", "_required"): True for field in upstream_fields},
+        **{field: inferential_uncertainty_metadata_rows_v0_diagnostics.get(field) is True for field in upstream_fields},
+        "declared_candidate_comparison_row_keys": list(_ALLOWED_CANDIDATE_COMPARISON_ROW_KEYS_AC0),
+        "declared_candidate_comparison_row_key_count": len(_ALLOWED_CANDIDATE_COMPARISON_ROW_KEYS_AC0),
+        "declared_candidate_comparison_value_kind_names": list(_ALLOWED_CANDIDATE_COMPARISON_VALUE_KIND_NAMES_AC0),
+        "declared_candidate_comparison_value_kind_count": len(_ALLOWED_CANDIDATE_COMPARISON_VALUE_KIND_NAMES_AC0),
+        "source_inferential_uncertainty_metadata_row_count": inferential_uncertainty_metadata_rows_v0_diagnostics.get("inferential_uncertainty_row_count"),
+        "candidate_comparison_rows": [], "candidate_comparison_rows_emitted": False,
+        "candidate_comparison_row_count": 0, "candidate_comparison_values_emitted": False,
+        "candidate_comparison_value_count": 0, "statistical_values": [],
+        "statistical_values_emitted": False, "statistical_value_count": 0,
+        **{field: False for field in _CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_OUTPUT_FIELDS if field != "statistical_values_emitted"},
+        **{field: False for field in _CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_AUTHORIZATION_FIELDS},
+        "downstream_unlocks": [], "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["candidate_comparison_schema_lock_ac0_gate"] = _derive_candidate_comparison_schema_lock_ac0_gate(diagnostics)
+    return diagnostics
+
+
+def _derive_candidate_comparison_schema_lock_ac0_gate(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    """Fail closed unless AC0 only declares its exact future schema."""
+    upstream_fields = _CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_UPSTREAM_GATE_FIELDS
+    output_fields = _CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_OUTPUT_FIELDS
+    authorization_fields = _CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_AUTHORIZATION_FIELDS
+    exact_false_fields = output_fields + authorization_fields
+    evidence = {
+        "ab1_gate_passed": diagnostics.get("inferential_uncertainty_metadata_rows_v0_gate_passed") is True,
+        **{field: diagnostics.get(field) is True for field in upstream_fields},
+        "declared": diagnostics.get("candidate_comparison_schema_lock_declared") is True,
+        "status_matches": diagnostics.get("candidate_comparison_schema_lock_status") == CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_DECLARED_DIAGNOSTIC_ONLY,
+        "row_keys_match": diagnostics.get("declared_candidate_comparison_row_keys") == list(_ALLOWED_CANDIDATE_COMPARISON_ROW_KEYS_AC0) and diagnostics.get("declared_candidate_comparison_row_key_count") == len(_ALLOWED_CANDIDATE_COMPARISON_ROW_KEYS_AC0),
+        "value_kinds_match": diagnostics.get("declared_candidate_comparison_value_kind_names") == list(_ALLOWED_CANDIDATE_COMPARISON_VALUE_KIND_NAMES_AC0) and diagnostics.get("declared_candidate_comparison_value_kind_count") == len(_ALLOWED_CANDIDATE_COMPARISON_VALUE_KIND_NAMES_AC0),
+        "rows_empty": diagnostics.get("candidate_comparison_rows") == [], "rows_not_emitted": diagnostics.get("candidate_comparison_rows_emitted") is False, "row_count_zero": diagnostics.get("candidate_comparison_row_count") == 0,
+        "values_not_emitted": diagnostics.get("candidate_comparison_values_emitted") is False, "value_count_zero": diagnostics.get("candidate_comparison_value_count") == 0,
+        "statistical_not_emitted": diagnostics.get("statistical_values") == [] and diagnostics.get("statistical_values_emitted") is False and diagnostics.get("statistical_value_count") == 0,
+        **{f"{field}_is_exactly_false": diagnostics.get(field) is False for field in exact_false_fields},
+        "downstream_unlocks_empty": diagnostics.get("downstream_unlocks") == [],
+    }
+    def gate(status: str, reason: str | None) -> dict[str, Any]:
+        return {"gate_kind": "candidate_comparison_schema_lock_ac0_gate", "gate_scope": CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_SCOPE, "gate_status": status, "gate_passed": False, "gate_scoring_authorization": False, "gate_live_authorization": False, "gate_final_verdict_authorization": False, "gate_downstream_unlocks": [], "evidence": evidence, "blocked_reason": reason}
+    if not evidence["ab1_gate_passed"] or not all(evidence[field] is True for field in upstream_fields): return gate(BLOCKED_BY_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_UPSTREAM_GATE, "REQUIRED_AB1_OR_UPSTREAM_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["row_keys_match"]: return gate(BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_ROW_SCHEMA_AC0, "DECLARED_ROW_KEYS_DO_NOT_EXACTLY_MATCH_AC0")
+    if not evidence["value_kinds_match"]: return gate(BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_VALUE_KIND_AC0, "DECLARED_VALUE_KIND_NAMES_DO_NOT_EXACTLY_MATCH_AC0")
+    if any(field not in diagnostics or not isinstance(diagnostics.get(field), bool) for field in exact_false_fields): return gate(BLOCKED_BY_INCOMPLETE_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_EVIDENCE, "DOWNSTREAM_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    if not (evidence["rows_empty"] and evidence["rows_not_emitted"] and evidence["row_count_zero"]): return gate(BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_ROWS_AC0, "CANDIDATE_COMPARISON_ROWS_MUST_NOT_BE_EMITTED")
+    if not (evidence["values_not_emitted"] and evidence["value_count_zero"]): return gate(BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_VALUES_AC0, "CANDIDATE_COMPARISON_VALUES_MUST_NOT_BE_EMITTED")
+    if not evidence["statistical_not_emitted"]: return gate(BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AC0, "STATISTICAL_VALUES_MUST_NOT_BE_EMITTED")
+    if any(diagnostics.get(field) is True for field in ("scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted")): return gate(BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_DOWNSTREAM_OUTPUT_AC0, "DOWNSTREAM_OUTPUT_MUST_NOT_BE_EMITTED")
+    if any(diagnostics.get(field) is True for field in authorization_fields): return gate(BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_DOWNSTREAM_AUTHORIZATION_AC0, "DOWNSTREAM_AUTHORIZATION_MUST_NOT_BE_GRANTED")
+    if diagnostics.get("final_offline_verdict_remains") != BLOCKED_BY_VALIDATION_IMPLEMENTATION: return gate(BLOCKED_BY_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_FINAL_VERDICT_ADVANCEMENT, "FINAL_OFFLINE_VERDICT_MUST_REMAIN_BLOCKED")
+    required = ("declared", "status_matches", "row_keys_match", "value_kinds_match", "rows_empty", "rows_not_emitted", "row_count_zero", "values_not_emitted", "value_count_zero", "statistical_not_emitted", "downstream_unlocks_empty") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
+    if not all(evidence.get(field) is True for field in required): return gate(BLOCKED_BY_INCOMPLETE_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_EVIDENCE, "AC0_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    result = gate(CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_DECLARED_DIAGNOSTIC_ONLY, None)
+    result["gate_passed"] = True
+    return result
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -19005,6 +19114,7 @@ def build_real_validation_receipt(
     descriptive_count_values_v0_diagnostics: dict | None = None,
     inferential_uncertainty_schema_lock_ab0_diagnostics: dict | None = None,
     inferential_uncertainty_metadata_rows_v0_diagnostics: dict | None = None,
+    candidate_comparison_schema_lock_ac0_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -19249,6 +19359,10 @@ def build_real_validation_receipt(
     if inferential_uncertainty_metadata_rows_v0_diagnostics is not None:
         receipt["inferential_uncertainty_metadata_rows_v0_diagnostics"] = (
             inferential_uncertainty_metadata_rows_v0_diagnostics
+        )
+    if candidate_comparison_schema_lock_ac0_diagnostics is not None:
+        receipt["candidate_comparison_schema_lock_ac0_diagnostics"] = (
+            candidate_comparison_schema_lock_ac0_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -20299,6 +20413,9 @@ def main(argv: list[str] | None = None) -> int:
                 inferential_uncertainty_schema_lock_ab0_diagnostics=inferential_uncertainty_schema_lock_ab0_diagnostics,
                 descriptive_count_values_v0_diagnostics=descriptive_count_values_v0_diagnostics,
             )
+            candidate_comparison_schema_lock_ac0_diagnostics = _build_candidate_comparison_schema_lock_ac0_diagnostics(
+                inferential_uncertainty_metadata_rows_v0_diagnostics=inferential_uncertainty_metadata_rows_v0_diagnostics,
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -20444,6 +20561,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             inferential_uncertainty_metadata_rows_v0_diagnostics=(
                 inferential_uncertainty_metadata_rows_v0_diagnostics
+            ),
+            candidate_comparison_schema_lock_ac0_diagnostics=(
+                candidate_comparison_schema_lock_ac0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -20976,6 +21096,9 @@ def main(argv: list[str] | None = None) -> int:
                 inferential_uncertainty_schema_lock_ab0_diagnostics=inferential_uncertainty_schema_lock_ab0_diagnostics,
                 descriptive_count_values_v0_diagnostics=descriptive_count_values_v0_diagnostics,
             )
+            candidate_comparison_schema_lock_ac0_diagnostics = _build_candidate_comparison_schema_lock_ac0_diagnostics(
+                inferential_uncertainty_metadata_rows_v0_diagnostics=inferential_uncertainty_metadata_rows_v0_diagnostics,
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -21088,6 +21211,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             inferential_uncertainty_metadata_rows_v0_diagnostics=(
                 inferential_uncertainty_metadata_rows_v0_diagnostics
+            ),
+            candidate_comparison_schema_lock_ac0_diagnostics=(
+                candidate_comparison_schema_lock_ac0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
