@@ -3,13 +3,14 @@
 This is a tiny, synthetic, docs-only fixture for the frozen
 `--protocol-computed-validation` path. It has one bars CSV (8 rows), one funding
 CSV (8 rows), and one append-only trial-registry entry carrying a structural
-split-boundary declaration. The checked-in `emitted_receipt.json` records a
+split-boundary declaration, a holdout seal declaration, and an execution
+packet lock declaration. The checked-in `emitted_receipt.json` records a
 receipt emitted from those inputs at commit
 `d09330a`.
 
 ## Scope
 
-Three computations run in this example, all structural provenance only:
+Four computations run in this example, all structural provenance only:
 
 1. **Input integrity** — role-relative source-byte fingerprinting, matching that
    fingerprint to the single frozen registry entry, and checking the declared
@@ -28,6 +29,20 @@ Three computations run in this example, all structural provenance only:
    not been altered since it was sealed — it never decodes, compares, or
    aggregates a price/value/outcome column, and it computes nothing about the
    partition's contents beyond a byte digest.
+4. **Execution packet lock** — a SHA-256 hash-of-hashes
+   (`execution_packet_fingerprint`) over exactly seven already-registered
+   identity fields, in one fixed, documented order:
+   `candidate_family_declaration_hash`, `null_family_declaration_hash`,
+   `data_cut_fingerprint`, `split_boundary_declaration_hash`,
+   `holdout_seal_fingerprint`, `code_commit_hash`, `protocol_version`.
+   Compared against an append-only registry `execution_packet_declaration`,
+   this yields `packet_lock_state` of `locked` / `mismatch` / `not_locked`.
+   This is a **content-blind, write-once attestation that all seven already
+   -registered artifacts still refer to the same trial** — it never creates,
+   selects, or modifies a candidate, null, split, or holdout, never reads a
+   price/value/outcome, and is never an authorization
+   (`paper_trade_authorized` / `live_integration_authorized` stay `false`
+   regardless of `packet_lock_state`).
 
 The split audit reads **only** the `timestamp` column and row position, and the
 seal fingerprint hashes **only** opaque raw row bytes. Neither dereferences a
@@ -157,7 +172,46 @@ same trial, `honest_trial_count` unchanged) and a subsequent run's recomputed
 fingerprint matches it exactly, with a matching boundary/purge/embargo. This
 module never writes to the registry itself.
 
+Whenever both the split-leakage audit and the holdout seal are present, the
+execution packet lock additionally sets `packet_lock_killed: true` (folded
+into `protocol_execution_killed`) when any of these occur:
+
+- the upstream split-leakage audit is absent, not passed, or killed;
+- the upstream holdout seal is absent, not `sealed`, or killed;
+- any of the seven constituent identity fields is missing (e.g. no registered
+  `candidate_family`/`null_family`, no split-boundary declaration, or no
+  `code_commit_hash` supplied);
+- no registry `execution_packet_declaration` exists yet (the computed
+  `execution_packet_fingerprint` is only a candidate value, not a durable
+  lock — `packet_lock_state: not_locked`,
+  `kill_criteria.execution_packet_declaration_absent: true`);
+- a registry `execution_packet_declaration` is present but missing one of the
+  seven required constituent fields or `execution_packet_fingerprint`
+  (`kill_criteria.execution_packet_declaration_incomplete: true`);
+- a declared constituent no longer matches the current registry-authoritative
+  value for that artifact — a stale reference, e.g. the packet declares a
+  `holdout_seal_fingerprint` that no longer matches the current seal
+  (`packet_lock_state: mismatch`,
+  `kill_criteria.execution_packet_declaration_stale: true`);
+- a recomputed `execution_packet_fingerprint` diverges from a complete,
+  matching registry declaration (`packet_lock_state: mismatch`,
+  `kill_criteria.execution_packet_fingerprint_mismatch: true`).
+
+Absent any registered `execution_packet_declaration`, a passing run still
+computes the candidate fingerprint, but `packet_lock_state` stays
+`not_locked` and `packet_lock_killed` stays `true` until that candidate value
+has been written to the registry as an `execution_packet_declaration`
+(append-only, same trial, `honest_trial_count` unchanged, recording all seven
+constituent hashes/strings verbatim plus a `locked_at` value — a deterministic
+placeholder string in this fixture, since the module avoids wall-clock
+timestamps in registered declarations) and a subsequent run's recomputed
+fingerprint matches it exactly. This module never writes to the registry
+itself. `packet_lock_state: locked` is a structural consistency attestation
+only, never an authorization: `paper_trade_authorized` and
+`live_integration_authorized` stay `false` regardless of `packet_lock_state`.
+
 Passing these checks is not evidence of an edge, profit, or performance. It only
 proves this small structural protocol slice had the declared synthetic inputs,
-a well-formed leakage-free split, and (for the seal) that the holdout bytes
-match what was last sealed.
+a well-formed leakage-free split, that the holdout bytes match what was last
+sealed, and that all seven bound identity artifacts still refer to the same
+trial.
