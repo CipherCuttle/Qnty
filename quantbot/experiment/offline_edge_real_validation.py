@@ -49,6 +49,7 @@ from quantbot.experiment.offline_edge_schema import (
 
 __all__ = [
     "build_real_validation_receipt",
+    "build_protocol_computed_validation_slice",
     "build_deterministic_split_definitions",
     "build_cost_case_matrix",
     "validate_real_validation_receipt",
@@ -146,6 +147,129 @@ __all__ = [
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
 ]
+
+# This is deliberately not an alphabet-lane constant.  It names the one
+# protocol-governed executable slice introduced after the ladder freeze.
+PROTOCOL_COMPUTED_VALIDATION_VERSION = "protocol_computed_validation_v1"
+_PROTOCOL_CANDIDATE_FAMILY = "FROZEN_SINGLE_CANDIDATE_FAMILY_V1"
+_PROTOCOL_NULL_FAMILY = "FROZEN_SINGLE_NULL_FAMILY_V1"
+_PROTOCOL_RESULT = "EDGE_UNPROVEN"
+
+
+def _data_cut_fingerprint(source_files: list[tuple[str, Path]]) -> str:
+    """Hash stable role-relative source names and bytes in deterministic order."""
+    digest = hashlib.sha256()
+    for stable_name, path in sorted(source_files, key=lambda item: item[0]):
+        digest.update(stable_name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def build_protocol_computed_validation_slice(
+    *,
+    bars_dir: str | Path | None,
+    funding_dir: str | Path | None,
+    expected_data_cut_fingerprint: str | None,
+    trial_registry_path: str | Path | None,
+    purge_intervals: int | None = 1,
+    embargo_intervals: int | None = 1,
+) -> dict[str, Any]:
+    """Execute the frozen protocol's smallest safe computed check.
+
+    This computes provenance and structural readiness only: it never computes a
+    market return, runs a strategy, or authorizes paper/live use.  Invalid or
+    absent inputs are represented as an explicit kill, so callers can emit an
+    honest blocked receipt rather than silently skipping the protocol.
+    """
+    source_files: list[tuple[str, Path]] = []
+    for role, directory in (("bars", bars_dir), ("funding", funding_dir)):
+        if directory is not None:
+            candidate = Path(directory)
+            if candidate.is_dir():
+                source_files.extend(
+                    (f"{role}/{path.relative_to(candidate).as_posix()}", path)
+                    for path in candidate.glob("*.csv")
+                )
+
+    actual_fingerprint = _data_cut_fingerprint(source_files) if source_files else None
+    fingerprint_ok = bool(
+        expected_data_cut_fingerprint
+        and actual_fingerprint
+        and expected_data_cut_fingerprint == actual_fingerprint
+    )
+    registry_entry: dict[str, Any] | None = None
+    registry_loaded = False
+    if trial_registry_path is not None and Path(trial_registry_path).is_file():
+        try:
+            raw_registry = json.loads(Path(trial_registry_path).read_text())
+            if isinstance(raw_registry, list):
+                registry_loaded = True
+                for entry in raw_registry:
+                    if isinstance(entry, dict) and entry.get("candidate_family") == _PROTOCOL_CANDIDATE_FAMILY:
+                        registry_entry = entry
+                        break
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    registry_ok = bool(
+        registry_entry
+        and registry_entry.get("append_only") is True
+        and registry_entry.get("registered_before_execution") is True
+        and registry_entry.get("data_cut_fingerprint") == actual_fingerprint
+        and registry_entry.get("null_family") == _PROTOCOL_NULL_FAMILY
+    )
+    split_ok = (
+        isinstance(purge_intervals, int)
+        and not isinstance(purge_intervals, bool)
+        and purge_intervals >= 1
+        and isinstance(embargo_intervals, int)
+        and not isinstance(embargo_intervals, bool)
+        and embargo_intervals >= 1
+    )
+    source_ok = bool(source_files)
+    killed = not all((source_ok, fingerprint_ok, registry_ok, split_ok))
+    registry_count = len(raw_registry) if registry_loaded else 0
+    return {
+        "protocol_version": PROTOCOL_COMPUTED_VALIDATION_VERSION,
+        "immutable_data_cut": {
+            "source_file_count": len(source_files),
+            "actual_sha256": actual_fingerprint,
+            "expected_sha256": expected_data_cut_fingerprint,
+            "matches_expected": fingerprint_ok,
+            "timestamp_convention": "SOURCE_CSV_AS_RECORDED",
+        },
+        "candidate_family": {"identifier": _PROTOCOL_CANDIDATE_FAMILY},
+        "null_family": {"identifier": _PROTOCOL_NULL_FAMILY},
+        "deterministic_split": {
+            "method": "SOURCE_ORDERED_SINGLE_HOLDOUT",
+            "purge_intervals": purge_intervals,
+            "embargo_intervals": embargo_intervals,
+            "declaration_complete": split_ok,
+        },
+        "trial_registry": {
+            "loaded": registry_loaded,
+            "entry_present": registry_entry is not None,
+            "append_only_entry": bool(registry_entry and registry_entry.get("append_only") is True),
+            "honest_trial_count": registry_count,
+            "entry_matches_data_cut": registry_ok,
+        },
+        "computed_input_integrity_result": {
+            "status": _PROTOCOL_RESULT,
+            "source_inputs_ready": source_ok,
+            "protocol_execution_killed": killed,
+            "paper_trade_authorized": False,
+            "live_integration_authorized": False,
+        },
+        "kill_criteria": {
+            "data_cut_failure": not fingerprint_ok,
+            "registry_incomplete": not registry_ok,
+            "purge_or_embargo_missing": not split_ok,
+            "source_inputs_missing": not source_ok,
+            "kill_triggered": killed,
+        },
+    }
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
 RECEIPT_SCHEMA_VERSION: str = "0.1.0"
@@ -19116,6 +19240,7 @@ def build_real_validation_receipt(
     inferential_uncertainty_metadata_rows_v0_diagnostics: dict | None = None,
     candidate_comparison_schema_lock_ac0_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
+    protocol_computed_validation_slice: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
 
@@ -19368,6 +19493,8 @@ def build_real_validation_receipt(
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
             final_offline_edge_verdict_logic_diagnostics
         )
+    if protocol_computed_validation_slice is not None:
+        receipt["protocol_computed_validation"] = protocol_computed_validation_slice
 
     return receipt
 
@@ -19503,6 +19630,19 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
 
     _assert_no_prod_paths_in_receipt(receipt)
 
+    computed_slice = receipt.get("protocol_computed_validation")
+    if computed_slice is not None:
+        if not isinstance(computed_slice, dict):
+            raise ValueError("protocol_computed_validation must be a dict")
+        result = computed_slice.get("computed_input_integrity_result")
+        if not isinstance(result, dict) or result.get("status") != _PROTOCOL_RESULT:
+            raise ValueError("computed validation must remain EDGE_UNPROVEN")
+        if result.get("paper_trade_authorized") is not False or result.get("live_integration_authorized") is not False:
+            raise ValueError("computed validation may not authorize paper or live use")
+        for name in ("immutable_data_cut", "trial_registry", "deterministic_split", "kill_criteria"):
+            if not isinstance(computed_slice.get(name), dict):
+                raise ValueError(f"computed validation missing {name}")
+
     # Recursive scan for forbidden calculation keys at any nesting level.
     _assert_no_forbidden_calculation_keys(receipt)
 
@@ -19545,6 +19685,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-manifest-fingerprint", required=True)
     parser.add_argument("--data-quality-receipt-sha256", required=True)
     parser.add_argument("--code-commit-sha", required=True)
+    parser.add_argument(
+        "--protocol-computed-validation",
+        action="store_true",
+        help="Run the frozen-protocol provenance/readiness slice; remains EDGE_UNPROVEN.",
+    )
+    parser.add_argument("--expected-data-cut-fingerprint", default=None)
+    parser.add_argument("--trial-registry-path", default=None)
+    parser.add_argument("--purge-intervals", type=int, default=1)
+    parser.add_argument("--embargo-intervals", type=int, default=1)
     parser.add_argument(
         "--global-min-timestamp",
         default=None,
@@ -19756,6 +19905,31 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     cost_cases = build_cost_case_matrix()
+
+    if args.protocol_computed_validation:
+        computed_slice = build_protocol_computed_validation_slice(
+            bars_dir=args.bars_dir,
+            funding_dir=args.funding_dir,
+            expected_data_cut_fingerprint=args.expected_data_cut_fingerprint,
+            trial_registry_path=args.trial_registry_path,
+            purge_intervals=args.purge_intervals,
+            embargo_intervals=args.embargo_intervals,
+        )
+        receipt = build_real_validation_receipt(
+            input_manifest_fingerprint=args.input_manifest_fingerprint,
+            data_quality_receipt_sha256=args.data_quality_receipt_sha256,
+            code_commit_sha=args.code_commit_sha,
+            split_definitions=[{"split_id": "protocol_single_holdout"}],
+            cost_cases=cost_cases,
+            protocol_computed_validation_slice=computed_slice,
+        )
+        output_path = output_dir / "real_validation_receipt.json"
+        digest = write_real_validation_receipt(receipt, output_path)
+        print(f"final_offline_verdict={receipt['final_offline_verdict']}")
+        print("computed_validation_result=EDGE_UNPROVEN")
+        print(f"receipt_sha256={digest}")
+        print(f"receipt_path={output_path}")
+        return 0
 
     if args.bars_dir is not None:
         # Inventory-based path: derive everything from real data directories.
