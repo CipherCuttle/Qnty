@@ -23958,3 +23958,573 @@ class TestHoldoutSealFingerprint:
         )
         real_validation.validate_real_validation_receipt(receipt)
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
+class TestExecutionPacketLock:
+    """Execution packet lock: a structural hash-of-identities over exactly
+    seven already-registered constituent identity fields.
+
+    Content-blind: hashes hex/identity strings only. Never opens the holdout,
+    never re-reads a source byte, never computes a return, PnL, edge, score,
+    or performance anywhere in this section. ``packet_lock_state`` is never
+    an authorization.
+    """
+
+    CANDIDATE_FAMILY = "FROZEN_SINGLE_CANDIDATE_FAMILY_V1"
+    NULL_FAMILY = "FROZEN_SINGLE_NULL_FAMILY_V1"
+
+    def _bars(self, tmp_path: Path, rows: int = 8, *, values: list[str] | None = None) -> Path:
+        bars = tmp_path / "bars"
+        bars.mkdir(exist_ok=True)
+        lines = ["timestamp,close"]
+        for i in range(rows):
+            value = values[i] if values is not None else str(10 + i)
+            lines.append(f"2024-01-01T{i:02d}:00:00Z,{value}")
+        (bars / "BTC.csv").write_text("\n".join(lines) + "\n")
+        return bars
+
+    def _registry_entry(
+        self,
+        *,
+        boundary: int = 4,
+        purge: int = 1,
+        embargo: int = 1,
+        candidate_family: str | None = CANDIDATE_FAMILY,
+        null_family: str | None = NULL_FAMILY,
+        seal_declaration: dict | None = None,
+        packet_declaration: dict | None = None,
+    ) -> dict:
+        entry: dict = {
+            "append_only": True,
+            "registered_before_execution": True,
+            "split_boundary_index": boundary,
+            "purge_intervals": purge,
+            "embargo_intervals": embargo,
+        }
+        if candidate_family is not None:
+            entry["candidate_family"] = candidate_family
+        if null_family is not None:
+            entry["null_family"] = null_family
+        if seal_declaration is not None:
+            entry["holdout_seal_declaration"] = seal_declaration
+        if packet_declaration is not None:
+            entry["execution_packet_declaration"] = packet_declaration
+        return entry
+
+    def _split_audit(self, tmp_path, bars_dir=None, registry_entry=None, **overrides):
+        kwargs = dict(
+            boundary_index=4,
+            purge_intervals=1,
+            embargo_intervals=1,
+            registry_entry=registry_entry if registry_entry is not None else self._registry_entry(),
+        )
+        kwargs.update(overrides)
+        kwargs["bars_dir"] = bars_dir if bars_dir is not None else self._bars(tmp_path)
+        return real_validation.build_protocol_split_leakage_audit(**kwargs)
+
+    def _sealed_seal_and_declaration(self, tmp_path, bars_dir, split_audit):
+        """Compute a holdout seal and the matching registry declaration for it."""
+        candidate = real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars_dir,
+            split_audit=split_audit,
+            registry_entry=self._registry_entry(),
+        )
+        declaration = {
+            "holdout_seal_fingerprint": candidate["holdout_seal_fingerprint"],
+            "sealed_at_boundary_index": candidate["sealed_at_boundary_index"],
+            "purge_intervals": split_audit["declared_purge_intervals"],
+            "embargo_intervals": split_audit["declared_embargo_intervals"],
+        }
+        return candidate, declaration
+
+    def _seven_inputs(self, tmp_path, bars_dir=None):
+        """Build a fully-sealed, fully-consistent set of upstream inputs.
+
+        Returns ``(split_audit, holdout_seal, registry_entry, constituent_values)``
+        where ``registry_entry`` carries a matching ``holdout_seal_declaration``
+        but *no* ``execution_packet_declaration`` yet (candidate-only state).
+        """
+        bars = bars_dir if bars_dir is not None else self._bars(tmp_path)
+        base_entry = self._registry_entry()
+        split_audit = self._split_audit(tmp_path, bars_dir=bars, registry_entry=base_entry)
+        _, seal_declaration = self._sealed_seal_and_declaration(tmp_path, bars, split_audit)
+        registry_entry = self._registry_entry(seal_declaration=seal_declaration)
+        holdout_seal = real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, split_audit=split_audit, registry_entry=registry_entry
+        )
+        assert holdout_seal["holdout_seal_state"] == "sealed"
+        constituent_values = {
+            "candidate_family_declaration_hash": real_validation._hash_identity_string(self.CANDIDATE_FAMILY),
+            "null_family_declaration_hash": real_validation._hash_identity_string(self.NULL_FAMILY),
+            "data_cut_fingerprint": "d" * 64,
+            "split_boundary_declaration_hash": real_validation._hash_split_boundary_declaration(4, 1, 1),
+            "holdout_seal_fingerprint": holdout_seal["holdout_seal_fingerprint"],
+            "code_commit_hash": "abc1234",
+            "protocol_version": real_validation.PROTOCOL_COMPUTED_VALIDATION_VERSION,
+        }
+        return split_audit, holdout_seal, registry_entry, constituent_values
+
+    def _lock(self, split_audit, holdout_seal, registry_entry, constituent_values, **overrides):
+        kwargs = dict(constituent_values)
+        kwargs.update(overrides)
+        return real_validation.build_execution_packet_lock(
+            split_audit=split_audit,
+            holdout_seal=holdout_seal,
+            registry_entry=registry_entry,
+            **kwargs,
+        )
+
+    # -- candidate-only / no declaration --------------------------------
+
+    def test_candidate_fingerprint_computed_but_not_locked_when_declaration_absent(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        lock = self._lock(split_audit, holdout_seal, registry_entry, values)
+        assert lock["execution_packet_fingerprint"] is not None
+        assert len(lock["execution_packet_fingerprint"]) == 64
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["registry_packet_fingerprint"] is None
+        assert lock["packet_fingerprint_matches_registry"] is None
+        assert lock["kill_criteria"]["execution_packet_declaration_absent"] is True
+        assert all(
+            v is False
+            for k, v in lock["kill_criteria"].items()
+            if k != "execution_packet_declaration_absent"
+        )
+
+    # -- matching declaration locks --------------------------------------
+
+    def test_matching_declaration_locks(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        candidate = self._lock(split_audit, holdout_seal, registry_entry, values)
+        fingerprint = candidate["execution_packet_fingerprint"]
+
+        declaration = {
+            "execution_packet_fingerprint": fingerprint,
+            "locked_at": "DETERMINISTIC_FIXTURE_LOCK_V0",
+            **values,
+        }
+        registry_entry["execution_packet_declaration"] = declaration
+
+        locked = self._lock(split_audit, holdout_seal, registry_entry, values)
+        assert locked["packet_lock_state"] == "locked"
+        assert locked["packet_lock_killed"] is False
+        assert locked["registry_packet_fingerprint"] == fingerprint
+        assert locked["packet_fingerprint_matches_registry"] is True
+        assert locked["packet_locked_at"] == "DETERMINISTIC_FIXTURE_LOCK_V0"
+        assert all(v is False for v in locked["kill_criteria"].values())
+
+    def test_deterministic_rerun_same_inputs_gives_same_fingerprint(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        first = self._lock(split_audit, holdout_seal, registry_entry, values)
+        second = self._lock(split_audit, holdout_seal, registry_entry, values)
+        assert first["execution_packet_fingerprint"] == second["execution_packet_fingerprint"]
+
+    # -- fixed order determinism -----------------------------------------
+
+    def test_fixed_order_is_stable_and_not_order_independent(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        assert real_validation.EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER == (
+            "candidate_family_declaration_hash",
+            "null_family_declaration_hash",
+            "data_cut_fingerprint",
+            "split_boundary_declaration_hash",
+            "holdout_seal_fingerprint",
+            "code_commit_hash",
+            "protocol_version",
+        )
+        in_order = real_validation._hash_execution_packet(
+            [values[field] for field in real_validation.EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER]
+        )
+        reversed_order = real_validation._hash_execution_packet(
+            [values[field] for field in reversed(real_validation.EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER)]
+        )
+        assert in_order != reversed_order
+
+        rerun = real_validation._hash_execution_packet(
+            [values[field] for field in real_validation.EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER]
+        )
+        assert in_order == rerun
+
+    # -- single constituent change kills mismatch/stale -------------------
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "candidate_family_declaration_hash",
+            "null_family_declaration_hash",
+            "data_cut_fingerprint",
+            "split_boundary_declaration_hash",
+            "holdout_seal_fingerprint",
+            "code_commit_hash",
+            "protocol_version",
+        ],
+    )
+    def test_single_constituent_change_changes_fingerprint_and_kills_stale(self, tmp_path, field):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        candidate = self._lock(split_audit, holdout_seal, registry_entry, values)
+        fingerprint = candidate["execution_packet_fingerprint"]
+
+        declaration = {
+            "execution_packet_fingerprint": fingerprint,
+            "locked_at": "DETERMINISTIC_FIXTURE_LOCK_V0",
+            **values,
+        }
+        registry_entry["execution_packet_declaration"] = declaration
+
+        mutated_values = dict(values)
+        mutated_values[field] = "z" * 64 if field not in ("code_commit_hash", "protocol_version") else "mutated-value"
+
+        mutated_lock = self._lock(split_audit, holdout_seal, registry_entry, mutated_values)
+        mutated_fingerprint = real_validation._hash_execution_packet(
+            [mutated_values[f] for f in real_validation.EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER]
+        )
+        assert mutated_fingerprint != fingerprint
+        assert mutated_lock["execution_packet_fingerprint"] == mutated_fingerprint
+        assert mutated_lock["packet_lock_state"] == "mismatch"
+        assert mutated_lock["packet_lock_killed"] is True
+        assert mutated_lock["kill_criteria"]["execution_packet_declaration_stale"] is True
+        assert mutated_lock["packet_fingerprint_matches_registry"] is False
+
+    # -- missing each of seven inputs kills --------------------------------
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "candidate_family_declaration_hash",
+            "null_family_declaration_hash",
+            "data_cut_fingerprint",
+            "split_boundary_declaration_hash",
+            "holdout_seal_fingerprint",
+            "code_commit_hash",
+            "protocol_version",
+        ],
+    )
+    def test_missing_each_of_seven_inputs_kills(self, tmp_path, field):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        broken_values = dict(values)
+        broken_values[field] = None
+        lock = self._lock(split_audit, holdout_seal, registry_entry, broken_values)
+        assert lock["execution_packet_fingerprint"] is None
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["kill_criteria"]["constituent_identity_missing"] is True
+
+    # -- upstream leakage / holdout seal gating ----------------------------
+
+    def test_upstream_leakage_not_passed_prevents_lock(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        broken_audit = dict(split_audit)
+        broken_audit["leakage_audit_passed"] = False
+        lock = self._lock(broken_audit, holdout_seal, registry_entry, values)
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["kill_criteria"]["leakage_audit_not_passed"] is True
+        assert lock["execution_packet_fingerprint"] is None
+
+    def test_upstream_leakage_killed_prevents_lock(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        broken_audit = dict(split_audit)
+        broken_audit["leakage_audit_killed"] = True
+        lock = self._lock(broken_audit, holdout_seal, registry_entry, values)
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["kill_criteria"]["leakage_audit_killed"] is True
+
+    def test_holdout_seal_not_sealed_prevents_lock(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        broken_seal = dict(holdout_seal)
+        broken_seal["holdout_seal_state"] = "not_sealed"
+        lock = self._lock(split_audit, broken_seal, registry_entry, values)
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["kill_criteria"]["holdout_seal_not_sealed"] is True
+
+    def test_holdout_seal_mismatch_state_prevents_lock(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        broken_seal = dict(holdout_seal)
+        broken_seal["holdout_seal_state"] = "mismatch"
+        lock = self._lock(split_audit, broken_seal, registry_entry, values)
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["kill_criteria"]["holdout_seal_not_sealed"] is True
+
+    def test_holdout_seal_killed_prevents_lock(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        broken_seal = dict(holdout_seal)
+        broken_seal["holdout_seal_killed"] = True
+        lock = self._lock(split_audit, broken_seal, registry_entry, values)
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["kill_criteria"]["holdout_seal_killed"] is True
+
+    def test_split_audit_absent_prevents_lock(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        lock = self._lock(None, holdout_seal, registry_entry, values)
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["kill_criteria"]["split_audit_absent"] is True
+
+    def test_holdout_seal_absent_prevents_lock(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        lock = self._lock(split_audit, None, registry_entry, values)
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["kill_criteria"]["holdout_seal_absent"] is True
+
+    # -- incomplete declaration kills --------------------------------------
+
+    def test_incomplete_declaration_kills(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        registry_entry["execution_packet_declaration"] = {
+            "execution_packet_fingerprint": "0" * 64,
+            # missing all seven constituent fields
+        }
+        lock = self._lock(split_audit, holdout_seal, registry_entry, values)
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["kill_criteria"]["execution_packet_declaration_incomplete"] is True
+
+    # -- locked_at required in declaration ----------------------------------
+
+    def test_missing_locked_at_kills_and_does_not_lock(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        candidate = self._lock(split_audit, holdout_seal, registry_entry, values)
+        fingerprint = candidate["execution_packet_fingerprint"]
+
+        declaration = {
+            "execution_packet_fingerprint": fingerprint,
+            # locked_at intentionally omitted
+            **values,
+        }
+        registry_entry["execution_packet_declaration"] = declaration
+
+        lock = self._lock(split_audit, holdout_seal, registry_entry, values)
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["packet_locked_at"] is None
+        assert lock["kill_criteria"]["execution_packet_declaration_incomplete"] is True
+
+    def test_empty_locked_at_kills_and_does_not_lock(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        candidate = self._lock(split_audit, holdout_seal, registry_entry, values)
+        fingerprint = candidate["execution_packet_fingerprint"]
+
+        declaration = {
+            "execution_packet_fingerprint": fingerprint,
+            "locked_at": "",
+            **values,
+        }
+        registry_entry["execution_packet_declaration"] = declaration
+
+        lock = self._lock(split_audit, holdout_seal, registry_entry, values)
+        assert lock["packet_lock_state"] == "not_locked"
+        assert lock["packet_lock_killed"] is True
+        assert lock["packet_locked_at"] is None
+        assert lock["kill_criteria"]["execution_packet_declaration_incomplete"] is True
+
+    def test_matching_declaration_with_locked_at_still_locks(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        candidate = self._lock(split_audit, holdout_seal, registry_entry, values)
+        fingerprint = candidate["execution_packet_fingerprint"]
+
+        declaration = {
+            "execution_packet_fingerprint": fingerprint,
+            "locked_at": "DETERMINISTIC_FIXTURE_LOCK_V0",
+            **values,
+        }
+        registry_entry["execution_packet_declaration"] = declaration
+
+        locked = self._lock(split_audit, holdout_seal, registry_entry, values)
+        assert locked["packet_lock_state"] == "locked"
+        assert locked["packet_lock_killed"] is False
+        assert locked["packet_locked_at"] == "DETERMINISTIC_FIXTURE_LOCK_V0"
+
+    # -- forbidden-key scan / content-blindness ----------------------------
+
+    def test_forbidden_exact_key_scan_remains_green(self, tmp_path):
+        split_audit, holdout_seal, registry_entry, values = self._seven_inputs(tmp_path)
+        lock = self._lock(split_audit, holdout_seal, registry_entry, values)
+        all_keys = _all_dict_keys(lock)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
+
+    def test_no_price_value_outcome_field_is_read(self, tmp_path):
+        # The packet lock never accepts bars/funding directories or any raw
+        # row data -- only hex/identity strings. Assert the function's
+        # keyword-only signature carries no I/O-shaped parameter at all.
+        import inspect
+
+        signature = inspect.signature(real_validation.build_execution_packet_lock)
+        for param_name in signature.parameters:
+            assert param_name not in (
+                "bars_dir",
+                "funding_dir",
+                "close",
+                "value",
+                "outcome",
+                "price",
+            )
+
+    # -- wired into build_protocol_computed_validation_slice ---------------
+
+    def _write_registry(self, path: Path, entry: dict) -> None:
+        path.write_text(json.dumps([entry]))
+
+    def test_wired_no_declaration_stays_not_locked(self, tmp_path):
+        bars = self._bars(tmp_path)
+        funding = tmp_path / "funding"
+        funding.mkdir()
+        (funding / "BTC.csv").write_text(
+            "timestamp,funding_rate\n"
+            + "\n".join(f"2024-01-01T{h:02d}:00:00Z,0" for h in range(8))
+            + "\n"
+        )
+        fingerprint = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None
+        )["immutable_data_cut"]["actual_sha256"]
+
+        entry = self._registry_entry()
+        entry["data_cut_fingerprint"] = fingerprint
+        registry = tmp_path / "registry.json"
+        self._write_registry(registry, entry)
+
+        first_pass = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=funding,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+            code_commit_hash="abc1234",
+        )
+        assert first_pass["holdout_seal_audit"]["holdout_seal_state"] == "not_sealed"
+        assert first_pass["execution_packet_lock"]["packet_lock_state"] == "not_locked"
+        assert first_pass["execution_packet_lock"]["packet_lock_killed"] is True
+        assert first_pass["computed_input_integrity_result"]["protocol_execution_killed"] is True
+        assert first_pass["computed_input_integrity_result"]["paper_trade_authorized"] is False
+        assert first_pass["computed_input_integrity_result"]["live_integration_authorized"] is False
+
+        receipt = real_validation.build_real_validation_receipt(
+            input_manifest_fingerprint="a",
+            data_quality_receipt_sha256="b",
+            code_commit_sha="c",
+            split_definitions=[],
+            cost_cases=[],
+            protocol_computed_validation_slice=first_pass,
+        )
+        real_validation.validate_real_validation_receipt(receipt)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+    def test_wired_matching_declaration_locks_and_verdict_stays_blocked(self, tmp_path):
+        bars = self._bars(tmp_path)
+        funding = tmp_path / "funding"
+        funding.mkdir()
+        (funding / "BTC.csv").write_text(
+            "timestamp,funding_rate\n"
+            + "\n".join(f"2024-01-01T{h:02d}:00:00Z,0" for h in range(8))
+            + "\n"
+        )
+        fingerprint = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None
+        )["immutable_data_cut"]["actual_sha256"]
+
+        entry = self._registry_entry()
+        entry["data_cut_fingerprint"] = fingerprint
+        registry = tmp_path / "registry.json"
+        self._write_registry(registry, entry)
+
+        first_pass = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=funding,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+            code_commit_hash="abc1234",
+        )
+        seal_fingerprint = first_pass["holdout_seal_audit"]["holdout_seal_fingerprint"]
+        entry["holdout_seal_declaration"] = {
+            "holdout_seal_fingerprint": seal_fingerprint,
+            "sealed_at_boundary_index": first_pass["holdout_seal_audit"]["sealed_at_boundary_index"],
+            "purge_intervals": entry["purge_intervals"],
+            "embargo_intervals": entry["embargo_intervals"],
+        }
+        self._write_registry(registry, entry)
+
+        second_pass = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=funding,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+            code_commit_hash="abc1234",
+        )
+        assert second_pass["holdout_seal_audit"]["holdout_seal_state"] == "sealed"
+        packet_fingerprint = second_pass["execution_packet_lock"]["execution_packet_fingerprint"]
+        assert packet_fingerprint is not None
+        assert second_pass["execution_packet_lock"]["packet_lock_state"] == "not_locked"
+
+        entry["execution_packet_declaration"] = {
+            "execution_packet_fingerprint": packet_fingerprint,
+            "locked_at": "DETERMINISTIC_FIXTURE_LOCK_V0",
+            "candidate_family_declaration_hash": real_validation._hash_identity_string(self.CANDIDATE_FAMILY),
+            "null_family_declaration_hash": real_validation._hash_identity_string(self.NULL_FAMILY),
+            "data_cut_fingerprint": fingerprint,
+            "split_boundary_declaration_hash": real_validation._hash_split_boundary_declaration(4, 1, 1),
+            "holdout_seal_fingerprint": seal_fingerprint,
+            "code_commit_hash": "abc1234",
+            "protocol_version": real_validation.PROTOCOL_COMPUTED_VALIDATION_VERSION,
+        }
+        self._write_registry(registry, entry)
+
+        third_pass = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=funding,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+            code_commit_hash="abc1234",
+        )
+        assert third_pass["execution_packet_lock"]["packet_lock_state"] == "locked"
+        assert third_pass["execution_packet_lock"]["packet_lock_killed"] is False
+        assert third_pass["execution_packet_lock"]["execution_packet_fingerprint"] == packet_fingerprint
+        assert third_pass["execution_packet_lock"]["packet_locked_at"] == "DETERMINISTIC_FIXTURE_LOCK_V0"
+        assert third_pass["computed_input_integrity_result"]["protocol_execution_killed"] is False
+        assert third_pass["computed_input_integrity_result"]["paper_trade_authorized"] is False
+        assert third_pass["computed_input_integrity_result"]["live_integration_authorized"] is False
+        assert third_pass["computed_input_integrity_result"]["status"] == "EDGE_UNPROVEN"
+
+        receipt = real_validation.build_real_validation_receipt(
+            input_manifest_fingerprint="a",
+            data_quality_receipt_sha256="b",
+            code_commit_sha="c",
+            split_definitions=[],
+            cost_cases=[],
+            protocol_computed_validation_slice=third_pass,
+        )
+        real_validation.validate_real_validation_receipt(receipt)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+        all_keys = _all_dict_keys(receipt)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys)
+
+    def test_wired_execution_packet_lock_absent_when_holdout_not_sealed(self, tmp_path):
+        # split_boundary_index provided but no registry entry at all -> the
+        # split audit itself fails closed; execution_packet_lock must not
+        # silently claim locked in that state.
+        bars = self._bars(tmp_path)
+        computed = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=None,
+            expected_data_cut_fingerprint=None,
+            trial_registry_path=None,
+            split_boundary_index=4,
+            code_commit_hash="abc1234",
+        )
+        assert computed["deterministic_split_audit"]["leakage_audit_killed"] is True
+        assert computed["holdout_seal_audit"]["holdout_seal_killed"] is True
+        assert computed["execution_packet_lock"]["packet_lock_killed"] is True
+        assert computed["execution_packet_lock"]["packet_lock_state"] == "not_locked"
+        assert computed["computed_input_integrity_result"]["paper_trade_authorized"] is False
+        assert computed["computed_input_integrity_result"]["live_integration_authorized"] is False

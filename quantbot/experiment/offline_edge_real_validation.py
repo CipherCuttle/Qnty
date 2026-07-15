@@ -52,6 +52,7 @@ __all__ = [
     "build_protocol_computed_validation_slice",
     "build_protocol_split_leakage_audit",
     "build_holdout_seal_fingerprint",
+    "build_execution_packet_lock",
     "build_deterministic_split_definitions",
     "build_cost_case_matrix",
     "validate_real_validation_receipt",
@@ -615,6 +616,218 @@ def build_holdout_seal_fingerprint(
     }
 
 
+# The execution packet fingerprint is a structural hash-of-identities over
+# seven already-registered identity fields (fixed, documented order below).
+# It never re-reads a source byte, opens the holdout, or reads a
+# price/value/outcome/return/PnL/score field -- it hashes opaque hex/identity
+# strings only. See
+# docs/status/QNTY_OFFLINE_EDGE_EXECUTION_PACKET_LOCK_DECISION_MEMO.md.
+EXECUTION_PACKET_FINGERPRINT_METHOD = "SHA256_HASH_OF_SEVEN_IDENTITY_FIELDS_FIXED_ORDER"
+EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER: tuple[str, ...] = (
+    "candidate_family_declaration_hash",
+    "null_family_declaration_hash",
+    "data_cut_fingerprint",
+    "split_boundary_declaration_hash",
+    "holdout_seal_fingerprint",
+    "code_commit_hash",
+    "protocol_version",
+)
+
+
+def _hash_identity_string(value: str) -> str:
+    """Content-blind SHA-256 hex digest of one opaque identity string."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _hash_split_boundary_declaration(
+    boundary_index: Any, purge_intervals: Any, embargo_intervals: Any
+) -> str:
+    """Hash a registry split-boundary declaration using length-prefix framing.
+
+    Unambiguous even if the string form of one field happens to be a prefix
+    of another (mirrors the framing discipline of ``_hash_holdout_rows``).
+    """
+    digest = hashlib.sha256()
+    for value in (boundary_index, purge_intervals, embargo_intervals):
+        value_bytes = repr(value).encode("utf-8")
+        digest.update(len(value_bytes).to_bytes(8, "big"))
+        digest.update(value_bytes)
+    return digest.hexdigest()
+
+
+def _hash_execution_packet(constituent_values: list[str]) -> str:
+    """Hash the seven fixed-order constituent identity strings.
+
+    Uses unambiguous length-prefix framing (not delimiter concatenation), so
+    the digest stays unambiguous regardless of what bytes a constituent hex
+    string happens to contain.
+    """
+    digest = hashlib.sha256()
+    for value in constituent_values:
+        value_bytes = value.encode("utf-8")
+        digest.update(len(value_bytes).to_bytes(8, "big"))
+        digest.update(value_bytes)
+    return digest.hexdigest()
+
+
+def build_execution_packet_lock(
+    *,
+    candidate_family_declaration_hash: str | None,
+    null_family_declaration_hash: str | None,
+    data_cut_fingerprint: str | None,
+    split_boundary_declaration_hash: str | None,
+    holdout_seal_fingerprint: str | None,
+    code_commit_hash: str | None,
+    protocol_version: str | None,
+    split_audit: dict[str, Any] | None,
+    holdout_seal: dict[str, Any] | None,
+    registry_entry: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Lock the execution packet: one atomic identity over seven constituents.
+
+    Computes ``execution_packet_fingerprint`` -- a SHA-256 hash-of-hashes over
+    the fixed-order concatenation (length-prefix framed) of
+    ``EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER`` -- and compares it against an
+    append-only registry ``execution_packet_declaration``. Never reads a
+    price/value/outcome column; never opens the holdout; never re-reads a
+    source byte. Only consumes hex/identity strings already computed by prior
+    slices, plus a code commit hash and protocol version string.
+
+    Fails closed (``packet_lock_killed: true``) when: any of the seven
+    constituent inputs is missing; the upstream split-leakage audit is
+    absent, not passed, or killed; the upstream holdout seal is absent, not
+    ``sealed``, or killed; no registry ``execution_packet_declaration`` exists
+    yet (candidate fingerprint only, ``packet_lock_state: not_locked``); the
+    registry declaration is missing any of the seven required constituent
+    fields, its ``execution_packet_fingerprint``, or a non-empty string
+    ``locked_at``; a declared constituent no longer matches the current
+    registry-authoritative value for that artifact (stale reference); or a
+    recomputed fingerprint diverges from a complete, matching registry
+    declaration (``packet_lock_state: mismatch``).
+
+    ``packet_lock_state: locked`` is a structural consistency attestation
+    only -- it is never an authorization. ``paper_trade_authorized`` and
+    ``live_integration_authorized`` are gated entirely separately and are
+    unaffected by this function's result.
+    """
+    kill = {
+        "split_audit_absent": not isinstance(split_audit, dict),
+        "leakage_audit_not_passed": False,
+        "leakage_audit_killed": False,
+        "holdout_seal_absent": not isinstance(holdout_seal, dict),
+        "holdout_seal_not_sealed": False,
+        "holdout_seal_killed": False,
+        "constituent_identity_missing": False,
+        "execution_packet_declaration_absent": False,
+        "execution_packet_declaration_incomplete": False,
+        "execution_packet_declaration_stale": False,
+        "execution_packet_fingerprint_mismatch": False,
+    }
+
+    if not kill["split_audit_absent"]:
+        kill["leakage_audit_not_passed"] = split_audit.get("leakage_audit_passed") is not True
+        kill["leakage_audit_killed"] = split_audit.get("leakage_audit_killed") is not False
+
+    if not kill["holdout_seal_absent"]:
+        kill["holdout_seal_not_sealed"] = holdout_seal.get("holdout_seal_state") != "sealed"
+        kill["holdout_seal_killed"] = holdout_seal.get("holdout_seal_killed") is not False
+
+    upstream_ok = not any(
+        kill[key]
+        for key in (
+            "split_audit_absent",
+            "leakage_audit_not_passed",
+            "leakage_audit_killed",
+            "holdout_seal_absent",
+            "holdout_seal_not_sealed",
+            "holdout_seal_killed",
+        )
+    )
+
+    constituent_values = {
+        "candidate_family_declaration_hash": candidate_family_declaration_hash,
+        "null_family_declaration_hash": null_family_declaration_hash,
+        "data_cut_fingerprint": data_cut_fingerprint,
+        "split_boundary_declaration_hash": split_boundary_declaration_hash,
+        "holdout_seal_fingerprint": holdout_seal_fingerprint,
+        "code_commit_hash": code_commit_hash,
+        "protocol_version": protocol_version,
+    }
+    all_present = all(
+        isinstance(constituent_values[field], str) and constituent_values[field]
+        for field in EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER
+    )
+    kill["constituent_identity_missing"] = not all_present
+
+    can_compute_fingerprint = upstream_ok and all_present
+    fingerprint: str | None = None
+    if can_compute_fingerprint:
+        fingerprint = _hash_execution_packet(
+            [constituent_values[field] for field in EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER]
+        )
+
+    declaration = (
+        registry_entry.get("execution_packet_declaration")
+        if isinstance(registry_entry, dict)
+        else None
+    )
+    registry_packet_fingerprint: str | None = None
+    packet_fingerprint_matches_registry: bool | None = None
+    packet_locked_at: str | None = None
+    state = "not_locked"
+
+    if can_compute_fingerprint:
+        if declaration is None:
+            kill["execution_packet_declaration_absent"] = True
+            state = "not_locked"
+        elif (
+            not isinstance(declaration, dict)
+            or any(
+                field not in declaration
+                for field in (
+                    *EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER,
+                    "execution_packet_fingerprint",
+                    "locked_at",
+                )
+            )
+            or not isinstance(declaration.get("locked_at"), str)
+            or not declaration.get("locked_at")
+        ):
+            kill["execution_packet_declaration_incomplete"] = True
+            state = "not_locked"
+        elif any(
+            declaration.get(field) != constituent_values[field]
+            for field in EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER
+        ):
+            kill["execution_packet_declaration_stale"] = True
+            state = "mismatch"
+            registry_packet_fingerprint = declaration.get("execution_packet_fingerprint")
+            packet_fingerprint_matches_registry = False
+            packet_locked_at = declaration.get("locked_at")
+        else:
+            registry_packet_fingerprint = declaration.get("execution_packet_fingerprint")
+            packet_fingerprint_matches_registry = registry_packet_fingerprint == fingerprint
+            packet_locked_at = declaration.get("locked_at")
+            if packet_fingerprint_matches_registry:
+                state = "locked"
+            else:
+                kill["execution_packet_fingerprint_mismatch"] = True
+                state = "mismatch"
+
+    killed = any(kill.values())
+    return {
+        "method": EXECUTION_PACKET_FINGERPRINT_METHOD,
+        "execution_packet_fingerprint": fingerprint,
+        "execution_packet_input_count": len(EXECUTION_PACKET_CONSTITUENT_FIELD_ORDER),
+        "packet_lock_state": state,
+        "packet_locked_at": packet_locked_at,
+        "registry_packet_fingerprint": registry_packet_fingerprint,
+        "packet_fingerprint_matches_registry": packet_fingerprint_matches_registry,
+        "packet_lock_killed": killed,
+        "kill_criteria": kill,
+    }
+
+
 def build_protocol_computed_validation_slice(
     *,
     bars_dir: str | Path | None,
@@ -624,6 +837,7 @@ def build_protocol_computed_validation_slice(
     purge_intervals: int | None = 1,
     embargo_intervals: int | None = 1,
     split_boundary_index: int | None = None,
+    code_commit_hash: str | None = None,
 ) -> dict[str, Any]:
     """Execute the frozen protocol's smallest safe computed check.
 
@@ -709,6 +923,48 @@ def build_protocol_computed_validation_slice(
         )
         killed = killed or holdout_seal["holdout_seal_killed"]
 
+    # The execution packet lock is a hard dependency on both split_audit and
+    # holdout_seal (decision memo §5, requirement 2): it only ever binds the
+    # split/seal just materialized above, never a stale or externally
+    # supplied audit/seal.
+    execution_packet_lock = None
+    if split_audit is not None and holdout_seal is not None:
+        candidate_family_declaration_hash = (
+            _hash_identity_string(registry_entry["candidate_family"])
+            if isinstance(registry_entry, dict) and isinstance(registry_entry.get("candidate_family"), str)
+            else None
+        )
+        null_family_declaration_hash = (
+            _hash_identity_string(registry_entry["null_family"])
+            if isinstance(registry_entry, dict) and isinstance(registry_entry.get("null_family"), str)
+            else None
+        )
+        split_boundary_declaration_hash = (
+            _hash_split_boundary_declaration(
+                registry_entry.get("split_boundary_index"),
+                registry_entry.get("purge_intervals"),
+                registry_entry.get("embargo_intervals"),
+            )
+            if isinstance(registry_entry, dict)
+            and "split_boundary_index" in registry_entry
+            and "purge_intervals" in registry_entry
+            and "embargo_intervals" in registry_entry
+            else None
+        )
+        execution_packet_lock = build_execution_packet_lock(
+            candidate_family_declaration_hash=candidate_family_declaration_hash,
+            null_family_declaration_hash=null_family_declaration_hash,
+            data_cut_fingerprint=actual_fingerprint,
+            split_boundary_declaration_hash=split_boundary_declaration_hash,
+            holdout_seal_fingerprint=holdout_seal.get("holdout_seal_fingerprint"),
+            code_commit_hash=code_commit_hash,
+            protocol_version=PROTOCOL_COMPUTED_VALIDATION_VERSION,
+            split_audit=split_audit,
+            holdout_seal=holdout_seal,
+            registry_entry=registry_entry,
+        )
+        killed = killed or execution_packet_lock["packet_lock_killed"]
+
     result = {
         "protocol_version": PROTOCOL_COMPUTED_VALIDATION_VERSION,
         "immutable_data_cut": {
@@ -752,6 +1008,8 @@ def build_protocol_computed_validation_slice(
         result["deterministic_split_audit"] = split_audit
     if holdout_seal is not None:
         result["holdout_seal_audit"] = holdout_seal
+    if execution_packet_lock is not None:
+        result["execution_packet_lock"] = execution_packet_lock
     return result
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -20408,6 +20666,7 @@ def main(argv: list[str] | None = None) -> int:
             purge_intervals=args.purge_intervals,
             embargo_intervals=args.embargo_intervals,
             split_boundary_index=args.split_boundary_index,
+            code_commit_hash=args.code_commit_sha,
         )
         receipt = build_real_validation_receipt(
             input_manifest_fingerprint=args.input_manifest_fingerprint,

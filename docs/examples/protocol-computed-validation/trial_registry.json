@@ -13,6 +13,17 @@
       "sealed_at_boundary_index": 4,
       "purge_intervals": 1,
       "embargo_intervals": 1
+    },
+    "execution_packet_declaration": {
+      "execution_packet_fingerprint": "a0bb2a6a078de5bad2847779f35f3e45e5aa0a7be1cca3293bb26eae688661b0",
+      "locked_at": "DETERMINISTIC_FIXTURE_LOCK_V0",
+      "candidate_family_declaration_hash": "cdf63504e2d56b64d7516bfc77562a08611a0bfdac18ff6013e79cf41a26d3ea",
+      "null_family_declaration_hash": "8568e2d53780c4469884a825ab5dba9b26d077176e3a2abd0459dc3d0142e4aa",
+      "data_cut_fingerprint": "4c1ffa74b28e011127ae89707d87c587e8c998ccb18936c8ec5b724e099eaf63",
+      "split_boundary_declaration_hash": "bb6e9adc7f3ab88d1f22c2e97fda3d8428c371bee61ac64b8ef730bc6d5c9c4d",
+      "holdout_seal_fingerprint": "536a5a363fc843682144432c32927bca398ea7d954df62e52e0d24bf244a67ee",
+      "code_commit_hash": "d09330a",
+      "protocol_version": "protocol_computed_validation_v1"
     }
   }
 ]

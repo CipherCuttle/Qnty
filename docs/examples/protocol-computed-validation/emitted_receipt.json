@@ -165,6 +165,29 @@
         "boundary_declaration_mismatch": false,
         "seal_fingerprint_mismatch": false
       }
+    },
+    "execution_packet_lock": {
+      "method": "SHA256_HASH_OF_SEVEN_IDENTITY_FIELDS_FIXED_ORDER",
+      "execution_packet_fingerprint": "a0bb2a6a078de5bad2847779f35f3e45e5aa0a7be1cca3293bb26eae688661b0",
+      "execution_packet_input_count": 7,
+      "packet_lock_state": "locked",
+      "packet_locked_at": "DETERMINISTIC_FIXTURE_LOCK_V0",
+      "registry_packet_fingerprint": "a0bb2a6a078de5bad2847779f35f3e45e5aa0a7be1cca3293bb26eae688661b0",
+      "packet_fingerprint_matches_registry": true,
+      "packet_lock_killed": false,
+      "kill_criteria": {
+        "split_audit_absent": false,
+        "leakage_audit_not_passed": false,
+        "leakage_audit_killed": false,
+        "holdout_seal_absent": false,
+        "holdout_seal_not_sealed": false,
+        "holdout_seal_killed": false,
+        "constituent_identity_missing": false,
+        "execution_packet_declaration_absent": false,
+        "execution_packet_declaration_incomplete": false,
+        "execution_packet_declaration_stale": false,
+        "execution_packet_fingerprint_mismatch": false
+      }
     }
   }
 }
