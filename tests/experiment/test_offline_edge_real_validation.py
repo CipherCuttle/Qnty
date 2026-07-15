@@ -18016,6 +18016,131 @@ class TestAllowedRunnerInputProjectionN1:
         )
 
 
+class TestCandidateComparisonSchemaLockAC0:
+    """Lane AC0: declare a future comparison schema without emitting outputs."""
+
+    def _build(self, tmp_path):
+        ab1 = TestInferentialUncertaintyMetadataRowsV0AB1()._build(tmp_path)
+        return real_validation._build_candidate_comparison_schema_lock_ac0_diagnostics(
+            inferential_uncertainty_metadata_rows_v0_diagnostics=ab1,
+        )
+
+    def test_happy_path_declares_schema_and_emits_zero_rows_or_values(self, tmp_path):
+        result = self._build(tmp_path)
+        assert result["candidate_comparison_schema_lock_ac0_gate"]["gate_passed"] is True
+        assert result["declared_candidate_comparison_row_keys"] == list(real_validation._ALLOWED_CANDIDATE_COMPARISON_ROW_KEYS_AC0)
+        assert result["declared_candidate_comparison_value_kind_names"] == ["not_computed"]
+        assert result["candidate_comparison_rows"] == []
+        assert result["candidate_comparison_rows_emitted"] is False
+        assert result["candidate_comparison_row_count"] == 0
+        assert result["candidate_comparison_values_emitted"] is False
+        assert result["candidate_comparison_value_count"] == 0
+        assert result["statistical_values"] == []
+        assert result["statistical_values_emitted"] is False
+        assert result["statistical_value_count"] == 0
+
+    @pytest.mark.parametrize("field", [
+        "inferential_uncertainty_metadata_rows_v0_gate_passed",
+        *real_validation._CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_UPSTREAM_GATE_FIELDS,
+    ])
+    def test_all_dependencies_fail_closed(self, tmp_path, field):
+        result = self._build(tmp_path)
+        result[field] = False
+        assert real_validation._derive_candidate_comparison_schema_lock_ac0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_UPSTREAM_GATE
+
+    @pytest.mark.parametrize("mutation", [
+        lambda r: r["declared_candidate_comparison_row_keys"].pop(),
+        lambda r: r["declared_candidate_comparison_row_keys"].append("extra"),
+    ])
+    def test_declared_row_key_mutations_fail_closed(self, tmp_path, mutation):
+        result = self._build(tmp_path); mutation(result)
+        assert real_validation._derive_candidate_comparison_schema_lock_ac0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_ROW_SCHEMA_AC0
+
+    @pytest.mark.parametrize("value", [None, "extra", "score", "edge", "return"])
+    def test_declared_value_kind_mutations_fail_closed(self, tmp_path, value):
+        result = self._build(tmp_path)
+        if value is None:
+            result["declared_candidate_comparison_value_kind_names"].clear()
+        else:
+            result["declared_candidate_comparison_value_kind_names"][0] = value
+        assert real_validation._derive_candidate_comparison_schema_lock_ac0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_VALUE_KIND_AC0
+
+    @pytest.mark.parametrize("field,value,status", [
+        ("candidate_comparison_rows", [{}], "BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_ROWS_AC0"),
+        ("candidate_comparison_rows_emitted", True, "BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_ROWS_AC0"),
+        ("candidate_comparison_row_count", 1, "BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_ROWS_AC0"),
+        ("candidate_comparison_values_emitted", True, "BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_VALUES_AC0"),
+        ("candidate_comparison_value_count", 1, "BLOCKED_BY_UNEXPECTED_EMITTED_CANDIDATE_COMPARISON_VALUES_AC0"),
+        ("statistical_values", [1], "BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AC0"),
+        ("statistical_values_emitted", True, "BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AC0"),
+        ("statistical_value_count", 1, "BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUES_AC0"),
+    ])
+    def test_emitted_rows_or_values_fail_closed(self, tmp_path, field, value, status):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_candidate_comparison_schema_lock_ac0_gate(result)["gate_status"] == getattr(real_validation, status)
+
+    @pytest.mark.parametrize("field", real_validation._CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_OUTPUT_FIELDS + real_validation._CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_AUTHORIZATION_FIELDS)
+    @pytest.mark.parametrize("value", [None, 1])
+    def test_downstream_evidence_must_be_present_and_exactly_false(self, tmp_path, field, value):
+        result = self._build(tmp_path); result[field] = value
+        assert real_validation._derive_candidate_comparison_schema_lock_ac0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_EVIDENCE
+
+    @pytest.mark.parametrize("field", real_validation._CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_AUTHORIZATION_FIELDS)
+    def test_downstream_authorizations_fail_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_candidate_comparison_schema_lock_ac0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_DOWNSTREAM_AUTHORIZATION_AC0
+
+    @pytest.mark.parametrize("field", ["scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted"])
+    def test_downstream_outputs_fail_closed(self, tmp_path, field):
+        result = self._build(tmp_path); result[field] = True
+        assert real_validation._derive_candidate_comparison_schema_lock_ac0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_UNEXPECTED_CANDIDATE_COMPARISON_DOWNSTREAM_OUTPUT_AC0
+
+    def test_unlocks_final_verdict_and_forbidden_exact_keys_fail_closed(self, tmp_path):
+        result = self._build(tmp_path); result["downstream_unlocks"] = ["unexpected"]
+        assert real_validation._derive_candidate_comparison_schema_lock_ac0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INCOMPLETE_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_EVIDENCE
+        result = self._build(tmp_path); result["final_offline_verdict_remains"] = "MUTATED"
+        assert real_validation._derive_candidate_comparison_schema_lock_ac0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_FINAL_VERDICT_ADVANCEMENT
+        result = self._build(tmp_path)
+        forbidden = {"p_value", "confidence_interval", "score", "metric", "performance", "pnl", "profit", "edge", "return", "returns"}
+        assert not (set(_all_dict_keys(result)) & forbidden)
+        assert not (set(result["declared_candidate_comparison_row_keys"]) & forbidden)
+        assert not (set(result["declared_candidate_comparison_value_kind_names"]) & forbidden)
+
+    def test_no_input_and_full_cli_receipts_include_ac0(self, tmp_path):
+        output_dir = tmp_path / "empty-output"; output_dir.mkdir()
+        m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        assert real_validation.main(m1._cli_base_args(output_dir)) == 0
+        empty = json.loads((output_dir / "real_validation_receipt.json").read_text())["candidate_comparison_schema_lock_ac0_diagnostics"]
+        assert empty["candidate_comparison_schema_lock_ac0_gate"]["gate_passed"] is False
+        assert empty["candidate_comparison_rows"] == []
+        assert empty["candidate_comparison_rows_emitted"] is False
+        assert empty["candidate_comparison_row_count"] == 0
+        assert empty["candidate_comparison_values_emitted"] is False
+        assert empty["candidate_comparison_value_count"] == 0
+        assert empty["statistical_values"] == []
+        assert empty["statistical_values_emitted"] is False
+        assert empty["statistical_value_count"] == 0
+
+        output_dir = tmp_path / "full-output"; output_dir.mkdir()
+        bars_dir = tmp_path / "bars"; funding_dir = tmp_path / "funding"
+        bars_dir.mkdir(); funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        funding_path = _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+        funding_path.write_text("fundingTime,fundingRate,markPrice\n2026-01-01T00:00:00Z,0.0001,50000.0\n2026-01-02T00:00:00Z,0.0002,50100.0\n2026-01-03T00:00:00Z,0.0003,50200.0\n")
+        j1 = TestEconomicAccountingPolicyPreregistrationJ1()
+        assert real_validation.main(j1._cli_base_args(output_dir) + j1._cli_upstream_args() + j1._cli_eap_args() + ["--bars-dir", str(bars_dir), "--funding-dir", str(funding_dir)]) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        full = receipt["candidate_comparison_schema_lock_ac0_diagnostics"]
+        assert full["candidate_comparison_schema_lock_ac0_gate"]["gate_passed"] is True
+        assert full["candidate_comparison_schema_lock_declared"] is True
+        assert full["candidate_comparison_rows"] == []
+        assert full["candidate_comparison_values_emitted"] is False
+        assert full["candidate_comparison_value_count"] == 0
+        assert full["statistical_values"] == []
+        assert all(full[field] is False for field in real_validation._CANDIDATE_COMPARISON_SCHEMA_LOCK_AC0_AUTHORIZATION_FIELDS)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
 class TestInferentialUncertaintySchemaLockAB0:
     """Lane AB0: declare future inferential schema and emit nothing."""
 
