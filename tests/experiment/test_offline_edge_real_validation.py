@@ -24490,7 +24490,12 @@ class TestExecutionPacketLock:
         assert third_pass["execution_packet_lock"]["packet_lock_killed"] is False
         assert third_pass["execution_packet_lock"]["execution_packet_fingerprint"] == packet_fingerprint
         assert third_pass["execution_packet_lock"]["packet_locked_at"] == "DETERMINISTIC_FIXTURE_LOCK_V0"
-        assert third_pass["computed_input_integrity_result"]["protocol_execution_killed"] is False
+        # No holdout_open_gate_declaration is registered in this scenario, so
+        # the (newer) holdout-open gate stays blocked and folds its own
+        # killed flag into protocol_execution_killed -- see
+        # TestHoldoutOpenGate for that gate's own dedicated coverage.
+        assert third_pass["holdout_open_gate"]["holdout_open_gate_state"] == "blocked"
+        assert third_pass["computed_input_integrity_result"]["protocol_execution_killed"] is True
         assert third_pass["computed_input_integrity_result"]["paper_trade_authorized"] is False
         assert third_pass["computed_input_integrity_result"]["live_integration_authorized"] is False
         assert third_pass["computed_input_integrity_result"]["status"] == "EDGE_UNPROVEN"
@@ -24528,3 +24533,621 @@ class TestExecutionPacketLock:
         assert computed["execution_packet_lock"]["packet_lock_state"] == "not_locked"
         assert computed["computed_input_integrity_result"]["paper_trade_authorized"] is False
         assert computed["computed_input_integrity_result"]["live_integration_authorized"] is False
+
+
+class TestHoldoutOpenGate:
+    """Holdout-open gate: the final structural gate.
+
+    Answers, structurally only, whether every prerequisite required before
+    any future holdout opening is present, internally consistent, and
+    unkilled -- right now. Consumes only opaque fingerprints/state enums
+    already produced by the execution packet lock, holdout seal, and split
+    leakage audit. Never opens the holdout, never reads a row, never computes
+    a return/PnL/edge/score/performance value anywhere in this section.
+    ``holdout_open_gate_state`` is never an authorization.
+    """
+
+    CANDIDATE_FAMILY = "FROZEN_SINGLE_CANDIDATE_FAMILY_V1"
+    NULL_FAMILY = "FROZEN_SINGLE_NULL_FAMILY_V1"
+
+    def _bars(self, tmp_path: Path, rows: int = 8) -> Path:
+        bars = tmp_path / "bars"
+        bars.mkdir(exist_ok=True)
+        lines = ["timestamp,close"]
+        for i in range(rows):
+            lines.append(f"2024-01-01T{i:02d}:00:00Z,{10 + i}")
+        (bars / "BTC.csv").write_text("\n".join(lines) + "\n")
+        return bars
+
+    def _registry_entry(
+        self,
+        *,
+        boundary: int = 4,
+        purge: int = 1,
+        embargo: int = 1,
+        seal_declaration: dict | None = None,
+        packet_declaration: dict | None = None,
+        gate_declaration: dict | None = None,
+    ) -> dict:
+        entry: dict = {
+            "append_only": True,
+            "registered_before_execution": True,
+            "split_boundary_index": boundary,
+            "purge_intervals": purge,
+            "embargo_intervals": embargo,
+            "candidate_family": self.CANDIDATE_FAMILY,
+            "null_family": self.NULL_FAMILY,
+        }
+        if seal_declaration is not None:
+            entry["holdout_seal_declaration"] = seal_declaration
+        if packet_declaration is not None:
+            entry["execution_packet_declaration"] = packet_declaration
+        if gate_declaration is not None:
+            entry["holdout_open_gate_declaration"] = gate_declaration
+        return entry
+
+    def _green_state(self, tmp_path: Path):
+        """Build a fully-green (locked packet, sealed holdout, passed leakage
+        audit) set of upstream structures, with no
+        ``holdout_open_gate_declaration`` registered yet.
+
+        Returns ``(split_audit, holdout_seal, execution_packet_lock,
+        registry_entry, data_cut_fingerprint)``.
+        """
+        bars = self._bars(tmp_path)
+        base_entry = self._registry_entry()
+        split_audit = real_validation.build_protocol_split_leakage_audit(
+            bars_dir=bars,
+            boundary_index=4,
+            purge_intervals=1,
+            embargo_intervals=1,
+            registry_entry=base_entry,
+        )
+        assert split_audit["leakage_audit_passed"] is True
+
+        candidate_seal = real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, split_audit=split_audit, registry_entry=base_entry
+        )
+        seal_declaration = {
+            "holdout_seal_fingerprint": candidate_seal["holdout_seal_fingerprint"],
+            "sealed_at_boundary_index": candidate_seal["sealed_at_boundary_index"],
+            "purge_intervals": split_audit["declared_purge_intervals"],
+            "embargo_intervals": split_audit["declared_embargo_intervals"],
+        }
+        registry_entry = self._registry_entry(seal_declaration=seal_declaration)
+        holdout_seal = real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, split_audit=split_audit, registry_entry=registry_entry
+        )
+        assert holdout_seal["holdout_seal_state"] == "sealed"
+
+        data_cut_fingerprint = "d" * 64
+        constituent_values = {
+            "candidate_family_declaration_hash": real_validation._hash_identity_string(
+                self.CANDIDATE_FAMILY
+            ),
+            "null_family_declaration_hash": real_validation._hash_identity_string(
+                self.NULL_FAMILY
+            ),
+            "data_cut_fingerprint": data_cut_fingerprint,
+            "split_boundary_declaration_hash": real_validation._hash_split_boundary_declaration(
+                4, 1, 1
+            ),
+            "holdout_seal_fingerprint": holdout_seal["holdout_seal_fingerprint"],
+            "code_commit_hash": "abc1234",
+            "protocol_version": real_validation.PROTOCOL_COMPUTED_VALIDATION_VERSION,
+        }
+        candidate_packet = real_validation.build_execution_packet_lock(
+            split_audit=split_audit,
+            holdout_seal=holdout_seal,
+            registry_entry=registry_entry,
+            **constituent_values,
+        )
+        packet_declaration = {
+            "execution_packet_fingerprint": candidate_packet["execution_packet_fingerprint"],
+            "locked_at": "DETERMINISTIC_FIXTURE_LOCK_V0",
+            **constituent_values,
+        }
+        registry_entry["execution_packet_declaration"] = packet_declaration
+        execution_packet_lock = real_validation.build_execution_packet_lock(
+            split_audit=split_audit,
+            holdout_seal=holdout_seal,
+            registry_entry=registry_entry,
+            **constituent_values,
+        )
+        assert execution_packet_lock["packet_lock_state"] == "locked"
+
+        return split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut_fingerprint
+
+    def _gate(
+        self,
+        execution_packet_lock,
+        holdout_seal,
+        split_audit,
+        data_cut_fingerprint,
+        registry_entry,
+        **overrides,
+    ) -> dict:
+        kwargs = dict(
+            execution_packet_lock=execution_packet_lock,
+            holdout_seal=holdout_seal,
+            split_audit=split_audit,
+            data_cut_fingerprint=data_cut_fingerprint,
+            protocol_version=real_validation.PROTOCOL_COMPUTED_VALIDATION_VERSION,
+            registry_entry=registry_entry,
+        )
+        kwargs.update(overrides)
+        return real_validation.build_holdout_open_gate(**kwargs)
+
+    def _write_registry(self, path: Path, entry: dict) -> None:
+        path.write_text(json.dumps([entry]))
+
+    # -- 1. gate_passed only with all prerequisites green + matching decl --
+
+    def test_gate_passed_only_with_all_green_and_matching_declaration(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        candidate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        assert candidate["holdout_open_gate_state"] == "blocked"
+        assert candidate["holdout_open_gate_fingerprint"] is not None
+
+        registry_entry["holdout_open_gate_declaration"] = {
+            "holdout_open_gate_fingerprint": candidate["holdout_open_gate_fingerprint"],
+            "holdout_open_gate_state": "gate_passed",
+            "gate_checked_at": "DETERMINISTIC_FIXTURE_GATE_CHECK_V0",
+            "structural_prerequisite_count": candidate["structural_prerequisite_count"],
+            # Once registered, the reason codes a fully green run emits are
+            # empty -- candidate["holdout_open_gate_reason_codes"] instead
+            # reflects the pre-registration ("declaration missing") run and
+            # would now be flagged as a stale declaration.
+            "holdout_open_gate_reason_codes": [],
+        }
+
+        gate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "gate_passed"
+        assert gate["holdout_open_gate_killed"] is False
+        assert gate["gate_fingerprint_matches_registry"] is True
+        assert gate["registry_gate_fingerprint"] == candidate["holdout_open_gate_fingerprint"]
+        assert all(v is False for v in gate["kill_criteria"].values())
+
+    # -- 2. missing declaration computes candidate fingerprint but blocks --
+
+    def test_missing_declaration_computes_candidate_but_blocks(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        gate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_fingerprint"] is not None
+        assert gate["holdout_open_gate_state"] == "blocked"
+        assert gate["holdout_open_gate_killed"] is True
+        assert gate["registry_gate_fingerprint"] is None
+        assert gate["gate_fingerprint_matches_registry"] is None
+        assert gate["kill_criteria"]["holdout_open_gate_declaration_missing"] is True
+
+    # -- 3. missing holdout_open_gate_fingerprint blocks --------------------
+
+    def test_declaration_key_missing_marks_incomplete_and_blocks(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        candidate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        registry_entry["holdout_open_gate_declaration"] = {
+            "holdout_open_gate_fingerprint": candidate["holdout_open_gate_fingerprint"],
+            "holdout_open_gate_state": "gate_passed",
+            # gate_checked_at intentionally omitted -> incomplete
+            "structural_prerequisite_count": candidate["structural_prerequisite_count"],
+            "holdout_open_gate_reason_codes": candidate["holdout_open_gate_reason_codes"],
+        }
+        gate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "blocked"
+        assert gate["holdout_open_gate_killed"] is True
+        assert gate["kill_criteria"]["holdout_open_gate_declaration_incomplete"] is True
+
+    def test_declaration_present_but_fingerprint_empty_blocks(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        candidate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        registry_entry["holdout_open_gate_declaration"] = {
+            "holdout_open_gate_fingerprint": "",
+            "holdout_open_gate_state": "gate_passed",
+            "gate_checked_at": "DETERMINISTIC_FIXTURE_GATE_CHECK_V0",
+            "structural_prerequisite_count": candidate["structural_prerequisite_count"],
+            "holdout_open_gate_reason_codes": candidate["holdout_open_gate_reason_codes"],
+        }
+        gate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "blocked"
+        assert gate["holdout_open_gate_killed"] is True
+        assert gate["kill_criteria"]["gate_fingerprint_missing"] is True
+
+    # -- 4. mismatching gate fingerprint returns mismatch -------------------
+
+    def test_mismatching_gate_fingerprint_returns_mismatch(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        candidate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        registry_entry["holdout_open_gate_declaration"] = {
+            "holdout_open_gate_fingerprint": "0" * 64,
+            "holdout_open_gate_state": "gate_passed",
+            "gate_checked_at": "DETERMINISTIC_FIXTURE_GATE_CHECK_V0",
+            "structural_prerequisite_count": candidate["structural_prerequisite_count"],
+            "holdout_open_gate_reason_codes": candidate["holdout_open_gate_reason_codes"],
+        }
+        gate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "mismatch"
+        assert gate["holdout_open_gate_killed"] is True
+        assert gate["gate_fingerprint_matches_registry"] is False
+        assert gate["kill_criteria"]["gate_fingerprint_mismatch"] is True
+
+    # -- 4b. matching fingerprint but stale audit fields mismatches/kills ----
+
+    def test_matching_fingerprint_but_wrong_state_mismatches(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        candidate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        registry_entry["holdout_open_gate_declaration"] = {
+            "holdout_open_gate_fingerprint": candidate["holdout_open_gate_fingerprint"],
+            "holdout_open_gate_state": "blocked",
+            "gate_checked_at": "DETERMINISTIC_FIXTURE_GATE_CHECK_V0",
+            "structural_prerequisite_count": candidate["structural_prerequisite_count"],
+            "holdout_open_gate_reason_codes": [],
+        }
+        gate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "mismatch"
+        assert gate["holdout_open_gate_killed"] is True
+        assert gate["kill_criteria"]["holdout_open_gate_declaration_stale"] is True
+
+    def test_matching_fingerprint_but_wrong_structural_prerequisite_count_mismatches(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        candidate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        registry_entry["holdout_open_gate_declaration"] = {
+            "holdout_open_gate_fingerprint": candidate["holdout_open_gate_fingerprint"],
+            "holdout_open_gate_state": "gate_passed",
+            "gate_checked_at": "DETERMINISTIC_FIXTURE_GATE_CHECK_V0",
+            "structural_prerequisite_count": candidate["structural_prerequisite_count"] - 1,
+            "holdout_open_gate_reason_codes": [],
+        }
+        gate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "mismatch"
+        assert gate["holdout_open_gate_killed"] is True
+        assert gate["kill_criteria"]["holdout_open_gate_declaration_stale"] is True
+
+    def test_matching_fingerprint_but_stale_reason_codes_mismatches(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        candidate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        registry_entry["holdout_open_gate_declaration"] = {
+            "holdout_open_gate_fingerprint": candidate["holdout_open_gate_fingerprint"],
+            "holdout_open_gate_state": "gate_passed",
+            "gate_checked_at": "DETERMINISTIC_FIXTURE_GATE_CHECK_V0",
+            "structural_prerequisite_count": candidate["structural_prerequisite_count"],
+            # Stale: claims a leftover reason code that no longer applies to
+            # this all-green run.
+            "holdout_open_gate_reason_codes": ["leakage_audit_not_passed"],
+        }
+        gate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "mismatch"
+        assert gate["holdout_open_gate_killed"] is True
+        assert gate["kill_criteria"]["holdout_open_gate_declaration_stale"] is True
+
+    # -- 5. missing each upstream declaration blocks -------------------------
+
+    @pytest.mark.parametrize(
+        "field,kill_key",
+        [
+            ("execution_packet_lock", "execution_packet_lock_absent"),
+            ("holdout_seal", "holdout_seal_absent"),
+            ("split_audit", "split_leakage_audit_absent"),
+        ],
+    )
+    def test_missing_each_upstream_blocks(self, tmp_path, field, kill_key):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        upstream = {
+            "execution_packet_lock": execution_packet_lock,
+            "holdout_seal": holdout_seal,
+            "split_audit": split_audit,
+        }
+        upstream[field] = None
+        gate = real_validation.build_holdout_open_gate(
+            data_cut_fingerprint=data_cut,
+            protocol_version=real_validation.PROTOCOL_COMPUTED_VALIDATION_VERSION,
+            registry_entry=registry_entry,
+            **upstream,
+        )
+        assert gate["holdout_open_gate_state"] == "blocked"
+        assert gate["holdout_open_gate_killed"] is True
+        assert gate["kill_criteria"][kill_key] is True
+        assert gate["holdout_open_gate_fingerprint"] is None
+
+    # -- 6/7. packet_lock_state / packet_lock_killed gating -----------------
+
+    def test_packet_not_locked_blocks(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        broken = dict(execution_packet_lock)
+        broken["packet_lock_state"] = "not_locked"
+        gate = self._gate(broken, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "blocked"
+        assert gate["kill_criteria"]["packet_not_locked"] is True
+
+    def test_packet_lock_killed_blocks(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        broken = dict(execution_packet_lock)
+        broken["packet_lock_killed"] = True
+        gate = self._gate(broken, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "blocked"
+        assert gate["kill_criteria"]["packet_lock_killed"] is True
+
+    # -- 8/9. holdout_seal_state / holdout_seal_killed gating ---------------
+
+    def test_holdout_not_sealed_blocks(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        broken = dict(holdout_seal)
+        broken["holdout_seal_state"] = "not_sealed"
+        gate = self._gate(execution_packet_lock, broken, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "blocked"
+        assert gate["kill_criteria"]["holdout_not_sealed"] is True
+
+    def test_holdout_seal_killed_blocks(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        broken = dict(holdout_seal)
+        broken["holdout_seal_killed"] = True
+        gate = self._gate(execution_packet_lock, broken, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "blocked"
+        assert gate["kill_criteria"]["holdout_seal_killed"] is True
+
+    # -- 10/11. leakage_audit_passed / leakage_audit_killed gating ----------
+
+    def test_leakage_audit_not_passed_blocks(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        broken = dict(split_audit)
+        broken["leakage_audit_passed"] = False
+        gate = self._gate(execution_packet_lock, holdout_seal, broken, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "blocked"
+        assert gate["kill_criteria"]["leakage_audit_not_passed"] is True
+
+    def test_leakage_audit_killed_blocks(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        broken = dict(split_audit)
+        broken["leakage_audit_killed"] = True
+        gate = self._gate(execution_packet_lock, holdout_seal, broken, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "blocked"
+        assert gate["kill_criteria"]["leakage_audit_killed"] is True
+
+    # -- 12. stale constituent reference returns mismatch -------------------
+
+    def test_stale_constituent_reference_returns_mismatch(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        stale = dict(execution_packet_lock)
+        stale["packet_lock_state"] = "mismatch"
+        gate = self._gate(stale, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate["holdout_open_gate_state"] == "mismatch"
+        assert gate["holdout_open_gate_killed"] is True
+        assert gate["kill_criteria"]["stale_constituent_reference"] is True
+
+    # -- 13. deterministic fixed-order fingerprint ---------------------------
+
+    def test_fixed_order_fingerprint_deterministic(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        first = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        second = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        assert first["holdout_open_gate_fingerprint"] == second["holdout_open_gate_fingerprint"]
+
+        assert real_validation.HOLDOUT_OPEN_GATE_CONSTITUENT_FIELD_ORDER == (
+            "execution_packet_fingerprint",
+            "packet_lock_state",
+            "holdout_seal_fingerprint",
+            "holdout_seal_state",
+            "split_boundary_declaration_hash",
+            "leakage_audit_passed",
+            "leakage_audit_killed",
+            "data_cut_fingerprint",
+            "protocol_version",
+            "holdout_open_gate_reason_codes",
+        )
+        in_order = real_validation._hash_holdout_open_gate(["a", "bb", "ccc"])
+        reversed_order = real_validation._hash_holdout_open_gate(["ccc", "bb", "a"])
+        assert in_order != reversed_order
+
+    # -- 14. length-prefix framing test --------------------------------------
+
+    def test_length_prefix_framing_unambiguous(self):
+        # Without a length prefix, ["ab", "c"] and ["a", "bc"] would collide
+        # once concatenated ("abc" either way). Length-prefix framing must
+        # keep them distinct.
+        first = real_validation._hash_holdout_open_gate(["ab", "c"])
+        second = real_validation._hash_holdout_open_gate(["a", "bc"])
+        assert first != second
+
+    # -- 15. reason-code ordering/normalization is deterministic ------------
+
+    def test_reason_codes_sorted_and_deterministic(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        broken = dict(execution_packet_lock)
+        broken["packet_lock_killed"] = True
+        gate1 = self._gate(broken, holdout_seal, split_audit, data_cut, registry_entry)
+        gate2 = self._gate(broken, holdout_seal, split_audit, data_cut, registry_entry)
+        assert gate1["holdout_open_gate_reason_codes"] == gate2["holdout_open_gate_reason_codes"]
+        assert gate1["holdout_open_gate_reason_codes"] == sorted(gate1["holdout_open_gate_reason_codes"])
+
+    # -- 16. no holdout/train/purge/embargo row is read by the gate path ----
+
+    def test_gate_signature_has_no_io_params(self):
+        import inspect
+
+        signature = inspect.signature(real_validation.build_holdout_open_gate)
+        for param_name in signature.parameters:
+            assert param_name not in (
+                "bars_dir",
+                "funding_dir",
+                "close",
+                "value",
+                "outcome",
+                "price",
+            )
+
+    # -- 17. forbidden exact-key scan remains green --------------------------
+
+    def test_forbidden_exact_key_scan_remains_green(self, tmp_path):
+        split_audit, holdout_seal, execution_packet_lock, registry_entry, data_cut = (
+            self._green_state(tmp_path)
+        )
+        gate = self._gate(execution_packet_lock, holdout_seal, split_audit, data_cut, registry_entry)
+        all_keys = _all_dict_keys(gate)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: {real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
+
+    # -- 18/19. wired: gate_passed keeps authorizations false, verdict unchanged --
+
+    def test_wired_gate_passed_authorizations_false_and_verdict_unchanged(self, tmp_path):
+        bars = self._bars(tmp_path)
+        fingerprint = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=None,
+            expected_data_cut_fingerprint=None,
+            trial_registry_path=None,
+        )["immutable_data_cut"]["actual_sha256"]
+
+        entry = self._registry_entry()
+        entry["data_cut_fingerprint"] = fingerprint
+        registry = tmp_path / "registry.json"
+        self._write_registry(registry, entry)
+
+        pass1 = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=None,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+            code_commit_hash="abc1234",
+        )
+        assert pass1["holdout_open_gate"]["holdout_open_gate_state"] == "blocked"
+        assert pass1["holdout_open_gate"]["holdout_open_gate_fingerprint"] is None
+
+        seal_fingerprint = pass1["holdout_seal_audit"]["holdout_seal_fingerprint"]
+        entry["holdout_seal_declaration"] = {
+            "holdout_seal_fingerprint": seal_fingerprint,
+            "sealed_at_boundary_index": pass1["holdout_seal_audit"]["sealed_at_boundary_index"],
+            "purge_intervals": entry["purge_intervals"],
+            "embargo_intervals": entry["embargo_intervals"],
+        }
+        self._write_registry(registry, entry)
+
+        pass2 = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=None,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+            code_commit_hash="abc1234",
+        )
+        packet_fingerprint = pass2["execution_packet_lock"]["execution_packet_fingerprint"]
+        entry["execution_packet_declaration"] = {
+            "execution_packet_fingerprint": packet_fingerprint,
+            "locked_at": "DETERMINISTIC_FIXTURE_LOCK_V0",
+            "candidate_family_declaration_hash": real_validation._hash_identity_string(
+                self.CANDIDATE_FAMILY
+            ),
+            "null_family_declaration_hash": real_validation._hash_identity_string(self.NULL_FAMILY),
+            "data_cut_fingerprint": fingerprint,
+            "split_boundary_declaration_hash": real_validation._hash_split_boundary_declaration(
+                4, 1, 1
+            ),
+            "holdout_seal_fingerprint": seal_fingerprint,
+            "code_commit_hash": "abc1234",
+            "protocol_version": real_validation.PROTOCOL_COMPUTED_VALIDATION_VERSION,
+        }
+        self._write_registry(registry, entry)
+
+        pass3 = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=None,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+            code_commit_hash="abc1234",
+        )
+        assert pass3["execution_packet_lock"]["packet_lock_state"] == "locked"
+        gate_fingerprint = pass3["holdout_open_gate"]["holdout_open_gate_fingerprint"]
+        assert gate_fingerprint is not None
+        assert pass3["holdout_open_gate"]["holdout_open_gate_state"] == "blocked"
+
+        entry["holdout_open_gate_declaration"] = {
+            "holdout_open_gate_fingerprint": gate_fingerprint,
+            "holdout_open_gate_state": "gate_passed",
+            "gate_checked_at": "DETERMINISTIC_FIXTURE_GATE_CHECK_V0",
+            "structural_prerequisite_count": pass3["holdout_open_gate"]["structural_prerequisite_count"],
+            # pass3's reason codes are from the pre-registration ("declaration
+            # missing") run; once registered a fully green run emits [].
+            "holdout_open_gate_reason_codes": [],
+        }
+        self._write_registry(registry, entry)
+
+        pass4 = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=None,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+            code_commit_hash="abc1234",
+        )
+        assert pass4["holdout_open_gate"]["holdout_open_gate_state"] == "gate_passed"
+        assert pass4["holdout_open_gate"]["holdout_open_gate_killed"] is False
+        assert pass4["computed_input_integrity_result"]["paper_trade_authorized"] is False
+        assert pass4["computed_input_integrity_result"]["live_integration_authorized"] is False
+        assert pass4["computed_input_integrity_result"]["status"] == "EDGE_UNPROVEN"
+
+        receipt = real_validation.build_real_validation_receipt(
+            input_manifest_fingerprint="a",
+            data_quality_receipt_sha256="b",
+            code_commit_sha="c",
+            split_definitions=[],
+            cost_cases=[],
+            protocol_computed_validation_slice=pass4,
+        )
+        real_validation.validate_real_validation_receipt(receipt)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+        all_keys = _all_dict_keys(receipt)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys)
+
+    # -- 20. emitted example fixture validates -------------------------------
+
+    def test_docs_example_emitted_receipt_has_gate_passed_and_validates(self):
+        fixture_dir = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "examples"
+            / "protocol-computed-validation"
+        )
+        receipt = json.loads((fixture_dir / "emitted_receipt.json").read_text())
+        real_validation.validate_real_validation_receipt(receipt)
+        gate = receipt["protocol_computed_validation"]["holdout_open_gate"]
+        assert gate["holdout_open_gate_state"] == "gate_passed"
+        assert gate["holdout_open_gate_killed"] is False
+        assert gate["gate_fingerprint_matches_registry"] is True

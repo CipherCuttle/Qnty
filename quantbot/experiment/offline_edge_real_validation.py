@@ -828,6 +828,354 @@ def build_execution_packet_lock(
     }
 
 
+# The holdout-open gate fingerprint is a structural hash over exactly ten
+# already-registered/derived structural values (fixed, documented order
+# below). It never re-reads a source byte, opens the holdout, or reads a
+# price/value/outcome/return/PnL/score field -- it hashes opaque hex/enum/
+# closed-set strings only, consuming the execution packet lock, holdout seal,
+# and split leakage audit as opaque upstream state. See
+# docs/status/QNTY_OFFLINE_EDGE_HOLDOUT_OPEN_GATE_DECISION_MEMO.md.
+HOLDOUT_OPEN_GATE_FINGERPRINT_METHOD = "SHA256_HASH_OF_TEN_STRUCTURAL_INPUTS_FIXED_ORDER"
+HOLDOUT_OPEN_GATE_CONSTITUENT_FIELD_ORDER: tuple[str, ...] = (
+    "execution_packet_fingerprint",
+    "packet_lock_state",
+    "holdout_seal_fingerprint",
+    "holdout_seal_state",
+    "split_boundary_declaration_hash",
+    "leakage_audit_passed",
+    "leakage_audit_killed",
+    "data_cut_fingerprint",
+    "protocol_version",
+    "holdout_open_gate_reason_codes",
+)
+
+_HOLDOUT_OPEN_GATE_DECLARATION_REQUIRED_FIELDS = (
+    "holdout_open_gate_fingerprint",
+    "holdout_open_gate_state",
+    "gate_checked_at",
+    "structural_prerequisite_count",
+    "holdout_open_gate_reason_codes",
+)
+
+# Reason-code keys that describe the *registered declaration's own shape*
+# rather than an upstream structural prerequisite. Excluded from what feeds
+# the fingerprint hash -- see the comment at their point of use below.
+_GATE_DECLARATION_SHAPE_REASON_KEYS = frozenset(
+    {
+        "holdout_open_gate_declaration_missing",
+        "holdout_open_gate_declaration_incomplete",
+        "gate_fingerprint_missing",
+        "gate_fingerprint_mismatch",
+        "holdout_open_gate_declaration_stale",
+    }
+)
+
+
+def _encode_gate_field(value: Any) -> str:
+    """Content-blind string encoding of one gate fingerprint constituent."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return ",".join(sorted(str(v) for v in value))
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _hash_holdout_open_gate(constituent_values: list[str]) -> str:
+    """Hash the ten fixed-order gate constituent strings.
+
+    Uses unambiguous length-prefix framing -- an 8-byte big-endian length
+    prefix precedes each field's UTF-8 bytes, in fixed order, identical
+    framing discipline to ``_hash_execution_packet`` -- so field boundaries
+    stay unambiguous under concatenation.
+    """
+    digest = hashlib.sha256()
+    for value in constituent_values:
+        value_bytes = value.encode("utf-8")
+        digest.update(len(value_bytes).to_bytes(8, "big"))
+        digest.update(value_bytes)
+    return digest.hexdigest()
+
+
+def build_holdout_open_gate(
+    *,
+    execution_packet_lock: dict[str, Any] | None,
+    holdout_seal: dict[str, Any] | None,
+    split_audit: dict[str, Any] | None,
+    data_cut_fingerprint: str | None,
+    protocol_version: str | None,
+    registry_entry: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Structural holdout-open gate: the final structural gate.
+
+    Answers, structurally only: are all prerequisites required before any
+    future holdout opening present, internally consistent, and unkilled --
+    right now? Reads only already-registered fingerprints, hashes, and
+    state/kill enums produced by the execution packet lock, holdout seal, and
+    split leakage audit; never a holdout/train/purge/embargo row, byte span,
+    or price/value/outcome/return/PnL/score field.
+
+    Computes ``holdout_open_gate_fingerprint`` -- a SHA-256 hash over the
+    fixed-order, length-prefixed concatenation of
+    ``HOLDOUT_OPEN_GATE_CONSTITUENT_FIELD_ORDER`` -- whenever all nine raw
+    structural inputs are present, regardless of whether a durable registry
+    ``holdout_open_gate_declaration`` exists yet (candidate fingerprint,
+    ``holdout_open_gate_state: blocked``). ``holdout_open_gate_state`` is
+    only ``gate_passed`` when every upstream prerequisite is green (packet
+    locked, seal sealed, leakage audit passed, neither killed) and a
+    complete, matching registry declaration is present. A stale execution
+    packet (``packet_lock_state == mismatch``), a recomputed fingerprint
+    that diverges from a complete, matching registry declaration, or a
+    matching-fingerprint declaration whose own recorded
+    ``holdout_open_gate_state`` / ``structural_prerequisite_count`` /
+    ``holdout_open_gate_reason_codes`` diverge from what this run actually
+    recomputes, all yield ``mismatch``. Everything else that blocks yields
+    ``blocked``.
+
+    ``holdout_open_gate_state`` is a structural attestation only, never an
+    authorization: ``paper_trade_authorized`` / ``live_integration_authorized``
+    are computed entirely separately and are unaffected by this function's
+    result.
+    """
+    kill = {
+        "execution_packet_lock_absent": not isinstance(execution_packet_lock, dict),
+        "packet_not_locked": False,
+        "packet_lock_killed": False,
+        "stale_constituent_reference": False,
+        "holdout_seal_absent": not isinstance(holdout_seal, dict),
+        "holdout_not_sealed": False,
+        "holdout_seal_killed": False,
+        "split_leakage_audit_absent": not isinstance(split_audit, dict),
+        "leakage_audit_not_passed": False,
+        "leakage_audit_killed": False,
+        "data_cut_fingerprint_missing": not (
+            isinstance(data_cut_fingerprint, str) and data_cut_fingerprint
+        ),
+        "protocol_version_missing": not (
+            isinstance(protocol_version, str) and protocol_version
+        ),
+        "holdout_open_gate_declaration_missing": False,
+        "holdout_open_gate_declaration_incomplete": False,
+        "gate_fingerprint_missing": False,
+        "gate_fingerprint_mismatch": False,
+        "holdout_open_gate_declaration_stale": False,
+    }
+
+    if not kill["execution_packet_lock_absent"]:
+        kill["packet_not_locked"] = execution_packet_lock.get("packet_lock_state") != "locked"
+        kill["packet_lock_killed"] = execution_packet_lock.get("packet_lock_killed") is not False
+        kill["stale_constituent_reference"] = (
+            execution_packet_lock.get("packet_lock_state") == "mismatch"
+        )
+
+    if not kill["holdout_seal_absent"]:
+        kill["holdout_not_sealed"] = holdout_seal.get("holdout_seal_state") != "sealed"
+        kill["holdout_seal_killed"] = holdout_seal.get("holdout_seal_killed") is not False
+
+    if not kill["split_leakage_audit_absent"]:
+        kill["leakage_audit_not_passed"] = split_audit.get("leakage_audit_passed") is not True
+        kill["leakage_audit_killed"] = split_audit.get("leakage_audit_killed") is not False
+
+    structural_ok = not any(
+        kill[key]
+        for key in (
+            "execution_packet_lock_absent",
+            "packet_not_locked",
+            "packet_lock_killed",
+            "stale_constituent_reference",
+            "holdout_seal_absent",
+            "holdout_not_sealed",
+            "holdout_seal_killed",
+            "split_leakage_audit_absent",
+            "leakage_audit_not_passed",
+            "leakage_audit_killed",
+            "data_cut_fingerprint_missing",
+            "protocol_version_missing",
+        )
+    )
+
+    structural_prerequisite_count = sum(
+        (
+            not kill["execution_packet_lock_absent"]
+            and not kill["packet_not_locked"]
+            and not kill["packet_lock_killed"],
+            not kill["holdout_seal_absent"]
+            and not kill["holdout_not_sealed"]
+            and not kill["holdout_seal_killed"],
+            not kill["split_leakage_audit_absent"]
+            and not kill["leakage_audit_not_passed"]
+            and not kill["leakage_audit_killed"],
+            not kill["data_cut_fingerprint_missing"],
+        )
+    )
+
+    execution_packet_fingerprint = (
+        execution_packet_lock.get("execution_packet_fingerprint")
+        if isinstance(execution_packet_lock, dict)
+        else None
+    )
+    packet_lock_state = (
+        execution_packet_lock.get("packet_lock_state")
+        if isinstance(execution_packet_lock, dict)
+        else None
+    )
+    holdout_seal_fingerprint = (
+        holdout_seal.get("holdout_seal_fingerprint") if isinstance(holdout_seal, dict) else None
+    )
+    holdout_seal_state = (
+        holdout_seal.get("holdout_seal_state") if isinstance(holdout_seal, dict) else None
+    )
+    split_boundary_declaration_hash = (
+        _hash_split_boundary_declaration(
+            split_audit.get("boundary_index"),
+            split_audit.get("declared_purge_intervals"),
+            split_audit.get("declared_embargo_intervals"),
+        )
+        if isinstance(split_audit, dict)
+        else None
+    )
+    leakage_audit_passed = (
+        split_audit.get("leakage_audit_passed") if isinstance(split_audit, dict) else None
+    )
+    leakage_audit_killed = (
+        split_audit.get("leakage_audit_killed") if isinstance(split_audit, dict) else None
+    )
+
+    all_structural_inputs_present = all(
+        value is not None
+        for value in (
+            execution_packet_fingerprint,
+            packet_lock_state,
+            holdout_seal_fingerprint,
+            holdout_seal_state,
+            split_boundary_declaration_hash,
+            leakage_audit_passed,
+            leakage_audit_killed,
+            data_cut_fingerprint,
+            protocol_version,
+        )
+    )
+
+    declaration = (
+        registry_entry.get("holdout_open_gate_declaration")
+        if isinstance(registry_entry, dict)
+        else None
+    )
+    kill["holdout_open_gate_declaration_missing"] = declaration is None
+    if declaration is not None:
+        if not isinstance(declaration, dict) or any(
+            field not in declaration
+            for field in _HOLDOUT_OPEN_GATE_DECLARATION_REQUIRED_FIELDS
+        ):
+            kill["holdout_open_gate_declaration_incomplete"] = True
+        elif (
+            not isinstance(declaration.get("holdout_open_gate_fingerprint"), str)
+            or not declaration.get("holdout_open_gate_fingerprint")
+        ):
+            kill["gate_fingerprint_missing"] = True
+
+    # Reason codes folded into the fingerprint itself are restricted to pure
+    # upstream-prerequisite facts -- never anything derived from the
+    # registered ``holdout_open_gate_declaration`` itself. Any declaration-
+    # shape fact (missing / incomplete / fingerprint-missing / mismatch)
+    # necessarily depends on whether *this* declaration exists yet, so
+    # folding it into the very fingerprint that declaration is meant to
+    # store would be self-referential: writing the declaration would change
+    # the input the fingerprint is hashed over. Excluding those four keys
+    # keeps the candidate fingerprint stable across "before" and "after" the
+    # matching declaration is registered.
+    pre_comparison_reason_codes = sorted(
+        name
+        for name, value in kill.items()
+        if value and name not in _GATE_DECLARATION_SHAPE_REASON_KEYS
+    )
+
+    fingerprint: str | None = None
+    if all_structural_inputs_present:
+        constituent_values = {
+            "execution_packet_fingerprint": execution_packet_fingerprint,
+            "packet_lock_state": packet_lock_state,
+            "holdout_seal_fingerprint": holdout_seal_fingerprint,
+            "holdout_seal_state": holdout_seal_state,
+            "split_boundary_declaration_hash": split_boundary_declaration_hash,
+            "leakage_audit_passed": leakage_audit_passed,
+            "leakage_audit_killed": leakage_audit_killed,
+            "data_cut_fingerprint": data_cut_fingerprint,
+            "protocol_version": protocol_version,
+            "holdout_open_gate_reason_codes": pre_comparison_reason_codes,
+        }
+        fingerprint = _hash_holdout_open_gate(
+            [
+                _encode_gate_field(constituent_values[field])
+                for field in HOLDOUT_OPEN_GATE_CONSTITUENT_FIELD_ORDER
+            ]
+        )
+
+    registry_gate_fingerprint: str | None = None
+    gate_fingerprint_matches_registry: bool | None = None
+    gate_checked_at: str | None = None
+
+    can_compare_registry = (
+        fingerprint is not None
+        and declaration is not None
+        and not kill["holdout_open_gate_declaration_incomplete"]
+        and not kill["gate_fingerprint_missing"]
+    )
+    if can_compare_registry:
+        registry_gate_fingerprint = declaration.get("holdout_open_gate_fingerprint")
+        gate_fingerprint_matches_registry = registry_gate_fingerprint == fingerprint
+        gate_checked_at = declaration.get("gate_checked_at")
+        kill["gate_fingerprint_mismatch"] = not gate_fingerprint_matches_registry
+
+    if structural_ok and can_compare_registry and gate_fingerprint_matches_registry:
+        state = "gate_passed"
+    elif kill["stale_constituent_reference"] or kill["gate_fingerprint_mismatch"]:
+        state = "mismatch"
+    else:
+        state = "blocked"
+
+    # A matching ``holdout_open_gate_fingerprint`` only proves the ten hashed
+    # structural inputs are unchanged -- it says nothing about whether the
+    # declaration's own recorded audit fields (state / count / reason codes)
+    # still describe this run. Audit them explicitly against what this run
+    # would actually emit, excluding this very flag from the reason-code
+    # comparison (comparing it to itself would be circular, the same
+    # rationale as `_GATE_DECLARATION_SHAPE_REASON_KEYS` above).
+    if can_compare_registry and gate_fingerprint_matches_registry:
+        pre_audit_reason_codes = sorted(name for name, value in kill.items() if value)
+        declared_reason_codes = declaration.get("holdout_open_gate_reason_codes")
+        normalized_declared_reason_codes = (
+            sorted(declared_reason_codes)
+            if isinstance(declared_reason_codes, list)
+            and all(isinstance(code, str) for code in declared_reason_codes)
+            else declared_reason_codes
+        )
+        if (
+            declaration.get("holdout_open_gate_state") != state
+            or declaration.get("structural_prerequisite_count") != structural_prerequisite_count
+            or normalized_declared_reason_codes != pre_audit_reason_codes
+        ):
+            kill["holdout_open_gate_declaration_stale"] = True
+            state = "mismatch"
+
+    killed = any(kill.values())
+    reason_codes = sorted(name for name, value in kill.items() if value)
+
+    return {
+        "method": HOLDOUT_OPEN_GATE_FINGERPRINT_METHOD,
+        "holdout_open_gate_fingerprint": fingerprint,
+        "holdout_open_gate_state": state,
+        "holdout_open_gate_killed": killed,
+        "holdout_open_gate_reason_codes": reason_codes,
+        "structural_prerequisite_count": structural_prerequisite_count,
+        "registry_gate_fingerprint": registry_gate_fingerprint,
+        "gate_fingerprint_matches_registry": gate_fingerprint_matches_registry,
+        "gate_checked_at": gate_checked_at,
+        "kill_criteria": kill,
+    }
+
+
 def build_protocol_computed_validation_slice(
     *,
     bars_dir: str | Path | None,
@@ -965,6 +1313,22 @@ def build_protocol_computed_validation_slice(
         )
         killed = killed or execution_packet_lock["packet_lock_killed"]
 
+    # The holdout-open gate is a hard dependency on execution_packet_lock
+    # (decision memo §5, requirement 2): it only ever binds the packet lock,
+    # holdout seal, and split audit just materialized above, never a stale or
+    # externally supplied one.
+    holdout_open_gate = None
+    if execution_packet_lock is not None:
+        holdout_open_gate = build_holdout_open_gate(
+            execution_packet_lock=execution_packet_lock,
+            holdout_seal=holdout_seal,
+            split_audit=split_audit,
+            data_cut_fingerprint=actual_fingerprint,
+            protocol_version=PROTOCOL_COMPUTED_VALIDATION_VERSION,
+            registry_entry=registry_entry,
+        )
+        killed = killed or holdout_open_gate["holdout_open_gate_killed"]
+
     result = {
         "protocol_version": PROTOCOL_COMPUTED_VALIDATION_VERSION,
         "immutable_data_cut": {
@@ -1010,6 +1374,8 @@ def build_protocol_computed_validation_slice(
         result["holdout_seal_audit"] = holdout_seal
     if execution_packet_lock is not None:
         result["execution_packet_lock"] = execution_packet_lock
+    if holdout_open_gate is not None:
+        result["holdout_open_gate"] = holdout_open_gate
     return result
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"

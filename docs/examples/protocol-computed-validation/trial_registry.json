@@ -24,6 +24,13 @@
       "holdout_seal_fingerprint": "536a5a363fc843682144432c32927bca398ea7d954df62e52e0d24bf244a67ee",
       "code_commit_hash": "d09330a",
       "protocol_version": "protocol_computed_validation_v1"
+    },
+    "holdout_open_gate_declaration": {
+      "holdout_open_gate_fingerprint": "2406364f849a25420dbe45d629cf58792643d2a6f667cd36adb4197ca364ae7b",
+      "holdout_open_gate_state": "gate_passed",
+      "gate_checked_at": "DETERMINISTIC_FIXTURE_GATE_CHECK_V0",
+      "structural_prerequisite_count": 4,
+      "holdout_open_gate_reason_codes": []
     }
   }
 ]
