@@ -50,6 +50,7 @@ from quantbot.experiment.offline_edge_schema import (
 __all__ = [
     "build_real_validation_receipt",
     "build_protocol_computed_validation_slice",
+    "build_protocol_split_leakage_audit",
     "build_deterministic_split_definitions",
     "build_cost_case_matrix",
     "validate_real_validation_receipt",
@@ -155,6 +156,13 @@ _PROTOCOL_CANDIDATE_FAMILY = "FROZEN_SINGLE_CANDIDATE_FAMILY_V1"
 _PROTOCOL_NULL_FAMILY = "FROZEN_SINGLE_NULL_FAMILY_V1"
 _PROTOCOL_RESULT = "EDGE_UNPROVEN"
 
+# The structural split materialized on top of the fingerprinted cut. It reads
+# only timestamp ordering and row position of the bars role; it never
+# dereferences a price / value / outcome column (close, funding_rate, value,
+# pnl, return, ...). Reading a market value here is a protocol violation, not a
+# lint failure. See docs/status/QNTY_OFFLINE_EDGE_NEXT_COMPUTED_QUANTITY_DECISION_MEMO.md.
+PROTOCOL_SPLIT_AUDIT_METHOD = "SOURCE_ORDERED_SINGLE_HOLDOUT"
+
 
 def _data_cut_fingerprint(source_files: list[tuple[str, Path]]) -> str:
     """Hash stable role-relative source names and bytes in deterministic order."""
@@ -167,6 +175,227 @@ def _data_cut_fingerprint(source_files: list[tuple[str, Path]]) -> str:
     return digest.hexdigest()
 
 
+def _read_role_timestamps(
+    directory: str | Path | None,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Return ``(timestamps, structural_failures)`` for a role's CSVs.
+
+    Files are read in sorted name order and concatenated. Only the
+    ``timestamp`` column is dereferenced; every other column (``close``,
+    ``funding_rate``, ``value``, ...) is ignored, so poison/nonsense values
+    there cannot influence the split audit.
+
+    Every CSV in the supplied cut must be auditable. A file is recorded as a
+    structural failure (rather than silently skipped) when it has a missing
+    header, a missing ``timestamp`` column, a missing/empty timestamp cell, a
+    malformed timestamp cell, or is otherwise unreadable/unparseable. The
+    audit must fail closed on any recorded failure -- a partial timestamp read
+    must never look identical to a fully clean one.
+    """
+    if directory is None:
+        return [], []
+    root = Path(directory)
+    if not root.is_dir():
+        return [], []
+    timestamps: list[str] = []
+    failures: list[dict[str, Any]] = []
+    for path in sorted(root.glob("*.csv"), key=lambda p: p.name):
+        try:
+            with open(path, newline="") as handle:
+                reader = csv.DictReader(handle)
+                if reader.fieldnames is None or "timestamp" not in reader.fieldnames:
+                    failures.append(
+                        {"file": path.name, "row": None, "reason": "timestamp_header_missing"}
+                    )
+                    continue
+                for row_index, row in enumerate(reader):
+                    cell = row.get("timestamp")
+                    if cell is None or cell == "":
+                        failures.append(
+                            {
+                                "file": path.name,
+                                "row": row_index,
+                                "reason": "timestamp_cell_missing",
+                            }
+                        )
+                        continue
+                    try:
+                        _parse_timestamp(cell)
+                    except (ValueError, OverflowError, OSError):
+                        failures.append(
+                            {
+                                "file": path.name,
+                                "row": row_index,
+                                "reason": "timestamp_cell_malformed",
+                            }
+                        )
+                        continue
+                    timestamps.append(cell)
+        except (OSError, csv.Error):
+            failures.append(
+                {"file": path.name, "row": None, "reason": "timestamp_read_failure"}
+            )
+    return timestamps, failures
+
+
+def _is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def build_protocol_split_leakage_audit(
+    *,
+    bars_dir: str | Path | None,
+    boundary_index: int | None,
+    purge_intervals: int | None,
+    embargo_intervals: int | None,
+    registry_entry: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Materialize the source-ordered train/purge/embargo/holdout split and audit it.
+
+    Split semantics (normative, from the decision memo): ``boundary_index`` is the
+    first raw holdout row; ``train_eligible`` = rows before it; ``holdout_eligible``
+    = rows from it onward; ``purged`` = the final ``purge_intervals`` rows of
+    ``train_eligible``; ``embargoed`` = the first ``embargo_intervals`` rows of
+    ``holdout_eligible``; ``train`` = ``train_eligible`` minus purged; ``holdout``
+    = ``holdout_eligible`` minus embargoed.
+
+    Reads only timestamp ordering and row position. Fails closed (sets
+    ``leakage_audit_killed``) on any invalid input, empty partition, overlap,
+    out-of-order holdout, insufficient realized gap, non-monotonic timestamps,
+    missing boundary, or a registry boundary declaration that is absent or does
+    not match the execution argument. Never authorizes paper/live use.
+    """
+    timestamps, structural_failures = _read_role_timestamps(bars_dir)
+    row_count = len(timestamps)
+    failure_reasons = {failure["reason"] for failure in structural_failures}
+
+    purge_ok = _is_positive_int(purge_intervals)
+    embargo_ok = _is_positive_int(embargo_intervals)
+    boundary_ok = isinstance(boundary_index, int) and not isinstance(boundary_index, bool)
+
+    kill = {
+        "source_rows_missing": row_count == 0,
+        "boundary_index_missing": not boundary_ok,
+        "boundary_index_out_of_range": False,
+        "purge_or_embargo_invalid": not (purge_ok and embargo_ok),
+        "non_monotonic_timestamps": False,
+        "empty_train_partition": False,
+        "empty_holdout_partition": False,
+        "empty_purge_partition": False,
+        "empty_embargo_partition": False,
+        "partitions_overlap": False,
+        "holdout_not_strictly_after_train": False,
+        "insufficient_purge_gap": False,
+        "insufficient_embargo_gap": False,
+        "registry_boundary_declaration_missing": False,
+        "registry_boundary_mismatch": False,
+        "timestamp_header_missing": "timestamp_header_missing" in failure_reasons,
+        "timestamp_cell_missing": "timestamp_cell_missing" in failure_reasons,
+        "timestamp_cell_malformed": "timestamp_cell_malformed" in failure_reasons,
+        "timestamp_read_failure": "timestamp_read_failure" in failure_reasons,
+    }
+
+    # Registry boundary declaration: must be present and match the execution
+    # argument. A changed split is a new trial under the freeze §6.
+    declared_index = None
+    if not isinstance(registry_entry, dict) or (
+        "split_boundary_index" not in registry_entry
+        or "purge_intervals" not in registry_entry
+        or "embargo_intervals" not in registry_entry
+        or registry_entry.get("registered_before_execution") is not True
+    ):
+        kill["registry_boundary_declaration_missing"] = True
+    else:
+        declared_index = registry_entry.get("split_boundary_index")
+        if (
+            declared_index != boundary_index
+            or registry_entry.get("purge_intervals") != purge_intervals
+            or registry_entry.get("embargo_intervals") != embargo_intervals
+        ):
+            kill["registry_boundary_mismatch"] = True
+
+    # Strictly-increasing timestamps within the (single bars) role.
+    if row_count >= 2:
+        kill["non_monotonic_timestamps"] = any(
+            timestamps[i] <= timestamps[i - 1] for i in range(1, row_count)
+        )
+
+    if boundary_ok and not (1 <= boundary_index <= row_count - 1):
+        kill["boundary_index_out_of_range"] = True
+
+    train_count = holdout_count = purged_count = embargoed_count = 0
+    realized_purge_gap = realized_embargo_gap = 0
+    holdout_strictly_after_train = False
+    partitions_disjoint = False
+
+    can_partition = (
+        boundary_ok
+        and not kill["boundary_index_out_of_range"]
+        and row_count >= 1
+        and purge_ok
+        and embargo_ok
+    )
+    if can_partition:
+        train_eligible = list(range(0, boundary_index))
+        holdout_eligible = list(range(boundary_index, row_count))
+        purged = train_eligible[len(train_eligible) - purge_intervals:] if purge_intervals <= len(train_eligible) else train_eligible[:]
+        train = train_eligible[: len(train_eligible) - purge_intervals]
+        embargoed = holdout_eligible[:embargo_intervals]
+        holdout = holdout_eligible[embargo_intervals:]
+
+        train_count = len(train)
+        holdout_count = len(holdout)
+        purged_count = len(purged)
+        embargoed_count = len(embargoed)
+        realized_purge_gap = purged_count
+        realized_embargo_gap = embargoed_count
+
+        kill["empty_train_partition"] = train_count == 0
+        kill["empty_holdout_partition"] = holdout_count == 0
+        kill["empty_purge_partition"] = purged_count == 0
+        kill["empty_embargo_partition"] = embargoed_count == 0
+        kill["insufficient_purge_gap"] = realized_purge_gap < purge_intervals
+        kill["insufficient_embargo_gap"] = realized_embargo_gap < embargo_intervals
+
+        index_sets = [set(train), set(purged), set(embargoed), set(holdout)]
+        total = sum(len(s) for s in index_sets)
+        union = set().union(*index_sets)
+        partitions_disjoint = len(union) == total
+        kill["partitions_overlap"] = not partitions_disjoint
+
+        if train and holdout:
+            holdout_strictly_after_train = (
+                max(train) < min(holdout)
+                and timestamps[max(train)] < timestamps[min(holdout)]
+            )
+            kill["holdout_not_strictly_after_train"] = not holdout_strictly_after_train
+        else:
+            kill["holdout_not_strictly_after_train"] = True
+
+    killed = any(kill.values())
+    return {
+        "method": PROTOCOL_SPLIT_AUDIT_METHOD,
+        "reads_only_timestamp_and_row_order": True,
+        "boundary_index": boundary_index,
+        "source_row_count": row_count,
+        "registry_declared_boundary_index": declared_index,
+        "declared_purge_intervals": purge_intervals,
+        "declared_embargo_intervals": embargo_intervals,
+        "train_row_count": train_count,
+        "holdout_row_count": holdout_count,
+        "purged_row_count": purged_count,
+        "embargoed_row_count": embargoed_count,
+        "realized_purge_gap_intervals": realized_purge_gap,
+        "realized_embargo_gap_intervals": realized_embargo_gap,
+        "holdout_strictly_after_train": holdout_strictly_after_train,
+        "partitions_disjoint": partitions_disjoint,
+        "leakage_audit_passed": not killed,
+        "leakage_audit_killed": killed,
+        "kill_criteria": kill,
+        "timestamp_structural_failures": structural_failures,
+    }
+
+
 def build_protocol_computed_validation_slice(
     *,
     bars_dir: str | Path | None,
@@ -175,6 +404,7 @@ def build_protocol_computed_validation_slice(
     trial_registry_path: str | Path | None,
     purge_intervals: int | None = 1,
     embargo_intervals: int | None = 1,
+    split_boundary_index: int | None = None,
 ) -> dict[str, Any]:
     """Execute the frozen protocol's smallest safe computed check.
 
@@ -231,7 +461,23 @@ def build_protocol_computed_validation_slice(
     source_ok = bool(source_files)
     killed = not all((source_ok, fingerprint_ok, registry_ok, split_ok))
     registry_count = len(raw_registry) if registry_loaded else 0
-    return {
+
+    # When a split boundary is requested, materialize the deterministic
+    # train/purge/embargo/holdout split and fold its leakage audit into the
+    # overall kill. Absent a boundary this is the lighter v0 declaration check;
+    # the audit itself never guesses a boundary (a None boundary kills closed).
+    split_audit = None
+    if split_boundary_index is not None:
+        split_audit = build_protocol_split_leakage_audit(
+            bars_dir=bars_dir,
+            boundary_index=split_boundary_index,
+            purge_intervals=purge_intervals,
+            embargo_intervals=embargo_intervals,
+            registry_entry=registry_entry,
+        )
+        killed = killed or split_audit["leakage_audit_killed"]
+
+    result = {
         "protocol_version": PROTOCOL_COMPUTED_VALIDATION_VERSION,
         "immutable_data_cut": {
             "source_file_count": len(source_files),
@@ -270,6 +516,9 @@ def build_protocol_computed_validation_slice(
             "kill_triggered": killed,
         },
     }
+    if split_audit is not None:
+        result["deterministic_split_audit"] = split_audit
+    return result
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
 RECEIPT_SCHEMA_VERSION: str = "0.1.0"
@@ -19695,6 +19944,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--purge-intervals", type=int, default=1)
     parser.add_argument("--embargo-intervals", type=int, default=1)
     parser.add_argument(
+        "--split-boundary-index",
+        type=int,
+        default=None,
+        help=(
+            "First raw holdout row index for the deterministic split leakage "
+            "audit. If omitted, no split is materialized (lighter declaration "
+            "check only); the audit never guesses a boundary."
+        ),
+    )
+    parser.add_argument(
         "--global-min-timestamp",
         default=None,
         help="Required if --bars-dir is not provided.",
@@ -19914,6 +20173,7 @@ def main(argv: list[str] | None = None) -> int:
             trial_registry_path=args.trial_registry_path,
             purge_intervals=args.purge_intervals,
             embargo_intervals=args.embargo_intervals,
+            split_boundary_index=args.split_boundary_index,
         )
         receipt = build_real_validation_receipt(
             input_manifest_fingerprint=args.input_manifest_fingerprint,
