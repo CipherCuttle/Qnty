@@ -23354,3 +23354,252 @@ class TestProtocolComputedValidationSlice:
         receipt = real_validation.build_real_validation_receipt(input_manifest_fingerprint="a", data_quality_receipt_sha256="b", code_commit_sha="c", split_definitions=[], cost_cases=[], protocol_computed_validation_slice=computed)
         with pytest.raises(ValueError, match="may not authorize"):
             real_validation.validate_real_validation_receipt(receipt)
+
+
+class TestProtocolSplitLeakageAudit:
+    """Deterministic structural split materialization + leakage audit.
+
+    Structural leakage auditing only: ordinal row counts and booleans over
+    timestamp/row order. No returns, PnL, edge, score, or performance is
+    computed anywhere in this section.
+    """
+
+    def _bars(self, tmp_path: Path, rows: int = 8, *, poison: bool = False, monotonic: bool = True) -> Path:
+        bars = tmp_path / "bars"
+        bars.mkdir(exist_ok=True)
+        lines = ["timestamp,close"]
+        for i in range(rows):
+            hour = (rows - 1 - i) if not monotonic else i
+            value = f"POISON-{i}!!" if poison else str(10 + i)
+            lines.append(f"2024-01-01T{hour:02d}:00:00Z,{value}")
+        (bars / "BTC.csv").write_text("\n".join(lines) + "\n")
+        return bars
+
+    def _registry_entry(self, *, boundary: int = 4, purge: int = 1, embargo: int = 1) -> dict:
+        return {
+            "candidate_family": "FROZEN_SINGLE_CANDIDATE_FAMILY_V1",
+            "null_family": "FROZEN_SINGLE_NULL_FAMILY_V1",
+            "append_only": True,
+            "registered_before_execution": True,
+            "split_boundary_index": boundary,
+            "purge_intervals": purge,
+            "embargo_intervals": embargo,
+        }
+
+    def _audit(self, tmp_path, **overrides):
+        kwargs = dict(
+            boundary_index=4,
+            purge_intervals=1,
+            embargo_intervals=1,
+            registry_entry=self._registry_entry(),
+        )
+        kwargs.update(overrides)
+        # Only materialize the default bars fixture when the caller did not
+        # supply one, so an override's bytes are not clobbered.
+        if "bars_dir" not in kwargs:
+            kwargs["bars_dir"] = self._bars(tmp_path)
+        return real_validation.build_protocol_split_leakage_audit(**kwargs)
+
+    def test_happy_path_non_empty_partitions(self, tmp_path):
+        audit = self._audit(tmp_path)
+        assert audit["leakage_audit_passed"] is True
+        assert audit["leakage_audit_killed"] is False
+        assert audit["train_row_count"] == 3
+        assert audit["purged_row_count"] == 1
+        assert audit["embargoed_row_count"] == 1
+        assert audit["holdout_row_count"] == 3
+        assert audit["holdout_strictly_after_train"] is True
+        assert audit["partitions_disjoint"] is True
+        assert audit["realized_purge_gap_intervals"] == 1
+        assert audit["realized_embargo_gap_intervals"] == 1
+        assert not any(audit["kill_criteria"].values())
+
+    def test_missing_boundary_kills(self, tmp_path):
+        audit = self._audit(
+            tmp_path,
+            boundary_index=None,
+            registry_entry=self._registry_entry(boundary=None),
+        )
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["boundary_index_missing"] is True
+
+    def test_boundary_out_of_range_kills(self, tmp_path):
+        audit = self._audit(
+            tmp_path,
+            boundary_index=99,
+            registry_entry=self._registry_entry(boundary=99),
+        )
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["boundary_index_out_of_range"] is True
+
+    def test_empty_train_partition_kills(self, tmp_path):
+        # boundary 1 with purge 1 removes the only train_eligible row.
+        audit = self._audit(
+            tmp_path,
+            boundary_index=1,
+            registry_entry=self._registry_entry(boundary=1),
+        )
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["empty_train_partition"] is True
+
+    def test_empty_holdout_partition_kills(self, tmp_path):
+        # boundary 7 with embargo 1 removes the only holdout_eligible row.
+        audit = self._audit(
+            tmp_path,
+            boundary_index=7,
+            registry_entry=self._registry_entry(boundary=7),
+        )
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["empty_holdout_partition"] is True
+
+    def test_insufficient_purge_gap_kills(self, tmp_path):
+        # purge 5 exceeds the 4 train_eligible rows -> empty train + short gap.
+        audit = self._audit(
+            tmp_path,
+            purge_intervals=5,
+            registry_entry=self._registry_entry(purge=5),
+        )
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["insufficient_purge_gap"] is True
+
+    def test_insufficient_embargo_gap_kills(self, tmp_path):
+        # embargo 5 exceeds the 4 holdout_eligible rows -> empty holdout + short gap.
+        audit = self._audit(
+            tmp_path,
+            embargo_intervals=5,
+            registry_entry=self._registry_entry(embargo=5),
+        )
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["insufficient_embargo_gap"] is True
+
+    def test_non_monotonic_timestamps_kill(self, tmp_path):
+        audit = self._audit(tmp_path, bars_dir=self._bars(tmp_path, monotonic=False))
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["non_monotonic_timestamps"] is True
+
+    def test_registry_boundary_mismatch_kills(self, tmp_path):
+        audit = self._audit(
+            tmp_path,
+            boundary_index=4,
+            registry_entry=self._registry_entry(boundary=3),
+        )
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["registry_boundary_mismatch"] is True
+
+    def test_registry_boundary_declaration_missing_kills(self, tmp_path):
+        audit = self._audit(tmp_path, registry_entry={})
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["registry_boundary_declaration_missing"] is True
+
+    def test_poison_value_columns_do_not_affect_split_audit(self, tmp_path):
+        clean = self._audit(tmp_path, bars_dir=self._bars(tmp_path, poison=False))
+        poisoned = self._audit(tmp_path, bars_dir=self._bars(tmp_path, poison=True))
+        assert poisoned == clean
+        assert poisoned["leakage_audit_passed"] is True
+
+    def test_poison_price_value_outcome_columns_do_not_affect_audit(self, tmp_path):
+        bars = tmp_path / "bars"
+        bars.mkdir()
+        lines = ["timestamp,close,value,outcome"]
+        for i in range(8):
+            lines.append(f"2024-01-01T{i:02d}:00:00Z,POISON-{i}!!,POISON-{i}!!,POISON-{i}!!")
+        (bars / "BTC.csv").write_text("\n".join(lines) + "\n")
+        audit = self._audit(tmp_path, bars_dir=bars)
+        assert audit["leakage_audit_passed"] is True
+        assert not any(audit["kill_criteria"].values())
+
+    def test_bars_csv_missing_timestamp_header_kills(self, tmp_path):
+        # One valid file plus one file with no timestamp header in the same
+        # supplied cut: the whole audit must fail closed, not just skip it.
+        bars = self._bars(tmp_path)
+        (bars / "ETH.csv").write_text("close\n1\n2\n")
+        audit = self._audit(tmp_path, bars_dir=bars)
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["timestamp_header_missing"] is True
+        failures = audit["timestamp_structural_failures"]
+        assert any(
+            f["file"] == "ETH.csv" and f["reason"] == "timestamp_header_missing"
+            for f in failures
+        )
+
+    def test_bars_csv_missing_timestamp_cell_kills(self, tmp_path):
+        bars = self._bars(tmp_path)
+        (bars / "ETH.csv").write_text("timestamp,close\n,1\n2024-01-01T01:00:00Z,2\n")
+        audit = self._audit(tmp_path, bars_dir=bars)
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["timestamp_cell_missing"] is True
+        failures = audit["timestamp_structural_failures"]
+        assert any(
+            f["file"] == "ETH.csv" and f["reason"] == "timestamp_cell_missing"
+            for f in failures
+        )
+
+    def test_bars_csv_malformed_timestamp_cell_kills(self, tmp_path):
+        bars = self._bars(tmp_path)
+        (bars / "ETH.csv").write_text(
+            "timestamp,close\nNOT-A-TIMESTAMP,1\n2024-01-01T01:00:00Z,2\n"
+        )
+        audit = self._audit(tmp_path, bars_dir=bars)
+        assert audit["leakage_audit_killed"] is True
+        assert audit["kill_criteria"]["timestamp_cell_malformed"] is True
+        failures = audit["timestamp_structural_failures"]
+        assert any(
+            f["file"] == "ETH.csv" and f["reason"] == "timestamp_cell_malformed"
+            for f in failures
+        )
+
+    def test_authorization_mutation_still_fails_receipt_validation(self, tmp_path):
+        bars = self._bars(tmp_path)
+        funding = tmp_path / "funding"
+        funding.mkdir()
+        (funding / "BTC.csv").write_text(
+            "timestamp,funding_rate\n"
+            + "\n".join(f"2024-01-01T{h:02d}:00:00Z,0" for h in range(8))
+            + "\n"
+        )
+        fingerprint = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None
+        )["immutable_data_cut"]["actual_sha256"]
+        registry = tmp_path / "registry.json"
+        entry = self._registry_entry()
+        entry["data_cut_fingerprint"] = fingerprint
+        registry.write_text(json.dumps([entry]))
+        computed = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars,
+            funding_dir=funding,
+            expected_data_cut_fingerprint=fingerprint,
+            trial_registry_path=registry,
+            split_boundary_index=4,
+        )
+        assert computed["deterministic_split_audit"]["leakage_audit_passed"] is True
+        assert computed["computed_input_integrity_result"]["protocol_execution_killed"] is False
+        computed["computed_input_integrity_result"]["live_integration_authorized"] = True
+        receipt = real_validation.build_real_validation_receipt(
+            input_manifest_fingerprint="a",
+            data_quality_receipt_sha256="b",
+            code_commit_sha="c",
+            split_definitions=[],
+            cost_cases=[],
+            protocol_computed_validation_slice=computed,
+        )
+        with pytest.raises(ValueError, match="may not authorize"):
+            real_validation.validate_real_validation_receipt(receipt)
+
+    def test_forbidden_exact_key_scan_remains_green(self, tmp_path):
+        audit = self._audit(tmp_path)
+        all_keys = _all_dict_keys(audit)
+        assert real_validation.FORBIDDEN_CALCULATION_KEYS.isdisjoint(all_keys), (
+            f"Forbidden keys found: "
+            f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
+        )
+
+    def test_no_split_boundary_leaves_v0_behavior_unchanged(self, tmp_path):
+        # Absent a boundary, no split is materialized (lighter declaration check).
+        bars = self._bars(tmp_path)
+        funding = tmp_path / "funding"
+        funding.mkdir()
+        (funding / "BTC.csv").write_text("timestamp,funding_rate\n2024-01-01T00:00:00Z,0\n")
+        result = real_validation.build_protocol_computed_validation_slice(
+            bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None
+        )
+        assert "deterministic_split_audit" not in result

@@ -2,8 +2,11 @@
   {
     "candidate_family": "FROZEN_SINGLE_CANDIDATE_FAMILY_V1",
     "null_family": "FROZEN_SINGLE_NULL_FAMILY_V1",
-    "data_cut_fingerprint": "023ad07777f72596bedbe852a781c6f54938f106a0379747c956d83f93207abc",
+    "data_cut_fingerprint": "4c1ffa74b28e011127ae89707d87c587e8c998ccb18936c8ec5b724e099eaf63",
     "append_only": true,
-    "registered_before_execution": true
+    "registered_before_execution": true,
+    "split_boundary_index": 4,
+    "purge_intervals": 1,
+    "embargo_intervals": 1
   }
 ]

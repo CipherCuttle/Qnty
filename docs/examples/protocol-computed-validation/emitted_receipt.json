@@ -2,11 +2,11 @@
   "validation_receipt": {
     "kind": "qnty_offline_edge_real_validation_receipt",
     "version": "0.1.0",
-    "timestamp_utc": "2026-07-15T12:10:16.206886+00:00"
+    "timestamp_utc": "2026-07-15T13:00:51.679213+00:00"
   },
   "input_manifest_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
   "data_quality_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "code_commit_sha": "bb2ed1beb5e84ff22f8f5e6c6b55fef0d9f8bda3",
+  "code_commit_sha": "d09330a",
   "split_definitions": [
     {
       "split_id": "protocol_single_holdout"
@@ -65,8 +65,8 @@
     "protocol_version": "protocol_computed_validation_v1",
     "immutable_data_cut": {
       "source_file_count": 2,
-      "actual_sha256": "023ad07777f72596bedbe852a781c6f54938f106a0379747c956d83f93207abc",
-      "expected_sha256": "023ad07777f72596bedbe852a781c6f54938f106a0379747c956d83f93207abc",
+      "actual_sha256": "4c1ffa74b28e011127ae89707d87c587e8c998ccb18936c8ec5b724e099eaf63",
+      "expected_sha256": "4c1ffa74b28e011127ae89707d87c587e8c998ccb18936c8ec5b724e099eaf63",
       "matches_expected": true,
       "timestamp_convention": "SOURCE_CSV_AS_RECORDED"
     },
@@ -102,6 +102,42 @@
       "purge_or_embargo_missing": false,
       "source_inputs_missing": false,
       "kill_triggered": false
+    },
+    "deterministic_split_audit": {
+      "method": "SOURCE_ORDERED_SINGLE_HOLDOUT",
+      "reads_only_timestamp_and_row_order": true,
+      "boundary_index": 4,
+      "source_row_count": 8,
+      "registry_declared_boundary_index": 4,
+      "declared_purge_intervals": 1,
+      "declared_embargo_intervals": 1,
+      "train_row_count": 3,
+      "holdout_row_count": 3,
+      "purged_row_count": 1,
+      "embargoed_row_count": 1,
+      "realized_purge_gap_intervals": 1,
+      "realized_embargo_gap_intervals": 1,
+      "holdout_strictly_after_train": true,
+      "partitions_disjoint": true,
+      "leakage_audit_passed": true,
+      "leakage_audit_killed": false,
+      "kill_criteria": {
+        "source_rows_missing": false,
+        "boundary_index_missing": false,
+        "boundary_index_out_of_range": false,
+        "purge_or_embargo_invalid": false,
+        "non_monotonic_timestamps": false,
+        "empty_train_partition": false,
+        "empty_holdout_partition": false,
+        "empty_purge_partition": false,
+        "empty_embargo_partition": false,
+        "partitions_overlap": false,
+        "holdout_not_strictly_after_train": false,
+        "insufficient_purge_gap": false,
+        "insufficient_embargo_gap": false,
+        "registry_boundary_declaration_missing": false,
+        "registry_boundary_mismatch": false
+      }
     }
   }
 }
