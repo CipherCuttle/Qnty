@@ -1884,23 +1884,19 @@ class TestCostCaseObservationalDrag:
         }
         assert forbidden.isdisjoint(_all_dict_keys(result))
 
-    def test_receipt_section_validates_and_preserves_guardrails(self):
+    def test_descriptive_drag_cannot_be_attached_to_an_active_receipt(self):
         drag = materialize_cost_case_observational_drag(
             gross_observational_returns=self._gross_fixture(),
             cost_cases=build_cost_case_matrix(),
         )
-        receipt = _base_receipt(cost_case_observational_drag=drag)
-        validate_real_validation_receipt(receipt)
-        assert receipt["cost_case_observational_drag"] == drag
-        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
-        assert all(value is False for value in receipt["required_outputs_present"].values())
-        assert all(value is False for value in receipt["forbidden_calculation_status"].values())
-        assert all(value is True for value in receipt["guardrail_status"].values())
-        assert "EDGE_CANDIDATE" not in json.dumps(receipt)
+        receipt = _base_receipt()
+        receipt["cost_case_observational_drag"] = drag
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
 
 
 class TestReceiptWithInventory:
-    def test_receipt_with_gross_observational_returns_validates(self, tmp_path):
+    def test_receipt_rejects_manually_added_gross_observational_returns(self, tmp_path):
         _write_tiny_bars_csv(tmp_path)
         inventory = build_real_validation_input_inventory(bars_dir=tmp_path)
         splits = _two_split_windows()
@@ -1908,24 +1904,10 @@ class TestReceiptWithInventory:
             inventory=inventory,
             split_definitions=splits,
         )
-        receipt = build_real_validation_receipt(
-            input_manifest_fingerprint="a" * 64,
-            data_quality_receipt_sha256="b" * 64,
-            code_commit_sha="c" * 40,
-            split_definitions=splits,
-            cost_cases=build_cost_case_matrix(),
-            gross_observational_returns=gross_observations,
-        )
-
-        validate_real_validation_receipt(receipt)
-        assert receipt["gross_observational_returns"] == gross_observations
-        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
-        assert all(value is False for value in receipt["required_outputs_present"].values())
-        assert all(
-            value is False
-            for value in receipt["forbidden_calculation_status"].values()
-        )
-        assert all(value is True for value in receipt["guardrail_status"].values())
+        receipt = _base_receipt()
+        receipt["gross_observational_returns"] = gross_observations
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
 
     def test_receipt_with_row_materialization_validates(self, tmp_path):
         _write_tiny_bars_csv(tmp_path)
@@ -2081,12 +2063,13 @@ class TestForbiddenKeysNested:
         with pytest.raises(ValueError, match="Forbidden calculation key"):
             validate_real_validation_receipt(receipt)
 
-    def test_gross_observational_return_allowed_inside_allowed_section(self):
+    def test_gross_observational_return_rejected_inside_formerly_allowed_section(self):
         receipt = _base_receipt()
         receipt["gross_observational_returns"] = {
             "observations": [{"gross_observational_return": 0.01}]
         }
-        validate_real_validation_receipt(receipt)
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
 
     def test_nested_pnl_rejected(self):
         receipt = self._receipt_with_nested_key("pnl", 1000.0)
@@ -2228,7 +2211,7 @@ class TestForbiddenKeysNested:
         assert self.ORIGINAL_22_FORBIDDEN_KEYS <= real_validation.FORBIDDEN_CALCULATION_KEYS
         assert len(self.ORIGINAL_22_FORBIDDEN_KEYS) == 22
         assert set(self.APPENDED_FORBIDDEN_KEYS) <= real_validation.FORBIDDEN_CALCULATION_KEYS
-        assert len(real_validation.FORBIDDEN_CALCULATION_KEYS) == 42
+        assert len(real_validation.FORBIDDEN_CALCULATION_KEYS) == 47
 
     def test_near_miss_keys_still_accepted_exact_match_semantics(self):
         """Legitimate policy/limit keys that merely *contain* a forbidden name must pass.
@@ -2262,15 +2245,17 @@ class TestForbiddenKeysNested:
         with pytest.raises(ValueError, match="Forbidden calculation key"):
             validate_real_validation_receipt(receipt)
 
-    def test_gross_observational_return_allowed_directly_inside_exact_section(self):
+    def test_gross_observational_return_rejected_directly_inside_exact_section(self):
         receipt = _base_receipt()
         receipt["gross_observational_returns"] = {"gross_observational_return": 0.01}
-        validate_real_validation_receipt(receipt)
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
 
-    def test_gross_observational_return_allowed_inside_exact_section_list(self):
+    def test_gross_observational_return_rejected_inside_exact_section_list(self):
         receipt = _base_receipt()
         receipt["gross_observational_returns"] = [{"gross_observational_return": 0.01}]
-        validate_real_validation_receipt(receipt)
+        with pytest.raises(ValueError, match="Forbidden calculation key"):
+            validate_real_validation_receipt(receipt)
 
     @pytest.mark.parametrize(
         "section",
@@ -2377,22 +2362,12 @@ class TestCLIWithDirs:
             assert written["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
             assert "input_inventory" in written
             assert "row_materialization" in written
-            assert "gross_observational_returns" in written
-            assert "cost_case_observational_drag" in written
+            assert "gross_observational_returns" not in written
+            assert "cost_case_observational_drag" not in written
             assert "funding_observational_adjustments" in written
             assert "funding_to_bars_alignment_diagnostics" in written
             materialized_roles = written["row_materialization"]["roles"]
             assert materialized_roles[0]["files"][0]["total_rows"] == 3
-            gross = written["gross_observational_returns"]
-            assert gross["files"][0]["observation_count"] == 2
-            assert gross["funding_adjusted_status"] == "NOT_EXECUTED"
-            drag_cases = written["cost_case_observational_drag"]["cost_cases"]
-            assert {case["cost_case"] for case in drag_cases} == {"low", "base", "high"}
-            assert all(
-                case["files"][0]["gross_observation_count"]
-                == gross["files"][0]["observation_count"]
-                for case in drag_cases
-            )
             funding = written["funding_observational_adjustments"]
             assert funding["processed_role"] == "funding"
             assert funding["files"][0]["observation_count"] == 2
@@ -2404,6 +2379,18 @@ class TestCLIWithDirs:
             assert alignment["symbols"][0]["symbol"] == "BTCUSDT"
             assert all(value is False for value in written["required_outputs_present"].values())
             assert all(value is False for value in written["forbidden_calculation_status"].values())
+            forbidden_active_receipt_keys = {
+                "pnl", "profit", "edge", "return", "returns",
+                "gross_return", "min_gross_return", "max_gross_return",
+                "mean_gross_return", "cost_adjusted_return",
+                "funding_adjusted_return", "price_change", "performance",
+                "metric", "score",
+            }
+            assert forbidden_active_receipt_keys.isdisjoint(_all_dict_keys(written))
+            assert written["forbidden_calculation_status"]["returns_computed"] is False
+            assert written["guardrail_status"]["edge_unproven"] is True
+            assert written["guardrail_status"]["block_live_integration"] is True
+            assert written["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
             assert "EDGE_CANDIDATE" not in result.stdout
             assert "EDGE_CANDIDATE" not in json.dumps(written)
         finally:
@@ -20814,6 +20801,9 @@ class TestEconomicAccountingRowsV0V1:
         assert result["accounting_row_count"] == result["source_simulated_event_count"] > 0
         assert all(set(row) == set(_ALLOWED_ECONOMIC_OUTPUT_SCHEMA_KEYS) for row in result["economic_accounting_rows"])
         assert all(row["accounting_amount_value"] == 0 for row in result["economic_accounting_rows"])
+        assert all(row["accounting_metadata_only"] is True for row in result["economic_accounting_rows"])
+        forbidden_row_keys = {"pnl", "return", "profit", "edge", "score", "performance", "metric"}
+        assert all(forbidden_row_keys.isdisjoint(row) for row in result["economic_accounting_rows"])
         assert result["final_offline_verdict_remains"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
     @pytest.mark.parametrize("value", [False, 1, -1, 0.01, "0", None, float("nan"), float("inf"), {}, []])
