@@ -3,10 +3,12 @@
 Scope boundary (do not violate) — see
 docs/status/QNTY_OFFLINE_EDGE_VALIDATION_REAL_VALIDATION_EXECUTION_PLAN.md:
 
-This module builds the *schema and metadata-only scaffold* for the real
-offline validation receipt. It does **not**:
+This module builds the real offline validation receipt.  Most of the receipt
+remains a metadata-only scaffold.  The sole bounded exception is the explicit
+``first_computed_statistic_v0`` protocol path, which computes one frozen
+candidate-versus-null scalar and nothing else.  It does **not**:
 
-- compute strategy, net, cost-adjusted, or funding-adjusted returns
+- emit a strategy return series or per-slot economic values
 - compute PnL
 - compute Sharpe or any risk-adjusted metric
 - run the paper engine
@@ -50,6 +52,7 @@ from quantbot.experiment.offline_edge_schema import (
 __all__ = [
     "build_real_validation_receipt",
     "build_protocol_computed_validation_slice",
+    "build_first_computed_statistic_v0",
     "build_protocol_split_leakage_audit",
     "build_holdout_seal_fingerprint",
     "build_execution_packet_lock",
@@ -164,6 +167,70 @@ _PROTOCOL_RESULT = "EDGE_UNPROVEN"
 # pnl, return, ...). Reading a market value here is a protocol violation, not a
 # lint failure. See docs/status/QNTY_OFFLINE_EDGE_NEXT_COMPUTED_QUANTITY_DECISION_MEMO.md.
 PROTOCOL_SPLIT_AUDIT_METHOD = "SOURCE_ORDERED_SINGLE_HOLDOUT"
+
+FIRST_COMPUTED_STATISTIC_VERSION = "first_computed_statistic_v0"
+FIRST_COMPUTED_STATISTIC_NAME = "mean_candidate_net_minus_null_net_v1"
+FIRST_COMPUTED_CANDIDATE_NAME = "funding_sign_one_interval_carry_v1"
+FIRST_COMPUTED_NULL_NAME = "alternating_active_slot_side_v1"
+FIRST_COMPUTED_HOLD_BARS = 8
+FIRST_COMPUTED_WARMUP_BARS = 90
+FIRST_COMPUTED_PURGE_BARS = 8
+FIRST_COMPUTED_EMBARGO_BARS = 90
+FIRST_COMPUTED_ROUND_TRIP_COST = Decimal("0.0022")
+
+# These exact JSON objects are the executable, pre-computation definitions.
+# The registry must contain byte-for-byte-equivalent JSON values and their
+# fingerprints.  Candidate alternatives are intentionally not represented.
+_FIRST_CANDIDATE_DEFINITION: dict[str, Any] = {
+    "candidate_name": FIRST_COMPUTED_CANDIDATE_NAME,
+    "side_rule": "positive_short_negative_long_zero_flat",
+    "entry_rule": "first_hourly_close_strictly_after_funding_time",
+    "exit_rule": "close_exactly_8_hourly_bars_after_entry",
+    "gross_price_component_rule": "side_times_exit_close_over_entry_close_minus_one",
+    "funding_component_rule": "negative_side_times_sum_after_entry_through_exit",
+    "fixed_round_trip_cost": "0.0022_active_only",
+}
+_FIRST_NULL_DEFINITION: dict[str, Any] = {
+    "null_name": FIRST_COMPUTED_NULL_NAME,
+    "side_rule": "active_slots_alternate_positive_one_negative_one_starting_positive_one",
+    "flat_rule": "candidate_flat_slots_remain_flat",
+    "slot_rule": "identical_entry_exit_sizing_costs_and_funding_accounting",
+}
+_FIRST_STATISTIC_DEFINITION: dict[str, Any] = {
+    "statistic_name": FIRST_COMPUTED_STATISTIC_NAME,
+    "rule": "arithmetic_mean_candidate_net_minus_null_net",
+    "universe": "BTC_only_one_bars_file_one_funding_file",
+    "warmup_hourly_bars": FIRST_COMPUTED_WARMUP_BARS,
+    "purge_hourly_bars": FIRST_COMPUTED_PURGE_BARS,
+    "embargo_hourly_bars": FIRST_COMPUTED_EMBARGO_BARS,
+    "hold_hourly_bars": FIRST_COMPUTED_HOLD_BARS,
+    "partition_rule": "entry_and_exit_wholly_inside_selected_allowed_partition",
+}
+
+
+def _canonical_json_fingerprint(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+_FIRST_CANDIDATE_RULE_FINGERPRINT = _canonical_json_fingerprint(_FIRST_CANDIDATE_DEFINITION)
+_FIRST_NULL_RULE_FINGERPRINT = _canonical_json_fingerprint(_FIRST_NULL_DEFINITION)
+_FIRST_STATISTIC_RULE_FINGERPRINT = _canonical_json_fingerprint(_FIRST_STATISTIC_DEFINITION)
+_FIRST_STATISTIC_RECEIPT_KEYS = frozenset(
+    {
+        "statistic_name",
+        "candidate_name",
+        "null_name",
+        "scored_slot_count",
+        "invalid_slot_count",
+        "statistic_value_T",
+        "statistic_state",
+        "statistic_reason_codes",
+        "data_cut_fingerprint",
+        "candidate_rule_fingerprint",
+        "null_rule_fingerprint",
+    }
+)
 
 
 def _data_cut_fingerprint(source_files: list[tuple[str, Path]]) -> str:
@@ -1176,6 +1243,310 @@ def build_holdout_open_gate(
     }
 
 
+def _first_statistic_blocked(
+    reason_codes: list[str],
+    *,
+    data_cut_fingerprint: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "statistic_name": FIRST_COMPUTED_STATISTIC_NAME,
+        "candidate_name": FIRST_COMPUTED_CANDIDATE_NAME,
+        "null_name": FIRST_COMPUTED_NULL_NAME,
+        "scored_slot_count": 0,
+        "invalid_slot_count": 0,
+        "statistic_value_T": None,
+        "statistic_state": "blocked",
+        "statistic_reason_codes": sorted(set(reason_codes)),
+        "data_cut_fingerprint": data_cut_fingerprint,
+        "candidate_rule_fingerprint": _FIRST_CANDIDATE_RULE_FINGERPRINT,
+        "null_rule_fingerprint": _FIRST_NULL_RULE_FINGERPRINT,
+    }
+
+
+def _matched_btc_csv(directory: str | Path | None) -> tuple[Path | None, str | None]:
+    if directory is None or not Path(directory).is_dir():
+        return None, "source_directory_missing"
+    matches = sorted(
+        (path for path in Path(directory).glob("*.csv") if "BTC" in path.stem.upper()),
+        key=lambda path: path.name,
+    )
+    if len(matches) != 1:
+        return None, "btc_file_match_count_not_one"
+    return matches[0], None
+
+
+def _first_statistic_bound_fingerprint(
+    bars_file: Path,
+    funding_file: Path,
+) -> str:
+    source_fingerprint = _data_cut_fingerprint(
+        [(f"bars/{bars_file.name}", bars_file), (f"funding/{funding_file.name}", funding_file)]
+    )
+    return _canonical_json_fingerprint(
+        {
+            "source_data_cut_fingerprint": source_fingerprint,
+            "candidate_rule_fingerprint": _FIRST_CANDIDATE_RULE_FINGERPRINT,
+            "null_rule_fingerprint": _FIRST_NULL_RULE_FINGERPRINT,
+            "statistic_rule_fingerprint": _FIRST_STATISTIC_RULE_FINGERPRINT,
+        }
+    )
+
+
+def _definition_reason_codes(registry_entry: dict[str, Any] | None) -> tuple[list[str], dict[str, Any] | None]:
+    if not isinstance(registry_entry, dict):
+        return ["trial_registry_entry_missing"], None
+    declaration = registry_entry.get(FIRST_COMPUTED_STATISTIC_VERSION)
+    if not isinstance(declaration, dict):
+        return ["first_computed_statistic_declaration_missing"], None
+    reasons: list[str] = []
+    if declaration.get("candidate_definition") is None:
+        reasons.append("candidate_definition_missing")
+    elif declaration.get("candidate_definition") != _FIRST_CANDIDATE_DEFINITION:
+        reasons.append("candidate_definition_mismatch")
+    if declaration.get("null_definition") is None:
+        reasons.append("null_definition_missing")
+    elif declaration.get("null_definition") != _FIRST_NULL_DEFINITION:
+        reasons.append("null_definition_mismatch")
+    if declaration.get("statistic_definition") is None:
+        reasons.append("statistic_definition_missing")
+    elif declaration.get("statistic_definition") != _FIRST_STATISTIC_DEFINITION:
+        reasons.append("statistic_definition_mismatch")
+    for field, expected in (
+        ("candidate_rule_fingerprint", _FIRST_CANDIDATE_RULE_FINGERPRINT),
+        ("null_rule_fingerprint", _FIRST_NULL_RULE_FINGERPRINT),
+        ("statistic_rule_fingerprint", _FIRST_STATISTIC_RULE_FINGERPRINT),
+    ):
+        if declaration.get(field) != expected:
+            reasons.append(f"{field}_mismatch")
+    if declaration.get("registered_before_execution") is not True:
+        reasons.append("statistic_packet_not_preregistered")
+    return reasons, declaration
+
+
+def build_first_computed_statistic_v0(
+    *,
+    bars_dir: str | Path | None,
+    funding_dir: str | Path | None,
+    registry_entry: dict[str, Any] | None,
+    split_audit: dict[str, Any] | None,
+    holdout_open_gate: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compute the one authorized Candidate-1 scalar, or fail closed.
+
+    The CSV boundary accepts canonical funding columns ``fundingTime`` /
+    ``fundingRate`` or the local-fixture aliases ``timestamp`` /
+    ``funding_rate``.  Mixing or duplicating either naming convention is
+    ambiguous and blocks.  The receipt exposes no per-slot values.
+    """
+    definition_reasons, declaration = _definition_reason_codes(registry_entry)
+    if definition_reasons:
+        return _first_statistic_blocked(definition_reasons)
+
+    bars_file, bars_error = _matched_btc_csv(bars_dir)
+    funding_file, funding_error = _matched_btc_csv(funding_dir)
+    source_reasons = [reason for reason in (bars_error, funding_error) if reason]
+    if bars_file is None or funding_file is None:
+        return _first_statistic_blocked(source_reasons)
+
+    bound_fingerprint = _first_statistic_bound_fingerprint(bars_file, funding_file)
+    if declaration.get("data_cut_fingerprint") != bound_fingerprint:
+        return _first_statistic_blocked(
+            ["data_cut_fingerprint_mismatch"], data_cut_fingerprint=bound_fingerprint
+        )
+
+    if not isinstance(split_audit, dict) or split_audit.get("leakage_audit_killed") is not False:
+        return _first_statistic_blocked(
+            ["split_audit_not_clean"], data_cut_fingerprint=bound_fingerprint
+        )
+    if (
+        split_audit.get("declared_purge_intervals") != FIRST_COMPUTED_PURGE_BARS
+        or split_audit.get("declared_embargo_intervals") != FIRST_COMPUTED_EMBARGO_BARS
+    ):
+        return _first_statistic_blocked(
+            ["split_purge_embargo_mismatch"], data_cut_fingerprint=bound_fingerprint
+        )
+
+    boundary = split_audit.get("boundary_index")
+    if not isinstance(boundary, int) or boundary <= 0:
+        return _first_statistic_blocked(
+            ["split_boundary_invalid"], data_cut_fingerprint=bound_fingerprint
+        )
+
+    try:
+        with open(bars_file, newline="") as handle:
+            reader = csv.DictReader(handle)
+            fields = reader.fieldnames or []
+            if fields.count("timestamp") != 1 or fields.count("close") != 1:
+                raise ValueError("bars_column_contract_invalid")
+            # Materialize only rows strictly before the holdout boundary.  The
+            # whole-file fingerprint above is structural byte binding; this is
+            # the semantic row reader and must leave holdout rows unopened.
+            bar_rows = []
+            for _ in range(boundary):
+                try:
+                    bar_rows.append(next(reader))
+                except StopIteration as exc:
+                    raise ValueError("split_boundary_invalid") from exc
+        bar_times = [_parse_timestamp(row["timestamp"]) for row in bar_rows]
+        if len(bar_times) < 2 or any(
+            bar_times[index] - bar_times[index - 1] != timedelta(hours=1)
+            for index in range(1, len(bar_times))
+        ):
+            raise ValueError("bars_not_strict_hourly_sequence")
+    except (OSError, KeyError, ValueError, InvalidOperation, OverflowError) as exc:
+        reason = str(exc) if str(exc) in {
+            "bars_column_contract_invalid",
+            "bars_not_strict_hourly_sequence",
+            "bars_close_invalid",
+            "split_boundary_invalid",
+        } else "bars_parse_failure"
+        result = _first_statistic_blocked([reason], data_cut_fingerprint=bound_fingerprint)
+        result["statistic_state"] = "invalid"
+        return result
+
+    # The holdout-open gate is structural only.  Its ``gate_passed`` state is
+    # necessary-but-not-sufficient for a future holdout open and must never be
+    # wired to evaluation authorization.  No protocol artifact authorizes this
+    # first statistic to open the holdout, so the gate is deliberately ignored
+    # here and only the eligible non-holdout partition may be scored.
+    del holdout_open_gate
+    allowed_start = FIRST_COMPUTED_WARMUP_BARS
+    allowed_end = boundary - FIRST_COMPUTED_PURGE_BARS - 1
+    partition_reason = "holdout_remained_sealed_non_holdout_scored"
+    if allowed_start > allowed_end:
+        result = _first_statistic_blocked(
+            ["allowed_scored_partition_empty", partition_reason],
+            data_cut_fingerprint=bound_fingerprint,
+        )
+        result["statistic_state"] = "invalid"
+        return result
+
+    try:
+        closes = {
+            index: Decimal(bar_rows[index]["close"])
+            for index in range(allowed_start, allowed_end + 1)
+        }
+        if any(not value.is_finite() or value <= 0 for value in closes.values()):
+            raise ValueError("bars_close_invalid")
+    except (KeyError, ValueError, InvalidOperation):
+        result = _first_statistic_blocked(
+            ["bars_close_invalid"], data_cut_fingerprint=bound_fingerprint
+        )
+        result["statistic_state"] = "invalid"
+        return result
+
+    try:
+        with open(funding_file, newline="") as handle:
+            reader = csv.DictReader(handle)
+            fields = reader.fieldnames or []
+            canonical_present = "fundingTime" in fields or "fundingRate" in fields
+            alias_present = "timestamp" in fields or "funding_rate" in fields
+            if canonical_present and alias_present:
+                raise ValueError("funding_columns_ambiguous")
+            if canonical_present:
+                if fields.count("fundingTime") != 1 or fields.count("fundingRate") != 1:
+                    raise ValueError("funding_column_contract_invalid")
+                time_column, rate_column = "fundingTime", "fundingRate"
+            elif alias_present:
+                if fields.count("timestamp") != 1 or fields.count("funding_rate") != 1:
+                    raise ValueError("funding_column_contract_invalid")
+                time_column, rate_column = "timestamp", "funding_rate"
+            else:
+                raise ValueError("funding_column_contract_invalid")
+            funding_rows: list[tuple[datetime, Decimal]] = []
+            for row in reader:
+                funding_time = _parse_timestamp(row[time_column])
+                # Stop the semantic reader at the first sealed holdout row.
+                # Its timestamp is used only to detect the boundary; its rate
+                # cell and every subsequent row remain unopened.
+                if funding_time >= bar_times[-1] + timedelta(hours=1):
+                    break
+                rate = Decimal(row[rate_column])
+                if not rate.is_finite():
+                    raise ValueError("funding_rate_invalid")
+                funding_rows.append((funding_time, rate))
+        if any(funding_rows[index][0] <= funding_rows[index - 1][0] for index in range(1, len(funding_rows))):
+            raise ValueError("funding_times_not_strictly_increasing")
+    except (OSError, KeyError, ValueError, InvalidOperation, OverflowError) as exc:
+        known = {
+            "funding_columns_ambiguous",
+            "funding_column_contract_invalid",
+            "funding_rate_invalid",
+            "funding_times_not_strictly_increasing",
+        }
+        reason = str(exc) if str(exc) in known else "funding_parse_failure"
+        result = _first_statistic_blocked([reason], data_cut_fingerprint=bound_fingerprint)
+        result["statistic_state"] = "invalid"
+        return result
+
+    funding_times = [row[0] for row in funding_rows]
+    differences: list[Decimal] = []
+    invalid_slot_count = 0
+    active_slot_index = 0
+    for decision_index, (decision_time, decision_rate) in enumerate(funding_rows):
+        entry_index = bisect.bisect_right(bar_times, decision_time)
+        exit_index = entry_index + FIRST_COMPUTED_HOLD_BARS
+        if (
+            entry_index < allowed_start
+            or exit_index > allowed_end
+            or entry_index >= len(bar_times)
+            or exit_index >= len(bar_times)
+        ):
+            invalid_slot_count += 1
+            continue
+
+        candidate_side = -1 if decision_rate > 0 else 1 if decision_rate < 0 else 0
+        null_side = 0
+        if candidate_side != 0:
+            null_side = 1 if active_slot_index % 2 == 0 else -1
+            active_slot_index += 1
+
+        funding_end = bisect.bisect_right(funding_times, bar_times[exit_index])
+        # Strictly after entry excludes both the decision at t and any funding
+        # row exactly at entry; the upper bound includes funding at exit.
+        funding_start = bisect.bisect_right(funding_times, bar_times[entry_index])
+        interval_funding = sum(
+            (funding_rows[index][1] for index in range(funding_start, funding_end)),
+            Decimal("0"),
+        )
+        price_ratio_delta = closes[exit_index] / closes[entry_index] - Decimal("1")
+        active = Decimal("1") if candidate_side != 0 else Decimal("0")
+        candidate_net = (
+            Decimal(candidate_side) * price_ratio_delta
+            - Decimal(candidate_side) * interval_funding
+            - FIRST_COMPUTED_ROUND_TRIP_COST * active
+        )
+        null_net = (
+            Decimal(null_side) * price_ratio_delta
+            - Decimal(null_side) * interval_funding
+            - FIRST_COMPUTED_ROUND_TRIP_COST * active
+        )
+        differences.append(candidate_net - null_net)
+
+    if not differences:
+        result = _first_statistic_blocked(
+            ["no_scored_slots", partition_reason], data_cut_fingerprint=bound_fingerprint
+        )
+        result["invalid_slot_count"] = invalid_slot_count
+        result["statistic_state"] = "invalid"
+        return result
+
+    statistic_value = sum(differences, Decimal("0")) / Decimal(len(differences))
+    return {
+        "statistic_name": FIRST_COMPUTED_STATISTIC_NAME,
+        "candidate_name": FIRST_COMPUTED_CANDIDATE_NAME,
+        "null_name": FIRST_COMPUTED_NULL_NAME,
+        "scored_slot_count": len(differences),
+        "invalid_slot_count": invalid_slot_count,
+        "statistic_value_T": float(statistic_value),
+        "statistic_state": "computed",
+        "statistic_reason_codes": [partition_reason],
+        "data_cut_fingerprint": bound_fingerprint,
+        "candidate_rule_fingerprint": _FIRST_CANDIDATE_RULE_FINGERPRINT,
+        "null_rule_fingerprint": _FIRST_NULL_RULE_FINGERPRINT,
+    }
+
+
 def build_protocol_computed_validation_slice(
     *,
     bars_dir: str | Path | None,
@@ -1186,6 +1557,7 @@ def build_protocol_computed_validation_slice(
     embargo_intervals: int | None = 1,
     split_boundary_index: int | None = None,
     code_commit_hash: str | None = None,
+    compute_first_statistic: bool = False,
 ) -> dict[str, Any]:
     """Execute the frozen protocol's smallest safe computed check.
 
@@ -1376,6 +1748,14 @@ def build_protocol_computed_validation_slice(
         result["execution_packet_lock"] = execution_packet_lock
     if holdout_open_gate is not None:
         result["holdout_open_gate"] = holdout_open_gate
+    if compute_first_statistic:
+        result[FIRST_COMPUTED_STATISTIC_VERSION] = build_first_computed_statistic_v0(
+            bars_dir=bars_dir,
+            funding_dir=funding_dir,
+            registry_entry=registry_entry,
+            split_audit=split_audit,
+            holdout_open_gate=holdout_open_gate,
+        )
     return result
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"
@@ -20602,6 +20982,14 @@ def build_real_validation_receipt(
         )
     if protocol_computed_validation_slice is not None:
         receipt["protocol_computed_validation"] = protocol_computed_validation_slice
+        statistic_block = protocol_computed_validation_slice.get(
+            FIRST_COMPUTED_STATISTIC_VERSION
+        )
+        if (
+            isinstance(statistic_block, dict)
+            and statistic_block.get("statistic_state") == "computed"
+        ):
+            receipt["forbidden_calculation_status"]["returns_computed"] = True
 
     return receipt
 
@@ -20723,10 +21111,21 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
     missing_calc = _REQUIRED_FORBIDDEN_CALC_KEYS - set(forbidden_calc.keys())
     if missing_calc:
         raise ValueError(f"Missing forbidden_calculation_status keys: {sorted(missing_calc)}")
+    computed_slice = receipt.get("protocol_computed_validation")
+    statistic_block = (
+        computed_slice.get(FIRST_COMPUTED_STATISTIC_VERSION)
+        if isinstance(computed_slice, dict)
+        else None
+    )
+    bounded_statistic_computed = bool(
+        isinstance(statistic_block, dict)
+        and statistic_block.get("statistic_state") == "computed"
+    )
     for key in _REQUIRED_FORBIDDEN_CALC_KEYS:
-        if forbidden_calc[key] is not False:
+        expected = True if key == "returns_computed" and bounded_statistic_computed else False
+        if forbidden_calc[key] is not expected:
             raise ValueError(
-                f"forbidden_calculation_status['{key}'] must be False, got {forbidden_calc[key]!r}"
+                f"forbidden_calculation_status['{key}'] must be {expected}, got {forbidden_calc[key]!r}"
             )
 
     output_path = receipt.get("output_path")
@@ -20737,7 +21136,6 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
 
     _assert_no_prod_paths_in_receipt(receipt)
 
-    computed_slice = receipt.get("protocol_computed_validation")
     if computed_slice is not None:
         if not isinstance(computed_slice, dict):
             raise ValueError("protocol_computed_validation must be a dict")
@@ -20749,6 +21147,29 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
         for name in ("immutable_data_cut", "trial_registry", "deterministic_split", "kill_criteria"):
             if not isinstance(computed_slice.get(name), dict):
                 raise ValueError(f"computed validation missing {name}")
+        if statistic_block is not None:
+            if not isinstance(statistic_block, dict):
+                raise ValueError("first_computed_statistic_v0 must be a dict")
+            if set(statistic_block) != _FIRST_STATISTIC_RECEIPT_KEYS:
+                raise ValueError("first_computed_statistic_v0 has unexpected keys")
+            if statistic_block.get("statistic_state") not in {"computed", "blocked", "invalid"}:
+                raise ValueError("first_computed_statistic_v0 has invalid state")
+            if statistic_block.get("candidate_name") != FIRST_COMPUTED_CANDIDATE_NAME:
+                raise ValueError("first_computed_statistic_v0 candidate is not authorized")
+            if statistic_block.get("null_name") != FIRST_COMPUTED_NULL_NAME:
+                raise ValueError("first_computed_statistic_v0 null is not authorized")
+            if statistic_block.get("statistic_name") != FIRST_COMPUTED_STATISTIC_NAME:
+                raise ValueError("first_computed_statistic_v0 statistic is not authorized")
+            value = statistic_block.get("statistic_value_T")
+            if bounded_statistic_computed:
+                if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+                    raise ValueError("computed statistic_value_T must be a finite number")
+            elif value is not None:
+                raise ValueError("blocked/invalid statistic_value_T must be null")
+            for count_name in ("scored_slot_count", "invalid_slot_count"):
+                count = statistic_block.get(count_name)
+                if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                    raise ValueError(f"{count_name} must be a non-negative integer")
 
     # Recursive scan for forbidden calculation keys at any nesting level.
     _assert_no_forbidden_calculation_keys(receipt)
@@ -20796,6 +21217,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--protocol-computed-validation",
         action="store_true",
         help="Run the frozen-protocol provenance/readiness slice; remains EDGE_UNPROVEN.",
+    )
+    parser.add_argument(
+        "--first-computed-statistic",
+        action="store_true",
+        help=(
+            "Compute only funding_sign_one_interval_carry_v1 versus its frozen "
+            "alternating null. Requires --protocol-computed-validation and an "
+            "exact preregistered first_computed_statistic_v0 packet."
+        ),
     )
     parser.add_argument("--expected-data-cut-fingerprint", default=None)
     parser.add_argument("--trial-registry-path", default=None)
@@ -21023,6 +21453,9 @@ def main(argv: list[str] | None = None) -> int:
 
     cost_cases = build_cost_case_matrix()
 
+    if args.first_computed_statistic and not args.protocol_computed_validation:
+        parser.error("--first-computed-statistic requires --protocol-computed-validation")
+
     if args.protocol_computed_validation:
         computed_slice = build_protocol_computed_validation_slice(
             bars_dir=args.bars_dir,
@@ -21033,6 +21466,7 @@ def main(argv: list[str] | None = None) -> int:
             embargo_intervals=args.embargo_intervals,
             split_boundary_index=args.split_boundary_index,
             code_commit_hash=args.code_commit_sha,
+            compute_first_statistic=args.first_computed_statistic,
         )
         receipt = build_real_validation_receipt(
             input_manifest_fingerprint=args.input_manifest_fingerprint,
