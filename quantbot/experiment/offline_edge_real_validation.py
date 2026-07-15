@@ -3,9 +3,8 @@
 Scope boundary (do not violate) — see
 docs/status/QNTY_OFFLINE_EDGE_VALIDATION_REAL_VALIDATION_EXECUTION_PLAN.md:
 
-This module builds the *schema and first descriptive calculation scaffold*
-for the real offline validation receipt. It only computes close-to-close gross
-observational metadata. It does **not**:
+This module builds the *schema and metadata-only scaffold* for the real
+offline validation receipt. It does **not**:
 
 - compute strategy, net, cost-adjusted, or funding-adjusted returns
 - compute PnL
@@ -180,7 +179,12 @@ FORBIDDEN_CALCULATION_KEYS = frozenset(
         "return",
         "returns",
         "gross_observational_return",
+        "gross_observational_returns",
+        "cost_case_observational_drag",
         "gross_return_value",
+        "min_gross_return",
+        "max_gross_return",
+        "mean_gross_return",
         "net_return_value",
         "cost_adjusted_return",
         "funding_adjusted_return",
@@ -3015,14 +3019,15 @@ def _non_negative_count(value: Any, field: str) -> int:
 def materialize_funding_to_bars_alignment_diagnostics(
     *,
     row_materialization: dict,
-    gross_observational_returns: dict,
+    gross_observational_returns: dict | None = None,
     funding_observational_adjustments: dict,
     outlier_threshold_abs_rate: float = 0.01,
 ) -> dict:
     """Pair existing bars/funding receipt summaries for diagnostics only.
 
-    This helper performs no I/O and derives no adjusted values. It only joins
-    already-materialized row, observation, split, and funding-rate metadata.
+    This helper performs no I/O and derives no adjusted values. The active
+    receipt path omits gross observations entirely; the optional argument only
+    supports legacy non-active helper fixtures.
     """
     if (
         not isinstance(outlier_threshold_abs_rate, (int, float))
@@ -3051,10 +3056,14 @@ def materialize_funding_to_bars_alignment_diagnostics(
     funding_rows = _files_by_symbol(
         role_files.get("funding"), "_funding.csv", "funding row materialization"
     )
-    gross_files = _files_by_symbol(
-        gross_observational_returns.get("files"),
-        "_8h_ohlcv.csv",
-        "gross observation",
+    gross_files = (
+        _files_by_symbol(
+            gross_observational_returns.get("files"),
+            "_8h_ohlcv.csv",
+            "gross observation",
+        )
+        if gross_observational_returns is not None
+        else None
     )
     funding_files = _files_by_symbol(
         funding_observational_adjustments.get("files"),
@@ -3063,11 +3072,13 @@ def materialize_funding_to_bars_alignment_diagnostics(
     )
 
     expected = set(bars_rows)
-    for label, indexed in (
+    indexed_sections = [
         ("funding row materialization", funding_rows),
-        ("gross observation", gross_files),
         ("funding observation", funding_files),
-    ):
+    ]
+    if gross_files is not None:
+        indexed_sections.append(("gross observation", gross_files))
+    for label, indexed in indexed_sections:
         missing = sorted(expected - set(indexed))
         extra = sorted(set(indexed) - expected)
         if missing or extra:
@@ -3079,7 +3090,7 @@ def materialize_funding_to_bars_alignment_diagnostics(
     for symbol in sorted(expected):
         bars_row = bars_rows[symbol]
         funding_row = funding_rows[symbol]
-        gross = gross_files[symbol]
+        gross = gross_files[symbol] if gross_files is not None else None
         funding = funding_files[symbol]
         bars_unassigned = _non_negative_count(
             bars_row.get("unassigned_rows"), "bars_unassigned_rows"
@@ -3102,24 +3113,23 @@ def materialize_funding_to_bars_alignment_diagnostics(
 
         bars_splits = split_index(bars_row, "per_split_counts")
         funding_row_splits = split_index(funding_row, "per_split_counts")
-        gross_splits = split_index(gross, "per_split_windows")
+        gross_splits = (
+            split_index(gross, "per_split_windows") if gross is not None else None
+        )
         funding_splits = split_index(funding, "per_split_windows")
-        if not (
-            set(bars_splits)
-            == set(funding_row_splits)
-            == set(gross_splits)
-            == set(funding_splits)
-        ):
+        split_sets = [set(bars_splits), set(funding_row_splits), set(funding_splits)]
+        if gross_splits is not None:
+            split_sets.append(set(gross_splits))
+        if any(split_set != split_sets[0] for split_set in split_sets[1:]):
             raise ValueError(f"Split mismatch for symbol {symbol}")
 
         split_diagnostics = []
         for split_id in bars_splits:
             bars_counts = bars_splits[split_id]
             funding_counts = funding_row_splits[split_id]
-            gross_windows = gross_splits[split_id]
+            gross_windows = gross_splits[split_id] if gross_splits is not None else None
             funding_windows = funding_splits[split_id]
-            split_diagnostics.append(
-                {
+            split_diagnostic = {
                     "split_id": split_id,
                     "bars_train_rows": _non_negative_count(
                         bars_counts.get("train_rows"), "bars_train_rows"
@@ -3134,16 +3144,6 @@ def materialize_funding_to_bars_alignment_diagnostics(
                         funding_counts.get("validation_rows"),
                         "funding_validation_rows",
                     ),
-                    "gross_train_observations": _non_negative_count(
-                        gross_windows.get("train_window", {}).get("observation_count"),
-                        "gross_train_observations",
-                    ),
-                    "gross_validation_observations": _non_negative_count(
-                        gross_windows.get("validation_window", {}).get(
-                            "observation_count"
-                        ),
-                        "gross_validation_observations",
-                    ),
                     "funding_train_observations": _non_negative_count(
                         funding_windows.get("train_window", {}).get(
                             "observation_count"
@@ -3157,7 +3157,20 @@ def materialize_funding_to_bars_alignment_diagnostics(
                         "funding_validation_observations",
                     ),
                 }
-            )
+            if gross_windows is not None:
+                split_diagnostic.update(
+                    {
+                        "gross_train_observations": _non_negative_count(
+                            gross_windows.get("train_window", {}).get("observation_count"),
+                            "gross_train_observations",
+                        ),
+                        "gross_validation_observations": _non_negative_count(
+                            gross_windows.get("validation_window", {}).get("observation_count"),
+                            "gross_validation_observations",
+                        ),
+                    }
+                )
+            split_diagnostics.append(split_diagnostic)
 
         minimum = funding.get("min_funding_rate")
         maximum = funding.get("max_funding_rate")
@@ -3172,8 +3185,7 @@ def materialize_funding_to_bars_alignment_diagnostics(
             value is not None and abs(float(value)) > threshold
             for value in (minimum, maximum)
         )
-        symbols.append(
-            {
+        symbol_diagnostic = {
                 "symbol": symbol,
                 "bars_file": bars_row["filename"],
                 "funding_file": funding_row["filename"],
@@ -3182,9 +3194,6 @@ def materialize_funding_to_bars_alignment_diagnostics(
                 ),
                 "funding_total_rows": _non_negative_count(
                     funding_row.get("total_rows"), "funding_total_rows"
-                ),
-                "gross_observation_count": _non_negative_count(
-                    gross.get("observation_count"), "gross_observation_count"
                 ),
                 "funding_observation_count": _non_negative_count(
                     funding.get("observation_count"), "funding_observation_count"
@@ -3206,7 +3215,11 @@ def materialize_funding_to_bars_alignment_diagnostics(
                 "splits": split_diagnostics,
                 "calculation_status": "FUNDING_TO_BARS_ALIGNMENT_DIAGNOSTIC_ONLY",
             }
-        )
+        if gross is not None:
+            symbol_diagnostic["gross_observation_count"] = _non_negative_count(
+                gross.get("observation_count"), "gross_observation_count"
+            )
+        symbols.append(symbol_diagnostic)
 
     complete_count = sum(item["coverage_status"] == "COMPLETE" for item in symbols)
     return {
@@ -18927,8 +18940,8 @@ def _default_rationale(output_status: str) -> str:
     if output_status == BLOCKED_BY_VALIDATION_IMPLEMENTATION:
         return (
             "BLOCKED_BY_VALIDATION_IMPLEMENTATION: this is a schema/skeleton-only "
-            "receipt. Gross observational close-to-close metadata may be present, "
-            "but no strategy returns, PnL, Sharpe, or paper-engine calculation has "
+            "receipt. No return-like market observations, strategy returns, PnL, "
+            "Sharpe, or paper-engine calculation has "
             "been implemented. No edge/profit/live-readiness claim is made."
         )
     return f"{output_status}: skeleton receipt, no calculation implemented."
@@ -18945,8 +18958,6 @@ def build_real_validation_receipt(
     rationale: str | None = None,
     input_inventory: dict[str, Any] | None = None,
     row_materialization: dict | None = None,
-    gross_observational_returns: dict | None = None,
-    cost_case_observational_drag: dict | None = None,
     funding_observational_adjustments: dict | None = None,
     funding_to_bars_alignment_diagnostics: dict | None = None,
     funding_to_bars_temporal_joinability_diagnostics: dict | None = None,
@@ -19032,7 +19043,7 @@ def build_real_validation_receipt(
         "split_definitions": effective_split_definitions,
         "cost_cases": cost_cases,
         "required_outputs_present": {
-            "gross_return": False,
+            "market_observations": False,
             "net_return_after_costs": False,
             "max_drawdown": False,
             "sharpe_or_risk_metric": False,
@@ -19060,10 +19071,6 @@ def build_real_validation_receipt(
         receipt["input_inventory"] = input_inventory
     if row_materialization is not None:
         receipt["row_materialization"] = row_materialization
-    if gross_observational_returns is not None:
-        receipt["gross_observational_returns"] = gross_observational_returns
-    if cost_case_observational_drag is not None:
-        receipt["cost_case_observational_drag"] = cost_case_observational_drag
     if funding_observational_adjustments is not None:
         receipt["funding_observational_adjustments"] = funding_observational_adjustments
     if funding_to_bars_alignment_diagnostics is not None:
@@ -19290,17 +19297,6 @@ _REQUIRED_FORBIDDEN_CALC_KEYS = frozenset(
 )
 
 
-_GROSS_OBSERVATIONAL_RETURNS_EXEMPT_PATH = "$.gross_observational_returns"
-
-
-def _is_under_gross_observational_returns_exempt_path(path: str) -> bool:
-    return (
-        path == _GROSS_OBSERVATIONAL_RETURNS_EXEMPT_PATH
-        or path.startswith(_GROSS_OBSERVATIONAL_RETURNS_EXEMPT_PATH + ".")
-        or path.startswith(_GROSS_OBSERVATIONAL_RETURNS_EXEMPT_PATH + "[")
-    )
-
-
 def _assert_no_forbidden_calculation_keys(value: Any, path: str = "$") -> None:
     """Recursively scan *value* for any key matching a forbidden calculation pattern.
 
@@ -19313,18 +19309,11 @@ def _assert_no_forbidden_calculation_keys(value: Any, path: str = "$") -> None:
     name (e.g. ``max_drawdown``, ``fill_policy``, ``equity_curve_policy``) are
     therefore accepted by design.
 
-    The sole exemption is ``gross_observational_return`` nested under the
-    ``$.gross_observational_returns`` section.
-
     Raises ``ValueError`` if any forbidden key is found at any nesting level.
     """
     if isinstance(value, dict):
         for key, v in value.items():
-            gross_observation_key_allowed = (
-                key == "gross_observational_return"
-                and _is_under_gross_observational_returns_exempt_path(path)
-            )
-            if key in FORBIDDEN_CALCULATION_KEYS and not gross_observation_key_allowed:
+            if key in FORBIDDEN_CALCULATION_KEYS:
                 raise ValueError(
                     f"Forbidden calculation key found at {path}.{key!r}"
                 )
@@ -19672,14 +19661,6 @@ def main(argv: list[str] | None = None) -> int:
                 inventory=inventory,
                 split_definitions=split_definitions,
             )
-            gross_observational_returns = materialize_gross_observational_returns(
-                inventory=inventory,
-                split_definitions=split_definitions,
-            )
-            cost_case_observational_drag = materialize_cost_case_observational_drag(
-                gross_observational_returns=gross_observational_returns,
-                cost_cases=cost_cases,
-            )
             funding_observational_adjustments = (
                 materialize_funding_observational_adjustments(
                     inventory=inventory,
@@ -19689,7 +19670,6 @@ def main(argv: list[str] | None = None) -> int:
             funding_to_bars_alignment_diagnostics = (
                 materialize_funding_to_bars_alignment_diagnostics(
                     row_materialization=row_materialization,
-                    gross_observational_returns=gross_observational_returns,
                     funding_observational_adjustments=(
                         funding_observational_adjustments
                     ),
@@ -20334,8 +20314,6 @@ def main(argv: list[str] | None = None) -> int:
             cost_cases=cost_cases,
             input_inventory=inventory,
             row_materialization=row_materialization,
-            gross_observational_returns=gross_observational_returns,
-            cost_case_observational_drag=cost_case_observational_drag,
             funding_observational_adjustments=funding_observational_adjustments,
             funding_to_bars_alignment_diagnostics=(
                 funding_to_bars_alignment_diagnostics
