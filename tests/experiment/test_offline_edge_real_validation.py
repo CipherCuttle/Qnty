@@ -18180,6 +18180,64 @@ class TestInferentialUncertaintySchemaLockAB0:
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
 
 
+class TestInferentialUncertaintyMetadataRowsV0AB1:
+    """Lane AB1: exact AB0-schema metadata projections with no values."""
+
+    def _build(self, tmp_path):
+        v1, w0, w1, x0, x1, y0, y1, z0, z1, aa0 = TestDescriptiveCountValuesV0AA1()._parts(tmp_path)
+        aa1 = real_validation._build_descriptive_count_values_v0_diagnostics(
+            descriptive_statistical_value_policy_lock_aa0_diagnostics=aa0, descriptive_statistical_metadata_rows_v0_diagnostics=z1,
+            descriptive_statistical_value_schema_lock_z0_diagnostics=z0, statistical_value_readiness_rows_v0_diagnostics=y1,
+            statistical_value_contract_lock_y0_diagnostics=y0, statistical_metadata_rows_v0_diagnostics=x1,
+            statistical_output_schema_lock_diagnostics=x0, null_reference_comparison_rows_v0_diagnostics=w1,
+            null_reference_comparison_schema_lock_diagnostics=w0, economic_accounting_rows_v0_diagnostics=v1,
+        )
+        ab0 = TestInferentialUncertaintySchemaLockAB0()._build(tmp_path)
+        return real_validation._build_inferential_uncertainty_metadata_rows_v0_diagnostics(
+            inferential_uncertainty_schema_lock_ab0_diagnostics=ab0,
+            descriptive_count_values_v0_diagnostics=aa1,
+        )
+
+    def test_happy_path_exact_schema_and_zero_values(self, tmp_path):
+        result = self._build(tmp_path)
+        rows = result["inferential_uncertainty_rows"]
+        assert result["inferential_uncertainty_metadata_rows_v0_gate"]["gate_passed"] is True
+        assert len(rows) == result["source_descriptive_count_value_row_count"] == 3
+        assert all(set(row) == set(real_validation._ALLOWED_INFERENTIAL_UNCERTAINTY_ROW_KEYS_AB0) for row in rows)
+        assert all(all(row[key] == value for key, value in real_validation._INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_FIXED_ROW_CONSTANTS.items()) for row in rows)
+        assert all(row["inferential_value_present"] is False and row["inferential_value"] is None and row["inferential_metadata_only"] is True for row in rows)
+        assert result["inferential_values_emitted"] is False and result["inferential_value_count"] == 0
+        assert result["uncertainty_values_emitted"] is False and result["uncertainty_value_count"] == 0
+        assert result["statistical_values"] == [] and result["statistical_values_emitted"] is False and result["statistical_value_count"] == 0
+
+    @pytest.mark.parametrize("mutation,status", [
+        (lambda r: r.__setitem__("inferential_uncertainty_schema_lock_ab0_gate_passed", False), real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_FOR_AB1_GATE),
+        (lambda r: r.__setitem__("descriptive_count_values_v0_gate_passed", False), real_validation.BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_FOR_AB1_GATE),
+        (lambda r: r["inferential_uncertainty_rows"][0].__setitem__("extra", True), real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SCHEMA),
+        (lambda r: r["inferential_uncertainty_rows"][0].__setitem__("inferential_variant", "mutated"), real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_METADATA_ROW_CONSTANTS),
+        (lambda r: r["inferential_uncertainty_rows"][0].__setitem__("inferential_value", 0), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_INFERENTIAL_VALUE_AB1),
+        (lambda r: r.__setitem__("uncertainty_values_emitted", True), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_UNCERTAINTY_VALUE_AB1),
+        (lambda r: r.__setitem__("statistical_values", [1]), real_validation.BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUE_AB1),
+        (lambda r: r.__setitem__("candidate_comparison_values_emitted", True), real_validation.BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_CANDIDATE_OUTPUT_AB1),
+        (lambda r: r.__setitem__("final_offline_verdict_remains", "MUTATED"), real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_FINAL_VERDICT_ADVANCEMENT),
+    ])
+    def test_mutations_fail_closed(self, tmp_path, mutation, status):
+        result = self._build(tmp_path); mutation(result)
+        assert real_validation._derive_inferential_uncertainty_metadata_rows_v0_gate(result)["gate_status"] == status
+
+    def test_duplicate_order_count_cap_and_forbidden_keys_fail_closed(self, tmp_path):
+        result = self._build(tmp_path)
+        result["inferential_uncertainty_rows"].append(result["inferential_uncertainty_rows"][0].copy())
+        result["inferential_uncertainty_row_count"] += 1
+        assert real_validation._derive_inferential_uncertainty_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_DUPLICATE_INFERENTIAL_UNCERTAINTY_METADATA_ROW_IDENTITY
+        result = self._build(tmp_path); result["inferential_uncertainty_rows"].reverse()
+        assert real_validation._derive_inferential_uncertainty_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_ORDERING_MUTATION
+        result = self._build(tmp_path); result["inferential_uncertainty_row_count"] = 2
+        assert real_validation._derive_inferential_uncertainty_metadata_rows_v0_gate(result)["gate_status"] == real_validation.BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SOURCE_COUNT_MISMATCH
+        forbidden = {"p_value", "confidence_interval", "score", "metric", "performance", "pnl", "profit", "edge", "return", "returns"}
+        assert not (set(_all_dict_keys(result)) & forbidden)
+
+
 class TestDescriptiveStatisticalMetadataRowsV0Z1:
     """Lane Z1: exact-schema descriptive metadata rows; no values are emitted."""
 
