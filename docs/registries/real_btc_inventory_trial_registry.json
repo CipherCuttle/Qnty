@@ -1,0 +1,41 @@
+[
+  {
+    "candidate_family": "FROZEN_SINGLE_CANDIDATE_FAMILY_V1",
+    "null_family": "FROZEN_SINGLE_NULL_FAMILY_V1",
+    "data_cut_fingerprint": "36e9ce5f97f5b24ad4487fa27d7e0836f726333418a4c625b0efb4c2c8788380",
+    "append_only": true,
+    "registered_before_execution": true,
+    "first_computed_statistic_v0": {
+      "candidate_definition": {
+        "candidate_name": "funding_sign_one_interval_carry_v1",
+        "side_rule": "positive_short_negative_long_zero_flat",
+        "entry_rule": "first_hourly_close_strictly_after_funding_time",
+        "exit_rule": "close_exactly_8_hourly_bars_after_entry",
+        "gross_price_component_rule": "side_times_exit_close_over_entry_close_minus_one",
+        "funding_component_rule": "negative_side_times_sum_after_entry_through_exit",
+        "fixed_round_trip_cost": "0.0022_active_only"
+      },
+      "null_definition": {
+        "null_name": "alternating_active_slot_side_v1",
+        "side_rule": "active_slots_alternate_positive_one_negative_one_starting_positive_one",
+        "flat_rule": "candidate_flat_slots_remain_flat",
+        "slot_rule": "identical_entry_exit_sizing_costs_and_funding_accounting"
+      },
+      "statistic_definition": {
+        "statistic_name": "mean_candidate_net_minus_null_net_v1",
+        "rule": "arithmetic_mean_candidate_net_minus_null_net",
+        "universe": "BTC_only_one_bars_file_one_funding_file",
+        "warmup_hourly_bars": 90,
+        "purge_hourly_bars": 8,
+        "embargo_hourly_bars": 90,
+        "hold_hourly_bars": 8,
+        "partition_rule": "entry_and_exit_wholly_inside_selected_allowed_partition"
+      },
+      "candidate_rule_fingerprint": "098418fce70dba933950ac347f38274464d67cda70e4b2878128e5025c8049fe",
+      "null_rule_fingerprint": "940db1b075f7a6f9ecb1a5b288fb63878abbdcbb361f691f3173a663423a2bfa",
+      "statistic_rule_fingerprint": "776b48aa94c1168faca1833e7f568351b1ba711c9e82d195aec9f5ec3364df88",
+      "data_cut_fingerprint": "0177a023f504129136fdecf6f957fe5bd2bdd5ea65f76d2eec7caac922927572",
+      "registered_before_execution": true
+    }
+  }
+]
