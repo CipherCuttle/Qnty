@@ -139,6 +139,8 @@ __all__ = [
     "_build_descriptive_count_values_v0_diagnostics",
     "_build_inferential_uncertainty_schema_lock_ab0_diagnostics",
     "_derive_inferential_uncertainty_schema_lock_ab0_gate",
+    "_build_inferential_uncertainty_metadata_rows_v0_diagnostics",
+    "_derive_inferential_uncertainty_metadata_rows_v0_gate",
     "_derive_descriptive_count_values_v0_gate",
     "_build_final_offline_edge_verdict_logic_diagnostics",
     "_derive_strategy_rule_contract_packet_gate",
@@ -1652,6 +1654,62 @@ _ALLOWED_INFERENTIAL_UNCERTAINTY_VALUE_KIND_NAMES_AB0 = ("not_computed",)
 _INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE_FIELDS = _DESCRIPTIVE_COUNT_VALUES_V0_UPSTREAM_GATE_FIELDS
 _INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_OUTPUT_FIELDS = _DESCRIPTIVE_COUNT_VALUES_V0_OUTPUT_FIELDS
 _INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_AUTHORIZATION_FIELDS = _DESCRIPTIVE_COUNT_VALUES_V0_AUTHORIZATION_FIELDS
+
+# === Lane AB1: metadata-only inferential and uncertainty rows ===
+INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_VERSION = "inferential-uncertainty-metadata-rows-v0-0.1"
+INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_SCOPE = "METADATA_ONLY_INFERENTIAL_UNCERTAINTY_ROWS_NO_VALUES_EMITTED"
+INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_DECLARED_ARTIFACT_ONLY = "INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_DECLARED_ARTIFACT_ONLY"
+INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_SCHEMA_VERSION = "inferential-uncertainty-metadata-rows-v0-0.1"
+INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_SCHEMA_KIND = "inferential_uncertainty_metadata_row_v0"
+INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_MAX_ROWS = 100
+BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_FOR_AB1_GATE = "BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_FOR_AB1_GATE"
+BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_FOR_AB1_GATE = "BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_FOR_AB1_GATE"
+BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_UPSTREAM_GATE = "BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_UPSTREAM_GATE"
+BLOCKED_BY_INCOMPLETE_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_EVIDENCE = "BLOCKED_BY_INCOMPLETE_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_EVIDENCE"
+BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SCHEMA = "BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SCHEMA"
+BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_METADATA_ROW_CONSTANTS = "BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_METADATA_ROW_CONSTANTS"
+BLOCKED_BY_UNEXPECTED_EMITTED_INFERENTIAL_VALUE_AB1 = "BLOCKED_BY_UNEXPECTED_EMITTED_INFERENTIAL_VALUE_AB1"
+BLOCKED_BY_UNEXPECTED_EMITTED_UNCERTAINTY_VALUE_AB1 = "BLOCKED_BY_UNEXPECTED_EMITTED_UNCERTAINTY_VALUE_AB1"
+BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUE_AB1 = "BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUE_AB1"
+BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_CANDIDATE_OUTPUT_AB1 = "BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_CANDIDATE_OUTPUT_AB1"
+BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_DOWNSTREAM_OUTPUT_AB1 = "BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_DOWNSTREAM_OUTPUT_AB1"
+BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_DOWNSTREAM_AUTHORIZATION_AB1 = "BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_DOWNSTREAM_AUTHORIZATION_AB1"
+BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_FINAL_VERDICT_ADVANCEMENT = "BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_FINAL_VERDICT_ADVANCEMENT"
+BLOCKED_BY_DUPLICATE_INFERENTIAL_UNCERTAINTY_METADATA_ROW_IDENTITY = "BLOCKED_BY_DUPLICATE_INFERENTIAL_UNCERTAINTY_METADATA_ROW_IDENTITY"
+BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_ORDERING_MUTATION = "BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_ORDERING_MUTATION"
+BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SOURCE_COUNT_MISMATCH = "BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SOURCE_COUNT_MISMATCH"
+BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SOURCE_PROJECTION_MISMATCH = "BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SOURCE_PROJECTION_MISMATCH"
+BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_CAP_EXCEEDED = "BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_CAP_EXCEEDED"
+_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_FIXED_ROW_CONSTANTS = {
+    "schema_version": INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_SCHEMA_VERSION,
+    "schema_kind": INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_SCHEMA_KIND,
+    "inferential_family": "neutral_inferential_uncertainty_metadata_v0",
+    "inferential_variant": "noop_no_inferential_or_uncertainty_value",
+    "inferential_revision": "ab1-0.1",
+    "inferential_entry_name": "metadata_only_inferential_uncertainty_artifact",
+    "inferential_entry_code": "NOOP_INFERENTIAL_UNCERTAINTY_METADATA_ONLY",
+    "inferential_basis_name": "schema_locked_descriptive_count_row_projection",
+    "inferential_basis_code": "DESCRIPTIVE_COUNT_METADATA_ONLY",
+    "inferential_unit": "unitless",
+    "inferential_value_kind": "not_computed",
+}
+_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_UPSTREAM_GATE_FIELDS = _INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_UPSTREAM_GATE_FIELDS
+_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_OUTPUT_FIELDS = _INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_OUTPUT_FIELDS
+_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_AUTHORIZATION_FIELDS = _INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_AUTHORIZATION_FIELDS
+_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_REQUIRED_GATE_FIELDS = (
+    "inferential_uncertainty_schema_lock_ab0_gate_passed",
+    "descriptive_count_values_v0_gate_passed",
+    "descriptive_statistical_value_policy_lock_aa0_gate_passed",
+    "descriptive_statistical_metadata_rows_v0_gate_passed",
+    "descriptive_statistical_value_schema_lock_z0_gate_passed",
+    "statistical_value_readiness_rows_v0_gate_passed",
+    "statistical_value_contract_lock_gate_passed",
+    "statistical_metadata_rows_v0_gate_passed",
+    "statistical_output_schema_lock_gate_passed",
+    "null_reference_comparison_rows_v0_gate_passed",
+    "null_reference_comparison_schema_lock_gate_passed",
+    "economic_accounting_rows_v0_gate_passed",
+) + _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_UPSTREAM_GATE_FIELDS
 
 # Deterministic in-code fixture rows proving the funding cashflow sign
 # convention from funding_adjustment_policy_contract_diagnostics. Inputs and
@@ -18640,6 +18698,158 @@ def _derive_inferential_uncertainty_schema_lock_ab0_gate(diagnostics: dict[str, 
     return result
 
 
+def _project_inferential_uncertainty_metadata_rows_v0(
+    source_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Apply AB1's sole permitted projection from AA1 source rows."""
+    return [{
+        **_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_FIXED_ROW_CONSTANTS,
+        "run_id": source.get("run_id"), "inferential_sequence_id": sequence,
+        "source_descriptive_sequence_id": source.get("descriptive_sequence_id"),
+        "source_readiness_sequence_id": source.get("source_readiness_sequence_id"),
+        "source_statistical_sequence_id": source.get("source_statistical_sequence_id"),
+        "source_comparison_sequence_id": source.get("source_comparison_sequence_id"),
+        "source_accounting_sequence_id": source.get("source_accounting_sequence_id"),
+        "source_event_sequence_id": source.get("source_event_sequence_id"),
+        "source_rule_row_sequence_id": source.get("source_rule_row_sequence_id"),
+        "symbol": source.get("symbol"), "split_id": source.get("split_id"),
+        "split_partition": source.get("split_partition"),
+        "inferential_time_utc": source.get("descriptive_time_utc"),
+        "source_descriptive_time_utc": source.get("descriptive_time_utc"),
+        "source_readiness_time_utc": source.get("source_readiness_time_utc"),
+        "source_statistical_time_utc": source.get("source_statistical_time_utc"),
+        "source_comparison_time_utc": source.get("source_comparison_time_utc"),
+        "source_accounting_time_utc": source.get("source_accounting_time_utc"),
+        "source_event_time_utc": source.get("source_event_time_utc"),
+        "inferential_value_present": False, "inferential_value": None,
+        "inferential_metadata_only": True,
+    } for sequence, source in enumerate(source_rows, start=1)]
+
+
+def _build_inferential_uncertainty_metadata_rows_v0_diagnostics(
+    *, inferential_uncertainty_schema_lock_ab0_diagnostics: dict[str, Any],
+    descriptive_count_values_v0_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    """Project AA1 descriptive-count rows into AB0's locked metadata schema."""
+    def passed(section: dict[str, Any], name: str) -> bool:
+        gate = section.get(name)
+        return isinstance(gate, dict) and gate.get("gate_passed") is True
+
+    source_rows = descriptive_count_values_v0_diagnostics.get("descriptive_value_rows")
+    source_rows = source_rows if isinstance(source_rows, list) else []
+    source_rows = sorted(source_rows, key=lambda row: (
+        row.get("symbol"), row.get("split_id"), row.get("split_partition"),
+        row.get("descriptive_time_utc"), row.get("descriptive_sequence_id"),
+    ) if isinstance(row, dict) else ("", "", "", "", -1))
+    upstream_fields = _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_UPSTREAM_GATE_FIELDS
+    upstream = {field: inferential_uncertainty_schema_lock_ab0_diagnostics.get(field) is True for field in upstream_fields}
+    gates_passed = (
+        passed(inferential_uncertainty_schema_lock_ab0_diagnostics, "inferential_uncertainty_schema_lock_ab0_gate")
+        and passed(descriptive_count_values_v0_diagnostics, "descriptive_count_values_v0_gate")
+        and all(upstream.values())
+    )
+    rows: list[dict[str, Any]] = []
+    if gates_passed and len(source_rows) <= INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_MAX_ROWS and all(isinstance(row, dict) for row in source_rows):
+        rows = _project_inferential_uncertainty_metadata_rows_v0(source_rows)
+    diagnostics: dict[str, Any] = {
+        "diagnostic_kind": "inferential_uncertainty_metadata_rows_v0",
+        "inferential_uncertainty_metadata_rows_v0_version": INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_VERSION,
+        "inferential_uncertainty_metadata_rows_v0_scope": INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_SCOPE,
+        "inferential_uncertainty_metadata_rows_v0_status": INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_DECLARED_ARTIFACT_ONLY,
+        "inferential_uncertainty_schema_lock_ab0_gate_required": True,
+        "inferential_uncertainty_schema_lock_ab0_gate_passed": passed(inferential_uncertainty_schema_lock_ab0_diagnostics, "inferential_uncertainty_schema_lock_ab0_gate"),
+        "descriptive_count_values_v0_gate_required": True,
+        "descriptive_count_values_v0_gate_passed": passed(descriptive_count_values_v0_diagnostics, "descriptive_count_values_v0_gate"),
+        **{field.replace("_passed", "_required"): True for field in _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_REQUIRED_GATE_FIELDS},
+        **{
+            field: (
+                passed(inferential_uncertainty_schema_lock_ab0_diagnostics, "inferential_uncertainty_schema_lock_ab0_gate")
+                if field == "inferential_uncertainty_schema_lock_ab0_gate_passed"
+                else passed(descriptive_count_values_v0_diagnostics, "descriptive_count_values_v0_gate")
+                if field == "descriptive_count_values_v0_gate_passed"
+                else inferential_uncertainty_schema_lock_ab0_diagnostics.get(field) is True
+            )
+            for field in _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_REQUIRED_GATE_FIELDS
+        },
+        "source_descriptive_count_value_row_count": len(source_rows),
+        "source_descriptive_count_value_rows": source_rows,
+        "inferential_uncertainty_rows": rows, "inferential_uncertainty_rows_emitted": bool(rows),
+        "inferential_uncertainty_row_count": len(rows), "inferential_values_emitted": False,
+        "inferential_value_count": 0, "uncertainty_values_emitted": False, "uncertainty_value_count": 0,
+        "statistical_values": [], "statistical_values_emitted": False, "statistical_value_count": 0,
+        **{field: False for field in _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_OUTPUT_FIELDS if field != "statistical_values_emitted"},
+        **{field: False for field in _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_AUTHORIZATION_FIELDS},
+        "downstream_unlocks": [], "final_offline_verdict_remains": BLOCKED_BY_VALIDATION_IMPLEMENTATION,
+    }
+    diagnostics["inferential_uncertainty_metadata_rows_v0_gate"] = _derive_inferential_uncertainty_metadata_rows_v0_gate(diagnostics)
+    return diagnostics
+
+
+def _derive_inferential_uncertainty_metadata_rows_v0_gate(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    """Fail closed unless AB1 emits exact, metadata-only AA1 projections."""
+    rows = diagnostics.get("inferential_uncertainty_rows")
+    rows_are_list = isinstance(rows, list)
+    every_row_is_dict = rows_are_list and all(isinstance(row, dict) for row in rows)
+    source_rows = diagnostics.get("source_descriptive_count_value_rows")
+    source_rows_are_list = isinstance(source_rows, list)
+    every_source_row_is_dict = source_rows_are_list and all(isinstance(row, dict) for row in source_rows)
+    expected_rows = _project_inferential_uncertainty_metadata_rows_v0(source_rows) if every_source_row_is_dict else None
+    projection_identity = lambda row: tuple((key, row.get(key)) for key in _ALLOWED_INFERENTIAL_UNCERTAINTY_ROW_KEYS_AB0)
+    upstream_fields = _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_UPSTREAM_GATE_FIELDS
+    output_fields = _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_OUTPUT_FIELDS
+    authorization_fields = _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_AUTHORIZATION_FIELDS
+    exact_false_fields = output_fields + authorization_fields
+    identities = [(r.get("run_id"), r.get("symbol"), r.get("split_id"), r.get("split_partition"), r.get("inferential_sequence_id")) for r in rows] if every_row_is_dict else []
+    ordering = [(r.get("symbol"), r.get("split_id"), r.get("split_partition"), r.get("inferential_time_utc"), r.get("inferential_sequence_id")) for r in rows] if every_row_is_dict else []
+    evidence = {
+        "ab0_gate_passed": diagnostics.get("inferential_uncertainty_schema_lock_ab0_gate_passed") is True,
+        "aa1_gate_passed": diagnostics.get("descriptive_count_values_v0_gate_passed") is True,
+        **{field: diagnostics.get(field) is True for field in _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_REQUIRED_GATE_FIELDS},
+        "status_matches": diagnostics.get("inferential_uncertainty_metadata_rows_v0_status") == INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_DECLARED_ARTIFACT_ONLY,
+        "rows_are_list": rows_are_list, "rows_emitted": diagnostics.get("inferential_uncertainty_rows_emitted") is True,
+        "row_count_matches": rows_are_list and diagnostics.get("inferential_uncertainty_row_count") == len(rows) == diagnostics.get("source_descriptive_count_value_row_count"),
+        "source_rows_match_count": source_rows_are_list and len(source_rows) == diagnostics.get("source_descriptive_count_value_row_count"),
+        "expected_projected_rows_match": rows_are_list and expected_rows is not None and rows == expected_rows,
+        "projected_row_identities_match": every_row_is_dict and expected_rows is not None and sorted(map(lambda row: repr(projection_identity(row)), rows)) == sorted(map(lambda row: repr(projection_identity(row)), expected_rows)),
+        "row_cap_ok": rows_are_list and len(rows) <= INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_MAX_ROWS,
+        "row_schema_exact": every_row_is_dict and all(set(row) == set(_ALLOWED_INFERENTIAL_UNCERTAINTY_ROW_KEYS_AB0) for row in rows),
+        "fixed_constants_match": every_row_is_dict and all(all(row.get(key) == value for key, value in _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_FIXED_ROW_CONSTANTS.items()) for row in rows),
+        "values_absent": every_row_is_dict and all(row.get("inferential_value_present") is False and row.get("inferential_value") is None and row.get("inferential_metadata_only") is True for row in rows),
+        "identities_unique": len(identities) == len(set(identities)), "rows_in_order": ordering == sorted(ordering),
+        "inferential_not_emitted": diagnostics.get("inferential_values_emitted") is False and diagnostics.get("inferential_value_count") == 0,
+        "uncertainty_not_emitted": diagnostics.get("uncertainty_values_emitted") is False and diagnostics.get("uncertainty_value_count") == 0,
+        "statistical_not_emitted": diagnostics.get("statistical_values") == [] and diagnostics.get("statistical_values_emitted") is False and diagnostics.get("statistical_value_count") == 0,
+        **{f"{field}_is_exactly_false": diagnostics.get(field) is False for field in exact_false_fields},
+        "downstream_unlocks_empty": diagnostics.get("downstream_unlocks") == [],
+    }
+    def gate(status: str, reason: str | None) -> dict[str, Any]:
+        return {"gate_kind": "inferential_uncertainty_metadata_rows_v0_gate", "gate_scope": INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_SCOPE, "gate_status": status, "gate_passed": False, "gate_scoring_authorization": False, "gate_live_authorization": False, "gate_final_verdict_authorization": False, "gate_downstream_unlocks": [], "evidence": evidence, "blocked_reason": reason}
+    if not evidence["ab0_gate_passed"]: return gate(BLOCKED_BY_INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_FOR_AB1_GATE, "AB0_SCHEMA_LOCK_GATE_MISSING_OR_NOT_PASSED")
+    if not evidence["aa1_gate_passed"]: return gate(BLOCKED_BY_DESCRIPTIVE_COUNT_VALUES_V0_FOR_AB1_GATE, "AA1_DESCRIPTIVE_COUNT_VALUES_GATE_MISSING_OR_NOT_PASSED")
+    if not all(evidence[field] for field in _INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_REQUIRED_GATE_FIELDS): return gate(BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_UPSTREAM_GATE, "REQUIRED_UPSTREAM_GATE_MISSING_OR_NOT_PASSED")
+    if rows_are_list and not evidence["row_cap_ok"]: return gate(BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_CAP_EXCEEDED, "ROW_CAP_EXCEEDED")
+    if every_row_is_dict and not evidence["row_schema_exact"]: return gate(BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SCHEMA, "ROW_KEYS_DO_NOT_EXACTLY_MATCH_AB0")
+    if every_row_is_dict and not evidence["fixed_constants_match"]: return gate(BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_METADATA_ROW_CONSTANTS, "ROW_CONSTANTS_DO_NOT_EXACTLY_MATCH_AB1")
+    if every_row_is_dict and not evidence["values_absent"]: return gate(BLOCKED_BY_UNEXPECTED_EMITTED_INFERENTIAL_VALUE_AB1, "INFERENTIAL_VALUE_MUST_NOT_BE_EMITTED")
+    if any(field not in diagnostics or not isinstance(diagnostics.get(field), bool) for field in exact_false_fields): return gate(BLOCKED_BY_INCOMPLETE_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_EVIDENCE, "DOWNSTREAM_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    if not evidence["inferential_not_emitted"]: return gate(BLOCKED_BY_UNEXPECTED_EMITTED_INFERENTIAL_VALUE_AB1, "INFERENTIAL_VALUES_MUST_NOT_BE_EMITTED")
+    if not evidence["uncertainty_not_emitted"]: return gate(BLOCKED_BY_UNEXPECTED_EMITTED_UNCERTAINTY_VALUE_AB1, "UNCERTAINTY_VALUES_MUST_NOT_BE_EMITTED")
+    if not evidence["statistical_not_emitted"]: return gate(BLOCKED_BY_UNEXPECTED_EMITTED_STATISTICAL_VALUE_AB1, "STATISTICAL_VALUES_MUST_NOT_BE_EMITTED")
+    if diagnostics.get("candidate_comparison_values_emitted") is True: return gate(BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_CANDIDATE_OUTPUT_AB1, "CANDIDATE_COMPARISON_OUTPUT_MUST_NOT_BE_EMITTED")
+    if any(diagnostics.get(field) is True for field in ("scoring_values_emitted", "live_integration_values_emitted", "paper_integration_values_emitted", "final_verdict_values_emitted")): return gate(BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_DOWNSTREAM_OUTPUT_AB1, "DOWNSTREAM_OUTPUT_MUST_NOT_BE_EMITTED")
+    if any(diagnostics.get(field) is True for field in authorization_fields): return gate(BLOCKED_BY_UNEXPECTED_INFERENTIAL_UNCERTAINTY_DOWNSTREAM_AUTHORIZATION_AB1, "DOWNSTREAM_AUTHORIZATION_MUST_NOT_BE_GRANTED")
+    if diagnostics.get("final_offline_verdict_remains") != BLOCKED_BY_VALIDATION_IMPLEMENTATION: return gate(BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_FINAL_VERDICT_ADVANCEMENT, "FINAL_OFFLINE_VERDICT_MUST_REMAIN_BLOCKED")
+    if every_row_is_dict and not evidence["identities_unique"]: return gate(BLOCKED_BY_DUPLICATE_INFERENTIAL_UNCERTAINTY_METADATA_ROW_IDENTITY, "DUPLICATE_ROW_IDENTITY")
+    if rows_are_list and not evidence["row_count_matches"]: return gate(BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SOURCE_COUNT_MISMATCH, "ROW_SOURCE_COUNT_MISMATCH")
+    if not evidence["projected_row_identities_match"]: return gate(BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_SOURCE_PROJECTION_MISMATCH, "ROWS_DO_NOT_EXACTLY_MATCH_AA1_SOURCE_PROJECTION")
+    if every_row_is_dict and not evidence["rows_in_order"]: return gate(BLOCKED_BY_INFERENTIAL_UNCERTAINTY_METADATA_ROW_ORDERING_MUTATION, "ROWS_NOT_IN_DETERMINISTIC_ORDER")
+    required = ("status_matches", "rows_are_list", "rows_emitted", "row_count_matches", "source_rows_match_count", "expected_projected_rows_match", "projected_row_identities_match", "row_cap_ok", "row_schema_exact", "fixed_constants_match", "values_absent", "identities_unique", "rows_in_order", "inferential_not_emitted", "uncertainty_not_emitted", "statistical_not_emitted", "downstream_unlocks_empty") + tuple(f"{field}_is_exactly_false" for field in exact_false_fields)
+    if not all(evidence.get(field) is True for field in required): return gate(BLOCKED_BY_INCOMPLETE_INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_EVIDENCE, "AB1_EVIDENCE_INCOMPLETE_OR_MUTATED")
+    result = gate(INFERENTIAL_UNCERTAINTY_METADATA_ROWS_V0_DECLARED_ARTIFACT_ONLY, None)
+    result["gate_passed"] = True
+    return result
+
+
 def _build_final_offline_edge_verdict_logic_diagnostics() -> dict[str, Any]:
     """Build a diagnostic-only section recording that final offline-edge
     scoring and verdict advancement remain blocked because every decisive
@@ -18783,6 +18993,7 @@ def build_real_validation_receipt(
     descriptive_statistical_value_policy_lock_aa0_diagnostics: dict | None = None,
     descriptive_count_values_v0_diagnostics: dict | None = None,
     inferential_uncertainty_schema_lock_ab0_diagnostics: dict | None = None,
+    inferential_uncertainty_metadata_rows_v0_diagnostics: dict | None = None,
     final_offline_edge_verdict_logic_diagnostics: dict | None = None,
 ) -> dict[str, Any]:
     """Build the real offline validation receipt skeleton.
@@ -19027,6 +19238,10 @@ def build_real_validation_receipt(
     if inferential_uncertainty_schema_lock_ab0_diagnostics is not None:
         receipt["inferential_uncertainty_schema_lock_ab0_diagnostics"] = (
             inferential_uncertainty_schema_lock_ab0_diagnostics
+        )
+    if inferential_uncertainty_metadata_rows_v0_diagnostics is not None:
+        receipt["inferential_uncertainty_metadata_rows_v0_diagnostics"] = (
+            inferential_uncertainty_metadata_rows_v0_diagnostics
         )
     if final_offline_edge_verdict_logic_diagnostics is not None:
         receipt["final_offline_edge_verdict_logic_diagnostics"] = (
@@ -20100,6 +20315,10 @@ def main(argv: list[str] | None = None) -> int:
                 null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
                 economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
             )
+            inferential_uncertainty_metadata_rows_v0_diagnostics = _build_inferential_uncertainty_metadata_rows_v0_diagnostics(
+                inferential_uncertainty_schema_lock_ab0_diagnostics=inferential_uncertainty_schema_lock_ab0_diagnostics,
+                descriptive_count_values_v0_diagnostics=descriptive_count_values_v0_diagnostics,
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -20244,6 +20463,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             inferential_uncertainty_schema_lock_ab0_diagnostics=(
                 inferential_uncertainty_schema_lock_ab0_diagnostics
+            ),
+            inferential_uncertainty_metadata_rows_v0_diagnostics=(
+                inferential_uncertainty_metadata_rows_v0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
@@ -20772,6 +20994,10 @@ def main(argv: list[str] | None = None) -> int:
                 null_reference_comparison_schema_lock_diagnostics=null_reference_comparison_schema_lock_diagnostics,
                 economic_accounting_rows_v0_diagnostics=economic_accounting_rows_v0_diagnostics,
             )
+            inferential_uncertainty_metadata_rows_v0_diagnostics = _build_inferential_uncertainty_metadata_rows_v0_diagnostics(
+                inferential_uncertainty_schema_lock_ab0_diagnostics=inferential_uncertainty_schema_lock_ab0_diagnostics,
+                descriptive_count_values_v0_diagnostics=descriptive_count_values_v0_diagnostics,
+            )
             final_offline_edge_verdict_logic_diagnostics = (
                 _build_final_offline_edge_verdict_logic_diagnostics()
             )
@@ -20881,6 +21107,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             inferential_uncertainty_schema_lock_ab0_diagnostics=(
                 inferential_uncertainty_schema_lock_ab0_diagnostics
+            ),
+            inferential_uncertainty_metadata_rows_v0_diagnostics=(
+                inferential_uncertainty_metadata_rows_v0_diagnostics
             ),
             final_offline_edge_verdict_logic_diagnostics=(
                 final_offline_edge_verdict_logic_diagnostics
