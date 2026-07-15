@@ -51,6 +51,7 @@ __all__ = [
     "build_real_validation_receipt",
     "build_protocol_computed_validation_slice",
     "build_protocol_split_leakage_audit",
+    "build_holdout_seal_fingerprint",
     "build_deterministic_split_definitions",
     "build_cost_case_matrix",
     "validate_real_validation_receipt",
@@ -396,6 +397,224 @@ def build_protocol_split_leakage_audit(
     }
 
 
+# The seal fingerprint hashes exact raw-row byte spans for the holdout
+# partition identified by build_protocol_split_leakage_audit. It never
+# decodes, compares, or aggregates a price / value / outcome column -- it
+# treats each holdout row as an opaque byte string. See
+# docs/status/QNTY_OFFLINE_EDGE_HOLDOUT_SEAL_FINGERPRINT_DECISION_MEMO.md.
+HOLDOUT_SEAL_FINGERPRINT_METHOD = "ROLE_RELATIVE_SOURCE_BYTE_SPAN_SHA256"
+_HOLDOUT_SEAL_DECLARATION_REQUIRED_FIELDS = (
+    "holdout_seal_fingerprint",
+    "sealed_at_boundary_index",
+    "purge_intervals",
+    "embargo_intervals",
+)
+
+
+def _read_role_lines(directory: str | Path | None) -> tuple[list[bytes], list[dict[str, Any]]]:
+    """Return ``(raw_row_lines, structural_failures)`` for a role's CSVs.
+
+    Files are read in the same sorted-name order and row order as
+    ``_read_role_timestamps`` so row indices line up across the two readers.
+    Each element of ``raw_row_lines`` is the exact raw byte content of one
+    data row (header excluded); no column is parsed or decoded.
+    """
+    if directory is None:
+        return [], []
+    root = Path(directory)
+    if not root.is_dir():
+        return [], []
+    lines: list[bytes] = []
+    failures: list[dict[str, Any]] = []
+    for path in sorted(root.glob("*.csv"), key=lambda p: p.name):
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            failures.append({"file": path.name, "row": None, "reason": "line_read_failure"})
+            continue
+        raw_lines = raw.split(b"\n")
+        if raw_lines and raw_lines[-1] == b"":
+            raw_lines = raw_lines[:-1]
+        if not raw_lines:
+            failures.append({"file": path.name, "row": None, "reason": "line_header_missing"})
+            continue
+        lines.extend(raw_lines[1:])
+    return lines, failures
+
+
+def _hash_holdout_rows(role_rows: list[tuple[str, list[bytes]]]) -> str:
+    """Hash opaque per-role raw row bytes in deterministic role/row order.
+
+    Uses length-prefix framing (role byte length, row count, each row's byte
+    length) rather than a delimiter byte, so the digest stays unambiguous
+    even if a raw row happens to contain a NUL byte.
+    """
+    digest = hashlib.sha256()
+    for role, rows in sorted(role_rows, key=lambda item: item[0]):
+        role_bytes = role.encode("utf-8")
+        digest.update(len(role_bytes).to_bytes(8, "big"))
+        digest.update(role_bytes)
+        digest.update(len(rows).to_bytes(8, "big"))
+        for row in rows:
+            digest.update(len(row).to_bytes(8, "big"))
+            digest.update(row)
+    return digest.hexdigest()
+
+
+def build_holdout_seal_fingerprint(
+    *,
+    bars_dir: str | Path | None,
+    split_audit: dict[str, Any] | None,
+    registry_entry: dict[str, Any] | None,
+    funding_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Seal the holdout partition identified by ``build_protocol_split_leakage_audit``.
+
+    Computes a SHA-256 fingerprint over the exact raw row bytes of the holdout
+    partition (role-relative source byte spans), never decoding a price /
+    value / outcome column. Fails closed (``holdout_seal_killed``) when the
+    upstream leakage audit is absent, killed, or not passed; when the
+    holdout byte span cannot be resolved; when a non-bars role cannot be
+    deterministically aligned to the bars-derived holdout partition; when no
+    registry ``holdout_seal_declaration`` exists yet (the fingerprint is only
+    a candidate, not a durable seal, so ``holdout_seal_state`` is
+    ``"not_sealed"``); when a registry ``holdout_seal_declaration`` is
+    present but incomplete or bound to a different boundary/purge/embargo; or
+    when a recomputed fingerprint diverges from a complete, matching registry
+    declaration. ``holdout_seal_state`` is only ``"sealed"`` when a complete,
+    matching registry declaration is present and the recomputed fingerprint
+    equals it. Never authorizes paper/live use.
+    """
+    kill = {
+        "split_audit_absent": not isinstance(split_audit, dict),
+        "leakage_audit_not_passed": False,
+        "leakage_audit_killed": False,
+        "holdout_span_unresolvable": False,
+        "non_bars_role_alignment_failed": False,
+        "registry_declaration_absent": False,
+        "registry_declaration_missing_required_fields": False,
+        "boundary_declaration_mismatch": False,
+        "seal_fingerprint_mismatch": False,
+    }
+
+    if not kill["split_audit_absent"]:
+        kill["leakage_audit_not_passed"] = split_audit.get("leakage_audit_passed") is not True
+        kill["leakage_audit_killed"] = split_audit.get("leakage_audit_killed") is not False
+
+    upstream_ok = not (
+        kill["split_audit_absent"]
+        or kill["leakage_audit_not_passed"]
+        or kill["leakage_audit_killed"]
+    )
+
+    boundary_index = split_audit.get("boundary_index") if upstream_ok else None
+    purge_intervals = split_audit.get("declared_purge_intervals") if upstream_ok else None
+    embargo_intervals = split_audit.get("declared_embargo_intervals") if upstream_ok else None
+    expected_holdout_row_count = split_audit.get("holdout_row_count") if upstream_ok else None
+    expected_source_row_count = split_audit.get("source_row_count") if upstream_ok else None
+
+    fingerprint: str | None = None
+    sealed_role_count = 0
+    sealed_row_count = 0
+
+    if upstream_ok:
+        bars_lines, bars_failures = _read_role_lines(bars_dir)
+        holdout_start = (
+            boundary_index + embargo_intervals
+            if isinstance(boundary_index, int) and isinstance(embargo_intervals, int)
+            else None
+        )
+        if (
+            bars_failures
+            or holdout_start is None
+            or len(bars_lines) != expected_source_row_count
+            or not (0 <= holdout_start <= len(bars_lines))
+            or (len(bars_lines) - holdout_start) != expected_holdout_row_count
+        ):
+            kill["holdout_span_unresolvable"] = True
+        else:
+            bars_holdout_rows = bars_lines[holdout_start:]
+            role_rows: list[tuple[str, list[bytes]]] = [("bars", bars_holdout_rows)]
+            sealed_role_count = 1
+            sealed_row_count = len(bars_holdout_rows)
+
+            if funding_dir is not None:
+                bars_timestamps, bars_ts_failures = _read_role_timestamps(bars_dir)
+                funding_timestamps, funding_ts_failures = _read_role_timestamps(funding_dir)
+                funding_lines, funding_line_failures = _read_role_lines(funding_dir)
+                if (
+                    bars_ts_failures
+                    or funding_ts_failures
+                    or funding_line_failures
+                    or len(funding_timestamps) != len(bars_timestamps)
+                    or funding_timestamps != bars_timestamps
+                    or len(funding_lines) != len(bars_lines)
+                ):
+                    kill["non_bars_role_alignment_failed"] = True
+                else:
+                    role_rows.append(("funding", funding_lines[holdout_start:]))
+                    sealed_role_count = 2
+
+            if not kill["non_bars_role_alignment_failed"]:
+                fingerprint = _hash_holdout_rows(role_rows)
+
+    can_compare_registry = not any(
+        kill[key]
+        for key in (
+            "split_audit_absent",
+            "leakage_audit_not_passed",
+            "leakage_audit_killed",
+            "holdout_span_unresolvable",
+            "non_bars_role_alignment_failed",
+        )
+    )
+
+    declaration = registry_entry.get("holdout_seal_declaration") if isinstance(registry_entry, dict) else None
+    registry_seal_fingerprint: str | None = None
+    seal_fingerprint_matches_registry: bool | None = None
+    state = "not_sealed"
+
+    if can_compare_registry:
+        if declaration is None:
+            # No durable registry declaration exists yet. The fingerprint
+            # above is only a candidate for a future append-only registry
+            # write -- it is not yet a sealed holdout.
+            kill["registry_declaration_absent"] = True
+            state = "not_sealed"
+        elif not isinstance(declaration, dict) or any(
+            field not in declaration for field in _HOLDOUT_SEAL_DECLARATION_REQUIRED_FIELDS
+        ):
+            kill["registry_declaration_missing_required_fields"] = True
+        elif (
+            declaration.get("sealed_at_boundary_index") != boundary_index
+            or declaration.get("purge_intervals") != purge_intervals
+            or declaration.get("embargo_intervals") != embargo_intervals
+        ):
+            kill["boundary_declaration_mismatch"] = True
+        else:
+            registry_seal_fingerprint = declaration.get("holdout_seal_fingerprint")
+            seal_fingerprint_matches_registry = registry_seal_fingerprint == fingerprint
+            if seal_fingerprint_matches_registry:
+                state = "sealed"
+            else:
+                kill["seal_fingerprint_mismatch"] = True
+                state = "mismatch"
+
+    killed = any(kill.values())
+    return {
+        "method": HOLDOUT_SEAL_FINGERPRINT_METHOD,
+        "holdout_seal_fingerprint": fingerprint,
+        "holdout_seal_state": state,
+        "sealed_role_count": sealed_role_count,
+        "sealed_row_count": sealed_row_count,
+        "sealed_at_boundary_index": boundary_index,
+        "registry_seal_fingerprint": registry_seal_fingerprint,
+        "seal_fingerprint_matches_registry": seal_fingerprint_matches_registry,
+        "holdout_seal_killed": killed,
+        "kill_criteria": kill,
+    }
+
+
 def build_protocol_computed_validation_slice(
     *,
     bars_dir: str | Path | None,
@@ -477,6 +696,19 @@ def build_protocol_computed_validation_slice(
         )
         killed = killed or split_audit["leakage_audit_killed"]
 
+    # The seal fingerprint is a hard dependency on split_audit (decision memo
+    # §5): it only ever runs against the split just materialized above, never
+    # against a stale or externally-supplied audit.
+    holdout_seal = None
+    if split_audit is not None:
+        holdout_seal = build_holdout_seal_fingerprint(
+            bars_dir=bars_dir,
+            split_audit=split_audit,
+            registry_entry=registry_entry,
+            funding_dir=funding_dir,
+        )
+        killed = killed or holdout_seal["holdout_seal_killed"]
+
     result = {
         "protocol_version": PROTOCOL_COMPUTED_VALIDATION_VERSION,
         "immutable_data_cut": {
@@ -518,6 +750,8 @@ def build_protocol_computed_validation_slice(
     }
     if split_audit is not None:
         result["deterministic_split_audit"] = split_audit
+    if holdout_seal is not None:
+        result["holdout_seal_audit"] = holdout_seal
     return result
 
 RECEIPT_SCHEMA_KIND: str = "qnty_offline_edge_real_validation_receipt"

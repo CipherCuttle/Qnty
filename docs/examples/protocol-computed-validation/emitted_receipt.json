@@ -2,7 +2,7 @@
   "validation_receipt": {
     "kind": "qnty_offline_edge_real_validation_receipt",
     "version": "0.1.0",
-    "timestamp_utc": "2026-07-15T13:00:51.679213+00:00"
+    "timestamp_utc": "2026-07-15T15:33:35.867442+00:00"
   },
   "input_manifest_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
   "data_quality_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -136,7 +136,34 @@
         "insufficient_purge_gap": false,
         "insufficient_embargo_gap": false,
         "registry_boundary_declaration_missing": false,
-        "registry_boundary_mismatch": false
+        "registry_boundary_mismatch": false,
+        "timestamp_header_missing": false,
+        "timestamp_cell_missing": false,
+        "timestamp_cell_malformed": false,
+        "timestamp_read_failure": false
+      },
+      "timestamp_structural_failures": []
+    },
+    "holdout_seal_audit": {
+      "method": "ROLE_RELATIVE_SOURCE_BYTE_SPAN_SHA256",
+      "holdout_seal_fingerprint": "536a5a363fc843682144432c32927bca398ea7d954df62e52e0d24bf244a67ee",
+      "holdout_seal_state": "sealed",
+      "sealed_role_count": 2,
+      "sealed_row_count": 3,
+      "sealed_at_boundary_index": 4,
+      "registry_seal_fingerprint": "536a5a363fc843682144432c32927bca398ea7d954df62e52e0d24bf244a67ee",
+      "seal_fingerprint_matches_registry": true,
+      "holdout_seal_killed": false,
+      "kill_criteria": {
+        "split_audit_absent": false,
+        "leakage_audit_not_passed": false,
+        "leakage_audit_killed": false,
+        "holdout_span_unresolvable": false,
+        "non_bars_role_alignment_failed": false,
+        "registry_declaration_absent": false,
+        "registry_declaration_missing_required_fields": false,
+        "boundary_declaration_mismatch": false,
+        "seal_fingerprint_mismatch": false
       }
     }
   }

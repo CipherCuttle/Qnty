@@ -7,6 +7,12 @@
     "registered_before_execution": true,
     "split_boundary_index": 4,
     "purge_intervals": 1,
-    "embargo_intervals": 1
+    "embargo_intervals": 1,
+    "holdout_seal_declaration": {
+      "holdout_seal_fingerprint": "536a5a363fc843682144432c32927bca398ea7d954df62e52e0d24bf244a67ee",
+      "sealed_at_boundary_index": 4,
+      "purge_intervals": 1,
+      "embargo_intervals": 1
+    }
   }
 ]
