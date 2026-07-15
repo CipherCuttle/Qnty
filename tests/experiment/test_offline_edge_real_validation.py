@@ -16628,6 +16628,7 @@ class TestPrerequisiteClosureK1:
             f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
         )
 
+
     # ── CLI receipt integration ─────────────────────────────────────────────
     def _cli_base_args(self, output_dir):
         return [
@@ -23279,3 +23280,77 @@ class TestProjectedInputRowCountP1:
             f"Forbidden keys found: "
             f"{real_validation.FORBIDDEN_CALCULATION_KEYS & all_keys}"
         )
+
+
+class TestProtocolComputedValidationSlice:
+    def _inputs(self, tmp_path: Path) -> tuple[Path, Path, Path, str]:
+        bars, funding = tmp_path / "bars", tmp_path / "funding"
+        bars.mkdir(); funding.mkdir()
+        (bars / "BTC.csv").write_text("timestamp,close\n2024-01-01T00:00:00Z,10\n")
+        (funding / "BTC.csv").write_text("timestamp,funding_rate\n2024-01-01T00:00:00Z,0\n")
+        initial = real_validation.build_protocol_computed_validation_slice(bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None)
+        fingerprint = initial["immutable_data_cut"]["actual_sha256"]
+        registry = tmp_path / "registry.json"
+        registry.write_text(json.dumps([{"candidate_family": "FROZEN_SINGLE_CANDIDATE_FAMILY_V1", "null_family": "FROZEN_SINGLE_NULL_FAMILY_V1", "data_cut_fingerprint": fingerprint, "append_only": True, "registered_before_execution": True}]))
+        return bars, funding, registry, fingerprint
+
+    def test_executes_frozen_inputs_to_edge_unproven_receipt(self, tmp_path):
+        bars, funding, registry, fingerprint = self._inputs(tmp_path)
+        result = real_validation.build_protocol_computed_validation_slice(bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=fingerprint, trial_registry_path=registry)
+        assert result["computed_input_integrity_result"]["status"] == "EDGE_UNPROVEN"
+        assert result["computed_input_integrity_result"]["protocol_execution_killed"] is False
+        assert result["trial_registry"]["honest_trial_count"] == 1
+
+    def test_data_cut_fingerprint_is_independent_of_local_root(self, tmp_path):
+        fingerprints = []
+        for root_name in ("clone-a", "clone-b"):
+            root = tmp_path / root_name
+            bars, funding = root / "bars", root / "funding"
+            bars.mkdir(parents=True); funding.mkdir()
+            (bars / "BTC.csv").write_bytes(b"timestamp,close\n2024-01-01T00:00:00Z,10\n")
+            (funding / "BTC.csv").write_bytes(b"timestamp,funding_rate\n2024-01-01T00:00:00Z,0\n")
+            fingerprints.append(real_validation.build_protocol_computed_validation_slice(bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None)["immutable_data_cut"]["actual_sha256"])
+
+        assert fingerprints[0] == fingerprints[1]
+
+    def test_data_cut_fingerprint_changes_when_file_bytes_change(self, tmp_path):
+        bars, funding, _, _ = self._inputs(tmp_path)
+        before = real_validation.build_protocol_computed_validation_slice(bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None)["immutable_data_cut"]["actual_sha256"]
+        (bars / "BTC.csv").write_bytes(b"timestamp,close\n2024-01-01T00:00:00Z,11\n")
+        after = real_validation.build_protocol_computed_validation_slice(bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None)["immutable_data_cut"]["actual_sha256"]
+
+        assert before != after
+
+    def test_data_cut_fingerprint_distinguishes_bars_and_funding_roles(self, tmp_path):
+        bars, funding = tmp_path / "bars", tmp_path / "funding"
+        bars.mkdir(); funding.mkdir()
+        payload = b"timestamp,value\n2024-01-01T00:00:00Z,10\n"
+        (bars / "BTC.csv").write_bytes(payload)
+        (funding / "BTC.csv").write_bytes(payload)
+
+        bars_only = real_validation.build_protocol_computed_validation_slice(bars_dir=bars, funding_dir=None, expected_data_cut_fingerprint=None, trial_registry_path=None)["immutable_data_cut"]["actual_sha256"]
+        funding_only = real_validation.build_protocol_computed_validation_slice(bars_dir=None, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None)["immutable_data_cut"]["actual_sha256"]
+        combined = real_validation.build_protocol_computed_validation_slice(bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=None, trial_registry_path=None)["immutable_data_cut"]
+
+        assert bars_only != funding_only
+        assert combined["actual_sha256"] not in {bars_only, funding_only}
+        assert combined["source_file_count"] == 2
+
+    @pytest.mark.parametrize("mutation", ["missing_fingerprint", "mutated_data", "missing_registry", "missing_split"])
+    def test_preflight_failures_fail_closed(self, tmp_path, mutation):
+        bars, funding, registry, fingerprint = self._inputs(tmp_path)
+        kwargs = {"bars_dir": bars, "funding_dir": funding, "expected_data_cut_fingerprint": fingerprint, "trial_registry_path": registry}
+        if mutation == "missing_fingerprint": kwargs["expected_data_cut_fingerprint"] = None
+        if mutation == "mutated_data": (bars / "BTC.csv").write_text("timestamp,close\n2024-01-01T00:00:00Z,11\n")
+        if mutation == "missing_registry": kwargs["trial_registry_path"] = None
+        if mutation == "missing_split": kwargs.update(purge_intervals=0, embargo_intervals=None)
+        result = real_validation.build_protocol_computed_validation_slice(**kwargs)
+        assert result["computed_input_integrity_result"]["protocol_execution_killed"] is True
+
+    def test_authorization_attempt_fails_receipt_validation(self, tmp_path):
+        bars, funding, registry, fingerprint = self._inputs(tmp_path)
+        computed = real_validation.build_protocol_computed_validation_slice(bars_dir=bars, funding_dir=funding, expected_data_cut_fingerprint=fingerprint, trial_registry_path=registry)
+        computed["computed_input_integrity_result"]["paper_trade_authorized"] = True
+        receipt = real_validation.build_real_validation_receipt(input_manifest_fingerprint="a", data_quality_receipt_sha256="b", code_commit_sha="c", split_definitions=[], cost_cases=[], protocol_computed_validation_slice=computed)
+        with pytest.raises(ValueError, match="may not authorize"):
+            real_validation.validate_real_validation_receipt(receipt)
