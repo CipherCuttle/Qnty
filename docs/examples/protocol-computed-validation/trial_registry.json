@@ -1,0 +1,9 @@
+[
+  {
+    "candidate_family": "FROZEN_SINGLE_CANDIDATE_FAMILY_V1",
+    "null_family": "FROZEN_SINGLE_NULL_FAMILY_V1",
+    "data_cut_fingerprint": "023ad07777f72596bedbe852a781c6f54938f106a0379747c956d83f93207abc",
+    "append_only": true,
+    "registered_before_execution": true
+  }
+]

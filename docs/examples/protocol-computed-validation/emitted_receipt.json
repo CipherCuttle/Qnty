@@ -1,0 +1,107 @@
+{
+  "validation_receipt": {
+    "kind": "qnty_offline_edge_real_validation_receipt",
+    "version": "0.1.0",
+    "timestamp_utc": "2026-07-15T12:10:16.206886+00:00"
+  },
+  "input_manifest_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+  "data_quality_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "code_commit_sha": "bb2ed1beb5e84ff22f8f5e6c6b55fef0d9f8bda3",
+  "split_definitions": [
+    {
+      "split_id": "protocol_single_holdout"
+    }
+  ],
+  "cost_cases": [
+    {
+      "cost_case": "low",
+      "commission_bps_per_side": 2.0,
+      "slippage_bps_per_side": 2.0,
+      "spread_bps_per_side": 0.5,
+      "funding_included": true,
+      "calculation_status": "NOT_EXECUTED"
+    },
+    {
+      "cost_case": "base",
+      "commission_bps_per_side": 5.0,
+      "slippage_bps_per_side": 5.0,
+      "spread_bps_per_side": 1.0,
+      "funding_included": true,
+      "calculation_status": "NOT_EXECUTED"
+    },
+    {
+      "cost_case": "high",
+      "commission_bps_per_side": 10.0,
+      "slippage_bps_per_side": 10.0,
+      "spread_bps_per_side": 2.0,
+      "funding_included": true,
+      "calculation_status": "NOT_EXECUTED"
+    }
+  ],
+  "required_outputs_present": {
+    "market_observations": false,
+    "net_return_after_costs": false,
+    "max_drawdown": false,
+    "sharpe_or_risk_metric": false,
+    "baseline_comparison": false,
+    "sensitivity_cases": false
+  },
+  "forbidden_calculation_status": {
+    "returns_computed": false,
+    "pnl_computed": false,
+    "sharpe_computed": false,
+    "paper_engine_run": false,
+    "live_integration_used": false
+  },
+  "guardrail_status": {
+    "edge_unproven": true,
+    "block_live_integration": true,
+    "no_report_promotion": true,
+    "output_under_tmp_only": true
+  },
+  "final_offline_verdict": "BLOCKED_BY_VALIDATION_IMPLEMENTATION",
+  "final_offline_verdict_rationale": "BLOCKED_BY_VALIDATION_IMPLEMENTATION: this is a schema/skeleton-only receipt. No return-like market observations, strategy returns, PnL, Sharpe, or paper-engine calculation has been implemented. No edge/profit/live-readiness claim is made.",
+  "protocol_computed_validation": {
+    "protocol_version": "protocol_computed_validation_v1",
+    "immutable_data_cut": {
+      "source_file_count": 2,
+      "actual_sha256": "023ad07777f72596bedbe852a781c6f54938f106a0379747c956d83f93207abc",
+      "expected_sha256": "023ad07777f72596bedbe852a781c6f54938f106a0379747c956d83f93207abc",
+      "matches_expected": true,
+      "timestamp_convention": "SOURCE_CSV_AS_RECORDED"
+    },
+    "candidate_family": {
+      "identifier": "FROZEN_SINGLE_CANDIDATE_FAMILY_V1"
+    },
+    "null_family": {
+      "identifier": "FROZEN_SINGLE_NULL_FAMILY_V1"
+    },
+    "deterministic_split": {
+      "method": "SOURCE_ORDERED_SINGLE_HOLDOUT",
+      "purge_intervals": 1,
+      "embargo_intervals": 1,
+      "declaration_complete": true
+    },
+    "trial_registry": {
+      "loaded": true,
+      "entry_present": true,
+      "append_only_entry": true,
+      "honest_trial_count": 1,
+      "entry_matches_data_cut": true
+    },
+    "computed_input_integrity_result": {
+      "status": "EDGE_UNPROVEN",
+      "source_inputs_ready": true,
+      "protocol_execution_killed": false,
+      "paper_trade_authorized": false,
+      "live_integration_authorized": false
+    },
+    "kill_criteria": {
+      "data_cut_failure": false,
+      "registry_incomplete": false,
+      "purge_or_embargo_missing": false,
+      "source_inputs_missing": false,
+      "kill_triggered": false
+    }
+  }
+}
