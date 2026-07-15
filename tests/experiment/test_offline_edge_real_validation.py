@@ -18128,6 +18128,57 @@ class TestInferentialUncertaintySchemaLockAB0:
         assert not (set(_all_dict_keys(result)) & forbidden)
         assert not (set(result["declared_inferential_uncertainty_row_keys"]) & forbidden)
 
+    def test_no_input_and_full_cli_receipts_include_ab0(self, tmp_path):
+        output_dir = tmp_path / "empty-output"; output_dir.mkdir()
+        m1 = TestEconomicOutputSchemaLockV0()._u1()._u0()._t1()._t0()._s1()._r1()._q1()._p1()._o1()._n1()._m1()
+        assert real_validation.main(m1._cli_base_args(output_dir)) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        empty = receipt["inferential_uncertainty_schema_lock_ab0_diagnostics"]
+        assert empty["inferential_uncertainty_schema_lock_ab0_gate"]["gate_passed"] is False
+        assert empty["inferential_uncertainty_rows"] == []
+        assert empty["inferential_uncertainty_rows_emitted"] is False
+        assert empty["inferential_uncertainty_row_count"] == 0
+        assert empty["inferential_values_emitted"] is False
+        assert empty["inferential_value_count"] == 0
+        assert empty["uncertainty_values_emitted"] is False
+        assert empty["uncertainty_value_count"] == 0
+        assert empty["statistical_values"] == []
+        assert empty["statistical_values_emitted"] is False
+        assert empty["statistical_value_count"] == 0
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+        output_dir = tmp_path / "full-output"; output_dir.mkdir()
+        bars_dir = tmp_path / "bars"; funding_dir = tmp_path / "funding"
+        bars_dir.mkdir(); funding_dir.mkdir()
+        _write_tiny_bars_csv(bars_dir, "BTCUSDT_8h_ohlcv.csv")
+        funding_path = _write_tiny_funding_csv(funding_dir, "BTCUSDT_8h_funding.csv")
+        funding_path.write_text(
+            "fundingTime,fundingRate,markPrice\n"
+            "2026-01-01T00:00:00Z,0.0001,50000.0\n"
+            "2026-01-02T00:00:00Z,0.0002,50100.0\n"
+            "2026-01-03T00:00:00Z,0.0003,50200.0\n"
+        )
+        j1 = TestEconomicAccountingPolicyPreregistrationJ1()
+        assert real_validation.main(j1._cli_base_args(output_dir) + j1._cli_upstream_args() + j1._cli_eap_args() + ["--bars-dir", str(bars_dir), "--funding-dir", str(funding_dir)]) == 0
+        receipt = json.loads((output_dir / "real_validation_receipt.json").read_text())
+        full = receipt["inferential_uncertainty_schema_lock_ab0_diagnostics"]
+        assert full["inferential_uncertainty_schema_lock_ab0_gate"]["gate_passed"] is True
+        assert full["inferential_uncertainty_schema_lock_declared"] is True
+        assert full["declared_inferential_uncertainty_row_keys"] == list(real_validation._ALLOWED_INFERENTIAL_UNCERTAINTY_ROW_KEYS_AB0)
+        assert full["declared_inferential_uncertainty_value_kind_names"] == list(real_validation._ALLOWED_INFERENTIAL_UNCERTAINTY_VALUE_KIND_NAMES_AB0)
+        assert full["inferential_uncertainty_rows"] == []
+        assert full["inferential_uncertainty_rows_emitted"] is False
+        assert full["inferential_uncertainty_row_count"] == 0
+        assert full["inferential_values_emitted"] is False
+        assert full["inferential_value_count"] == 0
+        assert full["uncertainty_values_emitted"] is False
+        assert full["uncertainty_value_count"] == 0
+        assert full["statistical_values"] == []
+        assert full["statistical_values_emitted"] is False
+        assert full["statistical_value_count"] == 0
+        assert all(full[field] is False for field in real_validation._INFERENTIAL_UNCERTAINTY_SCHEMA_LOCK_AB0_AUTHORIZATION_FIELDS)
+        assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
 
 class TestDescriptiveStatisticalMetadataRowsV0Z1:
     """Lane Z1: exact-schema descriptive metadata rows; no values are emitted."""
