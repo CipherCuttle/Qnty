@@ -2,7 +2,7 @@
   "validation_receipt": {
     "kind": "qnty_offline_edge_real_validation_receipt",
     "version": "0.1.0",
-    "timestamp_utc": "2026-07-15T15:33:35.867442+00:00"
+    "timestamp_utc": "2026-07-15T18:40:30.120637+00:00"
   },
   "input_manifest_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
   "data_quality_receipt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -187,6 +187,35 @@
         "execution_packet_declaration_incomplete": false,
         "execution_packet_declaration_stale": false,
         "execution_packet_fingerprint_mismatch": false
+      }
+    },
+    "holdout_open_gate": {
+      "method": "SHA256_HASH_OF_TEN_STRUCTURAL_INPUTS_FIXED_ORDER",
+      "holdout_open_gate_fingerprint": "2406364f849a25420dbe45d629cf58792643d2a6f667cd36adb4197ca364ae7b",
+      "holdout_open_gate_state": "gate_passed",
+      "holdout_open_gate_killed": false,
+      "holdout_open_gate_reason_codes": [],
+      "structural_prerequisite_count": 4,
+      "registry_gate_fingerprint": "2406364f849a25420dbe45d629cf58792643d2a6f667cd36adb4197ca364ae7b",
+      "gate_fingerprint_matches_registry": true,
+      "gate_checked_at": "DETERMINISTIC_FIXTURE_GATE_CHECK_V0",
+      "kill_criteria": {
+        "execution_packet_lock_absent": false,
+        "packet_not_locked": false,
+        "packet_lock_killed": false,
+        "stale_constituent_reference": false,
+        "holdout_seal_absent": false,
+        "holdout_not_sealed": false,
+        "holdout_seal_killed": false,
+        "split_leakage_audit_absent": false,
+        "leakage_audit_not_passed": false,
+        "leakage_audit_killed": false,
+        "data_cut_fingerprint_missing": false,
+        "protocol_version_missing": false,
+        "holdout_open_gate_declaration_missing": false,
+        "holdout_open_gate_declaration_incomplete": false,
+        "gate_fingerprint_missing": false,
+        "gate_fingerprint_mismatch": false
       }
     }
   }

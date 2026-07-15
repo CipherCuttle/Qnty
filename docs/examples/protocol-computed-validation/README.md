@@ -3,14 +3,14 @@
 This is a tiny, synthetic, docs-only fixture for the frozen
 `--protocol-computed-validation` path. It has one bars CSV (8 rows), one funding
 CSV (8 rows), and one append-only trial-registry entry carrying a structural
-split-boundary declaration, a holdout seal declaration, and an execution
-packet lock declaration. The checked-in `emitted_receipt.json` records a
-receipt emitted from those inputs at commit
+split-boundary declaration, a holdout seal declaration, an execution
+packet lock declaration, and a holdout-open gate declaration. The checked-in
+`emitted_receipt.json` records a receipt emitted from those inputs at commit
 `d09330a`.
 
 ## Scope
 
-Four computations run in this example, all structural provenance only:
+Five computations run in this example, all structural provenance only:
 
 1. **Input integrity** — role-relative source-byte fingerprinting, matching that
    fingerprint to the single frozen registry entry, and checking the declared
@@ -43,6 +43,26 @@ Four computations run in this example, all structural provenance only:
    price/value/outcome, and is never an authorization
    (`paper_trade_authorized` / `live_integration_authorized` stay `false`
    regardless of `packet_lock_state`).
+5. **Holdout-open gate** — the final structural gate. A SHA-256 hash
+   (`holdout_open_gate_fingerprint`) over exactly ten already-registered or
+   derived structural values, in one fixed, documented order:
+   `execution_packet_fingerprint`, `packet_lock_state`,
+   `holdout_seal_fingerprint`, `holdout_seal_state`,
+   `split_boundary_declaration_hash`, `leakage_audit_passed`,
+   `leakage_audit_killed`, `data_cut_fingerprint`, `protocol_version`, and the
+   closed, sorted set of upstream-prerequisite reason codes produced by this
+   same evaluation. Compared against an append-only registry
+   `holdout_open_gate_declaration`, this yields `holdout_open_gate_state` of
+   `gate_passed` / `mismatch` / `blocked`. This is a **content-blind,
+   read-only structural attestation that every prerequisite required before
+   any future holdout opening is present, locked/sealed/passed, and
+   internally consistent, right now** — it never creates, selects, or
+   modifies a candidate, null, split, or holdout, never reads a
+   price/value/outcome, and is never an authorization
+   (`paper_trade_authorized` / `live_integration_authorized` stay `false`
+   regardless of `holdout_open_gate_state`). This is the final structural
+   gate in this chain; the next computed quantity in the protocol must be a
+   bounded real computed validation statistic, not another structural gate.
 
 The split audit reads **only** the `timestamp` column and row position, and the
 seal fingerprint hashes **only** opaque raw row bytes. Neither dereferences a
@@ -210,8 +230,55 @@ itself. `packet_lock_state: locked` is a structural consistency attestation
 only, never an authorization: `paper_trade_authorized` and
 `live_integration_authorized` stay `false` regardless of `packet_lock_state`.
 
+Whenever the execution packet lock is present, the holdout-open gate
+additionally sets `holdout_open_gate_killed: true` (folded into
+`protocol_execution_killed`) when any of these occur:
+
+- the execution packet lock, holdout seal, or split-leakage audit is absent;
+- `packet_lock_state != locked`, `packet_lock_killed: true`, or the packet
+  lock's own state is `mismatch` (a stale constituent reference —
+  `holdout_open_gate_state: mismatch`, not merely `blocked`);
+- `holdout_seal_state != sealed` or `holdout_seal_killed: true`;
+- `leakage_audit_passed: false` or `leakage_audit_killed: true`;
+- `data_cut_fingerprint` or `protocol_version` is missing;
+- no registry `holdout_open_gate_declaration` exists yet (the computed
+  `holdout_open_gate_fingerprint` is only a candidate value —
+  `holdout_open_gate_state: blocked`,
+  `kill_criteria.holdout_open_gate_declaration_missing: true`,
+  `registry_gate_fingerprint: null`, `gate_fingerprint_matches_registry:
+  null`);
+- a registry `holdout_open_gate_declaration` is present but missing a
+  required field (`holdout_open_gate_fingerprint`,
+  `holdout_open_gate_state`, `gate_checked_at`,
+  `structural_prerequisite_count`, `holdout_open_gate_reason_codes`)
+  (`kill_criteria.holdout_open_gate_declaration_incomplete: true`), or its
+  `holdout_open_gate_fingerprint` field is present but empty
+  (`kill_criteria.gate_fingerprint_missing: true`);
+- a recomputed `holdout_open_gate_fingerprint` diverges from a complete,
+  matching registry declaration
+  (`holdout_open_gate_state: mismatch`,
+  `kill_criteria.gate_fingerprint_mismatch: true`).
+
+Absent any registered `holdout_open_gate_declaration`, a passing run still
+computes the candidate fingerprint, but `holdout_open_gate_state` stays
+`blocked` until that candidate value has been written to the registry as a
+`holdout_open_gate_declaration` (append-only, same trial,
+`honest_trial_count` unchanged, recording the fingerprint plus a
+`gate_checked_at` value — a deterministic placeholder string in this
+fixture, since the module avoids wall-clock timestamps in registered
+declarations) and a subsequent run's recomputed fingerprint matches it
+exactly. This module never writes to the registry itself.
+`holdout_open_gate_state: gate_passed` is a structural consistency
+attestation only, never an authorization: `paper_trade_authorized` and
+`live_integration_authorized` stay `false` regardless of
+`holdout_open_gate_state`. This is the final structural gate in this chain —
+the reason codes folded into the fingerprint hash cover only upstream
+prerequisite state, never the registered declaration's own shape, so the
+candidate fingerprint stays stable both before and after that declaration is
+written.
+
 Passing these checks is not evidence of an edge, profit, or performance. It only
 proves this small structural protocol slice had the declared synthetic inputs,
 a well-formed leakage-free split, that the holdout bytes match what was last
-sealed, and that all seven bound identity artifacts still refer to the same
+sealed, and that all bound identity artifacts still refer to the same
 trial.
