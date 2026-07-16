@@ -2140,6 +2140,34 @@ def _strict_count(value: Any) -> bool:
     return type(value) is int and value >= 0
 
 
+def _strict_json_contract_equal(actual: Any, expected: Any) -> bool:
+    """Compare a frozen JSON contract by exact value *and* exact JSON type.
+
+    Ordinary Python equality is unsound for a frozen descriptive contract:
+    ``True == 1``, ``False == 0``, and ``1 == 1.0``, so a registry could silently
+    swap a preregistered boolean flag for an integer, or an integer for a float,
+    and still compare equal.  This walks both sides structurally and requires the
+    exact type at every node, the exact key set for dicts, and the exact order and
+    length for lists.  Values are compared in memory; serialising through JSON
+    would re-introduce the coercion this exists to catch.
+    """
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        if actual.keys() != expected.keys():
+            return False
+        return all(
+            _strict_json_contract_equal(actual[key], expected[key]) for key in expected
+        )
+    if isinstance(expected, list):
+        if len(actual) != len(expected):
+            return False
+        return all(
+            _strict_json_contract_equal(a, e) for a, e in zip(actual, expected)
+        )
+    return actual == expected
+
+
 def _required_dict(parent: dict[str, Any], key: str, reason: str) -> tuple[dict[str, Any] | None, list[str]]:
     value = parent.get(key)
     if not isinstance(value, dict):
@@ -2619,11 +2647,15 @@ def _decomposition_registry_control_reasons(entry: dict[str, Any]) -> list[str]:
     # are not inputs to this function and are authenticated by the separate
     # no-computation preflight; claiming to verify them here would be a lie.
     preconditions = entry.get("execution_preconditions")
-    if preconditions != _DECOMPOSITION_EXECUTION_PRECONDITIONS:
+    if not _strict_json_contract_equal(
+        preconditions, _DECOMPOSITION_EXECUTION_PRECONDITIONS
+    ):
         reasons.append("execution_preconditions_mismatch")
 
     per_slot_definitions = entry.get("per_slot_definitions")
-    if per_slot_definitions != _DECOMPOSITION_PER_SLOT_DEFINITIONS:
+    if not _strict_json_contract_equal(
+        per_slot_definitions, _DECOMPOSITION_PER_SLOT_DEFINITIONS
+    ):
         reasons.append("per_slot_definitions_mismatch")
 
     return reasons
@@ -2649,7 +2681,7 @@ def _decomposition_frozen_contract_reasons(entry: dict[str, Any]) -> list[str]:
         if set(schema) != set(_DECOMPOSITION_FROZEN_OUTPUT_SCHEMA):
             reasons.append("frozen_output_schema_mismatch")
         for field, expected in _DECOMPOSITION_FROZEN_OUTPUT_SCHEMA.items():
-            if schema.get(field) != expected:
+            if not _strict_json_contract_equal(schema.get(field), expected):
                 reasons.append(
                     "forbidden_output_contract_mismatch"
                     if field == "forbidden_outputs"
@@ -2659,7 +2691,9 @@ def _decomposition_frozen_contract_reasons(entry: dict[str, Any]) -> list[str]:
     contract = entry.get("classification_contract")
     if not isinstance(contract, dict):
         reasons.append("classification_contract_missing")
-    elif contract != _DECOMPOSITION_CLASSIFICATION_CONTRACT:
+    elif not _strict_json_contract_equal(
+        contract, _DECOMPOSITION_CLASSIFICATION_CONTRACT
+    ):
         reasons.append("classification_contract_mismatch")
 
     return reasons
@@ -2858,7 +2892,10 @@ def _decomposition_source_contract_reasons(
     # Receipt bytes are authenticated against the entry's SHA below.  The
     # remaining provenance fields are literal preregistration commitments;
     # command/log/exit bytes are deliberately not inputs to this core.
-    frozen_source_ok = all(source_binding.get(key) == value for key, value in _DECOMPOSITION_FROZEN_SOURCE_BINDING.items())
+    frozen_source_ok = all(
+        _strict_json_contract_equal(source_binding.get(key), value)
+        for key, value in _DECOMPOSITION_FROZEN_SOURCE_BINDING.items()
+    )
 
     checks: list[tuple[bool, str]] = [
         (frozen_source_ok, "source_frozen_provenance_mismatch"),
@@ -2962,7 +2999,9 @@ def _decomposition_source_contract_reasons(
             "partition_use_policy_fingerprint_mismatch",
         ),
         (
-            universe.get("must_reuse_without_change") == _DECOMPOSITION_MUST_REUSE
+            _strict_json_contract_equal(
+                universe.get("must_reuse_without_change"), _DECOMPOSITION_MUST_REUSE
+            )
             and _strict_count(universe.get("scored_slot_count"))
             and _strict_count(universe.get("invalid_slot_count"))
             and universe.get("no_slot_added_removed_or_reclassified") is True

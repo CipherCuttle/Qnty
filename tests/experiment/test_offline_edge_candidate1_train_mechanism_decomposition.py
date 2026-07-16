@@ -2062,3 +2062,137 @@ def test_aggregate_means_are_derived_from_components(tmp_path: Path) -> None:
         means["candidate_net"]
         == means["candidate_price"] + means["candidate_funding"] - means["candidate_cost"]
     )
+
+
+# ── Frozen-contract type fidelity ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [
+        (True, 1),
+        (False, 0),
+        (1, True),
+        (0, False),
+        (1, 1.0),
+        (1.0, 1),
+        ({"flag": True}, {"flag": 1}),
+        ([True], [1]),
+    ],
+)
+def test_strict_contract_rejects_bool_int_and_int_float_coercion(
+    actual: object, expected: object
+) -> None:
+    # Plain equality accepts every one of these; the frozen contract must not.
+    assert actual == expected
+    assert subject._strict_json_contract_equal(actual, expected) is False
+
+
+def test_strict_contract_accepts_identical_nested_structure() -> None:
+    expected = {"a": [1, {"b": True, "c": ["x", None]}], "d": 0.0022}
+    assert subject._strict_json_contract_equal(json.loads(json.dumps(expected)), expected)
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [
+        ({"a": {"b": 1, "extra": 2}}, {"a": {"b": 1}}),  # extra nested key
+        ({"a": {}}, {"a": {"b": 1}}),                    # missing nested key
+        ({"a": [1, 2]}, {"a": [2, 1]}),                  # reordered list
+        ({"a": [1]}, {"a": [1, 2]}),                     # short list
+        ({"a": {"b": 1}}, {"a": [1]}),                   # wrong container type
+        ({"a": ("x",)}, {"a": ["x"]}),                   # tuple is not a JSON list
+        ({"a": "1"}, {"a": 1}),                          # string is not a number
+        ({"a": None}, {"a": "x"}),                       # null is not a string
+    ],
+)
+def test_strict_contract_rejects_shape_and_order_drift(
+    actual: object, expected: object
+) -> None:
+    assert subject._strict_json_contract_equal(actual, expected) is False
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "reason"),
+    [
+        # The four coercions a hostile reviewer got past plain equality.
+        (("classification_contract", "no_significance_inference"), 1,
+         "classification_contract_mismatch"),
+        (("classification_contract", "no_percentage_contribution_threshold"), 1,
+         "classification_contract_mismatch"),
+        (("frozen_output_schema", "no_random_side_ensemble"), 1,
+         "frozen_output_schema_mismatch"),
+        (("frozen_output_schema", "flat_benchmark_net_fixed_value"), False,
+         "frozen_output_schema_mismatch"),
+        # Remaining boolean flags on the same frozen blocks.
+        (("frozen_output_schema", "no_receive_side_matched_ensemble"), 1,
+         "frozen_output_schema_mismatch"),
+        (("frozen_output_schema",
+          "ensembles_require_separate_preregistration_and_trial_accounting"), 1,
+         "frozen_output_schema_mismatch"),
+        (("frozen_output_schema", "activity_matched_benchmark_contract",
+          "use_candidate_1_exact_active_flat_mask"), 1,
+         "frozen_output_schema_mismatch"),
+        (("frozen_output_schema", "activity_matched_benchmark_contract",
+          "remain_flat_where_candidate_1_flat"), 1,
+         "frozen_output_schema_mismatch"),
+        # Inverse coercion: a numeric frozen value replaced by a bool.
+        (("per_slot_definitions", "fixed_cost_per_active_slot"), True,
+         "per_slot_definitions_mismatch"),
+        # int/float coercion on a frozen numeric value.
+        (("frozen_output_schema", "flat_benchmark_net_fixed_value"), 0.0,
+         "frozen_output_schema_mismatch"),
+        (("per_slot_definitions", "fixed_cost_per_active_slot"), 0,
+         "per_slot_definitions_mismatch"),
+    ],
+)
+def test_frozen_contract_type_confusion_blocks(
+    tmp_path: Path, path: tuple[str, ...], value: object, reason: str
+) -> None:
+    case = _case(tmp_path)
+    result = _decompose(case, registry=_mutated(case["registry"], path, value))
+    assert result["decomposition_state"] == "blocked"
+    assert result["classification"] == "DECOMPOSITION_BLOCKED_OR_INVALID"
+    assert result["outputs"] is None
+    assert reason in result["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "reason"),
+    [
+        # Frozen integer counters: 0 -> False and 1 -> True.
+        (("decomposition_execution_count",), False,
+         "decomposition_execution_count_malformed"),
+        (("decomposition_execution_budget",), True,
+         "decomposition_execution_budget_malformed"),
+    ],
+)
+def test_frozen_integer_counters_reject_bool_coercion(
+    tmp_path: Path, path: tuple[str, ...], value: object, reason: str
+) -> None:
+    # These reach the strict count validator rather than the contract
+    # comparator; asserted here so the bool/int surface is closed end to end.
+    case = _case(tmp_path)
+    result = _decompose(case, registry=_mutated(case["registry"], path, value))
+    assert result["decomposition_state"] == "blocked"
+    assert result["classification"] == "DECOMPOSITION_BLOCKED_OR_INVALID"
+    assert result["outputs"] is None
+    assert reason in result["reason_codes"]
+
+
+def test_unmutated_synthetic_contract_still_computes(tmp_path: Path) -> None:
+    result = _decompose(_case(tmp_path))
+    assert result["decomposition_state"] == "computed"
+    assert result["outputs"] is not None
+
+
+def test_real_registry_frozen_contract_passes_strict_comparison() -> None:
+    # The shipped preregistration must survive the strict comparator unchanged.
+    entry = json.loads(
+        Path(
+            "docs/registries/"
+            "real_btc_candidate1_train_mechanism_decomposition_registry.json"
+        ).read_text(encoding="utf-8")
+    )["entries"][0]
+    assert subject._decomposition_registry_control_reasons(entry) == []
+    assert subject._decomposition_frozen_contract_reasons(entry) == []
