@@ -56,6 +56,7 @@ __all__ = [
     "build_protocol_split_leakage_audit",
     "build_holdout_seal_fingerprint",
     "build_execution_packet_lock",
+    "build_partition_use_policy_v0",
     "build_deterministic_split_definitions",
     "build_cost_case_matrix",
     "validate_real_validation_receipt",
@@ -1243,6 +1244,158 @@ def build_holdout_open_gate(
     }
 
 
+# Partition-use policy is intentionally orthogonal to the structural
+# holdout-open gate.  It consumes registry metadata only and is never folded
+# into the structural gate's fingerprint or state.
+PARTITION_USE_POLICY_VERSION = "partition_use_policy_v0"
+PARTITION_USE_POLICY_STATES = frozenset({"quarantine_only", "confirmatory_eligible"})
+PARTITION_USE_POLICY_REASON_CODES = frozenset(
+    {
+        "prior_economic_value_exposure_before_split_freeze",
+        "new_unseen_data_cut_declared_after_quarantine",
+    }
+)
+_PARTITION_USE_POLICY_REQUIRED_FIELDS = (
+    "partition_data_cut_fingerprint",
+    "partition_use_policy_state",
+    "partition_use_policy_reason_codes",
+    "declared_before_first_statistic_execution",
+    "future_confirmatory_data_after_utc",
+    "partition_use_policy_fingerprint",
+)
+_PARTITION_USE_POLICY_LINEAGE_FIELDS = (
+    "prior_quarantine_partition_data_cut_fingerprint",
+    "prior_quarantine_partition_use_policy_fingerprint",
+)
+_PARTITION_USE_POLICY_RECEIPT_KEYS = frozenset(
+    {
+        "method",
+        "partition_use_policy_state",
+        "partition_use_policy_reason_codes",
+        "partition_use_policy_fingerprint",
+        "partition_use_policy_registry_fingerprint",
+        "partition_use_policy_killed",
+        "scientific_use_authorized",
+        "append_only_declaration",
+        "kill_criteria",
+    }
+)
+
+
+def _partition_use_policy_fingerprint(declaration: dict[str, Any]) -> str:
+    """Return a canonical fingerprint over the immutable policy declaration."""
+    payload = {
+        field: declaration.get(field)
+        for field in (*_PARTITION_USE_POLICY_REQUIRED_FIELDS, *_PARTITION_USE_POLICY_LINEAGE_FIELDS)
+        if field != "partition_use_policy_fingerprint"
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def build_partition_use_policy_v0(
+    *, registry_entry: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Validate the registered scientific-use policy without reading data.
+
+    This is a narrow, registry-metadata-only declaration check.  It cannot
+    open or evaluate a holdout, and it deliberately has no dependency on the
+    structural holdout gate.  Missing, malformed, unknown, or fingerprint-
+    mismatched declarations fail closed at this separate policy layer.
+    """
+    declaration = (
+        registry_entry.get(PARTITION_USE_POLICY_VERSION)
+        if isinstance(registry_entry, dict)
+        else None
+    )
+    kill = {
+        "partition_use_policy_declaration_missing": declaration is None,
+        "partition_use_policy_declaration_incomplete": False,
+        "partition_use_policy_state_unknown": False,
+        "partition_use_policy_reason_code_unknown": False,
+        "partition_use_policy_data_cut_mismatch": False,
+        "partition_use_policy_not_preregistered": False,
+        "partition_use_policy_future_cutoff_invalid": False,
+        "partition_use_policy_confirmatory_lineage_missing": False,
+        "partition_use_policy_same_data_cut_reclassification": False,
+        "partition_use_policy_fingerprint_mismatch": False,
+    }
+    state: str | None = None
+    reason_codes: list[str] = []
+    fingerprint: str | None = None
+
+    if declaration is not None:
+        if not isinstance(declaration, dict) or any(
+            field not in declaration for field in _PARTITION_USE_POLICY_REQUIRED_FIELDS
+        ):
+            kill["partition_use_policy_declaration_incomplete"] = True
+        else:
+            state = declaration.get("partition_use_policy_state")
+            raw_reason_codes = declaration.get("partition_use_policy_reason_codes")
+            reason_codes = sorted(raw_reason_codes) if (
+                isinstance(raw_reason_codes, list)
+                and all(isinstance(code, str) for code in raw_reason_codes)
+            ) else []
+            kill["partition_use_policy_state_unknown"] = state not in PARTITION_USE_POLICY_STATES
+            kill["partition_use_policy_reason_code_unknown"] = (
+                not isinstance(raw_reason_codes, list)
+                or not raw_reason_codes
+                or any(code not in PARTITION_USE_POLICY_REASON_CODES for code in raw_reason_codes)
+            )
+            kill["partition_use_policy_data_cut_mismatch"] = (
+                not isinstance(registry_entry.get("data_cut_fingerprint"), str)
+                or declaration.get("partition_data_cut_fingerprint")
+                != registry_entry.get("data_cut_fingerprint")
+            )
+            kill["partition_use_policy_not_preregistered"] = (
+                declaration.get("declared_before_first_statistic_execution") is not True
+            )
+            cutoff = declaration.get("future_confirmatory_data_after_utc")
+            try:
+                cutoff_valid = isinstance(cutoff, str) and cutoff.endswith("Z")
+                if cutoff_valid:
+                    datetime.fromisoformat(cutoff.replace("Z", "+00:00"))
+            except ValueError:
+                cutoff_valid = False
+            kill["partition_use_policy_future_cutoff_invalid"] = not cutoff_valid
+            if state == "confirmatory_eligible":
+                prior_cut = declaration.get("prior_quarantine_partition_data_cut_fingerprint")
+                prior_fingerprint = declaration.get("prior_quarantine_partition_use_policy_fingerprint")
+                kill["partition_use_policy_confirmatory_lineage_missing"] = not (
+                    isinstance(prior_cut, str)
+                    and prior_cut
+                    and isinstance(prior_fingerprint, str)
+                    and prior_fingerprint
+                )
+                kill["partition_use_policy_same_data_cut_reclassification"] = (
+                    prior_cut == declaration.get("partition_data_cut_fingerprint")
+                )
+            fingerprint = _partition_use_policy_fingerprint(declaration)
+            kill["partition_use_policy_fingerprint_mismatch"] = (
+                declaration.get("partition_use_policy_fingerprint") != fingerprint
+            )
+
+    killed = any(kill.values())
+    return {
+        "method": "SHA256_CANONICAL_REGISTRY_POLICY_DECLARATION_V0",
+        "partition_use_policy_state": state if not killed else "blocked",
+        "partition_use_policy_reason_codes": reason_codes,
+        "partition_use_policy_fingerprint": fingerprint,
+        "partition_use_policy_registry_fingerprint": (
+            declaration.get("partition_use_policy_fingerprint")
+            if isinstance(declaration, dict)
+            else None
+        ),
+        "partition_use_policy_killed": killed,
+        "scientific_use_authorized": False,
+        "append_only_declaration": bool(
+            isinstance(registry_entry, dict) and registry_entry.get("append_only") is True
+        ),
+        "kill_criteria": kill,
+    }
+
+
 def _first_statistic_blocked(
     reason_codes: list[str],
     *,
@@ -1701,6 +1854,11 @@ def build_protocol_computed_validation_slice(
         )
         killed = killed or holdout_open_gate["holdout_open_gate_killed"]
 
+    # This separate metadata-only policy has no bearing on the structural
+    # gate.  It records whether the registered partition may be used
+    # scientifically, and fails closed without changing gate truth.
+    partition_use_policy = build_partition_use_policy_v0(registry_entry=registry_entry)
+
     result = {
         "protocol_version": PROTOCOL_COMPUTED_VALIDATION_VERSION,
         "immutable_data_cut": {
@@ -1748,6 +1906,7 @@ def build_protocol_computed_validation_slice(
         result["execution_packet_lock"] = execution_packet_lock
     if holdout_open_gate is not None:
         result["holdout_open_gate"] = holdout_open_gate
+    result[PARTITION_USE_POLICY_VERSION] = partition_use_policy
     if compute_first_statistic:
         result[FIRST_COMPUTED_STATISTIC_VERSION] = build_first_computed_statistic_v0(
             bars_dir=bars_dir,
@@ -21147,6 +21306,19 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
         for name in ("immutable_data_cut", "trial_registry", "deterministic_split", "kill_criteria"):
             if not isinstance(computed_slice.get(name), dict):
                 raise ValueError(f"computed validation missing {name}")
+        partition_policy = computed_slice.get(PARTITION_USE_POLICY_VERSION)
+        if partition_policy is not None:
+            if not isinstance(partition_policy, dict) or set(partition_policy) != _PARTITION_USE_POLICY_RECEIPT_KEYS:
+                raise ValueError("partition_use_policy_v0 has unexpected keys")
+            if partition_policy.get("partition_use_policy_state") not in {
+                "blocked",
+                *PARTITION_USE_POLICY_STATES,
+            }:
+                raise ValueError("partition_use_policy_v0 has invalid state")
+            if partition_policy.get("scientific_use_authorized") is not False:
+                raise ValueError("partition_use_policy_v0 may not authorize scientific use")
+            if not isinstance(partition_policy.get("partition_use_policy_killed"), bool):
+                raise ValueError("partition_use_policy_v0 killed state must be bool")
         if statistic_block is not None:
             if not isinstance(statistic_block, dict):
                 raise ValueError("first_computed_statistic_v0 must be a dict")
