@@ -1929,6 +1929,16 @@ CANDIDATE1_DECOMPOSITION_ALLOWED_PARTITION = (
 CANDIDATE1_DECOMPOSITION_QUARANTINE_STATE = "sealed"
 CANDIDATE1_DECOMPOSITION_QUARANTINE_ACCESS = "forbidden"
 
+# Execution-control contract.  The decomposition is a single-shot diagnostic:
+# one budgeted execution against an already-spent train smoke.
+CANDIDATE1_DECOMPOSITION_EXECUTION_BUDGET = 1
+CANDIDATE1_DECOMPOSITION_SOURCE_CLASSIFICATION = "CANDIDATE_1_TRAIN_SMOKE_SURVIVED"
+CANDIDATE1_DECOMPOSITION_SOURCE_REASON_CODE = (
+    "holdout_remained_sealed_non_holdout_scored"
+)
+CANDIDATE1_DECOMPOSITION_EDGE_STATUS = "EDGE_UNPROVEN"
+CANDIDATE1_DECOMPOSITION_LIVE_STATUS = "BLOCK_LIVE_INTEGRATION"
+
 # Outcome classifications.  Kept strictly separate from the frozen 19-key
 # output dictionary (see the frozen classification contract in the registry).
 DECOMPOSITION_BLOCKED_OR_INVALID = "DECOMPOSITION_BLOCKED_OR_INVALID"
@@ -1968,33 +1978,87 @@ _DECOMPOSITION_OUTPUT_KEYS = frozenset(
     _DECOMPOSITION_PRIMARY_OUTPUT_KEYS + _DECOMPOSITION_SECONDARY_OUTPUT_KEYS
 )
 
-# Prohibited output tokens (registry ``forbidden_outputs``) plus renamed
-# equivalents.  Scanned recursively so no per-slot leak, risk/PnL metric, or
-# significance statistic can escape the core.
-_DECOMPOSITION_FORBIDDEN_OUTPUT_KEYS = frozenset(
-    {
-        "per_slot_returns",
-        "return_series",
-        "cumulative_pnl",
-        "equity_curve",
-        "sharpe_ratio",
-        "sortino_ratio",
-        "drawdown",
-        "hit_rate",
-        "annualized_return",
-        "p_value",
-        "confidence_interval",
-        "t_statistic",
-        "bootstrap_result",
-        "regime_split",
-        "sensitivity_analysis",
-        "alternative_hold_period",
-        "alternative_cost",
-        "funding_threshold",
-        "candidate_variant",
-        "quarantine_result",
-    }
+# Prohibited output tokens, in registry ``forbidden_outputs`` order so the
+# preregistered list can be compared exactly.  Scanned recursively so no
+# per-slot leak, risk/PnL metric, or significance statistic can escape the core.
+_DECOMPOSITION_FORBIDDEN_OUTPUT_LIST = (
+    "per_slot_returns",
+    "return_series",
+    "cumulative_pnl",
+    "equity_curve",
+    "sharpe_ratio",
+    "sortino_ratio",
+    "drawdown",
+    "hit_rate",
+    "annualized_return",
+    "p_value",
+    "confidence_interval",
+    "t_statistic",
+    "bootstrap_result",
+    "regime_split",
+    "sensitivity_analysis",
+    "alternative_hold_period",
+    "alternative_cost",
+    "funding_threshold",
+    "candidate_variant",
+    "quarantine_result",
 )
+_DECOMPOSITION_FORBIDDEN_OUTPUT_KEYS = frozenset(_DECOMPOSITION_FORBIDDEN_OUTPUT_LIST)
+
+# The implementation's copy of the preregistered frozen output schema.  The
+# registry entry must match this exactly; neither side may drift alone.
+_DECOMPOSITION_FROZEN_OUTPUT_SCHEMA = {
+    "primary_outputs": list(_DECOMPOSITION_PRIMARY_OUTPUT_KEYS),
+    "secondary_outputs": list(_DECOMPOSITION_SECONDARY_OUTPUT_KEYS),
+    "flat_benchmark_net_fixed_value": 0,
+    "activity_matched_benchmark_contract": {
+        "use_candidate_1_exact_active_flat_mask": True,
+        "remain_flat_where_candidate_1_flat": True,
+        "same_entries_exits_funding_window_cost": True,
+        "differ_only_in_side_assignment": True,
+        "role": "regime_diagnostics_not_new_candidates",
+    },
+    "forbidden_outputs": list(_DECOMPOSITION_FORBIDDEN_OUTPUT_LIST),
+    "no_random_side_ensemble": True,
+    "no_receive_side_matched_ensemble": True,
+    "ensembles_require_separate_preregistration_and_trial_accounting": True,
+}
+
+# Frozen classification conditions, keyed by classification name.  These strings
+# are the preregistered conditions; :func:`_classify_candidate1_decomposition`
+# implements them and the registry must declare them verbatim.
+_DECOMPOSITION_CLASSIFICATION_CONDITIONS = {
+    CANDIDATE_1_ABSOLUTE_NET_NONPOSITIVE: "mean_candidate_net <= 0",
+    CANDIDATE_1_ABSOLUTE_NET_POSITIVE_RELATIVE_PRICE_NONPOSITIVE: (
+        "mean_candidate_net > 0 and mean_relative_price_component <= 0"
+    ),
+    CANDIDATE_1_ABSOLUTE_NET_AND_RELATIVE_PRICE_POSITIVE: (
+        "mean_candidate_net > 0 and mean_relative_price_component > 0"
+    ),
+}
+_DECOMPOSITION_BLOCKED_USE_WHEN_ANY = [
+    "source_receipt_cannot_be_authenticated",
+    "source_slot_universe_differs",
+    "slot_counts_differ",
+    "original_T_cannot_be_reconstructed_exactly",
+    "any_frozen_rule_or_fingerprint_differs",
+    "quarantine_access_occurs",
+    "output_schema_differs",
+    "any_prohibited_calculation_occurs",
+]
+# Every classification name the contract may define.  A registry that adds a
+# fourth outcome, or drops one, is a contract change and must fail closed.
+_DECOMPOSITION_CLASSIFICATION_NAMES = frozenset(
+    {DECOMPOSITION_BLOCKED_OR_INVALID, *_DECOMPOSITION_CLASSIFICATION_CONDITIONS}
+)
+
+_DECOMPOSITION_AUTHORIZATION_STATE = {
+    "scientific_use_authorized": False,
+    "paper_trade_authorized": False,
+    "live_integration_authorized": False,
+    "edge_status": CANDIDATE1_DECOMPOSITION_EDGE_STATUS,
+    "live_status": CANDIDATE1_DECOMPOSITION_LIVE_STATUS,
+}
 
 
 def _assert_no_forbidden_decomposition_outputs(value: Any, path: str = "$") -> None:
@@ -2041,9 +2105,16 @@ def _decomposition_blocked(reason_codes: list[str]) -> dict[str, Any]:
 
 
 def _classify_candidate1_decomposition(
-    mean_candidate_net: float, mean_relative_price_component: float
+    mean_candidate_net: Decimal, mean_relative_price_component: Decimal
 ) -> str:
-    """Frozen three-way successful classification (no significance inference)."""
+    """Frozen three-way successful classification (no significance inference).
+
+    Runs against the exact internal Decimal means, never the rounded output
+    floats: a mean whose sign only survives full precision must not be
+    reclassified by serialization.  Conditions are frozen in
+    :data:`_DECOMPOSITION_CLASSIFICATION_CONDITIONS` and validated against the
+    registry's classification contract before this is reached.
+    """
     if mean_candidate_net <= 0:
         return CANDIDATE_1_ABSOLUTE_NET_NONPOSITIVE
     if mean_relative_price_component <= 0:
@@ -2246,45 +2317,327 @@ def _materialize_candidate1_decomposition_slots(
     return slots, invalid_slot_count, None
 
 
-def _aggregate_candidate1_decomposition(
-    slots: list[dict[str, Any]], invalid_slot_count: int
-) -> tuple[dict[str, Any], Decimal]:
-    """Aggregate per-slot component decimals into the frozen 19-key dictionary.
+# Frozen additive identities: ``net == price + funding - cost`` for the
+# candidate, the null, and their relative difference.  Each entry maps the net
+# field to its ``(price, funding, cost)`` component fields.
+_DECOMPOSITION_COMPONENT_IDENTITIES = {
+    "candidate_net": ("candidate_price", "candidate_funding", "candidate_cost"),
+    "null_net": ("null_price", "null_funding", "null_cost"),
+    "relative_net": ("relative_price", "relative_funding", "relative_cost_difference"),
+}
 
-    Returns ``(outputs, mean_relative_net)`` where ``mean_relative_net`` is the
-    exact Decimal used for the reconstruction gate before float conversion.
+
+def _per_slot_component_identity_reasons(slots: list[dict[str, Any]]) -> list[str]:
+    """Verify the frozen per-slot additive identities exactly, in Decimal.
+
+    Every slot must satisfy ``net_i == price_i + funding_i - cost_i`` for the
+    candidate, the null, and the relative difference.  The reason set is bounded
+    and carries no per-slot value: a single code is returned regardless of which
+    or how many slots violate the identity.
+    """
+    for slot in slots:
+        for net_field, (price, funding, cost) in _DECOMPOSITION_COMPONENT_IDENTITIES.items():
+            if slot[net_field] != slot[price] + slot[funding] - slot[cost]:
+                return ["per_slot_component_identity_violation"]
+    return []
+
+
+def _candidate1_decomposition_means(
+    slots: list[dict[str, Any]],
+) -> tuple[dict[str, Decimal], list[str]]:
+    """Return exact Decimal component means plus any identity-violation reasons.
+
+    Each component mean is ``sum(component_i) / n`` under the scorer's Decimal
+    semantics.  The three net means are *derived from* their component means so
+    the frozen aggregate identity
+    ``mean_net == mean_price + mean_funding - mean_cost`` holds exactly rather
+    than up to a division-rounding artifact: Decimal division rounds at context
+    precision, so ``mean(net_i)`` and the component-derived form legitimately
+    differ in their final digit (e.g. ``1/3 + 1/3`` vs ``2/3``).  Requiring exact
+    Decimal equality *between those two forms* would fail closed on valid data,
+    so the derived form is authoritative and the independently computed direct
+    mean must agree with it at the serialization (float) level — the precision at
+    which every output is actually consumed.
     """
     denom = Decimal(len(slots))
 
     def _mean(field: str) -> Decimal:
         return sum((slot[field] for slot in slots), Decimal("0")) / denom
 
-    mean_relative_net = _mean("relative_net")
+    means = {
+        field: _mean(field)
+        for field in (
+            "candidate_price",
+            "candidate_funding",
+            "candidate_cost",
+            "null_price",
+            "null_funding",
+            "null_cost",
+            "relative_price",
+            "relative_funding",
+            "relative_cost_difference",
+            "always_long_net",
+            "always_short_net",
+            "flat_net",
+        )
+    }
+
+    reasons: list[str] = []
+    for net_field, (price, funding, cost) in _DECOMPOSITION_COMPONENT_IDENTITIES.items():
+        # The reported net mean *is* the component reconstruction, so the frozen
+        # aggregate identity holds exactly by construction.  The check that earns
+        # its keep is the independent one below.
+        means[net_field] = means[price] + means[funding] - means[cost]
+        # The component-derived net mean must agree with the directly aggregated
+        # per-slot nets at serialization precision.  Disagreement means the
+        # components do not actually account for the total.
+        if float(means[net_field]) != float(_mean(net_field)):
+            reasons.append("component_mean_direct_disagreement")
+    return means, reasons
+
+
+def _candidate1_decomposition_outputs(
+    means: dict[str, Decimal], slots: list[dict[str, Any]], invalid_slot_count: int
+) -> dict[str, Any]:
+    """Serialize the exact Decimal means into the frozen 19-key output dictionary.
+
+    Called only after every exact gate and the classification have succeeded, so
+    no gate and no classification ever sees a rounded value.
+    """
     active_count = sum(1 for slot in slots if slot["active"] != 0)
     scored_count = len(slots)
-
-    outputs = {
-        "mean_candidate_price_component": float(_mean("candidate_price")),
-        "mean_candidate_funding_component": float(_mean("candidate_funding")),
-        "mean_candidate_cost_drag": float(_mean("candidate_cost")),
-        "mean_candidate_net": float(_mean("candidate_net")),
-        "mean_relative_price_component": float(_mean("relative_price")),
-        "mean_relative_funding_component": float(_mean("relative_funding")),
-        "mean_relative_cost_difference": float(_mean("relative_cost_difference")),
-        "reconstructed_statistic_value_T": float(mean_relative_net),
-        "mean_null_price_component": float(_mean("null_price")),
-        "mean_null_funding_component": float(_mean("null_funding")),
-        "mean_null_cost_drag": float(_mean("null_cost")),
-        "mean_null_net": float(_mean("null_net")),
-        "mean_activity_matched_always_long_net": float(_mean("always_long_net")),
-        "mean_activity_matched_always_short_net": float(_mean("always_short_net")),
-        "flat_benchmark_net": float(_mean("flat_net")),
+    return {
+        "mean_candidate_price_component": float(means["candidate_price"]),
+        "mean_candidate_funding_component": float(means["candidate_funding"]),
+        "mean_candidate_cost_drag": float(means["candidate_cost"]),
+        "mean_candidate_net": float(means["candidate_net"]),
+        "mean_relative_price_component": float(means["relative_price"]),
+        "mean_relative_funding_component": float(means["relative_funding"]),
+        "mean_relative_cost_difference": float(means["relative_cost_difference"]),
+        "reconstructed_statistic_value_T": float(means["relative_net"]),
+        "mean_null_price_component": float(means["null_price"]),
+        "mean_null_funding_component": float(means["null_funding"]),
+        "mean_null_cost_drag": float(means["null_cost"]),
+        "mean_null_net": float(means["null_net"]),
+        "mean_activity_matched_always_long_net": float(means["always_long_net"]),
+        "mean_activity_matched_always_short_net": float(means["always_short_net"]),
+        "flat_benchmark_net": float(means["flat_net"]),
         "scored_slot_count": scored_count,
         "invalid_slot_count": invalid_slot_count,
         "candidate_active_slot_count": active_count,
         "candidate_flat_slot_count": scored_count - active_count,
     }
-    return outputs, mean_relative_net
+
+
+def _decomposition_registry_control_reasons(entry: dict[str, Any]) -> list[str]:
+    """Validate the preregistered protocol, execution-budget, and authorization fields.
+
+    These are the execution-critical controls: identity of the protocol, proof it
+    was registered before execution, the single-shot budget, the fact that the
+    source train execution was already spent, the sealed quarantine, and the
+    authorization state that keeps this a diagnostic.  ``True``/``False`` are
+    compared identically so a truthy ``1`` or ``"yes"`` cannot satisfy a flag.
+
+    Only the *required* fields are validated.  The entry is deliberately not
+    hard-closed against additional append-only evidence fields that the later
+    implementation-binding stage must be free to add.
+    """
+    reasons: list[str] = []
+    checks: list[tuple[bool, str]] = [
+        (
+            entry.get("protocol_id") == CANDIDATE1_DECOMPOSITION_PROTOCOL_ID,
+            "decomposition_protocol_id_mismatch",
+        ),
+        (
+            entry.get("registered_before_execution") is True,
+            "decomposition_not_registered_before_execution",
+        ),
+        (entry.get("append_only") is True, "decomposition_registry_not_append_only"),
+        (
+            entry.get("decomposition_execution_budget")
+            == CANDIDATE1_DECOMPOSITION_EXECUTION_BUDGET,
+            "decomposition_execution_budget_mismatch",
+        ),
+        (
+            entry.get("decomposition_execution_count") == 0,
+            "decomposition_execution_budget_exhausted",
+        ),
+        (
+            entry.get("source_train_execution_consumed") is True,
+            "source_train_execution_not_consumed",
+        ),
+        (
+            entry.get("source_quarantine_state")
+            == CANDIDATE1_DECOMPOSITION_QUARANTINE_STATE,
+            "quarantine_state_not_sealed",
+        ),
+        (
+            entry.get("quarantine_access") == CANDIDATE1_DECOMPOSITION_QUARANTINE_ACCESS,
+            "quarantine_access_not_forbidden",
+        ),
+        (
+            entry.get("allowed_partition") == CANDIDATE1_DECOMPOSITION_ALLOWED_PARTITION,
+            "allowed_partition_mismatch",
+        ),
+    ]
+    reasons.extend(reason for ok, reason in checks if not ok)
+
+    # ``decomposition_execution_count`` must be a real integer budget counter;
+    # ``True`` is an int in Python and ``0.0`` compares equal to ``0``.
+    count = entry.get("decomposition_execution_count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        reasons.append("decomposition_execution_count_malformed")
+
+    authorization = entry.get("authorization_state")
+    if not isinstance(authorization, dict):
+        reasons.append("decomposition_authorization_state_missing")
+    else:
+        authorization_checks: list[tuple[bool, str]] = [
+            (
+                authorization.get("scientific_use_authorized") is False,
+                "scientific_use_authorization_not_false",
+            ),
+            (
+                authorization.get("paper_trade_authorized") is False,
+                "paper_trade_authorization_not_false",
+            ),
+            (
+                authorization.get("live_integration_authorized") is False,
+                "live_integration_authorization_not_false",
+            ),
+            (
+                authorization.get("edge_status") == CANDIDATE1_DECOMPOSITION_EDGE_STATUS,
+                "edge_status_not_unproven",
+            ),
+            (
+                authorization.get("live_status") == CANDIDATE1_DECOMPOSITION_LIVE_STATUS,
+                "live_status_not_blocked",
+            ),
+        ]
+        reasons.extend(reason for ok, reason in authorization_checks if not ok)
+
+    # Structural presence only.  The artifact bytes behind these preconditions
+    # are not inputs to this function and are authenticated by the separate
+    # no-computation preflight; claiming to verify them here would be a lie.
+    preconditions = entry.get("execution_preconditions")
+    if not isinstance(preconditions, list) or not all(
+        isinstance(item, str) for item in preconditions
+    ):
+        reasons.append("execution_preconditions_missing")
+
+    per_slot_definitions = entry.get("per_slot_definitions")
+    if not isinstance(per_slot_definitions, dict) or not per_slot_definitions:
+        reasons.append("per_slot_definitions_missing")
+
+    return reasons
+
+
+def _decomposition_frozen_contract_reasons(entry: dict[str, Any]) -> list[str]:
+    """Validate the registry's frozen output schema and classification contract.
+
+    Both must match this implementation's frozen contract exactly: the output
+    lists close the schema against added or removed fields, and the
+    classification block closes the outcome space against added, dropped, or
+    reworded classifications.
+    """
+    reasons: list[str] = []
+
+    schema = entry.get("frozen_output_schema")
+    if not isinstance(schema, dict):
+        reasons.append("frozen_output_schema_missing")
+    else:
+        # The output schema is frozen, so it is closed in both directions: a
+        # missing *or* an added field is a contract change.  (Only the enclosing
+        # entry stays open to append-only evidence fields.)
+        if set(schema) != set(_DECOMPOSITION_FROZEN_OUTPUT_SCHEMA):
+            reasons.append("frozen_output_schema_mismatch")
+        for field, expected in _DECOMPOSITION_FROZEN_OUTPUT_SCHEMA.items():
+            if schema.get(field) != expected:
+                reasons.append(
+                    "forbidden_output_contract_mismatch"
+                    if field == "forbidden_outputs"
+                    else "frozen_output_schema_mismatch"
+                )
+
+    contract = entry.get("classification_contract")
+    if not isinstance(contract, dict):
+        reasons.append("classification_contract_missing")
+    else:
+        declared_names = {
+            key for key, value in contract.items() if isinstance(value, dict)
+        }
+        if declared_names != _DECOMPOSITION_CLASSIFICATION_NAMES:
+            reasons.append("classification_contract_mismatch")
+        for name, condition in _DECOMPOSITION_CLASSIFICATION_CONDITIONS.items():
+            declared = contract.get(name)
+            if not isinstance(declared, dict) or declared.get("condition") != condition:
+                reasons.append("classification_contract_mismatch")
+        blocked = contract.get(DECOMPOSITION_BLOCKED_OR_INVALID)
+        if (
+            not isinstance(blocked, dict)
+            or blocked.get("use_when_any") != _DECOMPOSITION_BLOCKED_USE_WHEN_ANY
+        ):
+            reasons.append("classification_contract_mismatch")
+        if (
+            contract.get("no_percentage_contribution_threshold") is not True
+            or contract.get("no_significance_inference") is not True
+        ):
+            reasons.append("classification_contract_mismatch")
+
+    return reasons
+
+
+def _decomposition_source_receipt_reasons(pcv: dict[str, Any]) -> list[str]:
+    """Validate the authenticated source receipt's frozen states.
+
+    Every field here comes from raw bytes whose SHA-256 already matched the
+    registered ``archived_receipt_sha256``, so the parsed values are trusted only
+    after authentication.
+    """
+    fcs = pcv.get("first_computed_statistic_v0") or {}
+    seal = pcv.get("holdout_seal_audit") or {}
+    packet = pcv.get("execution_packet_lock") or {}
+    gate = pcv.get("holdout_open_gate") or {}
+    partition = pcv.get("partition_use_policy_v0") or {}
+
+    checks: list[tuple[bool, str]] = [
+        (fcs.get("statistic_state") == "computed", "source_statistic_state_not_computed"),
+        (
+            fcs.get("statistic_reason_codes")
+            == [CANDIDATE1_DECOMPOSITION_SOURCE_REASON_CODE],
+            "source_statistic_reason_code_mismatch",
+        ),
+        (seal.get("holdout_seal_state") == "sealed", "source_holdout_seal_not_sealed"),
+        (seal.get("holdout_seal_killed") is False, "source_holdout_seal_killed"),
+        (seal.get("sealed_roles") == ["bars", "funding"], "source_sealed_roles_mismatch"),
+        (
+            seal.get("projection_policy") == HOLDOUT_SEAL_PROJECTION_POLICY_V1,
+            "source_projection_policy_mismatch",
+        ),
+        (packet.get("packet_lock_state") == "locked", "source_packet_not_locked"),
+        (packet.get("packet_lock_killed") is False, "source_packet_lock_killed"),
+        (
+            gate.get("holdout_open_gate_state") == "gate_passed",
+            "source_holdout_open_gate_not_passed",
+        ),
+        (
+            gate.get("holdout_open_gate_killed") is False,
+            "source_holdout_open_gate_killed",
+        ),
+        (
+            partition.get("partition_use_policy_state") == "quarantine_only",
+            "source_partition_use_policy_not_quarantine_only",
+        ),
+        (
+            partition.get("partition_use_policy_killed") is False,
+            "source_partition_use_policy_killed",
+        ),
+        (
+            partition.get("scientific_use_authorized") is False,
+            "source_scientific_use_authorized",
+        ),
+    ]
+    return [reason for ok, reason in checks if not ok]
 
 
 def _decomposition_source_contract_reasons(
@@ -2320,21 +2673,24 @@ def _decomposition_source_contract_reasons(
     ):
         return ["decomposition_registry_entry_malformed"], bound
 
+    control_reasons = _decomposition_registry_control_reasons(registry_entry)
+    control_reasons.extend(_decomposition_frozen_contract_reasons(registry_entry))
+
     # Authenticate raw bytes before trusting any parsed field.
     if not isinstance(source_receipt_bytes, (bytes, bytearray)):
-        return ["source_receipt_sha256_mismatch"], bound
+        return sorted(set(control_reasons + ["source_receipt_sha256_mismatch"])), bound
     actual_sha = hashlib.sha256(bytes(source_receipt_bytes)).hexdigest()
     if actual_sha != source_binding.get("archived_receipt_sha256"):
-        return ["source_receipt_sha256_mismatch"], bound
+        return sorted(set(control_reasons + ["source_receipt_sha256_mismatch"])), bound
     try:
         receipt = json.loads(bytes(source_receipt_bytes).decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
-        return ["source_receipt_malformed_json"], bound
+        return sorted(set(control_reasons + ["source_receipt_malformed_json"])), bound
 
     pcv = receipt.get("protocol_computed_validation") if isinstance(receipt, dict) else None
     fcs = pcv.get("first_computed_statistic_v0") if isinstance(pcv, dict) else None
     if not isinstance(pcv, dict) or not isinstance(fcs, dict):
-        return ["source_receipt_malformed_json"], bound
+        return sorted(set(control_reasons + ["source_receipt_malformed_json"])), bound
 
     seal = pcv.get("holdout_seal_audit") or {}
     packet = pcv.get("execution_packet_lock") or {}
@@ -2362,7 +2718,31 @@ def _decomposition_source_contract_reasons(
         passed_split.get("declared_embargo_intervals"),
     )
 
+    # The archived command / log / exit-code artifacts are bound structurally
+    # only.  Their bytes are NOT inputs to this function, so no claim is made
+    # that they were authenticated here; that is the later no-computation
+    # preflight's job.  Only the receipt bytes above are authenticated.
+    artifact_binding_present = all(
+        _is_lower_sha256(source_binding.get(field))
+        for field in (
+            "archived_command_sha256",
+            "archived_log_sha256",
+            "archived_exit_code_sha256",
+        )
+    ) and isinstance(source_binding.get("archived_receipt_path"), str)
+
     checks: list[tuple[bool, str]] = [
+        (artifact_binding_present, "source_artifact_binding_incomplete"),
+        (
+            source_binding.get("source_classification")
+            == CANDIDATE1_DECOMPOSITION_SOURCE_CLASSIFICATION,
+            "source_classification_mismatch",
+        ),
+        (
+            source_binding.get("source_statistic_reason_code")
+            == CANDIDATE1_DECOMPOSITION_SOURCE_REASON_CODE,
+            "source_statistic_reason_code_mismatch",
+        ),
         (
             source_binding.get("source_statistic_name")
             == FIRST_COMPUTED_STATISTIC_NAME
@@ -2447,21 +2827,6 @@ def _decomposition_source_contract_reasons(
             "partition_use_policy_fingerprint_mismatch",
         ),
         (
-            registry_entry.get("source_quarantine_state")
-            == CANDIDATE1_DECOMPOSITION_QUARANTINE_STATE,
-            "quarantine_state_not_sealed",
-        ),
-        (
-            registry_entry.get("quarantine_access")
-            == CANDIDATE1_DECOMPOSITION_QUARANTINE_ACCESS,
-            "quarantine_access_not_forbidden",
-        ),
-        (
-            registry_entry.get("allowed_partition")
-            == CANDIDATE1_DECOMPOSITION_ALLOWED_PARTITION,
-            "allowed_partition_mismatch",
-        ),
-        (
             universe.get("scored_slot_count")
             == source_binding.get("source_scored_slot_count")
             and universe.get("invalid_slot_count")
@@ -2473,14 +2838,16 @@ def _decomposition_source_contract_reasons(
             "source_slot_universe_mismatch",
         ),
     ]
-    reasons = [reason for ok, reason in checks if not ok]
+    reasons = control_reasons
+    reasons.extend(reason for ok, reason in checks if not ok)
+    reasons.extend(_decomposition_source_receipt_reasons(pcv))
 
     bound = {
         "source_scored_slot_count": source_binding.get("source_scored_slot_count"),
         "source_invalid_slot_count": source_binding.get("source_invalid_slot_count"),
         "source_statistic_value_T": source_binding.get("source_statistic_value_T"),
     }
-    return reasons, bound
+    return sorted(set(reasons)), bound
 
 
 def build_candidate1_train_mechanism_decomposition_v0(
@@ -2527,32 +2894,62 @@ def build_candidate1_train_mechanism_decomposition_v0(
     if not slots:
         return _decomposition_blocked(["source_slot_universe_mismatch"])
 
-    outputs, mean_relative_net = _aggregate_candidate1_decomposition(
-        slots, invalid_slot_count
+    # Every gate below runs on exact Decimal values.  Floats are produced only
+    # once the gates and the classification have already succeeded.
+    identity_reasons = _per_slot_component_identity_reasons(slots)
+    if identity_reasons:
+        return _decomposition_blocked(identity_reasons)
+
+    means, aggregate_reasons = _candidate1_decomposition_means(slots)
+    if aggregate_reasons:
+        return _decomposition_blocked(aggregate_reasons)
+
+    scored_count = len(slots)
+    active_count = sum(1 for slot in slots if slot["active"] != 0)
+    gate_reasons: list[str] = []
+    if scored_count != bound["source_scored_slot_count"]:
+        gate_reasons.append("source_slot_universe_mismatch")
+    if invalid_slot_count != bound["source_invalid_slot_count"]:
+        gate_reasons.append("source_invalid_slot_count_mismatch")
+    if active_count > scored_count:
+        gate_reasons.append("slot_count_partition_invalid")
+    if means["flat_net"] != 0:
+        gate_reasons.append("flat_benchmark_net_nonzero")
+    if means["relative_cost_difference"] != 0:
+        gate_reasons.append("relative_cost_difference_nonzero")
+    # The reconstruction gate binds the *component* means to the frozen source
+    # statistic: ``mean_relative_price + mean_relative_funding -
+    # mean_relative_cost_difference`` must serialize to the receipt's T under the
+    # scorer's own Decimal-to-float semantics.  This is deliberately not a
+    # comparison of ``mean(candidate_net - null_net)`` against T.
+    reconstructed = (
+        means["relative_price"]
+        + means["relative_funding"]
+        - means["relative_cost_difference"]
+    )
+    # Guards that the value gated here is the same one published as
+    # ``reconstructed_statistic_value_T``: a gate on a different value than the
+    # output reports would be worthless.
+    if reconstructed != means["relative_net"]:
+        gate_reasons.append("mean_relative_net_identity_violation")
+    if float(reconstructed) != bound["source_statistic_value_T"]:
+        gate_reasons.append("reconstruction_mismatch")
+    if gate_reasons:
+        return _decomposition_blocked(gate_reasons)
+
+    classification = _classify_candidate1_decomposition(
+        means["candidate_net"], means["relative_price"]
     )
 
+    outputs = _candidate1_decomposition_outputs(means, slots, invalid_slot_count)
     closure_reasons = _validate_decomposition_output_closure(outputs)
     if closure_reasons:
         return _decomposition_blocked(closure_reasons)
-
-    gate_reasons: list[str] = []
-    if outputs["scored_slot_count"] != bound["source_scored_slot_count"]:
-        gate_reasons.append("source_slot_universe_mismatch")
-    if outputs["invalid_slot_count"] != bound["source_invalid_slot_count"]:
-        gate_reasons.append("source_invalid_slot_count_mismatch")
     if (
         outputs["candidate_active_slot_count"] + outputs["candidate_flat_slot_count"]
         != outputs["scored_slot_count"]
     ):
-        gate_reasons.append("slot_count_partition_invalid")
-    if outputs["flat_benchmark_net"] != 0:
-        gate_reasons.append("flat_benchmark_net_nonzero")
-    if outputs["mean_relative_cost_difference"] != 0:
-        gate_reasons.append("relative_cost_difference_nonzero")
-    if float(mean_relative_net) != bound["source_statistic_value_T"]:
-        gate_reasons.append("reconstruction_mismatch")
-    if gate_reasons:
-        return _decomposition_blocked(gate_reasons)
+        return _decomposition_blocked(["slot_count_partition_invalid"])
 
     try:
         _assert_no_forbidden_decomposition_outputs(outputs)
@@ -2561,9 +2958,7 @@ def build_candidate1_train_mechanism_decomposition_v0(
 
     result = {
         "decomposition_state": "computed",
-        "classification": _classify_candidate1_decomposition(
-            outputs["mean_candidate_net"], outputs["mean_relative_price_component"]
-        ),
+        "classification": classification,
         "reason_codes": [],
         "outputs": outputs,
     }
