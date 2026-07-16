@@ -472,12 +472,146 @@ def build_protocol_split_leakage_audit(
 # treats each holdout row as an opaque byte string. See
 # docs/status/QNTY_OFFLINE_EDGE_HOLDOUT_SEAL_FINGERPRINT_DECISION_MEMO.md.
 HOLDOUT_SEAL_FINGERPRINT_METHOD = "ROLE_RELATIVE_SOURCE_BYTE_SPAN_SHA256"
-_HOLDOUT_SEAL_DECLARATION_REQUIRED_FIELDS = (
+HOLDOUT_SEAL_PROJECTION_POLICY_V1 = "bars_timestamp_partition_projection_v1"
+_HOLDOUT_SEAL_LEGACY_DECLARATION_FIELDS = frozenset((
     "holdout_seal_fingerprint",
     "sealed_at_boundary_index",
     "purge_intervals",
     "embargo_intervals",
-)
+))
+_HOLDOUT_SEAL_PROJECTED_DECLARATION_FIELDS = frozenset((
+    *_HOLDOUT_SEAL_LEGACY_DECLARATION_FIELDS,
+    "sealed_roles",
+    "projection_policy",
+))
+_HOLDOUT_SEAL_RECEIPT_KEYS = frozenset((
+    "method",
+    "holdout_seal_fingerprint",
+    "holdout_seal_state",
+    "sealed_role_count",
+    "sealed_row_count",
+    "sealed_roles",
+    "sealed_row_counts",
+    "projection_policy",
+    "funding_timestamp_column",
+    "funding_partition_counts",
+    "sealed_at_boundary_index",
+    "registry_seal_fingerprint",
+    "seal_fingerprint_matches_registry",
+    "holdout_seal_killed",
+    "kill_criteria",
+))
+_HOLDOUT_SEAL_LEGACY_RECEIPT_KEYS = frozenset((
+    "method", "holdout_seal_fingerprint", "holdout_seal_state",
+    "sealed_role_count", "sealed_row_count", "sealed_at_boundary_index",
+    "registry_seal_fingerprint", "seal_fingerprint_matches_registry",
+    "holdout_seal_killed", "kill_criteria",
+))
+_FUNDING_PARTITION_COUNT_KEYS = frozenset((
+    "before_bars", "train", "purge", "embargo", "quarantine", "after_bars",
+))
+
+
+def _read_timestamped_role_rows(
+    directory: str | Path | None, *, role: str
+) -> tuple[list[tuple[str, datetime, bytes]], list[dict[str, Any]], str | None]:
+    """Read timestamp metadata plus opaque source rows for one seal role.
+
+    The parser dereferences exactly one role-specific timestamp field.  Raw
+    data-row bytes are retained unchanged for later opaque hashing; no value
+    column is named, decoded, or interpreted.
+    """
+    if directory is None or not Path(directory).is_dir():
+        return [], [{"file": None, "row": None, "reason": "role_directory_missing"}], None
+    records: list[tuple[str, datetime, bytes]] = []
+    failures: list[dict[str, Any]] = []
+    selected_column: str | None = None
+    for path in sorted(Path(directory).glob("*.csv"), key=lambda item: item.name):
+        try:
+            raw_lines = path.read_bytes().splitlines()
+        except OSError:
+            failures.append({"file": path.name, "row": None, "reason": "line_read_failure"})
+            continue
+        if not raw_lines:
+            failures.append({"file": path.name, "row": None, "reason": "line_header_missing"})
+            continue
+        try:
+            header = next(csv.reader([raw_lines[0].decode("utf-8")], strict=True))
+        except (UnicodeDecodeError, csv.Error, StopIteration):
+            failures.append({"file": path.name, "row": None, "reason": "timestamp_header_unreadable"})
+            continue
+        if role == "bars":
+            if header.count("timestamp") != 1:
+                failures.append({"file": path.name, "row": None, "reason": "timestamp_header_ambiguous_or_missing"})
+                continue
+            column = "timestamp"
+        else:
+            funding_time_count = header.count("fundingTime")
+            timestamp_count = header.count("timestamp")
+            if funding_time_count + timestamp_count != 1:
+                failures.append({"file": path.name, "row": None, "reason": "funding_timestamp_header_ambiguous_or_missing"})
+                continue
+            column = "fundingTime" if funding_time_count == 1 else "timestamp"
+        if selected_column is None:
+            selected_column = column
+        elif selected_column != column:
+            failures.append({"file": path.name, "row": None, "reason": "funding_timestamp_column_inconsistent"})
+            continue
+        column_index = header.index(column)
+        for row_number, raw_row in enumerate(raw_lines[1:], start=0):
+            try:
+                values = next(csv.reader([raw_row.decode("utf-8")], strict=True))
+            except (UnicodeDecodeError, csv.Error, StopIteration):
+                failures.append({"file": path.name, "row": row_number, "reason": "timestamp_row_unreadable"})
+                continue
+            if len(values) != len(header) or column_index >= len(values) or not values[column_index]:
+                failures.append({"file": path.name, "row": row_number, "reason": "timestamp_cell_missing"})
+                continue
+            try:
+                timestamp = _parse_timestamp(values[column_index])
+            except (ValueError, OverflowError, OSError):
+                failures.append({"file": path.name, "row": row_number, "reason": "timestamp_cell_malformed"})
+                continue
+            records.append((path.name, timestamp, raw_row))
+    if any(records[index][1] <= records[index - 1][1] for index in range(1, len(records))):
+        failures.append({"file": None, "row": None, "reason": "timestamps_duplicate_or_non_monotonic"})
+    return records, failures, selected_column
+
+
+def _classify_projected_timestamp(timestamp: datetime, windows: dict[str, datetime]) -> str:
+    if timestamp < windows["bars_start"]:
+        return "before_bars"
+    if timestamp < windows["purge_start"]:
+        return "train"
+    if timestamp < windows["embargo_start"]:
+        return "purge"
+    if timestamp < windows["quarantine_start"]:
+        return "embargo"
+    if timestamp <= windows["bars_end"]:
+        return "quarantine"
+    return "after_bars"
+
+
+def _hash_projected_holdout_rows(
+    *, policy: str, role_rows: list[tuple[str, list[tuple[str, bytes]]]]
+) -> str:
+    """Hash policy, role-relative source identity, and opaque selected bytes."""
+    digest = hashlib.sha256()
+    policy_bytes = policy.encode("utf-8")
+    digest.update(len(policy_bytes).to_bytes(8, "big"))
+    digest.update(policy_bytes)
+    for role, rows in sorted(role_rows, key=lambda item: item[0]):
+        role_bytes = role.encode("utf-8")
+        digest.update(len(role_bytes).to_bytes(8, "big"))
+        digest.update(role_bytes)
+        digest.update(len(rows).to_bytes(8, "big"))
+        for source_name, row in rows:
+            source_bytes = source_name.encode("utf-8")
+            digest.update(len(source_bytes).to_bytes(8, "big"))
+            digest.update(source_bytes)
+            digest.update(len(row).to_bytes(8, "big"))
+            digest.update(row)
+    return digest.hexdigest()
 
 
 def _read_role_lines(directory: str | Path | None) -> tuple[list[bytes], list[dict[str, Any]]]:
@@ -537,22 +671,13 @@ def build_holdout_seal_fingerprint(
     registry_entry: dict[str, Any] | None,
     funding_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Seal the holdout partition identified by ``build_protocol_split_leakage_audit``.
+    """Seal bars plus optional sparse funding without decoding economic values.
 
-    Computes a SHA-256 fingerprint over the exact raw row bytes of the holdout
-    partition (role-relative source byte spans), never decoding a price /
-    value / outcome column. Fails closed (``holdout_seal_killed``) when the
-    upstream leakage audit is absent, killed, or not passed; when the
-    holdout byte span cannot be resolved; when a non-bars role cannot be
-    deterministically aligned to the bars-derived holdout partition; when no
-    registry ``holdout_seal_declaration`` exists yet (the fingerprint is only
-    a candidate, not a durable seal, so ``holdout_seal_state`` is
-    ``"not_sealed"``); when a registry ``holdout_seal_declaration`` is
-    present but incomplete or bound to a different boundary/purge/embargo; or
-    when a recomputed fingerprint diverges from a complete, matching registry
-    declaration. ``holdout_seal_state`` is only ``"sealed"`` when a complete,
-    matching registry declaration is present and the recomputed fingerprint
-    equals it. Never authorizes paper/live use.
+    Bars use their frozen source-index quarantine.  A funding role uses the
+    versioned bars-timestamp projection and contributes only opaque raw rows
+    whose normalized timestamp falls in that quarantine.  A bars-only call
+    retains the legacy fingerprint for fixture compatibility; a funding call
+    can never validate a legacy bars-only declaration.
     """
     kill = {
         "split_audit_absent": not isinstance(split_audit, dict),
@@ -560,9 +685,14 @@ def build_holdout_seal_fingerprint(
         "leakage_audit_killed": False,
         "holdout_span_unresolvable": False,
         "non_bars_role_alignment_failed": False,
+        "funding_projection_failed": False,
+        "required_role_missing": False,
         "registry_declaration_absent": False,
         "registry_declaration_missing_required_fields": False,
+        "registry_declaration_unexpected_fields": False,
         "boundary_declaration_mismatch": False,
+        "declaration_role_mismatch": False,
+        "declaration_projection_policy_mismatch": False,
         "seal_fingerprint_mismatch": False,
     }
 
@@ -585,6 +715,14 @@ def build_holdout_seal_fingerprint(
     fingerprint: str | None = None
     sealed_role_count = 0
     sealed_row_count = 0
+    sealed_roles: list[str] = []
+    sealed_row_counts: dict[str, int] = {}
+    projection_policy: str | None = None
+    funding_partition_counts = {
+        "before_bars": 0, "train": 0, "purge": 0, "embargo": 0,
+        "quarantine": 0, "after_bars": 0,
+    }
+    funding_timestamp_column: str | None = None
 
     if upstream_ok:
         bars_lines, bars_failures = _read_role_lines(bars_dir)
@@ -606,25 +744,47 @@ def build_holdout_seal_fingerprint(
             role_rows: list[tuple[str, list[bytes]]] = [("bars", bars_holdout_rows)]
             sealed_role_count = 1
             sealed_row_count = len(bars_holdout_rows)
+            sealed_roles = ["bars"]
+            sealed_row_counts = {"bars": len(bars_holdout_rows)}
 
             if funding_dir is not None:
-                bars_timestamps, bars_ts_failures = _read_role_timestamps(bars_dir)
-                funding_timestamps, funding_ts_failures = _read_role_timestamps(funding_dir)
-                funding_lines, funding_line_failures = _read_role_lines(funding_dir)
-                if (
-                    bars_ts_failures
-                    or funding_ts_failures
-                    or funding_line_failures
-                    or len(funding_timestamps) != len(bars_timestamps)
-                    or funding_timestamps != bars_timestamps
-                    or len(funding_lines) != len(bars_lines)
-                ):
-                    kill["non_bars_role_alignment_failed"] = True
+                bars_records, bars_projection_failures, _ = _read_timestamped_role_rows(bars_dir, role="bars")
+                funding_records, funding_projection_failures, funding_timestamp_column = _read_timestamped_role_rows(funding_dir, role="funding")
+                if bars_projection_failures or funding_projection_failures or len(bars_records) != len(bars_lines):
+                    kill["funding_projection_failed"] = True
+                elif not funding_records:
+                    kill["required_role_missing"] = True
                 else:
-                    role_rows.append(("funding", funding_lines[holdout_start:]))
-                    sealed_role_count = 2
+                    try:
+                        windows = {
+                            "bars_start": bars_records[0][1],
+                            "purge_start": bars_records[boundary_index - purge_intervals][1],
+                            "embargo_start": bars_records[boundary_index][1],
+                            "quarantine_start": bars_records[boundary_index + embargo_intervals][1],
+                            "bars_end": bars_records[-1][1],
+                        }
+                        projected_rows: list[tuple[str, bytes]] = []
+                        for source_name, timestamp, raw_row in funding_records:
+                            classification = _classify_projected_timestamp(timestamp, windows)
+                            funding_partition_counts[classification] += 1
+                            if classification == "quarantine":
+                                projected_rows.append((source_name, raw_row))
+                        projection_policy = HOLDOUT_SEAL_PROJECTION_POLICY_V1
+                        fingerprint = _hash_projected_holdout_rows(
+                            policy=projection_policy,
+                            role_rows=[
+                                ("bars", [(source_name, raw_row) for source_name, _, raw_row in bars_records[holdout_start:]]),
+                                ("funding", projected_rows),
+                            ],
+                        )
+                        sealed_roles = ["bars", "funding"]
+                        sealed_role_count = 2
+                        sealed_row_counts["funding"] = len(projected_rows)
+                        sealed_row_count += len(projected_rows)
+                    except (IndexError, TypeError):
+                        kill["funding_projection_failed"] = True
 
-            if not kill["non_bars_role_alignment_failed"]:
+            if funding_dir is None and not kill["non_bars_role_alignment_failed"]:
                 fingerprint = _hash_holdout_rows(role_rows)
 
     can_compare_registry = not any(
@@ -635,6 +795,8 @@ def build_holdout_seal_fingerprint(
             "leakage_audit_killed",
             "holdout_span_unresolvable",
             "non_bars_role_alignment_failed",
+            "funding_projection_failed",
+            "required_role_missing",
         )
     )
 
@@ -650,16 +812,30 @@ def build_holdout_seal_fingerprint(
             # write -- it is not yet a sealed holdout.
             kill["registry_declaration_absent"] = True
             state = "not_sealed"
-        elif not isinstance(declaration, dict) or any(
-            field not in declaration for field in _HOLDOUT_SEAL_DECLARATION_REQUIRED_FIELDS
-        ):
+        elif not isinstance(declaration, dict):
             kill["registry_declaration_missing_required_fields"] = True
+        elif not (expected_fields := (
+            _HOLDOUT_SEAL_PROJECTED_DECLARATION_FIELDS
+            if funding_dir is not None
+            else _HOLDOUT_SEAL_LEGACY_DECLARATION_FIELDS
+        )).issubset(declaration):
+            kill["registry_declaration_missing_required_fields"] = True
+        elif set(declaration) != expected_fields:
+            kill["registry_declaration_unexpected_fields"] = True
         elif (
             declaration.get("sealed_at_boundary_index") != boundary_index
             or declaration.get("purge_intervals") != purge_intervals
             or declaration.get("embargo_intervals") != embargo_intervals
         ):
             kill["boundary_declaration_mismatch"] = True
+        elif funding_dir is not None and (
+            declaration.get("sealed_roles") != ["bars", "funding"]
+        ):
+            kill["declaration_role_mismatch"] = True
+        elif funding_dir is not None and (
+            declaration.get("projection_policy") != HOLDOUT_SEAL_PROJECTION_POLICY_V1
+        ):
+            kill["declaration_projection_policy_mismatch"] = True
         else:
             registry_seal_fingerprint = declaration.get("holdout_seal_fingerprint")
             seal_fingerprint_matches_registry = registry_seal_fingerprint == fingerprint
@@ -676,6 +852,11 @@ def build_holdout_seal_fingerprint(
         "holdout_seal_state": state,
         "sealed_role_count": sealed_role_count,
         "sealed_row_count": sealed_row_count,
+        "sealed_roles": sealed_roles,
+        "sealed_row_counts": sealed_row_counts,
+        "projection_policy": projection_policy,
+        "funding_timestamp_column": funding_timestamp_column,
+        "funding_partition_counts": funding_partition_counts,
         "sealed_at_boundary_index": boundary_index,
         "registry_seal_fingerprint": registry_seal_fingerprint,
         "seal_fingerprint_matches_registry": seal_fingerprint_matches_registry,
@@ -21328,6 +21509,61 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
         for name in ("immutable_data_cut", "trial_registry", "deterministic_split", "kill_criteria"):
             if not isinstance(computed_slice.get(name), dict):
                 raise ValueError(f"computed validation missing {name}")
+        holdout_seal = computed_slice.get("holdout_seal_audit")
+        if holdout_seal is not None:
+            if not isinstance(holdout_seal, dict) or set(holdout_seal) not in {
+                _HOLDOUT_SEAL_RECEIPT_KEYS, _HOLDOUT_SEAL_LEGACY_RECEIPT_KEYS,
+            }:
+                raise ValueError("holdout_seal_audit has unexpected keys")
+            if holdout_seal.get("method") != HOLDOUT_SEAL_FINGERPRINT_METHOD:
+                raise ValueError("holdout_seal_audit has invalid method")
+            legacy_seal = set(holdout_seal) == _HOLDOUT_SEAL_LEGACY_RECEIPT_KEYS
+            sealed_roles = holdout_seal.get("sealed_roles")
+            sealed_row_counts = holdout_seal.get("sealed_row_counts")
+            sealed_role_count = holdout_seal.get("sealed_role_count")
+            sealed_row_count = holdout_seal.get("sealed_row_count")
+            if legacy_seal:
+                sealed_roles = [f"legacy-role-{index}" for index in range(sealed_role_count)] if isinstance(sealed_role_count, int) and not isinstance(sealed_role_count, bool) and sealed_role_count >= 0 else None
+                sealed_row_counts = {"legacy": sealed_row_count} if isinstance(sealed_row_count, int) and not isinstance(sealed_row_count, bool) and sealed_row_count >= 0 else None
+            if not isinstance(sealed_roles, list) or (not legacy_seal and sealed_roles not in ([], ["bars"], ["bars", "funding"])):
+                raise ValueError("holdout_seal_audit has invalid sealed roles")
+            if not isinstance(sealed_role_count, int) or isinstance(sealed_role_count, bool) or (not legacy_seal and sealed_role_count != len(sealed_roles)):
+                raise ValueError("holdout_seal_audit role count disagrees with sealed roles")
+            if not isinstance(sealed_row_counts, dict) or (not legacy_seal and set(sealed_row_counts) != set(sealed_roles)):
+                raise ValueError("holdout_seal_audit row-count roles disagree with sealed roles")
+            if any(not isinstance(count, int) or isinstance(count, bool) or count < 0 for count in sealed_row_counts.values()):
+                raise ValueError("holdout_seal_audit row counts must be non-negative integers")
+            if not isinstance(sealed_row_count, int) or isinstance(sealed_row_count, bool) or sealed_row_count != sum(sealed_row_counts.values()):
+                raise ValueError("holdout_seal_audit total row count disagrees with role counts")
+            partition_counts = holdout_seal.get("funding_partition_counts", {})
+            if legacy_seal:
+                partition_counts = {key: 0 for key in _FUNDING_PARTITION_COUNT_KEYS}
+            if not isinstance(partition_counts, dict) or set(partition_counts) != _FUNDING_PARTITION_COUNT_KEYS:
+                raise ValueError("holdout_seal_audit has invalid funding partition counts")
+            if any(not isinstance(count, int) or isinstance(count, bool) or count < 0 for count in partition_counts.values()):
+                raise ValueError("holdout_seal_audit funding partition counts must be non-negative integers")
+            projected = not legacy_seal and sealed_roles == ["bars", "funding"]
+            if projected:
+                if holdout_seal.get("projection_policy") != HOLDOUT_SEAL_PROJECTION_POLICY_V1:
+                    raise ValueError("projected holdout_seal_audit has invalid policy")
+                if holdout_seal.get("funding_timestamp_column") not in {"fundingTime", "timestamp"}:
+                    raise ValueError("projected holdout_seal_audit has invalid funding timestamp column")
+            elif not legacy_seal and (
+                holdout_seal.get("projection_policy") is not None
+                or holdout_seal.get("funding_timestamp_column") is not None
+                or any(partition_counts.values())
+            ):
+                raise ValueError("bars-only holdout_seal_audit claims funding projection metadata")
+            criteria = holdout_seal.get("kill_criteria")
+            if not isinstance(criteria, dict) or any(not isinstance(value, bool) for value in criteria.values()):
+                raise ValueError("holdout_seal_audit has invalid kill criteria")
+            if (
+                not isinstance(holdout_seal.get("holdout_seal_killed"), bool)
+                or holdout_seal["holdout_seal_killed"] != any(criteria.values())
+            ):
+                raise ValueError("holdout_seal_audit killed status disagrees with kill criteria")
+            if sealed_roles == [] and not holdout_seal["holdout_seal_killed"]:
+                raise ValueError("unkilled holdout_seal_audit must seal bars")
         partition_policy = computed_slice.get(PARTITION_USE_POLICY_VERSION)
         if partition_policy is not None:
             if not isinstance(partition_policy, dict) or set(partition_policy) != _PARTITION_USE_POLICY_RECEIPT_KEYS:
