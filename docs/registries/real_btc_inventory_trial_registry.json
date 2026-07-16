@@ -5,6 +5,43 @@
     "data_cut_fingerprint": "020eac5e9659138e4c66b2fb2b44020a9b894b0500f51fd935014c5b37f55224",
     "append_only": true,
     "registered_before_execution": true,
+    "split_boundary_index": 33735,
+    "purge_intervals": 8,
+    "embargo_intervals": 90,
+    "holdout_seal_declaration": {
+      "holdout_seal_fingerprint": "46cde529296e9bde4a884e3ea51950474ed75667a8b9a46d632581e76cd9a2cf",
+      "sealed_at_boundary_index": 33735,
+      "purge_intervals": 8,
+      "embargo_intervals": 90
+    },
+    "execution_packet_declaration": {
+      "execution_packet_fingerprint": "bc0526ecdbbb1a7c2ff183babd465266f8122efd19ca06ad604b916abca6bdb3",
+      "locked_at": "2026-07-16T00:50:14Z",
+      "candidate_family_declaration_hash": "cdf63504e2d56b64d7516bfc77562a08611a0bfdac18ff6013e79cf41a26d3ea",
+      "null_family_declaration_hash": "8568e2d53780c4469884a825ab5dba9b26d077176e3a2abd0459dc3d0142e4aa",
+      "data_cut_fingerprint": "020eac5e9659138e4c66b2fb2b44020a9b894b0500f51fd935014c5b37f55224",
+      "split_boundary_declaration_hash": "70e9c7066696636c3cce61b35e860c337bad6cc8f612dc458d3866cc3425f57c",
+      "holdout_seal_fingerprint": "46cde529296e9bde4a884e3ea51950474ed75667a8b9a46d632581e76cd9a2cf",
+      "code_commit_hash": "a8c6f48613aee6e596758370c841112011773781",
+      "protocol_version": "protocol_computed_validation_v1"
+    },
+    "holdout_open_gate_declaration": {
+      "holdout_open_gate_fingerprint": "6f37e476ff5e69b6bb3531c09ee7e1eec80f6e1fb44be72089879fc4bdf52533",
+      "holdout_open_gate_state": "gate_passed",
+      "gate_checked_at": "2026-07-16T00:50:14Z",
+      "structural_prerequisite_count": 4,
+      "holdout_open_gate_reason_codes": []
+    },
+    "partition_use_policy_v0": {
+      "partition_data_cut_fingerprint": "020eac5e9659138e4c66b2fb2b44020a9b894b0500f51fd935014c5b37f55224",
+      "partition_use_policy_state": "quarantine_only",
+      "partition_use_policy_reason_codes": [
+        "prior_economic_value_exposure_before_split_freeze"
+      ],
+      "declared_before_first_statistic_execution": true,
+      "future_confirmatory_data_after_utc": "2026-04-23T01:00:00Z",
+      "partition_use_policy_fingerprint": "c47d5fffb2098f13c9b4604d4d2157fd2bf1ff0c75deb918d3996e6956838ba5"
+    },
     "first_computed_statistic_v0": {
       "candidate_definition": {
         "candidate_name": "funding_sign_one_interval_carry_v1",
