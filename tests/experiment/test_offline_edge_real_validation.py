@@ -25151,3 +25151,191 @@ class TestHoldoutOpenGate:
         assert gate["holdout_open_gate_state"] == "gate_passed"
         assert gate["holdout_open_gate_killed"] is False
         assert gate["gate_fingerprint_matches_registry"] is True
+
+
+class TestPartitionUsePolicyV0:
+    DATA_CUT = "a" * 64
+
+    def _entry(self):
+        entry = {"append_only": True, "data_cut_fingerprint": self.DATA_CUT}
+        declaration = {
+            "partition_data_cut_fingerprint": self.DATA_CUT,
+            "partition_use_policy_state": "quarantine_only",
+            "partition_use_policy_reason_codes": [
+                "prior_economic_value_exposure_before_split_freeze"
+            ],
+            "declared_before_first_statistic_execution": True,
+            "future_confirmatory_data_after_utc": "2026-04-23T01:00:00Z",
+        }
+        declaration["partition_use_policy_fingerprint"] = (
+            real_validation._partition_use_policy_fingerprint(declaration)
+        )
+        entry["partition_use_policy_v0"] = declaration
+        return entry
+
+    def test_quarantine_policy_is_closed_and_never_authorizes_use(self):
+        policy = real_validation.build_partition_use_policy_v0(registry_entry=self._entry())
+        assert policy["partition_use_policy_state"] == "quarantine_only"
+        assert policy["partition_use_policy_killed"] is False
+        assert policy["scientific_use_authorized"] is False
+        assert policy["append_only_declaration"] is True
+        assert set(policy) == real_validation._PARTITION_USE_POLICY_RECEIPT_KEYS
+
+    def test_quarantine_does_not_change_a_structurally_passed_gate(self):
+        entry = self._entry()
+        packet = {
+            "execution_packet_fingerprint": "packet-fingerprint",
+            "packet_lock_state": "locked",
+            "packet_lock_killed": False,
+        }
+        seal = {
+            "holdout_seal_fingerprint": "seal-fingerprint",
+            "holdout_seal_state": "sealed",
+            "holdout_seal_killed": False,
+        }
+        split = {
+            "boundary_index": 4,
+            "declared_purge_intervals": 1,
+            "declared_embargo_intervals": 1,
+            "leakage_audit_passed": True,
+            "leakage_audit_killed": False,
+        }
+        candidate = real_validation.build_holdout_open_gate(
+            execution_packet_lock=packet,
+            holdout_seal=seal,
+            split_audit=split,
+            data_cut_fingerprint=self.DATA_CUT,
+            protocol_version=real_validation.PROTOCOL_COMPUTED_VALIDATION_VERSION,
+            registry_entry=entry,
+        )
+        entry["holdout_open_gate_declaration"] = {
+            "holdout_open_gate_fingerprint": candidate["holdout_open_gate_fingerprint"],
+            "holdout_open_gate_state": "gate_passed",
+            "gate_checked_at": "DETERMINISTIC_FIXTURE_GATE_CHECK_V0",
+            "structural_prerequisite_count": candidate["structural_prerequisite_count"],
+            "holdout_open_gate_reason_codes": [],
+        }
+        gate = real_validation.build_holdout_open_gate(
+            execution_packet_lock=packet,
+            holdout_seal=seal,
+            split_audit=split,
+            data_cut_fingerprint=self.DATA_CUT,
+            protocol_version=real_validation.PROTOCOL_COMPUTED_VALIDATION_VERSION,
+            registry_entry=entry,
+        )
+        policy = real_validation.build_partition_use_policy_v0(registry_entry=entry)
+        assert gate["holdout_open_gate_state"] == "gate_passed"
+        assert gate["holdout_open_gate_killed"] is False
+        assert policy["partition_use_policy_state"] == "quarantine_only"
+        assert policy["scientific_use_authorized"] is False
+
+    def test_confirmatory_eligible_is_rejected_in_v0(self):
+        entry = self._entry()
+        declaration = entry["partition_use_policy_v0"]
+        declaration["partition_use_policy_state"] = "confirmatory_eligible"
+        declaration["partition_use_policy_fingerprint"] = (
+            real_validation._partition_use_policy_fingerprint(declaration)
+        )
+        policy = real_validation.build_partition_use_policy_v0(registry_entry=entry)
+        assert policy["partition_use_policy_state"] == "blocked"
+        assert policy["kill_criteria"]["partition_use_policy_state_unknown"] is True
+
+    def test_missing_unknown_and_reason_declarations_fail_closed(self):
+        missing = real_validation.build_partition_use_policy_v0(registry_entry=self._entry() | {"partition_use_policy_v0": None})
+        assert missing["partition_use_policy_state"] == "blocked"
+        assert missing["kill_criteria"]["partition_use_policy_declaration_missing"] is True
+
+        unknown = self._entry()
+        unknown["partition_use_policy_v0"]["partition_use_policy_state"] = "open_now"
+        unknown_policy = real_validation.build_partition_use_policy_v0(registry_entry=unknown)
+        assert unknown_policy["partition_use_policy_state"] == "blocked"
+        assert unknown_policy["kill_criteria"]["partition_use_policy_state_unknown"] is True
+
+        bad_reason = self._entry()
+        bad_reason["partition_use_policy_v0"]["partition_use_policy_reason_codes"] = ["unknown"]
+        bad_reason_policy = real_validation.build_partition_use_policy_v0(registry_entry=bad_reason)
+        assert bad_reason_policy["kill_criteria"]["partition_use_policy_reason_code_unknown"] is True
+
+        for reason_codes in ([], ["prior_economic_value_exposure_before_split_freeze"] * 2):
+            bad = self._entry()
+            bad["partition_use_policy_v0"]["partition_use_policy_reason_codes"] = reason_codes
+            policy = real_validation.build_partition_use_policy_v0(registry_entry=bad)
+            assert policy["partition_use_policy_state"] == "blocked"
+            assert policy["kill_criteria"]["partition_use_policy_reason_code_unknown"] is True
+
+    def test_schema_hash_and_fingerprint_fail_closed(self):
+        unexpected = self._entry()
+        unexpected["partition_use_policy_v0"]["unbound"] = "field"
+        policy = real_validation.build_partition_use_policy_v0(registry_entry=unexpected)
+        assert policy["kill_criteria"]["partition_use_policy_unexpected_field"] is True
+
+        malformed_cut = self._entry()
+        malformed_cut["partition_use_policy_v0"]["partition_data_cut_fingerprint"] = "A" * 64
+        policy = real_validation.build_partition_use_policy_v0(registry_entry=malformed_cut)
+        assert policy["kill_criteria"]["partition_use_policy_data_cut_malformed"] is True
+
+        mismatched_cut = self._entry()
+        mismatched_cut["partition_use_policy_v0"]["partition_data_cut_fingerprint"] = "b" * 64
+        policy = real_validation.build_partition_use_policy_v0(registry_entry=mismatched_cut)
+        assert policy["kill_criteria"]["partition_use_policy_data_cut_mismatch"] is True
+
+        malformed_fingerprint = self._entry()
+        malformed_fingerprint["partition_use_policy_v0"]["partition_use_policy_fingerprint"] = "A" * 64
+        policy = real_validation.build_partition_use_policy_v0(registry_entry=malformed_fingerprint)
+        assert policy["kill_criteria"]["partition_use_policy_fingerprint_malformed"] is True
+
+        stale = self._entry()
+        stale["partition_use_policy_v0"]["future_confirmatory_data_after_utc"] = "2026-04-24T01:00:00Z"
+        policy = real_validation.build_partition_use_policy_v0(registry_entry=stale)
+        assert policy["kill_criteria"]["partition_use_policy_fingerprint_mismatch"] is True
+
+    def test_noncanonical_or_unqualified_declarations_cannot_pass(self):
+        bad_cutoff = self._entry()
+        bad_cutoff["partition_use_policy_v0"]["future_confirmatory_data_after_utc"] = "2026-04-23T01:00:00+00:00"
+        bad_cutoff["partition_use_policy_v0"]["partition_use_policy_fingerprint"] = real_validation._partition_use_policy_fingerprint(bad_cutoff["partition_use_policy_v0"])
+        assert real_validation.build_partition_use_policy_v0(registry_entry=bad_cutoff)["partition_use_policy_killed"] is True
+
+        not_append_only = self._entry()
+        not_append_only["append_only"] = 1
+        policy = real_validation.build_partition_use_policy_v0(registry_entry=not_append_only)
+        assert policy["kill_criteria"]["partition_use_policy_append_only_invalid"] is True
+
+    def test_fingerprint_is_deterministic_and_policy_path_has_no_data_or_scorer_io(self):
+        first = real_validation.build_partition_use_policy_v0(registry_entry=self._entry())
+        second = real_validation.build_partition_use_policy_v0(registry_entry=self._entry())
+        assert first["partition_use_policy_fingerprint"] == second["partition_use_policy_fingerprint"]
+
+        import inspect
+
+        signature = inspect.signature(real_validation.build_partition_use_policy_v0)
+        assert tuple(signature.parameters) == ("registry_entry",)
+        source = inspect.getsource(real_validation.build_partition_use_policy_v0)
+        assert "build_first_computed_statistic_v0" not in source
+
+    def test_receipt_validator_rejects_inconsistent_policy_receipts(self):
+        receipt = real_validation.build_real_validation_receipt(
+            input_manifest_fingerprint="a",
+            data_quality_receipt_sha256="b",
+            code_commit_sha="c",
+            split_definitions=[],
+            cost_cases=[],
+            protocol_computed_validation_slice={
+                "computed_input_integrity_result": {
+                    "status": real_validation._PROTOCOL_RESULT,
+                    "paper_trade_authorized": False,
+                    "live_integration_authorized": False,
+                },
+                "immutable_data_cut": {}, "trial_registry": {},
+                "deterministic_split": {}, "kill_criteria": {},
+                "partition_use_policy_v0": real_validation.build_partition_use_policy_v0(registry_entry=self._entry()),
+            },
+        )
+        real_validation.validate_real_validation_receipt(receipt)
+        policy = receipt["protocol_computed_validation"]["partition_use_policy_v0"]
+        policy["partition_use_policy_state"] = "blocked"
+        with pytest.raises(ValueError, match="state and killed"):
+            real_validation.validate_real_validation_receipt(receipt)
+        policy["partition_use_policy_state"] = "quarantine_only"
+        policy["kill_criteria"] = {"bad": False}
+        with pytest.raises(ValueError, match="kill criteria"):
+            real_validation.validate_real_validation_receipt(receipt)
