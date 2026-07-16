@@ -1,0 +1,63 @@
+{
+  "protocol_id": "real_btc_candidate1_train_smoke_v0",
+  "source_classification": "CANDIDATE_1_TRAIN_SMOKE_SURVIVED",
+  "source_classification_meaning": "T > 0 on the frozen non-quarantine train smoke; NOT absolute profitability, statistical significance, edge confirmation, paper readiness, or live readiness",
+  "source_repo_head": "407996932afbed9f8d1aaa8fc4c05871c6712c39",
+  "bound_implementation_sha": "e1b493e22403a228e9d3994e7a39a0f02fbb2bcc",
+  "execution_count": 1,
+  "exit_code": 0,
+  "utc_started": "2026-07-16T02:42:06Z",
+  "source_run_root": "/tmp/qnty-candidate1-real-run.v9EaBY",
+  "source_artifacts": [
+    {
+      "filename": "exact_command.txt",
+      "size_bytes": 793,
+      "sha256": "2eeeb9f87a0747f758f0171616c2a73315c041bb37531d5d4f6bf382e4550bb8"
+    },
+    {
+      "filename": "exit_code.txt",
+      "size_bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "filename": "first_statistic_run.log",
+      "size_bytes": 266,
+      "sha256": "421b3217b531063b09bee5d101ce184323d8959d1217d81be6de74a74377189c"
+    },
+    {
+      "filename": "real_validation_receipt.json",
+      "size_bytes": 11390,
+      "sha256": "7abb521eba06ebd515f6ad1519fab92df1368d342355a744ec415d6d220b9be5"
+    }
+  ],
+  "receipt_schema_validation_state": "VALID",
+  "receipt_schema_validator": "quantbot.experiment.offline_edge_real_validation.validate_real_validation_receipt",
+  "statistic_state": "computed",
+  "statistic_name": "mean_candidate_net_minus_null_net_v1",
+  "statistic_value_T": 0.0007358157493656125,
+  "scored_slot_count": 4203,
+  "invalid_slot_count": 14,
+  "statistic_reason_codes": [
+    "holdout_remained_sealed_non_holdout_scored"
+  ],
+  "candidate_name": "funding_sign_one_interval_carry_v1",
+  "null_name": "alternating_active_slot_side_v1",
+  "frozen_fingerprints": {
+    "outer_data_cut": "020eac5e9659138e4c66b2fb2b44020a9b894b0500f51fd935014c5b37f55224",
+    "nested_first_statistic_data_binding": "7c8552f10cf8f72c859335a5f4af8ca36094bffed695428a9c93a1033ef86c6f",
+    "candidate_rule_fingerprint": "098418fce70dba933950ac347f38274464d67cda70e4b2878128e5025c8049fe",
+    "null_rule_fingerprint": "940db1b075f7a6f9ecb1a5b288fb63878abbdcbb361f691f3173a663423a2bfa",
+    "statistic_fingerprint": "776b48aa94c1168faca1833e7f568351b1ba711c9e82d195aec9f5ec3364df88",
+    "split_fingerprint": "70e9c7066696636c3cce61b35e860c337bad6cc8f612dc458d3866cc3425f57c",
+    "two_role_seal": "1e05840e3d49ec4d74a76b8477d51a2170086fd93c4eaba38b43c30c03d14ef9",
+    "execution_packet": "b8a60de328193e23128b53f7436b5b992b7f0b2920187ffc274a89b52e868ca2",
+    "structural_gate": "6c216226f0438ddd66f38f9d14cb967d736bdfabcc8f353237e2c506c40b760f",
+    "partition_use_policy": "c47d5fffb2098f13c9b4604d4d2157fd2bf1ff0c75deb918d3996e6956838ba5"
+  },
+  "persistent_once_marker_present": true,
+  "persistent_once_marker_path": "$HOME/.local/state/qnty/real_btc_candidate1_first_statistic_v0.started",
+  "quarantine_economically_opened": false,
+  "scientific_use_authorized": false,
+  "paper_trade_authorized": false,
+  "live_integration_authorized": false
+}
