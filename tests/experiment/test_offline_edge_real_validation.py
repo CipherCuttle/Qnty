@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import json
 import subprocess
 import sys
@@ -23793,12 +23794,11 @@ class TestHoldoutSealFingerprint:
         assert confirmed["seal_fingerprint_matches_registry"] is True
         assert confirmed["registry_seal_fingerprint"] == first["holdout_seal_fingerprint"]
 
-    def test_non_bars_role_misaligned_funding_kills(self, tmp_path):
+    def test_sparse_funding_role_projects_without_row_alignment(self, tmp_path):
         bars = self._bars(tmp_path)
         funding = tmp_path / "funding"
         funding.mkdir()
-        # Only 3 funding rows vs 8 bars rows -- cannot be deterministically
-        # aligned to the bars-derived holdout partition.
+        # Sparse events are projected by normalized timestamp, not row index.
         funding.joinpath("BTC.csv").write_text(
             "timestamp,funding_rate\n"
             "2024-01-01T00:00:00Z,0\n2024-01-01T01:00:00Z,0\n2024-01-01T02:00:00Z,0\n"
@@ -23807,7 +23807,9 @@ class TestHoldoutSealFingerprint:
         seal = self._seal(tmp_path, bars_dir=bars, split_audit=audit, funding_dir=funding)
         assert seal["holdout_seal_state"] == "not_sealed"
         assert seal["holdout_seal_killed"] is True
-        assert seal["kill_criteria"]["non_bars_role_alignment_failed"] is True
+        assert seal["kill_criteria"]["registry_declaration_absent"] is True
+        assert seal["kill_criteria"]["funding_projection_failed"] is False
+        assert seal["sealed_row_counts"] == {"bars": 3, "funding": 0}
 
     def test_aligned_funding_role_seals_both_roles(self, tmp_path):
         bars = self._bars(tmp_path)
@@ -23932,6 +23934,8 @@ class TestHoldoutSealFingerprint:
             "sealed_at_boundary_index": first_pass["holdout_seal_audit"]["sealed_at_boundary_index"],
             "purge_intervals": entry["purge_intervals"],
             "embargo_intervals": entry["embargo_intervals"],
+            "sealed_roles": ["bars", "funding"],
+            "projection_policy": real_validation.HOLDOUT_SEAL_PROJECTION_POLICY_V1,
         }
         registry.write_text(json.dumps([entry]))
         computed = real_validation.build_protocol_computed_validation_slice(
@@ -23958,6 +23962,103 @@ class TestHoldoutSealFingerprint:
         )
         real_validation.validate_real_validation_receipt(receipt)
         assert receipt["final_offline_verdict"] == BLOCKED_BY_VALIDATION_IMPLEMENTATION
+
+
+class TestSparseFundingHoldoutProjection:
+    """Timestamp-only sparse-event projection; values are deliberately poison."""
+
+    def _setup(self, tmp_path, *, funding_header="fundingTime,fundingRate", funding_rows=None):
+        bars = tmp_path / "bars"; bars.mkdir()
+        bars.joinpath("BTC.csv").write_text("timestamp,close\n" + "\n".join(
+            f"2024-01-01T{hour:02d}:00:00Z,POISON-{hour}" for hour in range(12)
+        ) + "\n")
+        funding = tmp_path / "funding"; funding.mkdir()
+        if funding_rows is None:
+            funding_rows = [
+                "1704063600000,POISON", "1704067200000,POISON", "1704081600000,POISON",
+                "1704088800000,POISON", "1704096000000,POISON", "1704103200000,POISON", "1704110400000,POISON",
+            ]
+        funding.joinpath("BTC.csv").write_text(funding_header + "\n" + "\n".join(funding_rows) + "\n")
+        entry = {"candidate_family": "FROZEN_SINGLE_CANDIDATE_FAMILY_V1", "null_family": "FROZEN_SINGLE_NULL_FAMILY_V1", "append_only": True, "registered_before_execution": True, "split_boundary_index": 6, "purge_intervals": 2, "embargo_intervals": 2}
+        audit = real_validation.build_protocol_split_leakage_audit(bars_dir=bars, boundary_index=6, purge_intervals=2, embargo_intervals=2, registry_entry=entry)
+        return bars, funding, entry, audit
+
+    def _seal(self, tmp_path, **kwargs):
+        bars, funding, entry, audit = self._setup(tmp_path, **kwargs)
+        return real_validation.build_holdout_seal_fingerprint(bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry)
+
+    def test_epoch_millis_sparse_events_project_all_partition_classes(self, tmp_path):
+        seal = self._seal(tmp_path)
+        assert seal["projection_policy"] == real_validation.HOLDOUT_SEAL_PROJECTION_POLICY_V1
+        assert seal["funding_timestamp_column"] == "fundingTime"
+        assert seal["funding_partition_counts"] == {"before_bars": 1, "train": 1, "purge": 1, "embargo": 1, "quarantine": 2, "after_bars": 1}
+        assert seal["sealed_roles"] == ["bars", "funding"]
+        assert seal["sealed_row_counts"] == {"bars": 4, "funding": 2}
+        assert seal["kill_criteria"]["funding_projection_failed"] is False
+
+    def test_legacy_timestamp_and_normalized_utc_instants_are_supported(self, tmp_path):
+        seal = self._seal(tmp_path, funding_header="timestamp,funding_rate", funding_rows=[
+            "2023-12-31T19:00:00-05:00,POISON", "2024-01-01T04:00:00+00:00,POISON", "2024-01-01T08:00:00Z,POISON"
+        ])
+        assert seal["funding_timestamp_column"] == "timestamp"
+        assert seal["funding_partition_counts"]["train"] == 1
+        assert seal["funding_partition_counts"]["purge"] == 1
+        assert seal["funding_partition_counts"]["quarantine"] == 1
+
+    @pytest.mark.parametrize(("timestamp", "partition"), [
+        ("1704081600000", "purge"), ("1704088800000", "embargo"), ("1704096000000", "quarantine"),
+    ])
+    def test_exact_boundaries_begin_their_partition(self, tmp_path, timestamp, partition):
+        seal = self._seal(tmp_path, funding_rows=[timestamp + ",POISON"])
+        assert seal["funding_partition_counts"][partition] == 1
+
+    def test_missing_boundaries_and_28799_28800_second_cadence_are_unambiguous(self, tmp_path):
+        seal = self._seal(tmp_path, funding_rows=[
+            "1704067200000,POISON", "1704095999000,POISON", "1704124799000,POISON"
+        ])
+        assert seal["kill_criteria"]["funding_projection_failed"] is False
+        assert sum(seal["funding_partition_counts"].values()) == 3
+
+    @pytest.mark.parametrize(("header", "rows"), [
+        ("fundingTime,fundingRate", ["1704067200000,POISON", "1704067200000,POISON"]),
+        ("fundingTime,fundingRate", ["1704070800000,POISON", "1704067200000,POISON"]),
+        ("fundingTime,fundingRate", ["NOT_A_TIMESTAMP,POISON"]),
+        ("fundingRate", ["POISON"]),
+        ("fundingTime,timestamp,fundingRate", ["1704067200000,2024-01-01T00:00:00Z,POISON"]),
+        ("fundingTime,fundingRate", ["1704067200000,POISON,EXTRA"]),
+    ])
+    def test_invalid_sparse_timestamp_inputs_fail_closed(self, tmp_path, header, rows):
+        seal = self._seal(tmp_path, funding_header=header, funding_rows=rows)
+        assert seal["holdout_seal_killed"] is True
+        assert seal["kill_criteria"]["funding_projection_failed"] is True
+
+    def test_only_quarantine_raw_bytes_change_two_role_fingerprint(self, tmp_path):
+        bars, funding, entry, audit = self._setup(tmp_path)
+        first = real_validation.build_holdout_seal_fingerprint(bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry)
+        declaration = {"holdout_seal_fingerprint": first["holdout_seal_fingerprint"], "sealed_at_boundary_index": 6, "purge_intervals": 2, "embargo_intervals": 2, "sealed_roles": ["bars", "funding"], "projection_policy": real_validation.HOLDOUT_SEAL_PROJECTION_POLICY_V1}
+        entry["holdout_seal_declaration"] = declaration
+        funding.joinpath("BTC.csv").write_text("fundingTime,fundingRate\n1704063600000,CHANGED\n1704067200000,POISON\n1704081600000,POISON\n1704088800000,POISON\n1704096000000,POISON\n1704103200000,POISON\n1704110400000,POISON\n")
+        outside = real_validation.build_holdout_seal_fingerprint(bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry)
+        assert outside["holdout_seal_fingerprint"] == first["holdout_seal_fingerprint"]
+        funding.joinpath("BTC.csv").write_text("fundingTime,fundingRate\n1704063600000,CHANGED\n1704067200000,POISON\n1704081600000,POISON\n1704088800000,POISON\n1704096000000,CHANGED\n1704103200000,POISON\n1704110400000,POISON\n")
+        changed = real_validation.build_holdout_seal_fingerprint(bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry)
+        assert changed["holdout_seal_fingerprint"] != first["holdout_seal_fingerprint"]
+        assert changed["holdout_seal_state"] == "mismatch"
+
+    def test_two_role_declaration_binds_roles_and_policy(self, tmp_path):
+        bars, funding, entry, audit = self._setup(tmp_path)
+        candidate = real_validation.build_holdout_seal_fingerprint(bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry)
+        entry["holdout_seal_declaration"] = {"holdout_seal_fingerprint": candidate["holdout_seal_fingerprint"], "sealed_at_boundary_index": 6, "purge_intervals": 2, "embargo_intervals": 2, "sealed_roles": ["bars"], "projection_policy": "wrong"}
+        rejected = real_validation.build_holdout_seal_fingerprint(bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry)
+        assert rejected["kill_criteria"]["declaration_role_mismatch"] is True
+        entry["holdout_seal_declaration"]["sealed_roles"] = ["bars", "funding"]
+        rejected = real_validation.build_holdout_seal_fingerprint(bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry)
+        assert rejected["kill_criteria"]["declaration_projection_policy_mismatch"] is True
+
+    def test_projection_reader_names_no_economic_columns(self):
+        tree = ast.parse(inspect.getsource(real_validation._read_timestamped_role_rows))
+        string_constants = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+        assert {"close", "fundingRate", "funding_rate", "pnl", "return"}.isdisjoint(string_constants)
 
 
 class TestExecutionPacketLock:
@@ -24449,6 +24550,8 @@ class TestExecutionPacketLock:
             "sealed_at_boundary_index": first_pass["holdout_seal_audit"]["sealed_at_boundary_index"],
             "purge_intervals": entry["purge_intervals"],
             "embargo_intervals": entry["embargo_intervals"],
+            "sealed_roles": ["bars", "funding"],
+            "projection_policy": real_validation.HOLDOUT_SEAL_PROJECTION_POLICY_V1,
         }
         self._write_registry(registry, entry)
 
