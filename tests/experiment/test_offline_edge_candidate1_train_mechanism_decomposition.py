@@ -812,6 +812,162 @@ def test_source_slot_universe_mismatch_blocks(tmp_path: Path) -> None:
     assert "source_slot_universe_mismatch" in result["reason_codes"]
 
 
+# ── Exact-float T binding (integral type confusion) ─────────────────────────
+#
+# The default synthetic cut is flat, so the scorer's real T is exactly ``0.0``.
+# That is the one value where ordinary equality cannot tell a JSON float from a
+# JSON int (``0 == 0.0``), which makes it the fixture that proves the protocol
+# binds T by exact type and not merely by numeric value.
+
+_SOURCE_T = ("source_binding", "source_statistic_value_T")
+_RECON_T = (
+    "exact_decomposition_universe",
+    "reconstruction_requirement",
+    "reconstructed_statistic_value_T",
+)
+
+
+def test_integral_T_fixture_computes_unmutated(tmp_path: Path) -> None:
+    # Baseline for every mutation below: with T a genuine float 0.0 the
+    # decomposition must succeed, so a later block is attributable to the
+    # mutation rather than to the fixture.
+    case = _case(tmp_path)
+    assert case["scorer"]["statistic_value_T"] == 0.0
+    assert type(case["scorer"]["statistic_value_T"]) is float
+    result = _decompose(case)
+    assert result["decomposition_state"] == "computed"
+    assert result["outputs"]["reconstructed_statistic_value_T"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("paths", "reason"),
+    [
+        ((_SOURCE_T,), "source_statistic_value_T_type_invalid"),
+        ((_RECON_T,), "reconstruction_statistic_value_T_type_invalid"),
+        ((_SOURCE_T, _RECON_T), "source_statistic_value_T_type_invalid"),
+        ((_SOURCE_T, _RECON_T), "reconstruction_statistic_value_T_type_invalid"),
+    ],
+)
+def test_registry_integral_T_substitution_blocks(
+    tmp_path: Path, paths: tuple[tuple[str, ...], ...], reason: str
+) -> None:
+    # 0.0 -> 0 preserves the numeric value exactly, so every equality gate still
+    # agrees; only the exact-type requirement can catch it. The receipt is left
+    # untouched and still authenticates as float 0.0.
+    case = _case(tmp_path)
+    registry = case["registry"]
+    for path in paths:
+        registry = _mutated(registry, path, 0)
+    result = _decompose(case, registry=registry)
+    assert result["decomposition_state"] == "blocked"
+    assert result["classification"] == "DECOMPOSITION_BLOCKED_OR_INVALID"
+    assert result["outputs"] is None
+    assert reason in result["reason_codes"]
+
+
+def test_every_T_copy_integral_together_still_blocks(tmp_path: Path) -> None:
+    """Mutating all three T copies in concert must not bypass the type gate.
+
+    This is the strongest form of the attack: the receipt is re-hashed so it
+    authenticates, and receipt T, source-binding T and reconstruction T are all
+    integer ``0``. Every cross-copy equality check therefore passes (0 == 0 == 0)
+    and only the protocol-specific float requirement blocks.
+    """
+    case = _case(tmp_path)
+    mutation = _receipt_mutation(
+        case, ("first_computed_statistic_v0", "statistic_value_T"), 0
+    )
+    registry = _mutated(mutation["registry"], _SOURCE_T, 0)
+    registry = _mutated(registry, _RECON_T, 0)
+    result = _decompose(
+        case,
+        registry=registry,
+        receipt_bytes=mutation["receipt_bytes"],
+        expected_archived_receipt_sha256=mutation["expected_archived_receipt_sha256"],
+    )
+    assert result["decomposition_state"] == "blocked"
+    assert result["classification"] == "DECOMPOSITION_BLOCKED_OR_INVALID"
+    assert result["outputs"] is None
+    assert "source_receipt_statistic_value_T_type_invalid" in result["reason_codes"]
+    assert "source_statistic_value_T_type_invalid" in result["reason_codes"]
+    assert "reconstruction_statistic_value_T_type_invalid" in result["reason_codes"]
+
+
+def test_authenticated_receipt_integral_T_blocks(tmp_path: Path) -> None:
+    # Receipt T alone as integer 0, re-hashed so byte authentication passes:
+    # the block must come from the type check, not the SHA gate.
+    case = _case(tmp_path)
+    mutation = _receipt_mutation(
+        case, ("first_computed_statistic_v0", "statistic_value_T"), 0
+    )
+    result = _decompose(
+        case,
+        registry=mutation["registry"],
+        receipt_bytes=mutation["receipt_bytes"],
+        expected_archived_receipt_sha256=mutation["expected_archived_receipt_sha256"],
+    )
+    assert result["decomposition_state"] == "blocked"
+    assert result["outputs"] is None
+    assert "source_receipt_statistic_value_T_type_invalid" in result["reason_codes"]
+
+
+_NON_FLOAT_T = [
+    pytest.param(True, id="true"),
+    pytest.param(False, id="false"),
+    pytest.param("0.0", id="string"),
+    pytest.param(None, id="none"),
+    pytest.param(float("nan"), id="nan"),
+    pytest.param(float("inf"), id="infinity"),
+    pytest.param(float("-inf"), id="negative_infinity"),
+]
+
+
+@pytest.mark.parametrize("value", _NON_FLOAT_T)
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [
+        (_SOURCE_T, "source_statistic_value_T_type_invalid"),
+        (_RECON_T, "reconstruction_statistic_value_T_type_invalid"),
+    ],
+)
+def test_non_float_registry_T_blocks(
+    tmp_path: Path, path: tuple[str, ...], reason: str, value: object
+) -> None:
+    case = _case(tmp_path)
+    result = _decompose(case, registry=_mutated(case["registry"], path, value))
+    assert result["decomposition_state"] == "blocked"
+    assert result["classification"] == "DECOMPOSITION_BLOCKED_OR_INVALID"
+    assert result["outputs"] is None
+    assert reason in result["reason_codes"]
+
+
+@pytest.mark.parametrize("value", _NON_FLOAT_T)
+def test_non_float_receipt_T_blocks(tmp_path: Path, value: object) -> None:
+    case = _case(tmp_path)
+    mutation = _receipt_mutation(
+        case, ("first_computed_statistic_v0", "statistic_value_T"), value
+    )
+    result = _decompose(
+        case,
+        registry=mutation["registry"],
+        receipt_bytes=mutation["receipt_bytes"],
+        expected_archived_receipt_sha256=mutation["expected_archived_receipt_sha256"],
+    )
+    assert result["decomposition_state"] == "blocked"
+    assert result["outputs"] is None
+    assert "source_receipt_statistic_value_T_type_invalid" in result["reason_codes"]
+
+
+def test_strict_finite_float_accepts_only_exact_finite_floats() -> None:
+    assert subject._strict_finite_float(0.0007358157493656125) is True
+    assert subject._strict_finite_float(0.0) is True
+    assert subject._strict_finite_float(-0.2) is True
+    for rejected in (0, 1, True, False, "0.0", None, float("nan"), float("inf")):
+        assert subject._strict_finite_float(rejected) is False
+    # _finite_scalar keeps its broader int-or-float meaning for other outputs.
+    assert subject._finite_scalar(0) is True
+
+
 # ── Output-schema closure and forbidden outputs ─────────────────────────────
 
 
@@ -2196,3 +2352,27 @@ def test_real_registry_frozen_contract_passes_strict_comparison() -> None:
     )["entries"][0]
     assert subject._decomposition_registry_control_reasons(entry) == []
     assert subject._decomposition_frozen_contract_reasons(entry) == []
+
+
+def test_real_registry_T_copies_are_exact_finite_floats() -> None:
+    """The shipped registry's real, non-integral T must satisfy the strict gate.
+
+    Reads the frozen preregistration only; no BTC input is read and no
+    decomposition is executed. This is the positive counterpart to the integral
+    substitution regressions: the strict float requirement must not reject the
+    real value.
+    """
+    entry = json.loads(
+        Path(
+            "docs/registries/"
+            "real_btc_candidate1_train_mechanism_decomposition_registry.json"
+        ).read_text(encoding="utf-8")
+    )["entries"][0]
+    source_T = entry["source_binding"]["source_statistic_value_T"]
+    reconstruction_T = entry["exact_decomposition_universe"][
+        "reconstruction_requirement"
+    ]["reconstructed_statistic_value_T"]
+    assert source_T == 0.0007358157493656125
+    assert reconstruction_T == source_T
+    assert subject._strict_finite_float(source_T)
+    assert subject._strict_finite_float(reconstruction_T)

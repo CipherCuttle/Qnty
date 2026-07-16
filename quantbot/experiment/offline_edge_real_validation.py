@@ -2140,6 +2140,19 @@ def _strict_count(value: Any) -> bool:
     return type(value) is int and value >= 0
 
 
+def _strict_finite_float(value: Any) -> bool:
+    """Require a finite value whose JSON type is exactly float.
+
+    ``_finite_scalar`` deliberately accepts any finite int-or-float and stays
+    that way for general numeric outputs.  This protocol's ``T`` copies are a
+    stricter case: the frozen receipt and registry all serialise ``T`` as a JSON
+    float, so an int must fail even when it compares equal (``0 == 0.0``).
+    Accepting the int would let a value-preserving type substitution pass an
+    equality gate the protocol intends to bind by exact JSON type.
+    """
+    return type(value) is float and math.isfinite(value)
+
+
 def _strict_json_contract_equal(actual: Any, expected: Any) -> bool:
     """Compare a frozen JSON contract by exact value *and* exact JSON type.
 
@@ -2928,8 +2941,16 @@ def _decomposition_source_contract_reasons(
             "source_null_name_mismatch",
         ),
         (
-            _finite_scalar(source_binding.get("source_statistic_value_T"))
-            and _finite_scalar(fcs.get("statistic_value_T"))
+            _strict_finite_float(fcs.get("statistic_value_T")),
+            "source_receipt_statistic_value_T_type_invalid",
+        ),
+        (
+            _strict_finite_float(source_binding.get("source_statistic_value_T")),
+            "source_statistic_value_T_type_invalid",
+        ),
+        (
+            _strict_finite_float(source_binding.get("source_statistic_value_T"))
+            and _strict_finite_float(fcs.get("statistic_value_T"))
             and source_binding.get("source_statistic_value_T") == fcs.get("statistic_value_T"),
             "source_statistic_value_T_mismatch",
         ),
@@ -2999,6 +3020,11 @@ def _decomposition_source_contract_reasons(
             "partition_use_policy_fingerprint_mismatch",
         ),
         (
+            isinstance(reconstruction, dict)
+            and _strict_finite_float(reconstruction.get("reconstructed_statistic_value_T")),
+            "reconstruction_statistic_value_T_type_invalid",
+        ),
+        (
             _strict_json_contract_equal(
                 universe.get("must_reuse_without_change"), _DECOMPOSITION_MUST_REUSE
             )
@@ -3006,7 +3032,7 @@ def _decomposition_source_contract_reasons(
             and _strict_count(universe.get("invalid_slot_count"))
             and universe.get("no_slot_added_removed_or_reclassified") is True
             and isinstance(reconstruction, dict)
-            and _finite_scalar(reconstruction.get("reconstructed_statistic_value_T"))
+            and _strict_finite_float(reconstruction.get("reconstructed_statistic_value_T"))
             and universe.get("scored_slot_count") == source_binding.get("source_scored_slot_count")
             and universe.get("invalid_slot_count") == source_binding.get("source_invalid_slot_count")
             and reconstruction.get("reconstructed_statistic_value_T") == source_binding.get("source_statistic_value_T"),
