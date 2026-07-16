@@ -118,8 +118,77 @@ def test_validation_is_deterministic_and_does_not_mutate_inputs():
     assert entry == before and receipt == bytes_before
 
 
-def test_validator_has_no_forbidden_runtime_imports():
-    path = ROOT / "quantbot/experiment/offline_edge_candidate1_decomposition_binding.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    imports = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names}
-    assert not imports & {"pandas", "numpy", "requests", "sqlalchemy", "sqlite3", "quantbot.engine", "quantbot.exchange", "quantbot.paper", "quantbot.observer"}
+def test_validator_has_only_reviewed_stdlib_imports():
+    path = (
+        ROOT
+        / "quantbot/experiment/"
+        "offline_edge_candidate1_decomposition_binding.py"
+    )
+
+    def inspect_imports(source: str):
+        tree = ast.parse(source)
+        modules = set()
+        relative_imports = []
+        dynamic_imports = []
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.update(alias.name for alias in node.names)
+
+            elif isinstance(node, ast.ImportFrom):
+                if node.level != 0 or node.module is None:
+                    relative_imports.append(
+                        {
+                            "level": node.level,
+                            "module": node.module,
+                        }
+                    )
+                else:
+                    modules.add(node.module)
+
+            elif isinstance(node, ast.Call):
+                if (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id == "__import__"
+                ):
+                    dynamic_imports.append("__import__")
+
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "import_module"
+                ):
+                    dynamic_imports.append("import_module")
+
+        return modules, relative_imports, dynamic_imports
+
+    allowed_modules = {
+        "__future__",
+        "collections.abc",
+        "hashlib",
+        "json",
+        "re",
+    }
+
+    modules, relative_imports, dynamic_imports = inspect_imports(
+        path.read_text(encoding="utf-8")
+    )
+
+    assert modules == allowed_modules
+    assert relative_imports == []
+    assert dynamic_imports == []
+
+    assert inspect_imports(
+        "from pandas import DataFrame"
+    )[0] == {"pandas"}
+
+    assert inspect_imports(
+        "from quantbot.paper import funding_status"
+    )[0] == {"quantbot.paper"}
+
+    assert inspect_imports(
+        "import quantbot.paper"
+    )[0] == {"quantbot.paper"}
+
+    assert inspect_imports(
+        "import numpy"
+    )[0] == {"numpy"}
