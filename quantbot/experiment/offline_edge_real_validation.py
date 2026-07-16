@@ -1248,12 +1248,9 @@ def build_holdout_open_gate(
 # holdout-open gate.  It consumes registry metadata only and is never folded
 # into the structural gate's fingerprint or state.
 PARTITION_USE_POLICY_VERSION = "partition_use_policy_v0"
-PARTITION_USE_POLICY_STATES = frozenset({"quarantine_only", "confirmatory_eligible"})
+PARTITION_USE_POLICY_STATES = frozenset({"quarantine_only"})
 PARTITION_USE_POLICY_REASON_CODES = frozenset(
-    {
-        "prior_economic_value_exposure_before_split_freeze",
-        "new_unseen_data_cut_declared_after_quarantine",
-    }
+    {"prior_economic_value_exposure_before_split_freeze"}
 )
 _PARTITION_USE_POLICY_REQUIRED_FIELDS = (
     "partition_data_cut_fingerprint",
@@ -1263,9 +1260,22 @@ _PARTITION_USE_POLICY_REQUIRED_FIELDS = (
     "future_confirmatory_data_after_utc",
     "partition_use_policy_fingerprint",
 )
-_PARTITION_USE_POLICY_LINEAGE_FIELDS = (
-    "prior_quarantine_partition_data_cut_fingerprint",
-    "prior_quarantine_partition_use_policy_fingerprint",
+_PARTITION_USE_POLICY_DECLARATION_FIELDS = frozenset(_PARTITION_USE_POLICY_REQUIRED_FIELDS)
+_PARTITION_USE_POLICY_KILL_CRITERIA_KEYS = frozenset(
+    {
+        "partition_use_policy_declaration_missing",
+        "partition_use_policy_declaration_incomplete",
+        "partition_use_policy_unexpected_field",
+        "partition_use_policy_state_unknown",
+        "partition_use_policy_reason_code_unknown",
+        "partition_use_policy_data_cut_malformed",
+        "partition_use_policy_data_cut_mismatch",
+        "partition_use_policy_not_preregistered",
+        "partition_use_policy_future_cutoff_invalid",
+        "partition_use_policy_append_only_invalid",
+        "partition_use_policy_fingerprint_malformed",
+        "partition_use_policy_fingerprint_mismatch",
+    }
 )
 _PARTITION_USE_POLICY_RECEIPT_KEYS = frozenset(
     {
@@ -1283,15 +1293,36 @@ _PARTITION_USE_POLICY_RECEIPT_KEYS = frozenset(
 
 
 def _partition_use_policy_fingerprint(declaration: dict[str, Any]) -> str:
-    """Return a canonical fingerprint over the immutable policy declaration."""
+    """Return a canonical fingerprint over every non-fingerprint declaration field.
+
+    This proves consistency of one registry snapshot, not append-only history.
+    Historical mutation detection remains a registry and git-review responsibility.
+    """
     payload = {
         field: declaration.get(field)
-        for field in (*_PARTITION_USE_POLICY_REQUIRED_FIELDS, *_PARTITION_USE_POLICY_LINEAGE_FIELDS)
+        for field in _PARTITION_USE_POLICY_REQUIRED_FIELDS
         if field != "partition_use_policy_fingerprint"
     }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    return _canonical_json_fingerprint(payload)
+
+
+_LOWER_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_CANONICAL_UTC_SECOND_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+def _is_lower_sha256(value: Any) -> bool:
+    return isinstance(value, str) and _LOWER_SHA256_RE.fullmatch(value) is not None
+
+
+def _is_canonical_utc_second(value: Any) -> bool:
+    if not isinstance(value, str) or _CANONICAL_UTC_SECOND_RE.fullmatch(value) is None:
+        return False
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%SZ") == value
+    except ValueError:
+        return False
 
 
 def build_partition_use_policy_v0(
@@ -1314,11 +1345,15 @@ def build_partition_use_policy_v0(
         "partition_use_policy_declaration_incomplete": False,
         "partition_use_policy_state_unknown": False,
         "partition_use_policy_reason_code_unknown": False,
+        "partition_use_policy_unexpected_field": False,
+        "partition_use_policy_data_cut_malformed": False,
         "partition_use_policy_data_cut_mismatch": False,
         "partition_use_policy_not_preregistered": False,
         "partition_use_policy_future_cutoff_invalid": False,
-        "partition_use_policy_confirmatory_lineage_missing": False,
-        "partition_use_policy_same_data_cut_reclassification": False,
+        "partition_use_policy_append_only_invalid": not (
+            isinstance(registry_entry, dict) and registry_entry.get("append_only") is True
+        ),
+        "partition_use_policy_fingerprint_malformed": False,
         "partition_use_policy_fingerprint_mismatch": False,
     }
     state: str | None = None
@@ -1326,72 +1361,59 @@ def build_partition_use_policy_v0(
     fingerprint: str | None = None
 
     if declaration is not None:
-        if not isinstance(declaration, dict) or any(
-            field not in declaration for field in _PARTITION_USE_POLICY_REQUIRED_FIELDS
-        ):
+        if not isinstance(declaration, dict):
             kill["partition_use_policy_declaration_incomplete"] = True
         else:
+            kill["partition_use_policy_declaration_incomplete"] = any(
+                field not in declaration for field in _PARTITION_USE_POLICY_REQUIRED_FIELDS
+            )
+            kill["partition_use_policy_unexpected_field"] = (
+                set(declaration) != _PARTITION_USE_POLICY_DECLARATION_FIELDS
+            )
             state = declaration.get("partition_use_policy_state")
             raw_reason_codes = declaration.get("partition_use_policy_reason_codes")
-            reason_codes = sorted(raw_reason_codes) if (
-                isinstance(raw_reason_codes, list)
-                and all(isinstance(code, str) for code in raw_reason_codes)
-            ) else []
+            reason_codes = list(raw_reason_codes) if isinstance(raw_reason_codes, list) else []
             kill["partition_use_policy_state_unknown"] = state not in PARTITION_USE_POLICY_STATES
             kill["partition_use_policy_reason_code_unknown"] = (
-                not isinstance(raw_reason_codes, list)
-                or not raw_reason_codes
-                or any(code not in PARTITION_USE_POLICY_REASON_CODES for code in raw_reason_codes)
+                raw_reason_codes
+                != ["prior_economic_value_exposure_before_split_freeze"]
             )
+            declared_cut = declaration.get("partition_data_cut_fingerprint")
+            registry_cut = registry_entry.get("data_cut_fingerprint") if isinstance(registry_entry, dict) else None
+            kill["partition_use_policy_data_cut_malformed"] = not _is_lower_sha256(declared_cut)
             kill["partition_use_policy_data_cut_mismatch"] = (
-                not isinstance(registry_entry.get("data_cut_fingerprint"), str)
-                or declaration.get("partition_data_cut_fingerprint")
-                != registry_entry.get("data_cut_fingerprint")
+                not _is_lower_sha256(registry_cut) or declared_cut != registry_cut
             )
             kill["partition_use_policy_not_preregistered"] = (
                 declaration.get("declared_before_first_statistic_execution") is not True
             )
-            cutoff = declaration.get("future_confirmatory_data_after_utc")
-            try:
-                cutoff_valid = isinstance(cutoff, str) and cutoff.endswith("Z")
-                if cutoff_valid:
-                    datetime.fromisoformat(cutoff.replace("Z", "+00:00"))
-            except ValueError:
-                cutoff_valid = False
-            kill["partition_use_policy_future_cutoff_invalid"] = not cutoff_valid
-            if state == "confirmatory_eligible":
-                prior_cut = declaration.get("prior_quarantine_partition_data_cut_fingerprint")
-                prior_fingerprint = declaration.get("prior_quarantine_partition_use_policy_fingerprint")
-                kill["partition_use_policy_confirmatory_lineage_missing"] = not (
-                    isinstance(prior_cut, str)
-                    and prior_cut
-                    and isinstance(prior_fingerprint, str)
-                    and prior_fingerprint
-                )
-                kill["partition_use_policy_same_data_cut_reclassification"] = (
-                    prior_cut == declaration.get("partition_data_cut_fingerprint")
-                )
+            kill["partition_use_policy_future_cutoff_invalid"] = not _is_canonical_utc_second(
+                declaration.get("future_confirmatory_data_after_utc")
+            )
+            declared_fingerprint = declaration.get("partition_use_policy_fingerprint")
+            kill["partition_use_policy_fingerprint_malformed"] = not _is_lower_sha256(
+                declared_fingerprint
+            )
             fingerprint = _partition_use_policy_fingerprint(declaration)
             kill["partition_use_policy_fingerprint_mismatch"] = (
-                declaration.get("partition_use_policy_fingerprint") != fingerprint
+                declared_fingerprint != fingerprint
             )
 
     killed = any(kill.values())
     return {
         "method": "SHA256_CANONICAL_REGISTRY_POLICY_DECLARATION_V0",
         "partition_use_policy_state": state if not killed else "blocked",
-        "partition_use_policy_reason_codes": reason_codes,
-        "partition_use_policy_fingerprint": fingerprint,
+        "partition_use_policy_reason_codes": reason_codes if not killed else [],
+        "partition_use_policy_fingerprint": fingerprint if not killed else None,
         "partition_use_policy_registry_fingerprint": (
             declaration.get("partition_use_policy_fingerprint")
-            if isinstance(declaration, dict)
+            if not killed and isinstance(declaration, dict)
             else None
         ),
         "partition_use_policy_killed": killed,
         "scientific_use_authorized": False,
-        "append_only_declaration": bool(
-            isinstance(registry_entry, dict) and registry_entry.get("append_only") is True
-        ),
+        "append_only_declaration": isinstance(registry_entry, dict)
+        and registry_entry.get("append_only") is True,
         "kill_criteria": kill,
     }
 
@@ -21310,15 +21332,48 @@ def validate_real_validation_receipt(receipt: dict[str, Any]) -> None:
         if partition_policy is not None:
             if not isinstance(partition_policy, dict) or set(partition_policy) != _PARTITION_USE_POLICY_RECEIPT_KEYS:
                 raise ValueError("partition_use_policy_v0 has unexpected keys")
-            if partition_policy.get("partition_use_policy_state") not in {
-                "blocked",
-                *PARTITION_USE_POLICY_STATES,
-            }:
+            if partition_policy.get("method") != "SHA256_CANONICAL_REGISTRY_POLICY_DECLARATION_V0":
+                raise ValueError("partition_use_policy_v0 has invalid method")
+            state = partition_policy.get("partition_use_policy_state")
+            killed = partition_policy.get("partition_use_policy_killed")
+            if state not in {"blocked", *PARTITION_USE_POLICY_STATES}:
                 raise ValueError("partition_use_policy_v0 has invalid state")
             if partition_policy.get("scientific_use_authorized") is not False:
                 raise ValueError("partition_use_policy_v0 may not authorize scientific use")
-            if not isinstance(partition_policy.get("partition_use_policy_killed"), bool):
+            if not isinstance(killed, bool):
                 raise ValueError("partition_use_policy_v0 killed state must be bool")
+            if not isinstance(partition_policy.get("append_only_declaration"), bool):
+                raise ValueError("partition_use_policy_v0 append_only_declaration must be bool")
+            if (killed and state != "blocked") or (not killed and state != "quarantine_only"):
+                raise ValueError("partition_use_policy_v0 state and killed status disagree")
+            reasons = partition_policy.get("partition_use_policy_reason_codes")
+            if not isinstance(reasons, list) or any(
+                not isinstance(reason, str) or reason not in PARTITION_USE_POLICY_REASON_CODES
+                for reason in reasons
+            ):
+                raise ValueError("partition_use_policy_v0 has invalid reason codes")
+            if (not killed and reasons != ["prior_economic_value_exposure_before_split_freeze"]) or (
+                killed and reasons != []
+            ):
+                raise ValueError("partition_use_policy_v0 reason codes disagree with state")
+            for name in (
+                "partition_use_policy_fingerprint",
+                "partition_use_policy_registry_fingerprint",
+            ):
+                value = partition_policy.get(name)
+                if value is not None and not _is_lower_sha256(value):
+                    raise ValueError(f"partition_use_policy_v0 {name} must be lowercase SHA-256 or null")
+                if killed and value is not None:
+                    raise ValueError(f"blocked partition_use_policy_v0 {name} must be null")
+                if not killed and value is None:
+                    raise ValueError(f"quarantine_only partition_use_policy_v0 {name} must be SHA-256")
+            criteria = partition_policy.get("kill_criteria")
+            if not isinstance(criteria, dict) or set(criteria) != _PARTITION_USE_POLICY_KILL_CRITERIA_KEYS:
+                raise ValueError("partition_use_policy_v0 has invalid kill criteria")
+            if any(not isinstance(value, bool) for value in criteria.values()):
+                raise ValueError("partition_use_policy_v0 kill criteria must be bool")
+            if killed != any(criteria.values()):
+                raise ValueError("partition_use_policy_v0 killed status disagrees with kill criteria")
         if statistic_block is not None:
             if not isinstance(statistic_block, dict):
                 raise ValueError("first_computed_statistic_v0 must be a dict")
