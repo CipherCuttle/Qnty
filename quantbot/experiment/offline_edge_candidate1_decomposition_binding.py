@@ -73,7 +73,7 @@ def validate_candidate1_decomposition_implementation_binding_v0(entry: Mapping[s
     if type(parsed) is not dict:
         raise ValueError("receipt must be a JSON object")
     canonical = json.dumps(parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-    if receipt_bytes != canonical or receipt_bytes.endswith(b"\\n"):
+    if receipt_bytes != canonical or receipt_bytes.endswith(b"\n"):
         raise ValueError("receipt is not canonical")
     if hashlib.sha256(receipt_bytes).hexdigest() != _RECEIPT_SHA or not _same(parsed, _RECEIPT):
         raise ValueError("receipt facts do not match qualification")

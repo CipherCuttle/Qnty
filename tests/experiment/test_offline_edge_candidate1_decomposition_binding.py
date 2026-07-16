@@ -99,7 +99,7 @@ def test_receipt_fact_failures_are_closed(mutation):
         validate_candidate1_decomposition_implementation_binding_v0(entry, canonical(parsed))
 
 
-@pytest.mark.parametrize("receipt", [b"\\xff", b"{", b"[]"])
+@pytest.mark.parametrize("receipt", [b"\xff", b"{", b"[]"])
 def test_invalid_receipt_encoding_json_and_shape_fail_closed(receipt):
     entry, _ = artifacts()
     with pytest.raises(ValueError):
@@ -109,7 +109,7 @@ def test_invalid_receipt_encoding_json_and_shape_fail_closed(receipt):
 def test_noncanonical_and_trailing_newline_fail_closed():
     entry, receipt = artifacts()
     with pytest.raises(ValueError): validate_candidate1_decomposition_implementation_binding_v0(entry, b"{ }" )
-    with pytest.raises(ValueError): validate_candidate1_decomposition_implementation_binding_v0(entry, receipt + b"\\n")
+    with pytest.raises(ValueError): validate_candidate1_decomposition_implementation_binding_v0(entry, receipt + b"\n")
 
 
 def test_validation_is_deterministic_and_does_not_mutate_inputs():
