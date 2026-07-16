@@ -1,0 +1,39 @@
+name: qnty-continuity
+
+# Governance-only continuity checks: no secrets, no real data, no protocol
+# execution. Validates entrypoint pointers, control-state schema, canonical
+# bytes, receipt hash/chain, safety invariants, and deterministic rendering.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  continuity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package (test extras only)
+        run: python -m pip install -e ".[test]"
+
+      - name: Verify continuity control plane (fail closed)
+        run: python -m quantbot.continuity verify
+
+      - name: Deterministic context rendering
+        run: |
+          python -m quantbot.continuity show > packet_a.txt
+          python -m quantbot.continuity show > packet_b.txt
+          diff packet_a.txt packet_b.txt
+          cat packet_a.txt
+
+      - name: Focused continuity tests (synthetic only)
+        run: python -m pytest tests/continuity -q

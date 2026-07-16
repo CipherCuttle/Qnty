@@ -4,6 +4,17 @@ Qnty is a cleanroom crypto quant **research harness** (Python >=3.10, package
 `quantbot`). It is shadow-only research: **not a trading bot, not live-capital
 approved.** Claims must stay proportionate to evidence.
 
+## Cross-agent continuity (canonical contract)
+
+Shared task-state rules live in the canonical contract, imported here:
+
+@docs/agent/START_HERE.md
+
+Before non-trivial work: run `.venv/bin/python -m quantbot.continuity verify`,
+then `show`. If `verify` fails, stop and report — do not reconstruct task state
+from chat or MemPalace. Execute only the validated `NEXT_ACTION`; append the
+handoff receipt under `docs/control/tasks/<task_id>/` before claiming completion.
+
 ## Stack & layout
 - Python >=3.10; deps: numpy, pandas, requests; tests: pytest. No TS/frontend, no CI,
   no linter/formatter configured.
@@ -82,8 +93,9 @@ If MemPalace conflicts with git/docs/verifier output, trust git/docs/verifier.
 
 Preserve work quality and safety, but avoid dragging unnecessary context.
 
-- At the start of a session, read this file and use MemPalace `qnty` recall for the
-  current task instead of relying on huge prior chat context.
+- At the start of a session, read this file, run the continuity verifier
+  (`.venv/bin/python -m quantbot.continuity show`) for the current task state, and
+  use MemPalace `qnty` recall only as a supplementary aid — not huge prior chat context.
 - Use `/compact` after completing a coherent phase, before switching from investigation
   to implementation, or when context is getting large. Before compacting, write a short
   checkpoint: current branch, open PR, changed files, key findings, commands run,
