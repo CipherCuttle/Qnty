@@ -2037,6 +2037,34 @@ _DECOMPOSITION_CLASSIFICATION_CONDITIONS = {
         "mean_candidate_net > 0 and mean_relative_price_component > 0"
     ),
 }
+_DECOMPOSITION_CLASSIFICATION_CONTRACT = {
+    DECOMPOSITION_BLOCKED_OR_INVALID: {
+        "use_when_any": [
+            "source_receipt_cannot_be_authenticated",
+            "source_slot_universe_differs",
+            "slot_counts_differ",
+            "original_T_cannot_be_reconstructed_exactly",
+            "any_frozen_rule_or_fingerprint_differs",
+            "quarantine_access_occurs",
+            "output_schema_differs",
+            "any_prohibited_calculation_occurs",
+        ]
+    },
+    CANDIDATE_1_ABSOLUTE_NET_NONPOSITIVE: {
+        "condition": "mean_candidate_net <= 0",
+        "interpretation": "Candidate 1 is not economically viable under the frozen absolute accounting; retain only as a diagnostic baseline; no retuning or rescue",
+    },
+    CANDIDATE_1_ABSOLUTE_NET_POSITIVE_RELATIVE_PRICE_NONPOSITIVE: {
+        "condition": "mean_candidate_net > 0 and mean_relative_price_component <= 0",
+        "interpretation": "any positive absolute economics are not supported by a positive directional-price advantage against the frozen null; investigate funding/carry mechanics as measurement; do not claim price alpha",
+    },
+    CANDIDATE_1_ABSOLUTE_NET_AND_RELATIVE_PRICE_POSITIVE: {
+        "condition": "mean_candidate_net > 0 and mean_relative_price_component > 0",
+        "interpretation": "Candidate 1 remains eligible for a separately preregistered prospective test; still no edge, paper, or live claim",
+    },
+    "no_percentage_contribution_threshold": True,
+    "no_significance_inference": True,
+}
 _DECOMPOSITION_BLOCKED_USE_WHEN_ANY = [
     "source_receipt_cannot_be_authenticated",
     "source_slot_universe_differs",
@@ -2076,6 +2104,10 @@ _DECOMPOSITION_FROZEN_SOURCE_BINDING = {
     "source_candidate_name": "funding_sign_one_interval_carry_v1",
     "source_null_name": "alternating_active_slot_side_v1",
 }
+_DECOMPOSITION_ARCHIVED_RECEIPT_SHA256 = (
+    "7abb521eba06ebd515f6ad1519fab92df"
+    "1368d342355a744ec415d6d220b9be5"
+)
 _DECOMPOSITION_MUST_REUSE = [
     "4203_scored_slots", "14_invalid_slots", "entry_timestamps", "exit_timestamps",
     "candidate_activity_mask", "candidate_sides", "null_sides", "funding_accounting_window",
@@ -2520,11 +2552,6 @@ def _decomposition_registry_control_reasons(entry: dict[str, Any]) -> list[str]:
         ),
         (entry.get("append_only") is True, "decomposition_registry_not_append_only"),
         (
-            entry.get("decomposition_execution_budget")
-            == CANDIDATE1_DECOMPOSITION_EXECUTION_BUDGET,
-            "decomposition_execution_budget_mismatch",
-        ),
-        (
             entry.get("decomposition_execution_count") == 0,
             "decomposition_execution_budget_exhausted",
         ),
@@ -2547,6 +2574,12 @@ def _decomposition_registry_control_reasons(entry: dict[str, Any]) -> list[str]:
         ),
     ]
     reasons.extend(reason for ok, reason in checks if not ok)
+
+    budget = entry.get("decomposition_execution_budget")
+    if not _strict_count(budget):
+        reasons.append("decomposition_execution_budget_malformed")
+    elif budget != CANDIDATE1_DECOMPOSITION_EXECUTION_BUDGET:
+        reasons.append("decomposition_execution_budget_mismatch")
 
     # ``decomposition_execution_count`` must be a real integer budget counter;
     # ``True`` is an int in Python and ``0.0`` compares equal to ``0``.
@@ -2626,27 +2659,8 @@ def _decomposition_frozen_contract_reasons(entry: dict[str, Any]) -> list[str]:
     contract = entry.get("classification_contract")
     if not isinstance(contract, dict):
         reasons.append("classification_contract_missing")
-    else:
-        declared_names = {
-            key for key, value in contract.items() if isinstance(value, dict)
-        }
-        if declared_names != _DECOMPOSITION_CLASSIFICATION_NAMES:
-            reasons.append("classification_contract_mismatch")
-        for name, condition in _DECOMPOSITION_CLASSIFICATION_CONDITIONS.items():
-            declared = contract.get(name)
-            if not isinstance(declared, dict) or declared.get("condition") != condition:
-                reasons.append("classification_contract_mismatch")
-        blocked = contract.get(DECOMPOSITION_BLOCKED_OR_INVALID)
-        if (
-            not isinstance(blocked, dict)
-            or blocked.get("use_when_any") != _DECOMPOSITION_BLOCKED_USE_WHEN_ANY
-        ):
-            reasons.append("classification_contract_mismatch")
-        if (
-            contract.get("no_percentage_contribution_threshold") is not True
-            or contract.get("no_significance_inference") is not True
-        ):
-            reasons.append("classification_contract_mismatch")
+    elif contract != _DECOMPOSITION_CLASSIFICATION_CONTRACT:
+        reasons.append("classification_contract_mismatch")
 
     return reasons
 
@@ -2737,22 +2751,62 @@ def _decomposition_source_contract_reasons(
     source_binding = registry_entry.get("source_binding")
     fingerprints = registry_entry.get("frozen_fingerprints")
     universe = registry_entry.get("exact_decomposition_universe")
-    if (
-        not isinstance(source_binding, dict)
-        or not isinstance(fingerprints, dict)
-        or not isinstance(universe, dict)
-    ):
-        return ["decomposition_registry_entry_malformed"], bound
-
     control_reasons = _decomposition_registry_control_reasons(registry_entry)
     control_reasons.extend(_decomposition_frozen_contract_reasons(registry_entry))
+    if not isinstance(source_binding, dict):
+        return sorted(set(control_reasons + ["source_binding_contract_mismatch"])), bound
+    if not isinstance(fingerprints, dict):
+        return sorted(set(control_reasons + ["frozen_fingerprints_contract_mismatch"])), bound
+    if not isinstance(universe, dict):
+        return sorted(set(control_reasons + ["exact_decomposition_universe_contract_mismatch"])), bound
+
+    source_binding_keys = {
+        *(_DECOMPOSITION_FROZEN_SOURCE_BINDING),
+        "archived_receipt_sha256",
+        "source_statistic_value_T",
+        "source_scored_slot_count",
+        "source_invalid_slot_count",
+    }
+    if set(source_binding) != source_binding_keys:
+        control_reasons.append("source_binding_contract_mismatch")
+    if source_binding.get("archived_receipt_sha256") != _DECOMPOSITION_ARCHIVED_RECEIPT_SHA256:
+        control_reasons.append("registry_archived_receipt_sha256_drift")
+
+    fingerprint_keys = {
+        "outer_data_cut", "nested_first_statistic_data_binding",
+        "candidate_rule_fingerprint", "null_rule_fingerprint",
+        "statistic_fingerprint", "split_fingerprint", "two_role_seal",
+        "execution_packet", "structural_gate", "partition_use_policy",
+    }
+    if set(fingerprints) != fingerprint_keys or not all(
+        _is_lower_sha256(value) for value in fingerprints.values()
+    ):
+        control_reasons.append("frozen_fingerprints_contract_mismatch")
+
+    universe_keys = {
+        "must_reuse_without_change", "scored_slot_count", "invalid_slot_count",
+        "no_slot_added_removed_or_reclassified", "reconstruction_requirement",
+    }
+    if set(universe) != universe_keys:
+        control_reasons.append("exact_decomposition_universe_contract_mismatch")
+    reconstruction = universe.get("reconstruction_requirement")
+    if (
+        not isinstance(reconstruction, dict)
+        or set(reconstruction) != {
+            "reconstructed_statistic_value_T", "reconstructed_from", "reconstruction_identity"
+        }
+        or reconstruction.get("reconstructed_from") != "component_means"
+        or reconstruction.get("reconstruction_identity")
+        != "mean(relative_net_i) == 0.0007358157493656125"
+    ):
+        control_reasons.append("reconstruction_requirement_contract_mismatch")
 
     # Authenticate raw bytes before trusting any parsed field.
     if not isinstance(source_receipt_bytes, (bytes, bytearray)):
         return sorted(set(control_reasons + ["source_receipt_sha256_mismatch"])), bound
     actual_sha = hashlib.sha256(bytes(source_receipt_bytes)).hexdigest()
-    if actual_sha != source_binding.get("archived_receipt_sha256"):
-        return sorted(set(control_reasons + ["source_receipt_sha256_mismatch"])), bound
+    if actual_sha != _DECOMPOSITION_ARCHIVED_RECEIPT_SHA256:
+        return sorted(set(control_reasons + ["source_receipt_byte_authentication_failed"])), bound
     try:
         receipt = json.loads(bytes(source_receipt_bytes).decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
@@ -2912,12 +2966,11 @@ def _decomposition_source_contract_reasons(
             and _strict_count(universe.get("scored_slot_count"))
             and _strict_count(universe.get("invalid_slot_count"))
             and universe.get("no_slot_added_removed_or_reclassified") is True
-            and isinstance(universe.get("reconstruction_requirement"), dict)
-            and set(universe["reconstruction_requirement"]) == {"reconstructed_statistic_value_T", "reconstructed_from", "reconstruction_identity"}
-            and _finite_scalar(universe["reconstruction_requirement"].get("reconstructed_statistic_value_T"))
+            and isinstance(reconstruction, dict)
+            and _finite_scalar(reconstruction.get("reconstructed_statistic_value_T"))
             and universe.get("scored_slot_count") == source_binding.get("source_scored_slot_count")
             and universe.get("invalid_slot_count") == source_binding.get("source_invalid_slot_count")
-            and universe["reconstruction_requirement"].get("reconstructed_statistic_value_T") == source_binding.get("source_statistic_value_T"),
+            and reconstruction.get("reconstructed_statistic_value_T") == source_binding.get("source_statistic_value_T"),
             "source_slot_universe_mismatch",
         ),
     ]

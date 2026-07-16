@@ -14,6 +14,7 @@ import builtins
 import csv
 import hashlib
 import json
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -28,10 +29,10 @@ BOUNDARY = 220
 # Synthetic seal / packet / gate / partition fingerprints. The core only checks
 # equality between the registry and the (authenticated) receipt for these, so
 # opaque sentinels suffice — no real seal/packet value is used.
-_SEAL_FP = "synthetic-two-role-seal-fingerprint"
-_PACKET_FP = "synthetic-execution-packet-fingerprint"
-_GATE_FP = "synthetic-structural-gate-fingerprint"
-_PARTITION_FP = "synthetic-partition-use-policy-fingerprint"
+_SEAL_FP = "a" * 64
+_PACKET_FP = "b" * 64
+_GATE_FP = "c" * 64
+_PARTITION_FP = "d" * 64
 
 # Synthetic stand-ins for the archived artifact hashes. The core requires these
 # fields to be structurally present but must NOT claim to authenticate their
@@ -120,15 +121,15 @@ _CLASSIFICATION_CONTRACT = {
     },
     "CANDIDATE_1_ABSOLUTE_NET_NONPOSITIVE": {
         "condition": "mean_candidate_net <= 0",
-        "interpretation": "diagnostic baseline only",
+        "interpretation": "Candidate 1 is not economically viable under the frozen absolute accounting; retain only as a diagnostic baseline; no retuning or rescue",
     },
     "CANDIDATE_1_ABSOLUTE_NET_POSITIVE_RELATIVE_PRICE_NONPOSITIVE": {
         "condition": "mean_candidate_net > 0 and mean_relative_price_component <= 0",
-        "interpretation": "no price alpha claim",
+        "interpretation": "any positive absolute economics are not supported by a positive directional-price advantage against the frozen null; investigate funding/carry mechanics as measurement; do not claim price alpha",
     },
     "CANDIDATE_1_ABSOLUTE_NET_AND_RELATIVE_PRICE_POSITIVE": {
         "condition": "mean_candidate_net > 0 and mean_relative_price_component > 0",
-        "interpretation": "eligible for a separately preregistered prospective test",
+        "interpretation": "Candidate 1 remains eligible for a separately preregistered prospective test; still no edge, paper, or live claim",
     },
     "no_percentage_contribution_threshold": True,
     "no_significance_inference": True,
@@ -436,18 +437,23 @@ def _case(
         "fingerprints": fingerprints,
         "receipt_bytes": receipt_bytes,
         "registry": registry,
+        "expected_archived_receipt_sha256": registry["source_binding"]["archived_receipt_sha256"],
     }
 
 
 def _decompose(case: dict[str, object], **overrides) -> dict[str, object]:
-    return subject.build_candidate1_train_mechanism_decomposition_v0(
-        bars_dir=overrides.get("bars", case["bars"]),
-        funding_dir=overrides.get("funding", case["funding"]),
-        registry_entry=overrides.get("registry", case["registry"]),
-        split_audit=overrides.get("split", case["split"]),
-        holdout_open_gate=overrides.get("gate", None),
-        source_receipt_bytes=overrides.get("receipt_bytes", case["receipt_bytes"]),
+    expected_sha = overrides.get(
+        "expected_archived_receipt_sha256", case["expected_archived_receipt_sha256"]
     )
+    with patch.object(subject, "_DECOMPOSITION_ARCHIVED_RECEIPT_SHA256", expected_sha):
+        return subject.build_candidate1_train_mechanism_decomposition_v0(
+            bars_dir=overrides.get("bars", case["bars"]),
+            funding_dir=overrides.get("funding", case["funding"]),
+            registry_entry=overrides.get("registry", case["registry"]),
+            split_audit=overrides.get("split", case["split"]),
+            holdout_open_gate=overrides.get("gate", None),
+            source_receipt_bytes=overrides.get("receipt_bytes", case["receipt_bytes"]),
+        )
 
 
 _DELETE = object()
@@ -482,7 +488,11 @@ def _receipt_mutation(case: dict[str, object], path: tuple[str, ...], value: obj
         ("source_binding", "archived_receipt_sha256"),
         hashlib.sha256(receipt_bytes).hexdigest(),
     )
-    return {"registry": registry, "receipt_bytes": receipt_bytes}
+    return {
+        "registry": registry,
+        "receipt_bytes": receipt_bytes,
+        "expected_archived_receipt_sha256": registry["source_binding"]["archived_receipt_sha256"],
+    }
 
 
 # ── Component signs and separation ──────────────────────────────────────────
@@ -698,7 +708,7 @@ def test_source_receipt_sha256_mismatch_blocks(tmp_path: Path) -> None:
     registry["source_binding"]["archived_receipt_sha256"] = "0" * 64
     result = _decompose(case, registry=registry)
     assert result["decomposition_state"] == "blocked"
-    assert "source_receipt_sha256_mismatch" in result["reason_codes"]
+    assert "registry_archived_receipt_sha256_drift" in result["reason_codes"]
 
 
 def test_malformed_source_receipt_json_blocks(tmp_path: Path) -> None:
@@ -706,7 +716,12 @@ def test_malformed_source_receipt_json_blocks(tmp_path: Path) -> None:
     bad = b"{not valid json"
     registry = json.loads(json.dumps(case["registry"]))
     registry["source_binding"]["archived_receipt_sha256"] = hashlib.sha256(bad).hexdigest()
-    result = _decompose(case, registry=registry, receipt_bytes=bad)
+    result = _decompose(
+        case,
+        registry=registry,
+        receipt_bytes=bad,
+        expected_archived_receipt_sha256=registry["source_binding"]["archived_receipt_sha256"],
+    )
     assert result["decomposition_state"] == "blocked"
     assert "source_receipt_malformed_json" in result["reason_codes"]
 
@@ -944,14 +959,19 @@ def _blocked_from_raw(bars: Path, funding: Path) -> dict[str, object]:
     }
     receipt_bytes = _synthetic_receipt(scorer_like, fingerprints, BOUNDARY)
     registry = _registry_entry(scorer_like, fingerprints, receipt_bytes)
-    return subject.build_candidate1_train_mechanism_decomposition_v0(
-        bars_dir=bars,
-        funding_dir=funding,
-        registry_entry=registry,
-        split_audit=_split(),
-        holdout_open_gate=None,
-        source_receipt_bytes=receipt_bytes,
-    )
+    with patch.object(
+        subject,
+        "_DECOMPOSITION_ARCHIVED_RECEIPT_SHA256",
+        registry["source_binding"]["archived_receipt_sha256"],
+    ):
+        return subject.build_candidate1_train_mechanism_decomposition_v0(
+            bars_dir=bars,
+            funding_dir=funding,
+            registry_entry=registry,
+            split_audit=_split(),
+            holdout_open_gate=None,
+            source_receipt_bytes=receipt_bytes,
+        )
 
 
 # ── Purge / embargo / quarantine boundary crossings & warmup ────────────────
@@ -1183,7 +1203,7 @@ def test_golden_fixture_scorer_agrees_with_hand_calculated_source(tmp_path: Path
         (
             ("decomposition_execution_budget",),
             _DELETE,
-            "decomposition_execution_budget_mismatch",
+            "decomposition_execution_budget_malformed",
         ),
         # The single budgeted execution is already spent.
         (
@@ -1534,6 +1554,131 @@ def test_implementation_frozen_contract_matches_preregistered_literals() -> None
         _CLASSIFICATION_CONTRACT["DECOMPOSITION_BLOCKED_OR_INVALID"]["use_when_any"]
     )
     assert subject._DECOMPOSITION_AUTHORIZATION_STATE == _AUTHORIZATION_STATE
+    assert subject._DECOMPOSITION_CLASSIFICATION_CONTRACT == _CLASSIFICATION_CONTRACT
+
+
+def test_production_archived_receipt_sha_matches_preregistered_registry() -> None:
+    registry = json.loads(
+        Path("docs/registries/real_btc_candidate1_train_mechanism_decomposition_registry.json")
+        .read_text(encoding="utf-8")
+    )["entries"][0]
+    assert subject._DECOMPOSITION_ARCHIVED_RECEIPT_SHA256 == (
+        registry["source_binding"]["archived_receipt_sha256"]
+    )
+
+
+def test_substituted_receipt_and_matching_registry_sha_still_blocks(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    receipt = json.loads(bytes(case["receipt_bytes"]).decode("utf-8"))
+    receipt["protocol_computed_validation"]["first_computed_statistic_v0"]["statistic_state"] = "substituted"
+    substituted_bytes = json.dumps(receipt).encode("utf-8")
+    registry = _mutated(
+        case["registry"],
+        ("source_binding", "archived_receipt_sha256"),
+        hashlib.sha256(substituted_bytes).hexdigest(),
+    )
+    result = _decompose(case, registry=registry, receipt_bytes=substituted_bytes)
+    assert result["decomposition_state"] == "blocked"
+    assert result["classification"] == subject.DECOMPOSITION_BLOCKED_OR_INVALID
+    assert result["outputs"] is None
+    assert "registry_archived_receipt_sha256_drift" in result["reason_codes"]
+
+
+def test_changed_receipt_bytes_fail_authentication_against_frozen_sha(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    result = _decompose(case, receipt_bytes=bytes(case["receipt_bytes"]) + b" ")
+    assert result["decomposition_state"] == "blocked"
+    assert "source_receipt_byte_authentication_failed" in result["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [
+        (("source_binding", "extra"), "source_binding_contract_mismatch"),
+        (("frozen_fingerprints", "extra"), "frozen_fingerprints_contract_mismatch"),
+        (("exact_decomposition_universe", "extra"), "exact_decomposition_universe_contract_mismatch"),
+        (("exact_decomposition_universe", "reconstruction_requirement", "extra"), "reconstruction_requirement_contract_mismatch"),
+        (("classification_contract", "extra"), "classification_contract_mismatch"),
+        (("classification_contract", "DECOMPOSITION_BLOCKED_OR_INVALID", "extra"), "classification_contract_mismatch"),
+        *((
+            ("classification_contract", name, "extra"), "classification_contract_mismatch"
+        ) for name in (
+            "CANDIDATE_1_ABSOLUTE_NET_NONPOSITIVE",
+            "CANDIDATE_1_ABSOLUTE_NET_POSITIVE_RELATIVE_PRICE_NONPOSITIVE",
+            "CANDIDATE_1_ABSOLUTE_NET_AND_RELATIVE_PRICE_POSITIVE",
+        )),
+    ],
+)
+def test_frozen_nested_extra_fields_block(tmp_path: Path, path: tuple[str, ...], reason: str) -> None:
+    case = _case(tmp_path)
+    result = _decompose(case, registry=_mutated(case["registry"], path, "unexpected"))
+    assert result["decomposition_state"] == "blocked"
+    assert reason in result["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "reason"),
+    [
+        (("source_binding",), [], "source_binding_contract_mismatch"),
+        (("frozen_fingerprints",), [], "frozen_fingerprints_contract_mismatch"),
+        (("exact_decomposition_universe",), [], "exact_decomposition_universe_contract_mismatch"),
+        (("exact_decomposition_universe", "reconstruction_requirement"), [], "reconstruction_requirement_contract_mismatch"),
+        (("source_binding", "source_scored_slot_count"), True, "source_scored_slot_count_mismatch"),
+        (("exact_decomposition_universe", "must_reuse_without_change"), list(reversed(subject._DECOMPOSITION_MUST_REUSE)), "source_slot_universe_mismatch"),
+        (("exact_decomposition_universe", "reconstruction_requirement", "reconstructed_from"), "slots", "reconstruction_requirement_contract_mismatch"),
+        (("exact_decomposition_universe", "reconstruction_requirement", "reconstruction_identity"), "mean(relative_net_i)", "reconstruction_requirement_contract_mismatch"),
+        (("classification_contract", "CANDIDATE_1_ABSOLUTE_NET_NONPOSITIVE", "condition"), "x", "classification_contract_mismatch"),
+        (("classification_contract", "CANDIDATE_1_ABSOLUTE_NET_NONPOSITIVE", "interpretation"), "x", "classification_contract_mismatch"),
+        (("classification_contract", "DECOMPOSITION_BLOCKED_OR_INVALID", "use_when_any"), [], "classification_contract_mismatch"),
+        (("classification_contract", "no_significance_inference"), False, "classification_contract_mismatch"),
+    ],
+)
+def test_frozen_nested_missing_type_and_value_contracts_block(
+    tmp_path: Path, path: tuple[str, ...], value: object, reason: str
+) -> None:
+    case = _case(tmp_path)
+    result = _decompose(case, registry=_mutated(case["registry"], path, value))
+    assert result["decomposition_state"] == "blocked"
+    assert reason in result["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [
+        (("source_binding", "source_repo_head"), "source_binding_contract_mismatch"),
+        (("frozen_fingerprints", "outer_data_cut"), "frozen_fingerprints_contract_mismatch"),
+        (("exact_decomposition_universe", "must_reuse_without_change"), "exact_decomposition_universe_contract_mismatch"),
+        (("exact_decomposition_universe", "reconstruction_requirement", "reconstructed_from"), "reconstruction_requirement_contract_mismatch"),
+        *((
+            ("classification_contract", name, "condition"), "classification_contract_mismatch"
+        ) for name in (
+            "CANDIDATE_1_ABSOLUTE_NET_NONPOSITIVE",
+            "CANDIDATE_1_ABSOLUTE_NET_POSITIVE_RELATIVE_PRICE_NONPOSITIVE",
+            "CANDIDATE_1_ABSOLUTE_NET_AND_RELATIVE_PRICE_POSITIVE",
+        )),
+        (("classification_contract", "DECOMPOSITION_BLOCKED_OR_INVALID", "use_when_any"), "classification_contract_mismatch"),
+    ],
+)
+def test_frozen_nested_missing_fields_block(tmp_path: Path, path: tuple[str, ...], reason: str) -> None:
+    case = _case(tmp_path)
+    result = _decompose(case, registry=_mutated(case["registry"], path, _DELETE))
+    assert result["decomposition_state"] == "blocked"
+    assert reason in result["reason_codes"]
+
+
+@pytest.mark.parametrize("bad", [True, False, 1.0, -1, "1", None, [], {}])
+def test_execution_budget_requires_strict_integer_one(tmp_path: Path, bad: object) -> None:
+    case = _case(tmp_path)
+    result = _decompose(
+        case,
+        registry=_mutated(case["registry"], ("decomposition_execution_budget",), bad),
+    )
+    assert result["decomposition_state"] == "blocked"
+    assert "decomposition_execution_budget_malformed" in result["reason_codes"]
+
+
+def test_execution_budget_integer_one_passes(tmp_path: Path) -> None:
+    assert _decompose(_case(tmp_path))["decomposition_state"] == "computed"
 
 
 def test_registry_entry_stays_open_to_append_only_evidence_fields(tmp_path: Path) -> None:
