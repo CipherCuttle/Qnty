@@ -9,26 +9,28 @@
     "purge_intervals": 8,
     "embargo_intervals": 90,
     "holdout_seal_declaration": {
-      "holdout_seal_fingerprint": "46cde529296e9bde4a884e3ea51950474ed75667a8b9a46d632581e76cd9a2cf",
+      "holdout_seal_fingerprint": "1e05840e3d49ec4d74a76b8477d51a2170086fd93c4eaba38b43c30c03d14ef9",
       "sealed_at_boundary_index": 33735,
       "purge_intervals": 8,
-      "embargo_intervals": 90
+      "embargo_intervals": 90,
+      "sealed_roles": ["bars", "funding"],
+      "projection_policy": "bars_timestamp_partition_projection_v1"
     },
     "execution_packet_declaration": {
-      "execution_packet_fingerprint": "bc0526ecdbbb1a7c2ff183babd465266f8122efd19ca06ad604b916abca6bdb3",
-      "locked_at": "2026-07-16T00:50:14Z",
+      "execution_packet_fingerprint": "b8a60de328193e23128b53f7436b5b992b7f0b2920187ffc274a89b52e868ca2",
+      "locked_at": "2026-07-16T02:14:26Z",
       "candidate_family_declaration_hash": "cdf63504e2d56b64d7516bfc77562a08611a0bfdac18ff6013e79cf41a26d3ea",
       "null_family_declaration_hash": "8568e2d53780c4469884a825ab5dba9b26d077176e3a2abd0459dc3d0142e4aa",
       "data_cut_fingerprint": "020eac5e9659138e4c66b2fb2b44020a9b894b0500f51fd935014c5b37f55224",
       "split_boundary_declaration_hash": "70e9c7066696636c3cce61b35e860c337bad6cc8f612dc458d3866cc3425f57c",
-      "holdout_seal_fingerprint": "46cde529296e9bde4a884e3ea51950474ed75667a8b9a46d632581e76cd9a2cf",
-      "code_commit_hash": "a8c6f48613aee6e596758370c841112011773781",
+      "holdout_seal_fingerprint": "1e05840e3d49ec4d74a76b8477d51a2170086fd93c4eaba38b43c30c03d14ef9",
+      "code_commit_hash": "e1b493e22403a228e9d3994e7a39a0f02fbb2bcc",
       "protocol_version": "protocol_computed_validation_v1"
     },
     "holdout_open_gate_declaration": {
-      "holdout_open_gate_fingerprint": "6f37e476ff5e69b6bb3531c09ee7e1eec80f6e1fb44be72089879fc4bdf52533",
+      "holdout_open_gate_fingerprint": "6c216226f0438ddd66f38f9d14cb967d736bdfabcc8f353237e2c506c40b760f",
       "holdout_open_gate_state": "gate_passed",
-      "gate_checked_at": "2026-07-16T00:50:14Z",
+      "gate_checked_at": "2026-07-16T02:14:26Z",
       "structural_prerequisite_count": 4,
       "holdout_open_gate_reason_codes": []
     },
