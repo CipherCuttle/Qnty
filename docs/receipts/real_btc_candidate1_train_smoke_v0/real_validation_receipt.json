@@ -1,0 +1,287 @@
+{
+  "validation_receipt": {
+    "kind": "qnty_offline_edge_real_validation_receipt",
+    "version": "0.1.0",
+    "timestamp_utc": "2026-07-16T02:42:25.796153+00:00"
+  },
+  "input_manifest_fingerprint": "3dec994114769a16939afa9b0041a8162a308dcb05ca196557407b26a0d35b0d",
+  "data_quality_receipt_sha256": "65463bf7dc255f632bdb32b3d5b3f9fd457afac5b48317d8aa7ecef0739544c3",
+  "code_commit_sha": "e1b493e22403a228e9d3994e7a39a0f02fbb2bcc",
+  "split_definitions": [
+    {
+      "split_id": "protocol_single_holdout"
+    }
+  ],
+  "cost_cases": [
+    {
+      "cost_case": "low",
+      "commission_bps_per_side": 2.0,
+      "slippage_bps_per_side": 2.0,
+      "spread_bps_per_side": 0.5,
+      "funding_included": true,
+      "calculation_status": "NOT_EXECUTED"
+    },
+    {
+      "cost_case": "base",
+      "commission_bps_per_side": 5.0,
+      "slippage_bps_per_side": 5.0,
+      "spread_bps_per_side": 1.0,
+      "funding_included": true,
+      "calculation_status": "NOT_EXECUTED"
+    },
+    {
+      "cost_case": "high",
+      "commission_bps_per_side": 10.0,
+      "slippage_bps_per_side": 10.0,
+      "spread_bps_per_side": 2.0,
+      "funding_included": true,
+      "calculation_status": "NOT_EXECUTED"
+    }
+  ],
+  "required_outputs_present": {
+    "market_observations": false,
+    "net_return_after_costs": false,
+    "max_drawdown": false,
+    "sharpe_or_risk_metric": false,
+    "baseline_comparison": false,
+    "sensitivity_cases": false
+  },
+  "forbidden_calculation_status": {
+    "returns_computed": true,
+    "pnl_computed": false,
+    "sharpe_computed": false,
+    "paper_engine_run": false,
+    "live_integration_used": false
+  },
+  "guardrail_status": {
+    "edge_unproven": true,
+    "block_live_integration": true,
+    "no_report_promotion": true,
+    "output_under_tmp_only": true
+  },
+  "final_offline_verdict": "BLOCKED_BY_VALIDATION_IMPLEMENTATION",
+  "final_offline_verdict_rationale": "BLOCKED_BY_VALIDATION_IMPLEMENTATION: this is a schema/skeleton-only receipt. No return-like market observations, strategy returns, PnL, Sharpe, or paper-engine calculation has been implemented. No edge/profit/live-readiness claim is made.",
+  "protocol_computed_validation": {
+    "protocol_version": "protocol_computed_validation_v1",
+    "immutable_data_cut": {
+      "source_file_count": 2,
+      "actual_sha256": "020eac5e9659138e4c66b2fb2b44020a9b894b0500f51fd935014c5b37f55224",
+      "expected_sha256": "020eac5e9659138e4c66b2fb2b44020a9b894b0500f51fd935014c5b37f55224",
+      "matches_expected": true,
+      "timestamp_convention": "SOURCE_CSV_AS_RECORDED"
+    },
+    "candidate_family": {
+      "identifier": "FROZEN_SINGLE_CANDIDATE_FAMILY_V1"
+    },
+    "null_family": {
+      "identifier": "FROZEN_SINGLE_NULL_FAMILY_V1"
+    },
+    "deterministic_split": {
+      "method": "SOURCE_ORDERED_SINGLE_HOLDOUT",
+      "purge_intervals": 8,
+      "embargo_intervals": 90,
+      "declaration_complete": true
+    },
+    "trial_registry": {
+      "loaded": true,
+      "entry_present": true,
+      "append_only_entry": true,
+      "honest_trial_count": 1,
+      "entry_matches_data_cut": true
+    },
+    "computed_input_integrity_result": {
+      "status": "EDGE_UNPROVEN",
+      "source_inputs_ready": true,
+      "protocol_execution_killed": false,
+      "paper_trade_authorized": false,
+      "live_integration_authorized": false
+    },
+    "kill_criteria": {
+      "data_cut_failure": false,
+      "registry_incomplete": false,
+      "purge_or_embargo_missing": false,
+      "source_inputs_missing": false,
+      "kill_triggered": false
+    },
+    "deterministic_split_audit": {
+      "method": "SOURCE_ORDERED_SINGLE_HOLDOUT",
+      "reads_only_timestamp_and_row_order": true,
+      "boundary_index": 33735,
+      "source_row_count": 42169,
+      "registry_declared_boundary_index": 33735,
+      "declared_purge_intervals": 8,
+      "declared_embargo_intervals": 90,
+      "train_row_count": 33727,
+      "holdout_row_count": 8344,
+      "purged_row_count": 8,
+      "embargoed_row_count": 90,
+      "realized_purge_gap_intervals": 8,
+      "realized_embargo_gap_intervals": 90,
+      "holdout_strictly_after_train": true,
+      "partitions_disjoint": true,
+      "leakage_audit_passed": true,
+      "leakage_audit_killed": false,
+      "kill_criteria": {
+        "source_rows_missing": false,
+        "boundary_index_missing": false,
+        "boundary_index_out_of_range": false,
+        "purge_or_embargo_invalid": false,
+        "non_monotonic_timestamps": false,
+        "empty_train_partition": false,
+        "empty_holdout_partition": false,
+        "empty_purge_partition": false,
+        "empty_embargo_partition": false,
+        "partitions_overlap": false,
+        "holdout_not_strictly_after_train": false,
+        "insufficient_purge_gap": false,
+        "insufficient_embargo_gap": false,
+        "registry_boundary_declaration_missing": false,
+        "registry_boundary_mismatch": false,
+        "timestamp_header_missing": false,
+        "timestamp_cell_missing": false,
+        "timestamp_cell_malformed": false,
+        "timestamp_read_failure": false
+      },
+      "timestamp_structural_failures": []
+    },
+    "holdout_seal_audit": {
+      "method": "ROLE_RELATIVE_SOURCE_BYTE_SPAN_SHA256",
+      "holdout_seal_fingerprint": "1e05840e3d49ec4d74a76b8477d51a2170086fd93c4eaba38b43c30c03d14ef9",
+      "holdout_seal_state": "sealed",
+      "sealed_role_count": 2,
+      "sealed_row_count": 9386,
+      "sealed_roles": [
+        "bars",
+        "funding"
+      ],
+      "sealed_row_counts": {
+        "bars": 8344,
+        "funding": 1042
+      },
+      "projection_policy": "bars_timestamp_partition_projection_v1",
+      "funding_timestamp_column": "fundingTime",
+      "funding_partition_counts": {
+        "before_bars": 1,
+        "train": 4215,
+        "purge": 1,
+        "embargo": 12,
+        "quarantine": 1042,
+        "after_bars": 0
+      },
+      "sealed_at_boundary_index": 33735,
+      "registry_seal_fingerprint": "1e05840e3d49ec4d74a76b8477d51a2170086fd93c4eaba38b43c30c03d14ef9",
+      "seal_fingerprint_matches_registry": true,
+      "holdout_seal_killed": false,
+      "kill_criteria": {
+        "split_audit_absent": false,
+        "leakage_audit_not_passed": false,
+        "leakage_audit_killed": false,
+        "holdout_span_unresolvable": false,
+        "non_bars_role_alignment_failed": false,
+        "funding_projection_failed": false,
+        "required_role_missing": false,
+        "registry_declaration_absent": false,
+        "registry_declaration_missing_required_fields": false,
+        "registry_declaration_unexpected_fields": false,
+        "boundary_declaration_mismatch": false,
+        "declaration_role_mismatch": false,
+        "declaration_projection_policy_mismatch": false,
+        "seal_fingerprint_mismatch": false
+      }
+    },
+    "execution_packet_lock": {
+      "method": "SHA256_HASH_OF_SEVEN_IDENTITY_FIELDS_FIXED_ORDER",
+      "execution_packet_fingerprint": "b8a60de328193e23128b53f7436b5b992b7f0b2920187ffc274a89b52e868ca2",
+      "execution_packet_input_count": 7,
+      "packet_lock_state": "locked",
+      "packet_locked_at": "2026-07-16T02:14:26Z",
+      "registry_packet_fingerprint": "b8a60de328193e23128b53f7436b5b992b7f0b2920187ffc274a89b52e868ca2",
+      "packet_fingerprint_matches_registry": true,
+      "packet_lock_killed": false,
+      "kill_criteria": {
+        "split_audit_absent": false,
+        "leakage_audit_not_passed": false,
+        "leakage_audit_killed": false,
+        "holdout_seal_absent": false,
+        "holdout_seal_not_sealed": false,
+        "holdout_seal_killed": false,
+        "constituent_identity_missing": false,
+        "execution_packet_declaration_absent": false,
+        "execution_packet_declaration_incomplete": false,
+        "execution_packet_declaration_stale": false,
+        "execution_packet_fingerprint_mismatch": false
+      }
+    },
+    "holdout_open_gate": {
+      "method": "SHA256_HASH_OF_TEN_STRUCTURAL_INPUTS_FIXED_ORDER",
+      "holdout_open_gate_fingerprint": "6c216226f0438ddd66f38f9d14cb967d736bdfabcc8f353237e2c506c40b760f",
+      "holdout_open_gate_state": "gate_passed",
+      "holdout_open_gate_killed": false,
+      "holdout_open_gate_reason_codes": [],
+      "structural_prerequisite_count": 4,
+      "registry_gate_fingerprint": "6c216226f0438ddd66f38f9d14cb967d736bdfabcc8f353237e2c506c40b760f",
+      "gate_fingerprint_matches_registry": true,
+      "gate_checked_at": "2026-07-16T02:14:26Z",
+      "kill_criteria": {
+        "execution_packet_lock_absent": false,
+        "packet_not_locked": false,
+        "packet_lock_killed": false,
+        "stale_constituent_reference": false,
+        "holdout_seal_absent": false,
+        "holdout_not_sealed": false,
+        "holdout_seal_killed": false,
+        "split_leakage_audit_absent": false,
+        "leakage_audit_not_passed": false,
+        "leakage_audit_killed": false,
+        "data_cut_fingerprint_missing": false,
+        "protocol_version_missing": false,
+        "holdout_open_gate_declaration_missing": false,
+        "holdout_open_gate_declaration_incomplete": false,
+        "gate_fingerprint_missing": false,
+        "gate_fingerprint_mismatch": false,
+        "holdout_open_gate_declaration_stale": false
+      }
+    },
+    "partition_use_policy_v0": {
+      "method": "SHA256_CANONICAL_REGISTRY_POLICY_DECLARATION_V0",
+      "partition_use_policy_state": "quarantine_only",
+      "partition_use_policy_reason_codes": [
+        "prior_economic_value_exposure_before_split_freeze"
+      ],
+      "partition_use_policy_fingerprint": "c47d5fffb2098f13c9b4604d4d2157fd2bf1ff0c75deb918d3996e6956838ba5",
+      "partition_use_policy_registry_fingerprint": "c47d5fffb2098f13c9b4604d4d2157fd2bf1ff0c75deb918d3996e6956838ba5",
+      "partition_use_policy_killed": false,
+      "scientific_use_authorized": false,
+      "append_only_declaration": true,
+      "kill_criteria": {
+        "partition_use_policy_declaration_missing": false,
+        "partition_use_policy_declaration_incomplete": false,
+        "partition_use_policy_state_unknown": false,
+        "partition_use_policy_reason_code_unknown": false,
+        "partition_use_policy_unexpected_field": false,
+        "partition_use_policy_data_cut_malformed": false,
+        "partition_use_policy_data_cut_mismatch": false,
+        "partition_use_policy_not_preregistered": false,
+        "partition_use_policy_future_cutoff_invalid": false,
+        "partition_use_policy_append_only_invalid": false,
+        "partition_use_policy_fingerprint_malformed": false,
+        "partition_use_policy_fingerprint_mismatch": false
+      }
+    },
+    "first_computed_statistic_v0": {
+      "statistic_name": "mean_candidate_net_minus_null_net_v1",
+      "candidate_name": "funding_sign_one_interval_carry_v1",
+      "null_name": "alternating_active_slot_side_v1",
+      "scored_slot_count": 4203,
+      "invalid_slot_count": 14,
+      "statistic_value_T": 0.0007358157493656125,
+      "statistic_state": "computed",
+      "statistic_reason_codes": [
+        "holdout_remained_sealed_non_holdout_scored"
+      ],
+      "data_cut_fingerprint": "7c8552f10cf8f72c859335a5f4af8ca36094bffed695428a9c93a1033ef86c6f",
+      "candidate_rule_fingerprint": "098418fce70dba933950ac347f38274464d67cda70e4b2878128e5025c8049fe",
+      "null_rule_fingerprint": "940db1b075f7a6f9ecb1a5b288fb63878abbdcbb361f691f3173a663423a2bfa"
+    }
+  }
+}

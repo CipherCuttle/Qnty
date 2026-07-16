@@ -1,0 +1,4 @@
+final_offline_verdict=BLOCKED_BY_VALIDATION_IMPLEMENTATION
+computed_validation_result=EDGE_UNPROVEN
+receipt_sha256=7abb521eba06ebd515f6ad1519fab92df1368d342355a744ec415d6d220b9be5
+receipt_path=/tmp/qnty-candidate1-real-run.v9EaBY/output/real_validation_receipt.json
