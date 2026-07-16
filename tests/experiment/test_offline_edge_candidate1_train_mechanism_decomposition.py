@@ -37,11 +37,11 @@ _PARTITION_FP = "synthetic-partition-use-policy-fingerprint"
 # fields to be structurally present but must NOT claim to authenticate their
 # bytes: only the receipt bytes are an input here. Artifact-byte authentication
 # belongs to the later no-computation preflight.
-_SYNTHETIC_REPO_HEAD = "1" * 40
-_SYNTHETIC_IMPL_SHA = "2" * 40
-_SYNTHETIC_COMMAND_SHA = "3" * 64
-_SYNTHETIC_LOG_SHA = "4" * 64
-_SYNTHETIC_EXIT_CODE_SHA = "5" * 64
+_SYNTHETIC_REPO_HEAD = "407996932afbed9f8d1aaa8fc4c05871c6712c39"
+_SYNTHETIC_IMPL_SHA = "e1b493e22403a228e9d3994e7a39a0f02fbb2bcc"
+_SYNTHETIC_COMMAND_SHA = "2eeeb9f87a0747f758f0171616c2a73315c041bb37531d5d4f6bf382e4550bb8"
+_SYNTHETIC_LOG_SHA = "421b3217b531063b09bee5d101ce184323d8959d1217d81be6de74a74377189c"
+_SYNTHETIC_EXIT_CODE_SHA = "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
 
 # The frozen output schema and classification contract, spelled out independently
 # of the module constants. Double entry is the point: if the implementation's
@@ -141,13 +141,13 @@ _PER_SLOT_DEFINITIONS = {
     ),
     "candidate_cost_i": "0.0022 when candidate is active, otherwise 0",
     "candidate_net_i": "candidate_price_i + candidate_funding_i - candidate_cost_i",
-    "null_components": "null components use the frozen null side",
+    "null_components": "null components use the frozen null side with identical entry, exit, funding window, active/flat mask, and fixed cost",
     "relative_price_i": "candidate_price_i - null_price_i",
     "relative_funding_i": "candidate_funding_i - null_funding_i",
     "relative_cost_difference_i": "candidate_cost_i - null_cost_i",
     "relative_net_i": "relative_price_i + relative_funding_i - relative_cost_difference_i",
     "fixed_cost_per_active_slot": 0.0022,
-    "relative_cost_difference_expectation": "exactly zero; the executor MUST verify",
+    "relative_cost_difference_expectation": "expected exactly zero under the frozen identical-cost contract; the executor MUST verify, not assume",
 }
 
 _EXECUTION_PRECONDITIONS = [
@@ -361,7 +361,7 @@ def _registry_entry(
             "archived_command_sha256": _SYNTHETIC_COMMAND_SHA,
             "archived_log_sha256": _SYNTHETIC_LOG_SHA,
             "archived_exit_code_sha256": _SYNTHETIC_EXIT_CODE_SHA,
-            "archived_receipt_path": "synthetic/real_validation_receipt.json",
+            "archived_receipt_path": "docs/receipts/real_btc_candidate1_train_smoke_v0/real_validation_receipt.json",
             "source_statistic_name": scorer["statistic_name"],
             "source_statistic_value_T": scorer["statistic_value_T"],
             "source_scored_slot_count": scorer["scored_slot_count"],
@@ -373,8 +373,8 @@ def _registry_entry(
         "frozen_fingerprints": dict(fingerprints),
         "exact_decomposition_universe": {
             "must_reuse_without_change": [
-                "scored_slots",
-                "invalid_slots",
+                "4203_scored_slots",
+                "14_invalid_slots",
                 "entry_timestamps",
                 "exit_timestamps",
                 "candidate_activity_mask",
@@ -394,7 +394,7 @@ def _registry_entry(
             "reconstruction_requirement": {
                 "reconstructed_statistic_value_T": scorer["statistic_value_T"],
                 "reconstructed_from": "component_means",
-                "reconstruction_identity": "mean(relative_net_i)",
+                "reconstruction_identity": "mean(relative_net_i) == 0.0007358157493656125",
             },
         },
         "per_slot_definitions": json.loads(json.dumps(_PER_SLOT_DEFINITIONS)),
@@ -1259,8 +1259,8 @@ def test_golden_fixture_scorer_agrees_with_hand_calculated_source(tmp_path: Path
         ),
         (("authorization_state",), _DELETE, "decomposition_authorization_state_missing"),
         # Structural presence of the remaining preregistered blocks.
-        (("execution_preconditions",), _DELETE, "execution_preconditions_missing"),
-        (("per_slot_definitions",), _DELETE, "per_slot_definitions_missing"),
+        (("execution_preconditions",), _DELETE, "execution_preconditions_mismatch"),
+        (("per_slot_definitions",), _DELETE, "per_slot_definitions_mismatch"),
     ],
 )
 def test_registry_contract_fails_closed(
@@ -1844,7 +1844,7 @@ def test_missing_archived_artifact_binding_blocks(tmp_path: Path, field: str) ->
         case, registry=_mutated(case["registry"], ("source_binding", field), _DELETE)
     )
     assert result["decomposition_state"] == "blocked"
-    assert "source_artifact_binding_incomplete" in result["reason_codes"]
+    assert "source_frozen_provenance_mismatch" in result["reason_codes"]
 
 
 @pytest.mark.parametrize("bad", ["not-a-sha", "AB" * 32, ""])
@@ -1854,28 +1854,54 @@ def test_malformed_archived_artifact_hash_blocks(tmp_path: Path, bad: str) -> No
         case,
         registry=_mutated(case["registry"], ("source_binding", "archived_log_sha256"), bad),
     )
-    assert "source_artifact_binding_incomplete" in result["reason_codes"]
+    assert "source_frozen_provenance_mismatch" in result["reason_codes"]
 
 
-def test_artifact_bytes_are_not_authenticated_here(tmp_path: Path) -> None:
-    # The command/log/exit-code bytes are not inputs to this core, so a
-    # structurally valid but arbitrary hash must NOT block: authenticating those
-    # artifacts is the later no-computation preflight's job. Only the receipt
-    # bytes are authenticated here, and that check is exercised separately.
+def test_artifact_provenance_literals_are_frozen(tmp_path: Path) -> None:
+    # Artifact bytes are not inputs here, but preregistered hash literals are.
     case = _case(tmp_path)
     registry = _mutated(
         case["registry"], ("source_binding", "archived_command_sha256"), "f" * 64
     )
-    assert _decompose(case, registry=registry)["decomposition_state"] == "computed"
+    assert _decompose(case, registry=registry)["decomposition_state"] == "blocked"
 
 
-def test_aggregate_component_mean_disagreement_is_detected() -> None:
+def test_exact_component_total_disagreement_is_detected() -> None:
     # Components that do not account for the total must be caught: the derived
     # net mean and the directly aggregated per-slot nets then disagree.
     slot = _consistent_slot()
     slot["candidate_net"] = slot["candidate_net"] + Decimal("0.5")
-    _means, reasons = subject._candidate1_decomposition_means([slot])
-    assert "component_mean_direct_disagreement" in reasons
+    assert "exact_component_total_mismatch" in subject._exact_component_total_reasons([slot])
+
+
+def test_exact_component_total_detects_distinct_decimals_with_same_float() -> None:
+    left = Decimal("1.000000000000000000000000000")
+    right = Decimal("1.0000000000000000000000000001")
+    assert float(left) == float(right)
+    slot = _consistent_slot()
+    slot["candidate_net"] = right
+    slot["candidate_price"] = left
+    slot["candidate_funding"] = Decimal("0")
+    slot["candidate_cost"] = Decimal("0")
+    assert "exact_component_total_mismatch" in subject._exact_component_total_reasons([slot])
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        "first_computed_statistic_v0", "immutable_data_cut", "deterministic_split_audit",
+        "holdout_seal_audit", "execution_packet_lock", "holdout_open_gate",
+        "partition_use_policy_v0",
+    ],
+)
+@pytest.mark.parametrize("malformed", [None, [], [{}], "string", 1, True])
+def test_authenticated_malformed_receipt_sections_block(
+    tmp_path: Path, section: str, malformed: object
+) -> None:
+    case = _case(tmp_path)
+    result = _decompose(case, **_receipt_mutation(case, (section,), malformed))
+    assert result["decomposition_state"] == "blocked"
+    assert result["outputs"] is None
 
 
 def test_aggregate_means_are_derived_from_components(tmp_path: Path) -> None:

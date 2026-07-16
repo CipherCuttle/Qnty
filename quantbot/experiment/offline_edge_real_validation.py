@@ -29,6 +29,7 @@ import argparse
 import bisect
 import csv
 from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -2060,6 +2061,59 @@ _DECOMPOSITION_AUTHORIZATION_STATE = {
     "live_status": CANDIDATE1_DECOMPOSITION_LIVE_STATUS,
 }
 
+# These are copied verbatim from the preregistration.  The registry entry is
+# append-only at its top level, but these nested scientific contracts are not.
+_DECOMPOSITION_FROZEN_SOURCE_BINDING = {
+    "source_repo_head": "407996932afbed9f8d1aaa8fc4c05871c6712c39",
+    "bound_implementation_sha": "e1b493e22403a228e9d3994e7a39a0f02fbb2bcc",
+    "archived_command_sha256": "2eeeb9f87a0747f758f0171616c2a73315c041bb37531d5d4f6bf382e4550bb8",
+    "archived_log_sha256": "421b3217b531063b09bee5d101ce184323d8959d1217d81be6de74a74377189c",
+    "archived_exit_code_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "archived_receipt_path": "docs/receipts/real_btc_candidate1_train_smoke_v0/real_validation_receipt.json",
+    "source_classification": CANDIDATE1_DECOMPOSITION_SOURCE_CLASSIFICATION,
+    "source_statistic_name": "mean_candidate_net_minus_null_net_v1",
+    "source_statistic_reason_code": CANDIDATE1_DECOMPOSITION_SOURCE_REASON_CODE,
+    "source_candidate_name": "funding_sign_one_interval_carry_v1",
+    "source_null_name": "alternating_active_slot_side_v1",
+}
+_DECOMPOSITION_MUST_REUSE = [
+    "4203_scored_slots", "14_invalid_slots", "entry_timestamps", "exit_timestamps",
+    "candidate_activity_mask", "candidate_sides", "null_sides", "funding_accounting_window",
+    "cost_accounting", "warmup", "split", "purge", "embargo", "hold_period",
+]
+_DECOMPOSITION_PER_SLOT_DEFINITIONS = {
+    "candidate_price_i": "candidate_side_i * (exit_close_i / entry_close_i - 1)",
+    "candidate_funding_i": "-candidate_side_i * sum(funding_rates where entry_time_i < fundingTime <= exit_time_i)",
+    "candidate_cost_i": "0.0022 when candidate is active, otherwise 0",
+    "candidate_net_i": "candidate_price_i + candidate_funding_i - candidate_cost_i",
+    "null_components": "null components use the frozen null side with identical entry, exit, funding window, active/flat mask, and fixed cost",
+    "relative_price_i": "candidate_price_i - null_price_i",
+    "relative_funding_i": "candidate_funding_i - null_funding_i",
+    "relative_cost_difference_i": "candidate_cost_i - null_cost_i",
+    "relative_net_i": "relative_price_i + relative_funding_i - relative_cost_difference_i",
+    "fixed_cost_per_active_slot": 0.0022,
+    "relative_cost_difference_expectation": "expected exactly zero under the frozen identical-cost contract; the executor MUST verify, not assume",
+}
+_DECOMPOSITION_EXECUTION_PRECONDITIONS = [
+    "this_preregistration_pr_merged", "separate_implementation_pr_reviewed_and_merged",
+    "implementation_fingerprint_or_commit_bound", "final_no_computation_preflight_passed",
+]
+
+
+def _finite_scalar(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _strict_count(value: Any) -> bool:
+    return type(value) is int and value >= 0
+
+
+def _required_dict(parent: dict[str, Any], key: str, reason: str) -> tuple[dict[str, Any] | None, list[str]]:
+    value = parent.get(key)
+    if not isinstance(value, dict):
+        return None, [reason]
+    return value, []
+
 
 def _assert_no_forbidden_decomposition_outputs(value: Any, path: str = "$") -> None:
     """Recursively reject any prohibited decomposition-output key.
@@ -2342,6 +2396,19 @@ def _per_slot_component_identity_reasons(slots: list[dict[str, Any]]) -> list[st
     return []
 
 
+def _exact_component_total_reasons(slots: list[dict[str, Any]]) -> list[str]:
+    """Audit additive attribution with exact finite Decimal totals, before division."""
+    for slot in slots:
+        for value in slot.values():
+            if isinstance(value, Decimal) and not value.is_finite():
+                return ["non_finite_decomposition_output"]
+    for net, (price, funding, cost) in _DECOMPOSITION_COMPONENT_IDENTITIES.items():
+        total = lambda field: sum((Fraction(slot[field]) for slot in slots), Fraction(0))
+        if total(net) != total(price) + total(funding) - total(cost):
+            return ["exact_component_total_mismatch"]
+    return []
+
+
 def _candidate1_decomposition_means(
     slots: list[dict[str, Any]],
 ) -> tuple[dict[str, Decimal], list[str]]:
@@ -2388,11 +2455,10 @@ def _candidate1_decomposition_means(
         # aggregate identity holds exactly by construction.  The check that earns
         # its keep is the independent one below.
         means[net_field] = means[price] + means[funding] - means[cost]
-        # The component-derived net mean must agree with the directly aggregated
-        # per-slot nets at serialization precision.  Disagreement means the
-        # components do not actually account for the total.
-        if float(means[net_field]) != float(_mean(net_field)):
-            reasons.append("component_mean_direct_disagreement")
+        # Exact total attribution is audited separately before division.  Do not
+        # compare independently rounded repeating Decimal means here.
+    if any(not value.is_finite() for value in means.values()):
+        reasons.append("non_finite_decomposition_output")
     return means, reasons
 
 
@@ -2485,7 +2551,7 @@ def _decomposition_registry_control_reasons(entry: dict[str, Any]) -> list[str]:
     # ``decomposition_execution_count`` must be a real integer budget counter;
     # ``True`` is an int in Python and ``0.0`` compares equal to ``0``.
     count = entry.get("decomposition_execution_count")
-    if not isinstance(count, int) or isinstance(count, bool):
+    if not _strict_count(count):
         reasons.append("decomposition_execution_count_malformed")
 
     authorization = entry.get("authorization_state")
@@ -2520,14 +2586,12 @@ def _decomposition_registry_control_reasons(entry: dict[str, Any]) -> list[str]:
     # are not inputs to this function and are authenticated by the separate
     # no-computation preflight; claiming to verify them here would be a lie.
     preconditions = entry.get("execution_preconditions")
-    if not isinstance(preconditions, list) or not all(
-        isinstance(item, str) for item in preconditions
-    ):
-        reasons.append("execution_preconditions_missing")
+    if preconditions != _DECOMPOSITION_EXECUTION_PRECONDITIONS:
+        reasons.append("execution_preconditions_mismatch")
 
     per_slot_definitions = entry.get("per_slot_definitions")
-    if not isinstance(per_slot_definitions, dict) or not per_slot_definitions:
-        reasons.append("per_slot_definitions_missing")
+    if per_slot_definitions != _DECOMPOSITION_PER_SLOT_DEFINITIONS:
+        reasons.append("per_slot_definitions_mismatch")
 
     return reasons
 
@@ -2594,11 +2658,18 @@ def _decomposition_source_receipt_reasons(pcv: dict[str, Any]) -> list[str]:
     registered ``archived_receipt_sha256``, so the parsed values are trusted only
     after authentication.
     """
-    fcs = pcv.get("first_computed_statistic_v0") or {}
-    seal = pcv.get("holdout_seal_audit") or {}
-    packet = pcv.get("execution_packet_lock") or {}
-    gate = pcv.get("holdout_open_gate") or {}
-    partition = pcv.get("partition_use_policy_v0") or {}
+    fcs, reasons = _required_dict(pcv, "first_computed_statistic_v0", "source_receipt_first_statistic_malformed")
+    seal, failure = _required_dict(pcv, "holdout_seal_audit", "source_receipt_holdout_seal_malformed")
+    reasons.extend(failure)
+    packet, failure = _required_dict(pcv, "execution_packet_lock", "source_receipt_packet_malformed")
+    reasons.extend(failure)
+    gate, failure = _required_dict(pcv, "holdout_open_gate", "source_receipt_gate_malformed")
+    reasons.extend(failure)
+    partition, failure = _required_dict(pcv, "partition_use_policy_v0", "source_receipt_partition_malformed")
+    reasons.extend(failure)
+    if reasons:
+        return reasons
+    assert fcs is not None and seal is not None and packet is not None and gate is not None and partition is not None
 
     checks: list[tuple[bool, str]] = [
         (fcs.get("statistic_state") == "computed", "source_statistic_state_not_computed"),
@@ -2637,7 +2708,7 @@ def _decomposition_source_receipt_reasons(pcv: dict[str, Any]) -> list[str]:
             "source_scientific_use_authorized",
         ),
     ]
-    return [reason for ok, reason in checks if not ok]
+    return [*reasons, *(reason for ok, reason in checks if not ok)]
 
 
 def _decomposition_source_contract_reasons(
@@ -2688,16 +2759,24 @@ def _decomposition_source_contract_reasons(
         return sorted(set(control_reasons + ["source_receipt_malformed_json"])), bound
 
     pcv = receipt.get("protocol_computed_validation") if isinstance(receipt, dict) else None
-    fcs = pcv.get("first_computed_statistic_v0") if isinstance(pcv, dict) else None
-    if not isinstance(pcv, dict) or not isinstance(fcs, dict):
+    if not isinstance(pcv, dict):
         return sorted(set(control_reasons + ["source_receipt_malformed_json"])), bound
-
-    seal = pcv.get("holdout_seal_audit") or {}
-    packet = pcv.get("execution_packet_lock") or {}
-    gate = pcv.get("holdout_open_gate") or {}
-    partition = pcv.get("partition_use_policy_v0") or {}
-    immutable_cut = pcv.get("immutable_data_cut") or {}
-    split_block = pcv.get("deterministic_split_audit") or {}
+    fcs, type_reasons = _required_dict(pcv, "first_computed_statistic_v0", "source_receipt_first_statistic_malformed")
+    seal, failure = _required_dict(pcv, "holdout_seal_audit", "source_receipt_holdout_seal_malformed")
+    type_reasons.extend(failure)
+    packet, failure = _required_dict(pcv, "execution_packet_lock", "source_receipt_packet_malformed")
+    type_reasons.extend(failure)
+    gate, failure = _required_dict(pcv, "holdout_open_gate", "source_receipt_gate_malformed")
+    type_reasons.extend(failure)
+    partition, failure = _required_dict(pcv, "partition_use_policy_v0", "source_receipt_partition_malformed")
+    type_reasons.extend(failure)
+    immutable_cut, failure = _required_dict(pcv, "immutable_data_cut", "source_receipt_immutable_cut_malformed")
+    type_reasons.extend(failure)
+    split_block, failure = _required_dict(pcv, "deterministic_split_audit", "source_receipt_split_malformed")
+    type_reasons.extend(failure)
+    if type_reasons:
+        return sorted(set(control_reasons + type_reasons)), bound
+    assert all(item is not None for item in (fcs, seal, packet, gate, partition, immutable_cut, split_block))
 
     nested_binding = _first_statistic_bound_fingerprint(bars_file, funding_file)
     outer_cut = _data_cut_fingerprint(
@@ -2722,17 +2801,13 @@ def _decomposition_source_contract_reasons(
     # only.  Their bytes are NOT inputs to this function, so no claim is made
     # that they were authenticated here; that is the later no-computation
     # preflight's job.  Only the receipt bytes above are authenticated.
-    artifact_binding_present = all(
-        _is_lower_sha256(source_binding.get(field))
-        for field in (
-            "archived_command_sha256",
-            "archived_log_sha256",
-            "archived_exit_code_sha256",
-        )
-    ) and isinstance(source_binding.get("archived_receipt_path"), str)
+    # Receipt bytes are authenticated against the entry's SHA below.  The
+    # remaining provenance fields are literal preregistration commitments;
+    # command/log/exit bytes are deliberately not inputs to this core.
+    frozen_source_ok = all(source_binding.get(key) == value for key, value in _DECOMPOSITION_FROZEN_SOURCE_BINDING.items())
 
     checks: list[tuple[bool, str]] = [
-        (artifact_binding_present, "source_artifact_binding_incomplete"),
+        (frozen_source_ok, "source_frozen_provenance_mismatch"),
         (
             source_binding.get("source_classification")
             == CANDIDATE1_DECOMPOSITION_SOURCE_CLASSIFICATION,
@@ -2762,15 +2837,21 @@ def _decomposition_source_contract_reasons(
             "source_null_name_mismatch",
         ),
         (
-            source_binding.get("source_statistic_value_T") == fcs.get("statistic_value_T"),
+            _finite_scalar(source_binding.get("source_statistic_value_T"))
+            and _finite_scalar(fcs.get("statistic_value_T"))
+            and source_binding.get("source_statistic_value_T") == fcs.get("statistic_value_T"),
             "source_statistic_value_T_mismatch",
         ),
         (
-            source_binding.get("source_scored_slot_count") == fcs.get("scored_slot_count"),
+            _strict_count(source_binding.get("source_scored_slot_count"))
+            and _strict_count(fcs.get("scored_slot_count"))
+            and source_binding.get("source_scored_slot_count") == fcs.get("scored_slot_count"),
             "source_scored_slot_count_mismatch",
         ),
         (
-            source_binding.get("source_invalid_slot_count") == fcs.get("invalid_slot_count"),
+            _strict_count(source_binding.get("source_invalid_slot_count"))
+            and _strict_count(fcs.get("invalid_slot_count"))
+            and source_binding.get("source_invalid_slot_count") == fcs.get("invalid_slot_count"),
             "source_invalid_slot_count_mismatch",
         ),
         (
@@ -2827,14 +2908,16 @@ def _decomposition_source_contract_reasons(
             "partition_use_policy_fingerprint_mismatch",
         ),
         (
-            universe.get("scored_slot_count")
-            == source_binding.get("source_scored_slot_count")
-            and universe.get("invalid_slot_count")
-            == source_binding.get("source_invalid_slot_count")
-            and (universe.get("reconstruction_requirement") or {}).get(
-                "reconstructed_statistic_value_T"
-            )
-            == source_binding.get("source_statistic_value_T"),
+            universe.get("must_reuse_without_change") == _DECOMPOSITION_MUST_REUSE
+            and _strict_count(universe.get("scored_slot_count"))
+            and _strict_count(universe.get("invalid_slot_count"))
+            and universe.get("no_slot_added_removed_or_reclassified") is True
+            and isinstance(universe.get("reconstruction_requirement"), dict)
+            and set(universe["reconstruction_requirement"]) == {"reconstructed_statistic_value_T", "reconstructed_from", "reconstruction_identity"}
+            and _finite_scalar(universe["reconstruction_requirement"].get("reconstructed_statistic_value_T"))
+            and universe.get("scored_slot_count") == source_binding.get("source_scored_slot_count")
+            and universe.get("invalid_slot_count") == source_binding.get("source_invalid_slot_count")
+            and universe["reconstruction_requirement"].get("reconstructed_statistic_value_T") == source_binding.get("source_statistic_value_T"),
             "source_slot_universe_mismatch",
         ),
     ]
@@ -2899,6 +2982,9 @@ def build_candidate1_train_mechanism_decomposition_v0(
     identity_reasons = _per_slot_component_identity_reasons(slots)
     if identity_reasons:
         return _decomposition_blocked(identity_reasons)
+    exact_total_reasons = _exact_component_total_reasons(slots)
+    if exact_total_reasons:
+        return _decomposition_blocked(exact_total_reasons)
 
     means, aggregate_reasons = _candidate1_decomposition_means(slots)
     if aggregate_reasons:
@@ -2932,7 +3018,9 @@ def build_candidate1_train_mechanism_decomposition_v0(
     # output reports would be worthless.
     if reconstructed != means["relative_net"]:
         gate_reasons.append("mean_relative_net_identity_violation")
-    if float(reconstructed) != bound["source_statistic_value_T"]:
+    if not reconstructed.is_finite() or not _finite_scalar(float(reconstructed)):
+        gate_reasons.append("non_finite_decomposition_output")
+    elif float(reconstructed) != bound["source_statistic_value_T"]:
         gate_reasons.append("reconstruction_mismatch")
     if gate_reasons:
         return _decomposition_blocked(gate_reasons)
@@ -2942,6 +3030,16 @@ def build_candidate1_train_mechanism_decomposition_v0(
     )
 
     outputs = _candidate1_decomposition_outputs(means, slots, invalid_slot_count)
+    numeric_keys = set(_DECOMPOSITION_PRIMARY_OUTPUT_KEYS) | {
+        "mean_null_price_component", "mean_null_funding_component", "mean_null_cost_drag",
+        "mean_null_net", "mean_activity_matched_always_long_net",
+        "mean_activity_matched_always_short_net", "flat_benchmark_net",
+    }
+    if any(not _finite_scalar(outputs[key]) for key in numeric_keys) or any(
+        not _strict_count(outputs[key])
+        for key in ("scored_slot_count", "invalid_slot_count", "candidate_active_slot_count", "candidate_flat_slot_count")
+    ):
+        return _decomposition_blocked(["non_finite_decomposition_output"])
     closure_reasons = _validate_decomposition_output_closure(outputs)
     if closure_reasons:
         return _decomposition_blocked(closure_reasons)
