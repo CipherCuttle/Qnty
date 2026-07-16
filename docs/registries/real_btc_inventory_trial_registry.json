@@ -16,7 +16,7 @@
     },
     "execution_packet_declaration": {
       "execution_packet_fingerprint": "bc0526ecdbbb1a7c2ff183babd465266f8122efd19ca06ad604b916abca6bdb3",
-      "locked_at": "2026-07-16T00:00:00Z",
+      "locked_at": "2026-07-16T00:50:14Z",
       "candidate_family_declaration_hash": "cdf63504e2d56b64d7516bfc77562a08611a0bfdac18ff6013e79cf41a26d3ea",
       "null_family_declaration_hash": "8568e2d53780c4469884a825ab5dba9b26d077176e3a2abd0459dc3d0142e4aa",
       "data_cut_fingerprint": "020eac5e9659138e4c66b2fb2b44020a9b894b0500f51fd935014c5b37f55224",
@@ -28,7 +28,7 @@
     "holdout_open_gate_declaration": {
       "holdout_open_gate_fingerprint": "6f37e476ff5e69b6bb3531c09ee7e1eec80f6e1fb44be72089879fc4bdf52533",
       "holdout_open_gate_state": "gate_passed",
-      "gate_checked_at": "2026-07-16T00:00:00Z",
+      "gate_checked_at": "2026-07-16T00:50:14Z",
       "structural_prerequisite_count": 4,
       "holdout_open_gate_reason_codes": []
     },
