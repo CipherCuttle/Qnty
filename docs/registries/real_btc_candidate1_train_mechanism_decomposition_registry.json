@@ -32,6 +32,15 @@
         "source_null_name": "alternating_active_slot_side_v1"
       },
 
+      "implementation_binding": {
+        "binding_kind": "candidate1_decomposition_implementation_environment_qualification_v0",
+        "binding_receipt_path": "docs/receipts/real_btc_candidate1_train_mechanism_decomposition_v0/implementation_binding_v0.json",
+        "binding_receipt_sha256": "2f36380dcc4120473718ce35a68abd2ef4952dc89205d8300d852332751f45a3",
+        "qualified_environment_manifest_sha256": "25f92f2c99f989de7553930ef09ff34e39d9893bcf008cbfd6992a242312b213",
+        "qualified_implementation_commit": "6d4b0c7fd11afe614edb0d1070ef4a9637e91542",
+        "qualified_source_manifest_sha256": "1ca8627b49e326d8fa6c55e0a52dc0d3e26e1cc96e203840ca7a77524e76d7a5"
+      },
+
       "frozen_fingerprints": {
         "outer_data_cut": "020eac5e9659138e4c66b2fb2b44020a9b894b0500f51fd935014c5b37f55224",
         "nested_first_statistic_data_binding": "7c8552f10cf8f72c859335a5f4af8ca36094bffed695428a9c93a1033ef86c6f",
