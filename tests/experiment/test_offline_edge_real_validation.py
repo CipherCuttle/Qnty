@@ -24055,6 +24055,110 @@ class TestSparseFundingHoldoutProjection:
         rejected = real_validation.build_holdout_seal_fingerprint(bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry)
         assert rejected["kill_criteria"]["declaration_projection_policy_mismatch"] is True
 
+    @pytest.mark.parametrize("header", [
+        "fundingTime,fundingTime,fundingRate",
+        "timestamp,timestamp,funding_rate",
+        "fundingTime,timestamp,fundingRate",
+    ])
+    def test_ambiguous_funding_timestamp_headers_fail_closed(self, tmp_path, header):
+        seal = self._seal(tmp_path, funding_header=header, funding_rows=["1704067200000,POISON,POISON"])
+        assert seal["holdout_seal_killed"] is True
+        assert seal["kill_criteria"]["funding_projection_failed"] is True
+
+    def test_duplicate_bars_timestamp_header_fails_closed(self, tmp_path):
+        bars, funding, entry, audit = self._setup(tmp_path)
+        bars.joinpath("BTC.csv").write_text(
+            "timestamp,timestamp,close\n" + "\n".join(
+                f"2024-01-01T{hour:02d}:00:00Z,2024-01-01T{hour:02d}:00:00Z,POISON"
+                for hour in range(12)
+            ) + "\n"
+        )
+        seal = real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry
+        )
+        assert seal["holdout_seal_killed"] is True
+        assert seal["kill_criteria"]["funding_projection_failed"] is True
+
+    def test_declaration_schemas_are_exact_and_call_specific(self, tmp_path):
+        bars, funding, entry, audit = self._setup(tmp_path)
+        projected = real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry
+        )
+        projected_declaration = {
+            "holdout_seal_fingerprint": projected["holdout_seal_fingerprint"],
+            "sealed_at_boundary_index": 6,
+            "purge_intervals": 2,
+            "embargo_intervals": 2,
+            "sealed_roles": ["bars", "funding"],
+            "projection_policy": real_validation.HOLDOUT_SEAL_PROJECTION_POLICY_V1,
+        }
+        for field in ("sealed_roles", "projection_policy"):
+            entry["holdout_seal_declaration"] = {
+                key: value for key, value in projected_declaration.items() if key != field
+            }
+            seal = real_validation.build_holdout_seal_fingerprint(
+                bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry
+            )
+            assert seal["kill_criteria"]["registry_declaration_missing_required_fields"] is True
+        entry["holdout_seal_declaration"] = {**projected_declaration, "unexpected": True}
+        seal = real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry
+        )
+        assert seal["kill_criteria"]["registry_declaration_unexpected_fields"] is True
+        entry["holdout_seal_declaration"] = projected_declaration
+        assert real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry
+        )["holdout_seal_state"] == "sealed"
+        assert real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, split_audit=audit, registry_entry=entry
+        )["kill_criteria"]["registry_declaration_unexpected_fields"] is True
+
+        legacy_candidate = real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, split_audit=audit, registry_entry=entry
+        )
+        legacy_declaration = {
+            "holdout_seal_fingerprint": legacy_candidate["holdout_seal_fingerprint"],
+            "sealed_at_boundary_index": 6,
+            "purge_intervals": 2,
+            "embargo_intervals": 2,
+        }
+        entry["holdout_seal_declaration"] = legacy_declaration
+        assert real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, split_audit=audit, registry_entry=entry
+        )["holdout_seal_state"] == "sealed"
+        assert real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry
+        )["kill_criteria"]["registry_declaration_missing_required_fields"] is True
+        entry["holdout_seal_declaration"] = {**legacy_declaration, "unexpected": True}
+        assert real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, split_audit=audit, registry_entry=entry
+        )["kill_criteria"]["registry_declaration_unexpected_fields"] is True
+
+    def test_two_role_fingerprint_isolates_selected_bytes_and_source_identity(self, tmp_path):
+        bars, funding, entry, audit = self._setup(tmp_path)
+        first = real_validation.build_holdout_seal_fingerprint(
+            bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry
+        )["holdout_seal_fingerprint"]
+        def fingerprint():
+            return real_validation.build_holdout_seal_fingerprint(
+                bars_dir=bars, funding_dir=funding, split_audit=audit, registry_entry=entry
+            )["holdout_seal_fingerprint"]
+        bars_text = bars.joinpath("BTC.csv").read_text()
+        bars.joinpath("BTC.csv").write_text(bars_text.replace("POISON-2", "TRAIN-MUTATION"))
+        assert fingerprint() == first
+        bars.joinpath("BTC.csv").write_text(bars_text.replace("POISON-8", "QUARANTINE-MUTATION"))
+        assert fingerprint() != first
+        bars.joinpath("BTC.csv").write_text(bars_text)
+        funding_text = funding.joinpath("BTC.csv").read_text()
+        funding.joinpath("BTC.csv").write_text(funding_text.replace("1704067200000,POISON", "1704067200000,TRAIN-MUTATION"))
+        assert fingerprint() == first
+        funding.joinpath("BTC.csv").write_text(funding_text.replace("1704096000000,POISON", "1704096000000,QUARANTINE-MUTATION"))
+        assert fingerprint() != first
+        funding.joinpath("BTC.csv").write_text(funding_text.replace("1704063600000,POISON", "1704063600000,BEFORE-MUTATION").replace("1704110400000,POISON", "1704110400000,AFTER-MUTATION"))
+        assert fingerprint() == first
+        funding.joinpath("BTC.csv").rename(funding / "renamed.csv")
+        assert fingerprint() != first
+
     def test_projection_reader_names_no_economic_columns(self):
         tree = ast.parse(inspect.getsource(real_validation._read_timestamped_role_rows))
         string_constants = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)}

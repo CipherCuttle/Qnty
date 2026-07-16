@@ -24,6 +24,14 @@ cadence-based.
 
 The two-role seal binds the projection policy, canonical roles, role-relative
 source identity, selected opaque quarantine bytes, and frozen bars partition.
+Timestamp headers are closed: bars require one `timestamp`, while funding
+requires one total occurrence across `fundingTime` and `timestamp`; duplicates
+or simultaneous allowed names fail closed. Registry declarations are also
+closed by invocation: bars-only uses exactly the four legacy fields, while a
+funding invocation uses exactly those fields plus `sealed_roles` and
+`projection_policy`. Receipt validation closes the seal audit shape and checks
+role counts, row totals, projection metadata, partition-count keys, and killed
+state consistency.
 The current registered bars-only seal is insufficient for a bars-plus-funding
 execution surface and must fail closed. A separate reviewed, post-merge
 registry correction must disclose the old bars-only fingerprint
