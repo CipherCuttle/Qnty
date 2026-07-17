@@ -25,10 +25,11 @@ from quantbot.artifacts.registry import (
     validate_artifact_record_bytes,
     validate_store_registry_bytes,
 )
-from quantbot.artifacts.store import FilesystemStore
+from quantbot.artifacts.store import FilesystemStore, PinnedStoreRoot
 
 __all__ = [
     "FilesystemStore",
+    "PinnedStoreRoot",
     "build_portable_manifest",
     "canonical_json_bytes",
     "portable_manifest_sha256",

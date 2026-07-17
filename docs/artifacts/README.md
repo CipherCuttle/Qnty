@@ -64,6 +64,13 @@ Code lives in `quantbot/artifacts/` (pure stdlib). CLI:
   itself), `read_enabled`, `write_enabled`. Backends remain replaceable;
   this plane provides the QNTY scientific identity and verification layer,
   not a cloud-vendor dependency.
+- Operational verification acquires each configured filesystem root once as a
+  no-follow directory FD, records its `(st_dev, st_ino)` identity, and keeps
+  that FD open through manifest and object verification. Every fixed store
+  path is opened relative to the pinned FD with no-follow directory traversal
+  and regular-file checks. The configured pathname is checked again before a
+  successful result, but it is never used to reopen artifact bytes. Roots
+  with the same device or the same opened identity are not independent.
 
 ## Availability contract (two-copy, fail-closed)
 

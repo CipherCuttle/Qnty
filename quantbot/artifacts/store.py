@@ -44,6 +44,7 @@ __all__ = [
     "PROHIBITED_CANONICAL_STORE_PREFIXES",
     "ArtifactStoreError",
     "FilesystemStore",
+    "PinnedStoreRoot",
     "require_allowed_canonical_root",
 ]
 
@@ -93,6 +94,126 @@ def _hash_store_file(path: Path) -> tuple[str, int]:
     finally:
         os.close(fd)
     return digest.hexdigest(), size
+
+
+def _open_relative_file(root_fd: int, components: tuple[str, ...]) -> int:
+    """Open a fixed relative store path beneath an already opened root FD."""
+    if not components or any(not component or component in {".", ".."} or "/" in component for component in components):
+        _fail("invalid relative store path")
+    directory_fd = os.dup(root_fd)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        for component in components[:-1]:
+            component_stat = os.lstat(component, dir_fd=directory_fd)
+            if stat_module.S_ISLNK(component_stat.st_mode):
+                _fail(f"store directory component {component!r} is a symlink")
+            if not stat_module.S_ISDIR(component_stat.st_mode):
+                _fail(f"store directory component {component!r} is not a directory")
+            next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+        final_stat = os.lstat(components[-1], dir_fd=directory_fd)
+        if stat_module.S_ISLNK(final_stat.st_mode):
+            _fail(f"store entry {components[-1]!r} is a symlink")
+        file_fd = os.open(components[-1], file_flags, dir_fd=directory_fd)
+        mode = os.fstat(file_fd).st_mode
+        if not stat_module.S_ISREG(mode):
+            os.close(file_fd)
+            _fail(f"store entry {components[-1]!r} is not a regular file")
+        return file_fd
+    except OSError as error:
+        if error.errno == errno.ENOENT:
+            _fail("store entry is missing beneath the pinned root")
+        if error.errno == errno.ELOOP:
+            _fail("store entry is a symlink beneath the pinned root")
+        _fail(f"cannot open store path beneath pinned root: {error}")
+    finally:
+        os.close(directory_fd)
+
+
+def _hash_fd(file_fd: int, *, expected_size: int | None = None, expected_sha256: str | None = None) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    while True:
+        chunk = os.read(file_fd, _CHUNK_SIZE)
+        if not chunk:
+            break
+        digest.update(chunk)
+        size += len(chunk)
+    actual_sha256 = digest.hexdigest()
+    if expected_size is not None and size != expected_size:
+        _fail(f"store file has size {size}, manifest requires {expected_size}")
+    if expected_sha256 is not None and actual_sha256 != expected_sha256:
+        _fail(f"store file content hash mismatch (expected {expected_sha256})")
+    return actual_sha256, size
+
+
+def _read_fd(file_fd: int) -> bytes:
+    chunks = []
+    while True:
+        chunk = os.read(file_fd, _CHUNK_SIZE)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+class PinnedStoreRoot:
+    """Context-managed directory handle and identity for one store root."""
+
+    def __init__(self, configured_path: Path, resolved_path: Path, fd: int, identity: tuple[int, int]):
+        self.configured_path = configured_path
+        self.resolved_path = resolved_path
+        self.fd = fd
+        self.identity = identity
+
+    def __enter__(self) -> "PinnedStoreRoot":
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        os.close(self.fd)
+
+    def assert_path_still_bound(self) -> None:
+        try:
+            path_stat = os.lstat(self.configured_path)
+            if stat_module.S_ISLNK(path_stat.st_mode):
+                _fail("configured store root became a symlink")
+            current = os.stat(self.configured_path)
+        except OSError as error:
+            _fail(f"configured store root is no longer accessible: {error}")
+        if not stat_module.S_ISDIR(current.st_mode):
+            _fail("configured store root is no longer a directory")
+        if (current.st_dev, current.st_ino) != self.identity:
+            _fail("configured store root changed during verification")
+
+    def verify_copy(self, manifest_sha256: str) -> dict:
+        """Verify a manifest and all objects using only this pinned root FD."""
+        manifest_components = ("manifests", "sha256", manifest_sha256[:2], f"{manifest_sha256}.json")
+        manifest_fd = _open_relative_file(self.fd, manifest_components)
+        try:
+            manifest_bytes = _read_fd(manifest_fd)
+            actual_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+        finally:
+            os.close(manifest_fd)
+        if actual_sha256 != manifest_sha256:
+            _fail(f"manifest {manifest_sha256} bytes do not match their address (corrupt)")
+        manifest, validated_sha = validate_manifest_bytes(manifest_bytes)
+        if validated_sha != manifest_sha256:
+            _fail(f"manifest {manifest_sha256} failed canonical re-validation")
+        for entry in manifest["files"]:
+            object_fd = _open_relative_file(
+                self.fd, ("objects", "sha256", entry["sha256"][:2], entry["sha256"])
+            )
+            try:
+                _hash_fd(object_fd, expected_size=entry["size_bytes"], expected_sha256=entry["sha256"])
+            finally:
+                os.close(object_fd)
+        self.assert_path_still_bound()
+        return {
+            "artifact_id": manifest["artifact_id"],
+            "manifest_sha256": manifest_sha256,
+            "verified_object_count": manifest["file_count"],
+        }
 
 
 def _fsync_directory(directory: Path) -> None:
@@ -148,10 +269,47 @@ class FilesystemStore:
 
     def __init__(self, root: Path, *, canonical: bool = True):
         self.canonical = bool(canonical)
+        self.configured_root = Path(root)
         if self.canonical:
             self.root = require_allowed_canonical_root(root)
         else:
             self.root = Path(root).resolve()
+
+    def open_pinned_root(self) -> PinnedStoreRoot:
+        """Resolve, policy-check, open, and identity-bind the configured root."""
+        configured = self.configured_root
+        try:
+            configured_stat = os.lstat(configured)
+        except OSError as error:
+            _fail(f"configured store root cannot be opened: {error}")
+        if stat_module.S_ISLNK(configured_stat.st_mode):
+            _fail("configured store root is a symlink")
+        try:
+            resolved = Path(configured).resolve(strict=True)
+        except OSError as error:
+            _fail(f"configured store root cannot be resolved: {error}")
+        if self.canonical:
+            require_allowed_canonical_root(resolved)
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+        try:
+            root_fd = os.open(resolved, flags)
+            opened = os.fstat(root_fd)
+            expected = os.stat(resolved)
+        except OSError as error:
+            try:
+                os.close(root_fd)
+            except (UnboundLocalError, OSError):
+                pass
+            _fail(f"configured store root cannot be opened safely: {error}")
+        if not stat_module.S_ISDIR(opened.st_mode):
+            os.close(root_fd)
+            _fail("configured store root is not a directory")
+        opened_identity = (opened.st_dev, opened.st_ino)
+        expected_identity = (expected.st_dev, expected.st_ino)
+        if opened_identity != expected_identity or opened_identity != (configured_stat.st_dev, configured_stat.st_ino):
+            os.close(root_fd)
+            _fail("configured store root path and opened FD identities differ")
+        return PinnedStoreRoot(configured, resolved, root_fd, opened_identity)
 
     # -- layout ---------------------------------------------------------
 
@@ -326,14 +484,8 @@ class FilesystemStore:
 
     def verify_copy(self, manifest_sha256: str) -> dict:
         """Rehash the complete manifest and every referenced object (full bytes)."""
-        manifest, _ = self.load_manifest(manifest_sha256)
-        for entry in manifest["files"]:
-            self.verify_object(entry["sha256"], entry["size_bytes"])
-        return {
-            "artifact_id": manifest["artifact_id"],
-            "manifest_sha256": manifest_sha256,
-            "verified_object_count": manifest["file_count"],
-        }
+        with self.open_pinned_root() as pinned_root:
+            return pinned_root.verify_copy(manifest_sha256)
 
     def restore(self, manifest_sha256: str, destination: Path) -> dict:
         """Restore into a fresh destination; roles become top-level directories.

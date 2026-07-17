@@ -161,6 +161,140 @@ def test_symlinked_object_rejects(tmp_path):
         store.verify_copy(manifest_sha)
 
 
+def test_pinned_root_rejects_root_replaced_by_symlink_after_acquisition(tmp_path):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    replacement = tmp_path / "replacement"
+    replacement_store = FilesystemStore(replacement, canonical=False)
+    replacement_store.ingest(manifest_bytes, roots)
+    original_root = tmp_path / "store"
+    moved_root = tmp_path / "original"
+    with store.open_pinned_root() as pinned:
+        original_root.rename(moved_root)
+        original_root.symlink_to(replacement, target_is_directory=True)
+        with pytest.raises(ArtifactStoreError, match="changed|symlink"):
+            pinned.verify_copy(manifest_sha)
+    assert moved_root.exists()
+
+
+def test_pinned_root_rejects_root_replaced_by_another_store(tmp_path):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    original_root = tmp_path / "store"
+    replacement = tmp_path / "replacement"
+    replacement_store = FilesystemStore(replacement, canonical=False)
+    replacement_store.ingest(manifest_bytes, roots)
+    moved_root = tmp_path / "original"
+    with store.open_pinned_root() as pinned:
+        original_root.rename(moved_root)
+        replacement.rename(original_root)
+        with pytest.raises(ArtifactStoreError, match="changed"):
+            pinned.verify_copy(manifest_sha)
+    assert moved_root.exists()
+
+
+def test_pinned_root_rejects_removed_root_before_success(tmp_path):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    root = tmp_path / "store"
+    moved = tmp_path / "removed"
+    with store.open_pinned_root() as pinned:
+        root.rename(moved)
+        with pytest.raises(ArtifactStoreError, match="no longer accessible"):
+            pinned.verify_copy(manifest_sha)
+
+
+def test_pinned_root_reads_original_bytes_when_path_is_swapped_and_restored(tmp_path):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    original_root = tmp_path / "store"
+    replacement = tmp_path / "replacement"
+    replacement_store = FilesystemStore(replacement, canonical=False)
+    replacement_store.ingest(manifest_bytes.replace(b"synthetic-artifact-v0", b"synthetic-artifact-v1"), roots)
+    moved_root = tmp_path / "original"
+    with store.open_pinned_root() as pinned:
+        original_root.rename(moved_root)
+        replacement.rename(original_root)
+        original_root.rename(replacement)
+        moved_root.rename(original_root)
+        report = pinned.verify_copy(manifest_sha)
+    assert report["manifest_sha256"] == manifest_sha
+
+
+def test_pinned_root_acquisition_identity_mismatch_fails(tmp_path, monkeypatch):
+    store, roots, manifest_bytes, _ = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    original_stat = store_module.os.stat
+
+    def mismatched_stat(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        values = list(result)
+        values[1] += 1
+        return os.stat_result(values)
+
+    monkeypatch.setattr(store_module.os, "stat", mismatched_stat)
+    with pytest.raises(ArtifactStoreError, match="identities differ"):
+        store.open_pinned_root()
+
+
+def test_symlinked_manifest_directory_component_rejects(tmp_path):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    manifest_dir = store.manifest_path(manifest_sha).parent
+    real = tmp_path / "manifest-dir-real"
+    manifest_dir.rename(real)
+    manifest_dir.symlink_to(real, target_is_directory=True)
+    with pytest.raises(ArtifactStoreError, match="symlink"):
+        store.verify_copy(manifest_sha)
+
+
+def test_symlinked_object_directory_component_rejects(tmp_path):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    object_dir = store.object_path(hashlib.sha256(b"synthetic,bars,1\n").hexdigest()).parent
+    real = tmp_path / "object-dir-real"
+    object_dir.rename(real)
+    object_dir.symlink_to(real, target_is_directory=True)
+    with pytest.raises(ArtifactStoreError, match="symlink"):
+        store.verify_copy(manifest_sha)
+
+
+def test_symlinked_manifest_final_file_rejects(tmp_path):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    manifest_path = store.manifest_path(manifest_sha)
+    real = manifest_path.with_name("manifest-real.json")
+    manifest_path.rename(real)
+    manifest_path.symlink_to(real)
+    with pytest.raises(ArtifactStoreError, match="symlink"):
+        store.verify_copy(manifest_sha)
+
+
+def test_pinned_root_fd_closes_after_success_and_failure(tmp_path):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    with store.open_pinned_root() as pinned:
+        fd = pinned.fd
+        pinned.verify_copy(manifest_sha)
+    with pytest.raises(OSError):
+        os.fstat(fd)
+    with store.open_pinned_root() as pinned:
+        fd = pinned.fd
+        store.object_path(hashlib.sha256(b"synthetic,bars,1\n").hexdigest()).unlink()
+        with pytest.raises(ArtifactStoreError):
+            pinned.verify_copy(manifest_sha)
+    with pytest.raises(OSError):
+        os.fstat(fd)
+
+
+def test_verify_copy_does_not_use_path_based_fallback(tmp_path, monkeypatch):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    monkeypatch.setattr(store, "load_manifest", lambda _: pytest.fail("path-based manifest fallback invoked"))
+    monkeypatch.setattr(store, "verify_object", lambda *_: pytest.fail("path-based object fallback invoked"))
+    store.verify_copy(manifest_sha)
+
+
 def test_symlinked_source_rejects_on_ingest(tmp_path):
     store, roots, manifest_bytes, _ = make_store(tmp_path)
     target = roots["funding"] / "btc" / "funding.csv"

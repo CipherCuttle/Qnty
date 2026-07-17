@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import re
+from contextlib import ExitStack
 from pathlib import Path
 
 from quantbot.artifacts.store import FilesystemStore, require_allowed_canonical_root
@@ -376,19 +377,6 @@ def validate_registry_tree(root: Path) -> dict:
     return {"records": records, "store_registry": store_registry}
 
 
-def _filesystem_identity(root: Path) -> tuple[str, int]:
-    """Return the runtime identity used to reject non-independent roots."""
-    resolved = require_allowed_canonical_root(root)
-    if not resolved.exists():
-        _fail(f"configured store root {str(resolved)!r} does not exist")
-    if not resolved.is_dir():
-        _fail(f"configured store root {str(resolved)!r} is not a directory")
-    try:
-        return str(resolved), os.stat(resolved).st_dev
-    except OSError as error:
-        _fail(f"configured store root {str(resolved)!r} cannot be statted: {error}")
-
-
 def validate_operational_registry(root: Path, *, registry_tree: dict | None = None) -> dict:
     """Read-only current verification for statically ``VERIFIED_AVAILABLE`` records.
 
@@ -399,43 +387,46 @@ def validate_operational_registry(root: Path, *, registry_tree: dict | None = No
     root = Path(root)
     tree = validate_registry_tree(root) if registry_tree is None else registry_tree
     stores = {store["store_id"]: store for store in tree["store_registry"]["stores"]}
-    used: dict[str, tuple[dict, Path, tuple[str, int]]] = {}
-    for entry in tree["records"].values():
-        record = entry["record"]
-        if record["availability"] != "VERIFIED_AVAILABLE":
-            continue
-        for copy in record["copies"]:
-            store = stores[copy["store_id"]]
-            if store["read_enabled"] is not True:
-                _fail(f"store {store['store_id']!r} is not read-enabled for live verification")
-            if store["backend_kind"] != "filesystem":
-                _fail(f"store {store['store_id']!r} backend {store['backend_kind']!r} is unsupported by live verification")
-            variable = store["root_environment_variable"]
-            configured_root = os.environ.get(variable)
-            if not configured_root:
-                _fail(f"store {store['store_id']!r} environment variable {variable!r} is unset or empty")
-            identity = _filesystem_identity(Path(configured_root))
-            used[store["store_id"]] = (store, Path(identity[0]), identity)
+    with ExitStack() as stack:
+        used = {}
+        for entry in tree["records"].values():
+            record = entry["record"]
+            if record["availability"] != "VERIFIED_AVAILABLE":
+                continue
+            for copy in record["copies"]:
+                store = stores[copy["store_id"]]
+                if store["read_enabled"] is not True:
+                    _fail(f"store {store['store_id']!r} is not read-enabled for live verification")
+                if store["backend_kind"] != "filesystem":
+                    _fail(f"store {store['store_id']!r} backend {store['backend_kind']!r} is unsupported by live verification")
+                variable = store["root_environment_variable"]
+                configured_root = os.environ.get(variable)
+                if not configured_root:
+                    _fail(f"store {store['store_id']!r} environment variable {variable!r} is unset or empty")
+                if store["store_id"] not in used:
+                    require_allowed_canonical_root(Path(configured_root))
+                    pinned = stack.enter_context(FilesystemStore(Path(configured_root), canonical=False).open_pinned_root())
+                    used[store["store_id"]] = (store, pinned)
 
-    used_values = list(used.values())
-    for index, (left_store, left_root, left_identity) in enumerate(used_values):
-        for right_store, right_root, right_identity in used_values[index + 1:]:
-            if left_store["root_environment_variable"] == right_store["root_environment_variable"]:
-                _fail("independent stores share a root_environment_variable declaration")
-            if left_identity[0] == right_identity[0] or os.path.samefile(left_root, right_root):
-                _fail("independent stores resolve to the same filesystem root")
-            if left_identity[1] == right_identity[1]:
-                _fail("independent stores share a filesystem device identity")
+        used_values = list(used.values())
+        for index, (left_store, left_root) in enumerate(used_values):
+            for right_store, right_root in used_values[index + 1:]:
+                if left_store["root_environment_variable"] == right_store["root_environment_variable"]:
+                    _fail("independent stores share a root_environment_variable declaration")
+                if left_root.identity == right_root.identity:
+                    _fail("independent stores resolve to the same filesystem root")
+                if left_root.identity[0] == right_root.identity[0]:
+                    _fail("independent stores share a filesystem device identity")
 
-    for entry in tree["records"].values():
-        record = entry["record"]
-        if record["availability"] != "VERIFIED_AVAILABLE":
-            continue
-        for copy in record["copies"]:
-            store, configured_root, _ = used[copy["store_id"]]
-            report = FilesystemStore(configured_root, canonical=True).verify_copy(copy["manifest_sha256"])
-            if report["artifact_id"] != record["artifact_id"]:
-                _fail(f"store {store['store_id']!r} manifest artifact_id does not match {record['artifact_id']!r}")
-            if report["verified_object_count"] != copy["object_verification"]["verified_object_count"]:
-                _fail(f"store {store['store_id']!r} verified object count differs from recorded evidence")
+        for entry in tree["records"].values():
+            record = entry["record"]
+            if record["availability"] != "VERIFIED_AVAILABLE":
+                continue
+            for copy in record["copies"]:
+                store, pinned_root = used[copy["store_id"]]
+                report = pinned_root.verify_copy(copy["manifest_sha256"])
+                if report["artifact_id"] != record["artifact_id"]:
+                    _fail(f"store {store['store_id']!r} manifest artifact_id does not match {record['artifact_id']!r}")
+                if report["verified_object_count"] != copy["object_verification"]["verified_object_count"]:
+                    _fail(f"store {store['store_id']!r} verified object count differs from recorded evidence")
     return tree

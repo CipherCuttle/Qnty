@@ -128,6 +128,20 @@ def test_live_availability_rejects_same_device_roots(monkeypatch, tmp_path):
         validate_operational_registry(tmp_path, registry_tree=tree)
 
 
+def test_live_availability_rejects_same_opened_root_identity(monkeypatch, tmp_path):
+    root = tmp_path / "same-root"
+    root.mkdir()
+    monkeypatch.setenv("SYNTHETIC_STORE_A", str(root))
+    monkeypatch.setenv("SYNTHETIC_STORE_B", str(root))
+    monkeypatch.setattr(registry_module, "require_allowed_canonical_root", lambda path: Path(path).resolve())
+    tree = _operational_tree(
+        [_store_entry("store-a", "SYNTHETIC_STORE_A"), _store_entry("store-b", "SYNTHETIC_STORE_B")],
+        [copy_record("store-a", "domain-store-a"), copy_record("store-b", "domain-store-b")],
+    )
+    with pytest.raises(ArtifactRegistryError, match="same filesystem root"):
+        validate_operational_registry(tmp_path, registry_tree=tree)
+
+
 @pytest.mark.parametrize("mutation", [
     lambda copies: copies.__setitem__(1, copy_record("store-a", "domain-b")),
     lambda copies: copies.__setitem__(1, {**copy_record("store-b", "domain-b"), "canonical_location": canonical_location("store-a", PORTABLE)}),
