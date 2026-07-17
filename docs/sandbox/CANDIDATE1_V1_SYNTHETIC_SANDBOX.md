@@ -22,6 +22,9 @@ network, artifact-store, timestamp, or arbitrary-series interface.
 .venv/bin/python -m quantbot.sandbox.candidate1_v1_cli list-scenarios
 .venv/bin/python -m quantbot.sandbox.candidate1_v1_cli run --variants docs/sandbox/example_candidate1_v1_variants.json --out /existing/workspace/receipt.json
 .venv/bin/python -m quantbot.sandbox.candidate1_v1_cli verify --receipt /existing/workspace/receipt.json
+
+# Hypothesis 001 / Batch 002
+.venv/bin/python -m quantbot.sandbox.candidate1_v1_cli run --variants docs/sandbox/example_candidate1_v1_hypothesis_001.json --out /existing/workspace/h001.json
 ```
 
 The output path must be new and its parent must already exist. Receipts are
@@ -36,15 +39,82 @@ The top-level keys are `bundle_id`, `bundle_kind`, `schema_version`, and
 strings, not JSON numbers.
 
 The exact rule registry is `ALWAYS_FLAT`, `ALWAYS_LONG`, `ALWAYS_SHORT`,
-`LAGGED_RETURN_SIGN`, `LAGGED_RETURN_FADE`, and `FUNDING_SIGN_FADE`. Decisions
+`LAGGED_RETURN_SIGN`, `LAGGED_RETURN_FADE`, `FUNDING_SIGN_FADE`, and
+`FUNDING_CROWDING_REVERSAL`. Decisions
 use only observations strictly before the evaluated interval. No callbacks,
 expressions, plugins, or user code are accepted.
+
+## Hypothesis 001: funding crowding reversal
+
+`candidate1-v1-funding-crowding-reversal-h001` has status
+`SYNTHETIC_MECHANICAL_HYPOTHESIS_ONLY`. Its hypothesis statement is:
+
+> Crowded funding is mechanically actionable only when lagged price movement
+> stops confirming the crowded side and reverses against it.
+
+Positive funding is treated as a generic crowded-long condition and negative
+funding as a generic crowded-short condition. Funding sign alone is
+insufficient; both funding crowding and lagged price reversal are required.
+This is an economic intuition encoded for synthetic mechanics, not a claim
+that cryptocurrency markets behave this way.
+
+The rule kind is `FUNDING_CROWDING_REVERSAL` with `lookback` in `1..16`, plus
+non-negative finite decimal-string `price_deadband` and `funding_deadband`.
+At decision index `t`, only indices below `t` are readable:
+
+```text
+lagged_price_change = price[t - 1] - price[t - 1 - lookback]
+prior_funding = funding[t - 1]
+
+if t <= lookback: position = 0
+elif prior_funding > funding_deadband and lagged_price_change < -price_deadband:
+    position = -1
+elif prior_funding < -funding_deadband and lagged_price_change > price_deadband:
+    position = +1
+else:
+    position = 0
+```
+
+Activation is strict: equality with either deadband is flat. Positions remain
+in `{-1, 0, +1}`. The warm-up is flat through `t <= lookback`. Both conditions
+are required so funding sign alone and price reversal alone cannot activate the
+rule.
 
 ## Fixed scenario registry
 
 `FLAT_ZERO_FUNDING`, `UPTREND_ZERO_FUNDING`, `DOWNTREND_ZERO_FUNDING`,
 `ALTERNATING_REVERSAL_ZERO_FUNDING`, `FLAT_POSITIVE_FUNDING`,
-`FLAT_NEGATIVE_FUNDING`, and `TREND_WITH_OPPOSING_FUNDING` are fixed and ordered.
+`FLAT_NEGATIVE_FUNDING`, `TREND_WITH_OPPOSING_FUNDING`,
+`POSITIVE_FUNDING_TREND_CONTINUES`, `POSITIVE_FUNDING_THEN_REVERSAL_DOWN`,
+`NEGATIVE_FUNDING_TREND_CONTINUES`, `NEGATIVE_FUNDING_THEN_REVERSAL_UP`,
+`FUNDING_FLIPS_WITHOUT_PRICE_CONFIRMATION`,
+`PRICE_REVERSAL_WITHOUT_FUNDING_CROWDING`, `DELAYED_REVERSAL_AFTER_CROWDING`,
+and `FALSE_REVERSAL_THEN_CONTINUATION` are fixed and ordered. The eight H001
+scenarios each contain 14 observations and exercise lookbacks 1, 2, and 4.
+
+The required mechanical expectations are: continuing positive or negative
+funding does not activate by itself; sustained reversal activates only after
+the lagged observations expose it; funding flips without price confirmation
+and price reversals without crowding remain flat; delayed and false reversals
+follow the declared lagged rule without retroactive correction.
+
+## Batch 002
+
+Run `docs/sandbox/example_candidate1_v1_hypothesis_001.json` as one declarative
+bundle. It contains exactly these nine H001 variants:
+`h001-l1-pdb0-fdb0`, `h001-l1-pdb0p5-fdb0p05`, `h001-l1-pdb1-fdb0p1`,
+`h001-l2-pdb0-fdb0`, `h001-l2-pdb1-fdb0p05`, `h001-l2-pdb2-fdb0p1`,
+`h001-l4-pdb0-fdb0`, `h001-l4-pdb1-fdb0p05`, and `h001-l4-pdb2-fdb0p1`.
+It also contains exactly four controls: `ALWAYS_FLAT`, `FUNDING_SIGN_FADE`,
+`LAGGED_RETURN_SIGN`, and `LAGGED_RETURN_FADE`, with the declared parameters
+in the bundle. Every variant has an explicit rationale. The harness reports
+all 13 variants and does not rank or select them.
+
+H001 is mechanically weakened if activation occurs without both conditions,
+future observations alter an earlier position, funding sign or price reversal
+alone opens a position, warm-up is bypassed, strict boundaries activate, its
+behaviour cannot be distinguished from `FUNDING_SIGN_FADE`, or a replayed
+receipt differs from the original result.
 
 ## Accounting semantics
 
@@ -100,6 +170,13 @@ asserts nothing about market behaviour.
 To create a new batch, copy the example, change only declarative variants,
 provide an explicit rationale for each, and run into a new existing workspace
 directory. Repeat the run and compare bytes before verification.
+
+Synthetic success establishes only correct implementation, deterministic
+replay, and the declared mechanical path. This rule is not evidence that
+crowded funding predicts reversals. Synthetic activation is not profitability
+evidence. A mechanically coherent result does not authorize real-data testing.
+No parameter or variant is automatically promoted, and no result selects an
+official protocol.
 
 Publication is atomic and fail-closed: the parent directory must already exist,
 the destination must not exist, canonical bytes are written to a temporary file
