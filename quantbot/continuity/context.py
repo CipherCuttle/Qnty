@@ -40,6 +40,7 @@ ACTIVE_TASK_RELPATH = "docs/control/active_task.json"
 ARTIFACT_RECORDS_DIR_RELPATH = "docs/artifacts"
 STORE_REGISTRY_RELPATH = "docs/artifacts/stores.json"
 AMENDMENT_RELPATH = "docs/control/amendments/candidate1_v1_synthetic_sandbox_v001.json"
+REAL_H001_AMENDMENT_RELPATH = "docs/control/amendments/candidate1_h001_real_falsification_design_v001.json"
 START_HERE_RELPATH = "docs/agent/START_HERE.md"
 CLAUDE_ENTRYPOINT_RELPATH = "CLAUDE.md"
 CODEX_ENTRYPOINT_RELPATH = "AGENTS.md"
@@ -117,9 +118,89 @@ _SANDBOX_READY_PHASE = "candidate1_v1_synthetic_sandbox_ready"
 _SANDBOX_READY_NEXT_ACTION = "RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"
 _H001_COMPLETE_PHASE = "candidate1_h001_synthetic_falsification_complete"
 _H001_COMPLETE_NEXT_ACTION = "AUTHORIZE_H001_REAL_FALSIFICATION_PREREGISTRATION_DESIGN_GOVERNANCE"
+_H001_DESIGN_PHASE = "candidate1_h001_real_falsification_preregistration_design_governance"
+_H001_DESIGN_NEXT_ACTION = "DRAFT_H001_REAL_FALSIFICATION_PREREGISTRATION_DESIGN"
 _H001_BUNDLE_RELPATH = "docs/sandbox/example_candidate1_v1_hypothesis_001.json"
 _H001_BUNDLE_SHA256 = "322b58eb5aa7b8b02d488ab182b38420afa8390cc36e054e1c1e96558905b82e"
 _H001_BATCH_RECEIPT_SHA256 = "cb634f40a27204e2465392f3d8d2aaaf8e8af6f71dacba77b8506a66e465b3d5"
+_SYNTHETIC_AMENDMENT_SHA256 = "46100af25d0b68d374e38df9c6c1902ac02e6c8d1c2df8307f56ed2ed37e32d0"
+_H001_DESIGN_AMENDMENT_KEYS = {
+    "allowed_actions", "amendment_id", "amendment_kind", "authorization_scope",
+    "authorization_status", "governed_protocol_id", "non_effects", "predecessor_amendment",
+    "prohibited_actions", "schema_version", "source_accounting_contract_sha256",
+    "source_hypothesis_id", "source_main_commit", "source_rule_contract_sha256",
+    "source_rule_kind", "source_scenario_contract_sha256", "source_synthetic_evidence_status",
+    "source_synthetic_receipt_sha256", "transition_gates",
+}
+_H001_DESIGN_ALLOWED_ACTIONS = [
+    "DRAFT_H001_REAL_FALSIFICATION_PREREGISTRATION_DESIGN",
+    "IMPLEMENT_H001_PREREGISTRATION_SCHEMA_VALIDATOR_WITHOUT_DATA_ACCESS",
+    "REVIEW_H001_REAL_FALSIFICATION_PREREGISTRATION_DESIGN",
+]
+_H001_DESIGN_AUTHORIZATION_SCOPE = (
+    "A repository-owned design document and machine-readable preregistration may be created with "
+    "status PREREGISTERED_DESIGN_ONLY, provided every real-data, artifact, execution, scientific, "
+    "paper-trading and live authorization remains false."
+)
+_H001_DESIGN_NON_EFFECTS = [
+    "DOES_NOT_ACCESS_REAL_DATA",
+    "DOES_NOT_AUTHORIZE_OFFICIAL_EXECUTABLE_PROTOCOL",
+    "DOES_NOT_AUTHORIZE_PAPER_TRADING",
+    "DOES_NOT_AUTHORIZE_PROTOCOL_EXECUTION",
+    "DOES_NOT_AUTHORIZE_REAL_DATA_ACCESS",
+    "DOES_NOT_AUTHORIZE_SCIENTIFIC_CLAIMS",
+    "DOES_NOT_AUTHORIZE_LIVE_INTEGRATION",
+    "DOES_NOT_CHANGE_BLOCK_LIVE_INTEGRATION",
+    "DOES_NOT_CHANGE_EDGE_UNPROVEN",
+    "DOES_NOT_CHANGE_V0_ARTIFACT_STATE",
+    "DOES_NOT_CONFIGURE_DURABLE_STORES",
+    "DOES_NOT_CREATE_OR_BIND_REAL_DATA_ARTIFACTS",
+    "DOES_NOT_CHANGE_V0_ARTIFACT_STATE",
+    "DOES_NOT_INCREMENT_ANY_EXECUTION_COUNT",
+    "DOES_NOT_FREEZE_OR_SELECT_DATASET_BYTES",
+    "DOES_NOT_RECOVER_OR_RETIRE_V0",
+]
+_H001_DESIGN_NON_EFFECTS = sorted(set(_H001_DESIGN_NON_EFFECTS))
+_H001_DESIGN_PROHIBITED_ACTIONS = sorted([
+    "ACCESS_ANY_REAL_BARS_OR_FUNDING",
+    "ACCESS_CANDIDATE1_V0_INPUT_OR_QUARANTINE",
+    "CHOOSE_OR_INSPECT_REAL_DATASET_BYTES",
+    "CONFIGURE_DURABLE_ARTIFACT_STORES",
+    "CREATE_OR_BIND_REAL_DATA_ARTIFACT",
+    "EXECUTE_H001",
+    "CALCULATE_H001_REAL_RETURNS",
+    "CONSUME_H001_EXECUTION_BUDGET",
+    "FREEZE_REAL_DATA",
+    "GRANT_PAPER_TRADE_AUTHORIZATION",
+    "GRANT_REAL_DATA_ACCESS",
+    "GRANT_SCIENTIFIC_AUTHORIZATION",
+    "GRANT_LIVE_INTEGRATION_AUTHORIZATION",
+    "INCREMENT_EXECUTION_COUNTS",
+    "CLAIM_H001_HAS_MARKET_EDGE",
+    "MUTATE_EXISTING_GOVERNANCE_AMENDMENTS",
+    "MUTATE_EXISTING_HANDOFF_RECEIPTS",
+    "RANK_OR_SELECT_H001_VARIANTS_FROM_SYNTHETIC_OUTPUT",
+    "RECOVER_OR_RETIRE_V0",
+])
+_H001_DESIGN_TRANSITION_GATES = {
+    "synthetic_adversarial_review_completed": True,
+    "synthetic_batch_002_completed": True,
+    "synthetic_falsification_conditions_passed": 15,
+    "synthetic_falsification_conditions_total": 15,
+    "synthetic_variant_selection_performed": False,
+    "preregistration_design_requires_separate_review": True,
+    "real_data_access_requires_later_governance": True,
+    "real_artifact_operations_require_two_qualified_durable_stores": True,
+    "execution_requires_frozen_artifact_identity": True,
+    "execution_requires_implementation_and_environment_binding": True,
+    "execution_requires_final_no_computation_preflight": True,
+    "execution_requires_explicit_later_authorization": True,
+    "required_durable_copy_count": 2,
+    "h001_primary_execution_budget": 0,
+    "h001_primary_execution_count": 0,
+    "synthetic_evidence_is_scientific_evidence": False,
+    "v0_disposition_unchanged": True,
+}
 _H001_COMPLETION_DECISIONS = {
     "H001_HYPOTHESIS_ID=candidate1-v1-funding-crowding-reversal-h001",
     "H001_BATCH_IDENTITY=H001_SYNTHETIC_BATCH_002",
@@ -485,6 +566,74 @@ def _validate_h001_completion_handoff(receipt: dict, root: Path) -> None:
         _fail("H001 completion is missing a real-data or synthetic-evidence prohibition")
 
 
+def _validate_h001_design_amendment(receipt: dict, root: Path) -> dict:
+    path = root / REAL_H001_AMENDMENT_RELPATH
+    if not path.is_file():
+        _fail(f"H001 design amendment {REAL_H001_AMENDMENT_RELPATH} is missing")
+    amendment = _load_canonical_document(path.read_bytes(), "H001 design amendment")
+    _require_exact_keys(amendment, _H001_DESIGN_AMENDMENT_KEYS, "H001 design amendment")
+    exact_strings = {
+        "schema_version": "0.1.0",
+        "amendment_kind": "qnty_governance_transition_amendment",
+        "amendment_id": "candidate1-h001-real-falsification-design-v001",
+        "governed_protocol_id": PROTOCOL_ID,
+        "source_hypothesis_id": "candidate1-v1-funding-crowding-reversal-h001",
+        "source_rule_kind": "FUNDING_CROWDING_REVERSAL",
+        "authorization_status": "AUTHORIZED_PREREGISTRATION_DESIGN_ONLY",
+        "source_main_commit": "22b9c40dd2bb58d852388683625cc1a4b449cb9b",
+        "source_rule_contract_sha256": "62718e4dc67e3c20a904e197ac7587f8cedbbc5a91b90e6315c189fc4072396a",
+        "source_scenario_contract_sha256": "cde35c4f785525dce3639e38eb37ba9f64c55cdc63d6e82c16b87d7d60df7b30",
+        "source_accounting_contract_sha256": "922977fc74ad59ba32c848bf27977f0579a61f544d830bac64fbb25abd15436c",
+        "source_synthetic_receipt_sha256": _H001_BATCH_RECEIPT_SHA256,
+        "source_synthetic_evidence_status": "MECHANICAL_ONLY_NOT_SCIENTIFIC_EVIDENCE",
+        "authorization_scope": _H001_DESIGN_AUTHORIZATION_SCOPE,
+    }
+    for key, expected in exact_strings.items():
+        if amendment[key] != expected:
+            _fail(f"H001 design amendment {key} is wrong")
+    for key in ("source_main_commit", "source_rule_contract_sha256", "source_scenario_contract_sha256", "source_accounting_contract_sha256", "source_synthetic_receipt_sha256"):
+        if key == "source_main_commit":
+            if not _COMMIT_RE.fullmatch(amendment[key]):
+                _fail(f"H001 design amendment {key} is malformed")
+        elif not _SHA256_RE.fullmatch(amendment[key]):
+            _fail(f"H001 design amendment {key} is malformed")
+    for key, expected in (("allowed_actions", _H001_DESIGN_ALLOWED_ACTIONS), ("non_effects", _H001_DESIGN_NON_EFFECTS), ("prohibited_actions", _H001_DESIGN_PROHIBITED_ACTIONS)):
+        value = _require_str_list(amendment[key], f"H001 design amendment {key}")
+        if value != expected or len(value) != len(set(value)) or value != sorted(value):
+            _fail(f"H001 design amendment {key} drifted")
+    predecessor = _require_exact_keys(amendment["predecessor_amendment"], {"path", "sha256"}, "H001 design amendment predecessor_amendment")
+    if predecessor != {"path": AMENDMENT_RELPATH, "sha256": _SYNTHETIC_AMENDMENT_SHA256}:
+        _fail("H001 design amendment predecessor_amendment drifted")
+    gates = _require_exact_keys(amendment["transition_gates"], set(_H001_DESIGN_TRANSITION_GATES), "H001 design amendment transition_gates")
+    if gates != _H001_DESIGN_TRANSITION_GATES:
+        _fail("H001 design amendment transition_gates drifted")
+    evidence = {item["path"]: item["sha256"] for item in receipt["evidence"]}
+    if evidence.get(AMENDMENT_RELPATH) != _SYNTHETIC_AMENDMENT_SHA256:
+        _fail("original synthetic amendment hash is not evidenced by the active handoff receipt")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if evidence.get(REAL_H001_AMENDMENT_RELPATH) != digest:
+        _fail("H001 design amendment hash is not evidenced by the active handoff receipt")
+    if receipt["next_actions"] != [_H001_DESIGN_NEXT_ACTION]:
+        _fail("H001 design phase next action is wrong")
+    if receipt["required_artifacts"] != [{
+        "artifact_id": REQUIRED_ARTIFACT_ID,
+        "availability": "UNAVAILABLE",
+        "canonical_paths": [],
+        "expected_manifest_sha256": REQUIRED_ARTIFACT_MANIFEST_SHA256,
+        "verified_copy_count": 0,
+    }]:
+        _fail("H001 design phase changed the required V0 artifact state")
+    if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 design phase changed an execution or authorization boundary")
+    required_prohibitions = set(_H001_DESIGN_PROHIBITED_ACTIONS) | {
+        "PREREGISTER_H001_REAL_PROTOCOL_WITHOUT_SEPARATE_GOVERNANCE",
+        "TREAT_SYNTHETIC_RESULTS_AS_SCIENTIFIC_EVIDENCE",
+    }
+    if not required_prohibitions.issubset(receipt["prohibited_actions"]):
+        _fail("H001 design phase is missing a required prohibition")
+    return amendment
+
+
 def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evidence_files: bool) -> int:
     """Structural fail-closed validation shared by the active receipt and every
     historical receipt in the predecessor chain. Does not validate the
@@ -550,12 +699,18 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
         _cross_check_artifact_records(parsed, root)
         _validate_h001_completion_handoff(parsed, root)
         amendment = _validate_sandbox_amendment(parsed, root, expected_next_action=_H001_COMPLETE_NEXT_ACTION)
+    elif active["phase"] == _H001_DESIGN_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        amendment = _validate_h001_design_amendment(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
     if amendment is not None:
         parsed = dict(parsed)
-        parsed["_validated_sandbox_amendment"] = amendment
+        if phase == _H001_DESIGN_PHASE:
+            parsed["_validated_h001_design_amendment"] = amendment
+        else:
+            parsed["_validated_sandbox_amendment"] = amendment
     return parsed
 
 
@@ -675,6 +830,7 @@ def load_and_verify_continuity_state(root: Path) -> dict:
         "handoff_receipt": receipt,
         "handoff_receipt_sha256": digest,
         **({"sandbox_amendment": receipt["_validated_sandbox_amendment"]} if "_validated_sandbox_amendment" in receipt else {}),
+        **({"h001_design_amendment": receipt["_validated_h001_design_amendment"]} if "_validated_h001_design_amendment" in receipt else {}),
     }
 
 
@@ -765,6 +921,23 @@ def render_context_packet(state: dict) -> str:
             "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
             "DURABLE_STORE_GATE=REQUIRED_FOR_REAL_ARTIFACT_OPERATIONS",
             "V0_DISPOSITION=UNCHANGED",
+        ])
+    elif active["phase"] == _H001_DESIGN_PHASE:
+        lines.extend([
+            "H001_REAL_FALSIFICATION_GOVERNANCE=AUTHORIZED_PREREGISTRATION_DESIGN_ONLY",
+            "H001_PREREGISTRATION_DESIGN=ALLOWED",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_REAL_DATA_EXECUTION=FORBIDDEN",
+            "H001_PRIMARY_EXECUTION_BUDGET=0",
+            "H001_PRIMARY_EXECUTION_COUNT=0",
+            "H001_REQUIRED_DURABLE_COPIES=2",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+            "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+            "H001_LIVE_AUTHORIZATION=FALSE",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "EDGE_STATUS=EDGE_UNPROVEN",
+            "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
         ])
     for prohibited in receipt["prohibited_actions"]:
         lines.append(f"PROHIBITED={prohibited}")
