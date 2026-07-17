@@ -1621,3 +1621,46 @@ def test_h001_assurance_review_binding_drift_fails_closed(tmp_path, mutation):
     active_path.write_bytes(canonical_json_bytes(active))
     with pytest.raises(ValueError):
         load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r["decisions"].append("H001_REVIEW_EVIDENCE_PACKET=REQUIRED_NOT_IMPLEMENTED"),
+    lambda r: r["decisions"].append("INVENTED_DECISION=TRUE"),
+    lambda r: r["decisions"].pop(),
+    lambda r: r["decisions"].append(r["decisions"][0]),
+    lambda r: r["decisions"].append("H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=TRUE"),
+])
+def test_h001_assurance_exact_decision_contract_fails_closed(tmp_path, mutation):
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT, root)
+    receipt_path = root / TASK_DIR / "handoff_v015.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    mutation(receipt)
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r["evidence"].remove(next(x for x in r["evidence"] if x["path"].endswith("handoff_v014.json"))),
+    lambda r: next(x for x in r["evidence"] if x["path"].endswith("handoff_v014.json")).update(sha256="0" * 64),
+    lambda r: r["evidence"].append({"path": f"{TASK_DIR}/handoff_v014.json", "sha256": context._H001_ASSURANCE_PROTOCOL_SHA256}),
+    lambda r: r["predecessor"].update(sha256="0" * 64),
+])
+def test_h001_assurance_v014_evidence_binding_fails_closed(tmp_path, mutation):
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT, root)
+    receipt_path = root / TASK_DIR / "handoff_v015.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    mutation(receipt)
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)

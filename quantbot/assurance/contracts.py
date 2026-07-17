@@ -87,12 +87,35 @@ _REVIEW_HARNESS_HASHES = {key: _REVIEW_ARTIFACT_HASHES[key] for key in (
     "tests/assurance/test_contracts.py", "tests/assurance/test_h001_null_calibration.py", "tests/continuity/test_cross_agent_continuity.py",
 )}
 _REVIEW_COMMANDS = [
-    "$PY -m pytest tests/assurance -q", "$PY -m pytest tests/continuity -q", "$PY -m pytest tests/sandbox -q",
-    "$PY -m pytest tests/artifacts -q", "$PY -m pytest tests/experiment/test_h001_real_falsification_preregistration.py -q",
-    "$PY -m pytest -q", "PATH=\"$REPO/.venv/bin:$PATH\" $REPO/scripts/release_smoke.sh", "$PY -m quantbot.continuity verify",
-    "$PY -m quantbot.continuity show", "$PY -m quantbot.artifacts verify-registry", "$PY -m quantbot.artifacts status",
-    "git diff --check", "git status --short", "git archive $HEAD | tar -x -C $EXPORT", "$PY -m pytest tests/assurance tests/continuity -q",
-    "$PY -m pytest tests/assurance tests/continuity --no-git-export -q", "remote CI checks for $HEAD",
+    "set -euo pipefail",
+    "REPO=/home/swirky/DevHub/repos/Qnty",
+    "BASE=ae61c6162f3164e0b24dd567a6ef73bdb5ecf8ea",
+    "HEAD=c52c607045803ab6d6e2a961f0f697aa72bf7581",
+    "PY=$REPO/.venv/bin/python",
+    "EXPORT=$(mktemp -d /tmp/qnty-h001-review-export.XXXXXX)",
+    "cd $REPO",
+    "test $(git rev-parse HEAD) = $HEAD",
+    "test $(git merge-base $BASE $HEAD) = $BASE",
+    "git diff --name-only $BASE...$HEAD",
+    "test $(git diff --name-only $BASE...$HEAD | wc -l) = 16",
+    "test -z $(git status --short)",
+    "sha256sum docs/assurance/H001_PRE_DATA_ASSURANCE_SCAFFOLD.md docs/assurance/replayable_review_evidence_packet_schema_v001.json quantbot/assurance/contracts.py quantbot/continuity/context.py",
+    "$PY -m pytest tests/assurance -q",
+    "$PY -m pytest tests/continuity -q",
+    "$PY -m pytest tests/sandbox -q",
+    "$PY -m pytest tests/artifacts -q",
+    "$PY -m pytest tests/experiment/test_h001_real_falsification_preregistration.py -q",
+    "$PY -m pytest -q",
+    "PATH=$REPO/.venv/bin:$PATH $REPO/scripts/release_smoke.sh",
+    "$PY -m quantbot.continuity verify",
+    "$PY -m quantbot.continuity show",
+    "$PY -m quantbot.artifacts verify-registry",
+    "$PY -m quantbot.artifacts status",
+    "git archive $HEAD | tar -x -C $EXPORT",
+    "test ! -e $EXPORT/.git",
+    "$PY -m pytest tests/assurance tests/continuity -q",
+    "git diff --check",
+    "gh run list --repo CipherCuttle/Qnty --commit $HEAD --json name,status,conclusion,headSha",
 ]
 
 def review_protocol_record() -> dict:
@@ -135,6 +158,13 @@ def validate_review_evidence_packet(value: object) -> dict:
         _fail("review packet environment, findings, or redaction metadata drifted")
     if data["commands"] != _REVIEW_COMMANDS or data["stdout_artifact_hashes"] or data["stderr_artifact_hashes"]:
         _fail("review packet commands or output hashes drifted")
+    if len(data["commands"]) != len(set(data["commands"])) or any(type(command) is not str or not command for command in data["commands"]):
+        _fail("review packet commands must be non-empty and unique")
+    if any(token in command for command in data["commands"] for token in ("--no-git-export", "remote CI checks", "token=", "password=", "credential=")):
+        _fail("review packet contains a non-replayable or secret-bearing command")
+    required_markers = ("$HEAD", "$BASE", "git diff --name-only", "sha256sum", "git archive", "! -e $EXPORT/.git", "gh run list", "git status --short")
+    if any(not any(marker in command for command in data["commands"]) for marker in required_markers):
+        _fail("review packet command coverage is incomplete")
     _validate_hash_records(data["reviewed_artifact_hashes"], _REVIEW_ARTIFACT_HASHES, "reviewed_artifact_hashes")
     _validate_hash_records(data["harness_source_hashes"], _REVIEW_HARNESS_HASHES, "harness_source_hashes")
     expected_protocol_hash = hashlib.sha256(canonical_json_bytes(_REVIEW_PROTOCOL_EXPECTED)).hexdigest()

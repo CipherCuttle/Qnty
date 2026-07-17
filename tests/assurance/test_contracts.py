@@ -185,3 +185,12 @@ def test_h001_review_packet_rejects_forbidden_fields(field):
     value[field] = False
     with pytest.raises(ValueError):
         contracts.validate_review_evidence_packet(value)
+
+
+def test_h001_review_packet_commands_are_executable_replay_records():
+    packet = json.loads((REVIEWS / "h001_pre_data_assurance_scaffold_rereview_packet_v001.json").read_bytes())
+    assert "--no-git-export" not in " ".join(packet["commands"])
+    assert "remote CI checks" not in " ".join(packet["commands"])
+    assert len(packet["commands"]) == len(set(packet["commands"]))
+    for marker in ("$HEAD", "$BASE", "git diff --name-only", "sha256sum", "git archive", "! -e $EXPORT/.git", "gh run list", "git status --short"):
+        assert any(marker in command for command in packet["commands"])
