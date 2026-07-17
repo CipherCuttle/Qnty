@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+import quantbot.artifacts.store as store_module
 from quantbot.artifacts.manifest import (
     build_portable_manifest,
     canonical_json_bytes,
@@ -203,6 +204,66 @@ def test_restore_to_existing_destination_rejects(tmp_path):
         store.restore(manifest_sha, destination)
 
 
+@pytest.mark.parametrize("destination", [Path("/tmp/qnty-artifact-restore"), Path("/srv/qnty/qnty-artifact-restore")])
+def test_canonical_restore_destination_under_prohibited_prefix_rejects(tmp_path, destination):
+    store, _, _, manifest_sha = make_store(tmp_path)
+    store.canonical = True
+    with pytest.raises(ArtifactStoreError, match="prohibited"):
+        store.restore(manifest_sha, destination)
+
+
+def test_restore_concurrent_destination_is_never_replaced(tmp_path, monkeypatch):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    destination = tmp_path / "concurrent"
+    original = store_module._rename_directory_no_replace
+
+    def race(source, target):
+        target.mkdir()
+        (target / "attacker.txt").write_bytes(b"preserve me")
+        original(source, target)
+
+    monkeypatch.setattr(store_module, "_rename_directory_no_replace", race)
+    with pytest.raises(ArtifactStoreError, match="already exists"):
+        store.restore(manifest_sha, destination)
+    assert (destination / "attacker.txt").read_bytes() == b"preserve me"
+    assert not (tmp_path / ".concurrent.qnty-restore-tmp").exists()
+
+
+def test_restore_fsyncs_workspace_tree_and_destination_parent(tmp_path, monkeypatch):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+    fsynced = []
+    original = store_module._fsync_directory
+
+    def capture(directory):
+        fsynced.append(Path(directory))
+        original(directory)
+
+    monkeypatch.setattr(store_module, "_fsync_directory", capture)
+    destination = tmp_path / "restored"
+    store.restore(manifest_sha, destination)
+    assert destination.parent in fsynced
+    assert any(path.name == "bars" for path in fsynced)
+    assert any(path.name == "funding" for path in fsynced)
+    assert any(path.name == ".restored.qnty-restore-tmp" for path in fsynced)
+
+
+def test_restore_no_replace_primitive_unavailability_fails_closed(tmp_path, monkeypatch):
+    store, roots, manifest_bytes, manifest_sha = make_store(tmp_path)
+    store.ingest(manifest_bytes, roots)
+
+    class MissingRenameAt2:
+        pass
+
+    monkeypatch.setattr(store_module.ctypes, "CDLL", lambda *args, **kwargs: MissingRenameAt2())
+    destination = tmp_path / "restored"
+    with pytest.raises(ArtifactStoreError, match="unavailable"):
+        store.restore(manifest_sha, destination)
+    assert not destination.exists()
+    assert not (tmp_path / ".restored.qnty-restore-tmp").exists()
+
+
 def test_source_may_be_deleted_before_restore(tmp_path):
     import shutil
 
@@ -299,7 +360,7 @@ def test_cli_rejects_tmp_store_without_workspace_declaration(tmp_path, capsys):
 
 def test_store_module_is_stdlib_only():
     allowed = {
-        "__future__", "hashlib", "os", "shutil", "stat", "tempfile", "pathlib",
+        "__future__", "ctypes", "errno", "hashlib", "os", "shutil", "stat", "tempfile", "pathlib",
         "quantbot.artifacts.manifest",
     }
     tree = ast.parse((ROOT / "quantbot/artifacts/store.py").read_text(encoding="utf-8"))

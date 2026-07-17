@@ -80,6 +80,16 @@ cross-checked by `quantbot.continuity`:
 - every copy having passed an independent restore test whose recomputed
   portable manifest matched exactly.
 
+Those are static record requirements, not a claim that the copies still
+exist. Whenever registry status or real-data execution evaluates an effective
+`VERIFIED_AVAILABLE` state, the verifier read-only resolves each configured
+root, rejects unavailable/read-disabled/unsupported stores and `/tmp` or
+`/srv/qnty` roots, rejects roots sharing a canonical path or filesystem
+device, and re-runs the full-byte `verify_copy` path for every copy. Historical
+verification booleans remain immutable evidence only. The active handoff also
+pins the exact canonical `stores.json` bytes by SHA-256 before it consumes the
+registry.
+
 Anything less is `UNAVAILABLE`: zero copies, no canonical locations, and a
 `null` portable manifest until real bytes are ingested and verified under an
 explicitly authorized task.
@@ -89,6 +99,6 @@ explicitly authorized task.
 The active handoff receipt's `required_artifacts` summary must agree with the
 artifact records here (identity, legacy fingerprint, availability, copy
 count, canonical locations), and the active receipt's `evidence` must pin the
-exact record bytes by SHA-256. `python -m quantbot.continuity verify` fails
+exact record and `stores.json` bytes by SHA-256. `python -m quantbot.continuity verify` fails
 closed on any divergence. Every agent resolves artifacts through these
 Git-owned records — never through chat history, `/tmp`, or a single machine.

@@ -2,9 +2,11 @@
 
 import copy
 import hashlib
+from pathlib import Path
 
 import pytest
 
+import quantbot.artifacts.registry as registry_module
 from quantbot.artifacts.manifest import canonical_json_bytes
 from quantbot.artifacts.registry import (
     ArtifactRegistryError,
@@ -12,6 +14,7 @@ from quantbot.artifacts.registry import (
     cross_check_receipt_artifact,
     validate_artifact_record_bytes,
     validate_store_registry_bytes,
+    validate_operational_registry,
 )
 
 LEGACY = "3dec994114769a16939afa9b0041a8162a308dcb05ca196557407b26a0d35b0d"
@@ -74,6 +77,55 @@ def test_verified_available_requires_two_independent_verified_restored_copies():
     two = [copy_record("store-a", "domain-a"), copy_record("store-b", "domain-b")]
     parsed = validate(record(availability="VERIFIED_AVAILABLE", copies=two))
     cross_check_receipt_artifact(receipt_summary("VERIFIED_AVAILABLE", two), parsed, validate_store_registry_bytes(canonical_json_bytes(stores())))
+
+
+def test_duplicate_store_root_environment_variable_rejects():
+    value = stores()
+    value["stores"][1]["root_environment_variable"] = value["stores"][0]["root_environment_variable"]
+    with pytest.raises(ArtifactRegistryError, match="duplicate root_environment_variable"):
+        validate_store_registry_bytes(canonical_json_bytes(value))
+
+
+def _operational_tree(store_entries, copies):
+    return {
+        "store_registry": {"stores": store_entries},
+        "records": {
+            "candidate1-real-input-v0": {
+                "record": record(availability="VERIFIED_AVAILABLE", copies=copies),
+            }
+        },
+    }
+
+
+def _store_entry(store_id, environment_variable):
+    return {
+        "backend_kind": "filesystem", "failure_domain": f"domain-{store_id}",
+        "read_enabled": True, "root_environment_variable": environment_variable,
+        "store_id": store_id, "write_enabled": True,
+    }
+
+
+def test_live_availability_rejects_missing_store_root(monkeypatch, tmp_path):
+    monkeypatch.delenv("SYNTHETIC_STORE_A", raising=False)
+    tree = _operational_tree([_store_entry("store-a", "SYNTHETIC_STORE_A")], [copy_record("store-a", "domain-store-a")])
+    with pytest.raises(ArtifactRegistryError, match="unset or empty"):
+        validate_operational_registry(tmp_path, registry_tree=tree)
+
+
+def test_live_availability_rejects_same_device_roots(monkeypatch, tmp_path):
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    monkeypatch.setenv("SYNTHETIC_STORE_A", str(left))
+    monkeypatch.setenv("SYNTHETIC_STORE_B", str(right))
+    monkeypatch.setattr(registry_module, "require_allowed_canonical_root", lambda path: Path(path).resolve())
+    tree = _operational_tree(
+        [_store_entry("store-a", "SYNTHETIC_STORE_A"), _store_entry("store-b", "SYNTHETIC_STORE_B")],
+        [copy_record("store-a", "domain-store-a"), copy_record("store-b", "domain-store-b")],
+    )
+    with pytest.raises(ArtifactRegistryError, match="filesystem device"):
+        validate_operational_registry(tmp_path, registry_tree=tree)
 
 
 @pytest.mark.parametrize("mutation", [

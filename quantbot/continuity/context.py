@@ -17,6 +17,7 @@ from quantbot.artifacts.registry import (
     ArtifactRegistryError,
     cross_check_receipt_artifact,
     validate_artifact_record_bytes,
+    validate_operational_registry,
     validate_store_registry_bytes,
 )
 
@@ -323,6 +324,11 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
         _fail("handoff_receipt protocol_id does not match active_task")
     if active["phase"] == "durable_artifact_store_configuration":
         _cross_check_artifact_records(parsed, root)
+        if parsed["safety_state"]["real_data_execution_requested"]:
+            try:
+                validate_operational_registry(root)
+            except ArtifactRegistryError as error:
+                _fail(f"current artifact operational verification failed: {error}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
     return parsed
 
@@ -344,6 +350,10 @@ def _cross_check_artifact_records(receipt: dict, root: Path) -> None:
     except ArtifactRegistryError as error:
         _fail(f"store registry invalid: {error}")
     evidence_by_path = {item["path"]: item["sha256"] for item in receipt["evidence"]}
+    store_registry_bytes = store_registry_path.read_bytes()
+    store_registry_sha = hashlib.sha256(store_registry_bytes).hexdigest()
+    if evidence_by_path.get(STORE_REGISTRY_RELPATH) != store_registry_sha:
+        _fail("artifact store registry hash is not evidenced by the active handoff receipt")
     for artifact in receipt["required_artifacts"]:
         record_relpath = f"{ARTIFACT_RECORDS_DIR_RELPATH}/{artifact['artifact_id']}.json"
         record_path = root / record_relpath

@@ -26,7 +26,7 @@ from quantbot.artifacts.manifest import (
     canonical_json_bytes,
     validate_manifest_bytes,
 )
-from quantbot.artifacts.registry import validate_registry_tree
+from quantbot.artifacts.registry import validate_operational_registry, validate_registry_tree
 from quantbot.artifacts.store import FilesystemStore
 
 
@@ -100,6 +100,7 @@ def _cmd_restore(args: argparse.Namespace) -> int:
 
 def _cmd_verify_registry(args: argparse.Namespace) -> int:
     result = validate_registry_tree(_discover_root(args.root))
+    validate_operational_registry(_discover_root(args.root), registry_tree=result)
     store_count = len(result["store_registry"]["stores"])
     print(f"ARTIFACTS_REGISTRY_OK records={len(result['records'])} stores={store_count}")
     for artifact_id in sorted(result["records"]):
@@ -110,6 +111,7 @@ def _cmd_verify_registry(args: argparse.Namespace) -> int:
 
 def _cmd_status(args: argparse.Namespace) -> int:
     result = validate_registry_tree(_discover_root(args.root))
+    validate_operational_registry(_discover_root(args.root), registry_tree=result)
     print("QNTY_ARTIFACT_STATUS schema=1.0.0")
     stores = result["store_registry"]["stores"]
     if not stores:

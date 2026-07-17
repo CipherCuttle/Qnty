@@ -25,6 +25,8 @@ identity and verification layer, not a storage-vendor dependency.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import os
 import shutil
@@ -99,6 +101,29 @@ def _fsync_directory(directory: Path) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def _rename_directory_no_replace(source: Path, destination: Path) -> None:
+    """Publish a prepared directory without ever replacing a concurrent entry."""
+    try:
+        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    except AttributeError:
+        _fail("atomic no-replace directory publication is unavailable")
+    renameat2.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    renameat2.restype = ctypes.c_int
+    result = renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1)
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number == errno.EEXIST:
+        _fail(f"restore destination {destination.name!r} already exists")
+    _fail(f"atomic no-replace directory publication failed: {os.strerror(error_number)}")
+
+
+def _fsync_tree_bottom_up(root: Path) -> None:
+    directories = [Path(directory) for directory, _, _ in os.walk(root)]
+    for directory in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+        _fsync_directory(directory)
 
 
 def _install_new_file(temp_name: str, final_path: Path) -> bool:
@@ -321,7 +346,10 @@ class FilesystemStore:
         destination = Path(destination)
         if os.path.lexists(destination):
             _fail(f"restore destination {destination.name!r} already exists")
-        parent = destination.parent
+        parent = destination.parent.resolve()
+        destination = parent / destination.name
+        if self.canonical:
+            require_allowed_canonical_root(destination)
         if not parent.is_dir():
             _fail("restore destination parent directory does not exist")
         workspace = parent / f".{destination.name}.qnty-restore-tmp"
@@ -364,7 +392,9 @@ class FilesystemStore:
                     "restored portable manifest does not match the requested manifest "
                     f"({rebuilt_sha} != {manifest_sha256})"
                 )
-            os.rename(workspace, destination)
+            _fsync_tree_bottom_up(workspace)
+            _rename_directory_no_replace(workspace, destination)
+            _fsync_directory(parent)
         except BaseException:
             shutil.rmtree(workspace, ignore_errors=True)
             raise

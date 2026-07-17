@@ -158,8 +158,10 @@ def write_durable_artifact_tree(root, *, verified=False):
     record_path = artifacts / "candidate1-real-input-v0.json"
     record_bytes = canonical_json_bytes(record)
     record_path.write_bytes(record_bytes)
-    (artifacts / "stores.json").write_bytes(canonical_json_bytes(registry))
+    registry_bytes = canonical_json_bytes(registry)
+    (artifacts / "stores.json").write_bytes(registry_bytes)
     receipt["evidence"].append({"path": "docs/artifacts/candidate1-real-input-v0.json", "sha256": hashlib.sha256(record_bytes).hexdigest()})
+    receipt["evidence"].append({"path": "docs/artifacts/stores.json", "sha256": hashlib.sha256(registry_bytes).hexdigest()})
     return write_tree(root, receipt, receipt_name="handoff_v002.json", extra_receipts=[("handoff_v001.json", first)], phase="durable_artifact_store_configuration")
 
 
@@ -306,16 +308,18 @@ def test_real_data_execution_request_with_unavailable_artifact_fails(tmp_path):
 
 
 def test_verified_artifact_with_two_copies_allows_request_flag(tmp_path):
-    receipt = base_receipt()
-    receipt["required_artifacts"][0].update(
-        availability="VERIFIED_AVAILABLE",
-        verified_copy_count=2,
-        canonical_paths=["/srv/artifacts/candidate1", "remote/qnty/candidate1"],
-    )
+    root = write_durable_artifact_tree(tmp_path, verified=True)
+    receipt_path = root / TASK_DIR / "handoff_v002.json"
+    receipt = json.loads(receipt_path.read_bytes())
     receipt["safety_state"]["real_data_execution_requested"] = True
-    write_tree(tmp_path, receipt)
-    state = load_and_verify_continuity_state(tmp_path)
-    assert "PROTOCOL_EXECUTION=BLOCKED" not in render_context_packet(state)
+    receipt_data = canonical_json_bytes(receipt)
+    receipt_path.write_bytes(receipt_data)
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_data).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="current artifact operational verification"):
+        load_and_verify_continuity_state(root)
 
 
 def test_receipt_byte_change_breaks_active_pointer(tmp_path):
@@ -638,6 +642,31 @@ def test_durable_artifact_record_change_without_evidence_update_rejects(tmp_path
         load_and_verify_continuity_state(root)
 
 
+def test_active_receipt_missing_store_registry_evidence_rejects(tmp_path):
+    root = write_durable_artifact_tree(tmp_path)
+    receipt_path = root / TASK_DIR / "handoff_v002.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["evidence"] = [item for item in receipt["evidence"] if item["path"] != "docs/artifacts/stores.json"]
+    receipt_data = canonical_json_bytes(receipt)
+    receipt_path.write_bytes(receipt_data)
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_data).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="store registry hash"):
+        load_and_verify_continuity_state(root)
+
+
+def test_active_receipt_store_registry_mutation_rejects(tmp_path):
+    root = write_durable_artifact_tree(tmp_path)
+    registry_path = root / "docs/artifacts/stores.json"
+    registry = json.loads(registry_path.read_bytes())
+    registry["stores"].append({"backend_kind": "filesystem", "failure_domain": "domain-c", "read_enabled": True, "root_environment_variable": "SYNTHETIC_STORE_C", "store_id": "store-c", "write_enabled": True})
+    registry_path.write_bytes(canonical_json_bytes(registry))
+    with pytest.raises(ValueError, match="evidence file"):
+        load_and_verify_continuity_state(root)
+
+
 def test_durable_artifact_legacy_fingerprint_mismatch_rejects(tmp_path):
     root = write_durable_artifact_tree(tmp_path)
     record_path = root / "docs/artifacts/candidate1-real-input-v0.json"
@@ -647,7 +676,7 @@ def test_durable_artifact_legacy_fingerprint_mismatch_rejects(tmp_path):
     record_path.write_bytes(data)
     receipt_path = root / TASK_DIR / "handoff_v002.json"
     receipt = json.loads(receipt_path.read_bytes())
-    receipt["evidence"][-1]["sha256"] = hashlib.sha256(data).hexdigest()
+    next(item for item in receipt["evidence"] if item["path"] == "docs/artifacts/candidate1-real-input-v0.json")["sha256"] = hashlib.sha256(data).hexdigest()
     receipt_data = canonical_json_bytes(receipt)
     receipt_path.write_bytes(receipt_data)
     active_path = root / "docs/control/active_task.json"
