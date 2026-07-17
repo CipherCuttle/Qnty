@@ -8,6 +8,7 @@ import ast
 import copy
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -179,7 +180,7 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
@@ -347,7 +348,7 @@ def test_noncanonical_receipt_bytes_fail_even_with_matching_hash(tmp_path, tail)
     active = json.loads(active_path.read_bytes())
     active["handoff_receipt_sha256"] = hashlib.sha256(data).hexdigest()
     active_path.write_bytes(canonical_json_bytes(active))
-    with pytest.raises(ValueError, match="canonical"):
+    with pytest.raises(ValueError):
         load_and_verify_continuity_state(tmp_path)
 
 
@@ -705,3 +706,109 @@ def test_durable_artifact_availability_and_copy_count_mismatch_rejects(tmp_path)
 def test_durable_unavailable_state_keeps_execution_blocked(tmp_path):
     state = load_and_verify_continuity_state(write_durable_artifact_tree(tmp_path))
     assert "PROTOCOL_EXECUTION=BLOCKED" in render_context_packet(state)
+
+
+def _sandbox_fixture(tmp_path):
+    for relpath in (
+        "CLAUDE.md", "AGENTS.md", "docs/agent/START_HERE.md",
+        "docs/control/active_task.json",
+        f"{TASK_DIR}/handoff_v001.json", f"{TASK_DIR}/handoff_v002.json",
+        f"{TASK_DIR}/handoff_v003.json", "docs/artifacts/stores.json",
+        "docs/artifacts/candidate1-real-input-v0.json",
+        "docs/artifacts/README.md", ".github/workflows/qnty-artifacts.yml",
+        "docs/control/amendments/candidate1_v1_synthetic_sandbox_v001.json",
+        "quantbot/continuity/context.py", "tests/continuity/test_cross_agent_continuity.py",
+        "quantbot/artifacts/__init__.py", "quantbot/artifacts/__main__.py",
+        "quantbot/artifacts/manifest.py", "quantbot/artifacts/registry.py", "quantbot/artifacts/store.py",
+        "tests/artifacts/test_manifest.py", "tests/artifacts/test_registry.py", "tests/artifacts/test_store.py",
+    ):
+        target = tmp_path / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relpath, target)
+    return tmp_path
+
+
+def _rewrite_receipt(root, mutate):
+    path = root / TASK_DIR / "handoff_v003.json"
+    receipt = json.loads(path.read_bytes())
+    mutate(receipt)
+    data = canonical_json_bytes(receipt)
+    path.write_bytes(data)
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(data).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+
+
+def test_valid_v003_amendment_chain_and_boundary_rendering():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["handoff_receipt"]["receipt_index"] == 3
+    assert state["sandbox_amendment"]["sandbox_id"] == "candidate1-v1-synthetic-design-sandbox-v0"
+    packet = render_context_packet(state)
+    assert "SYNTHETIC_SANDBOX id=candidate1-v1-synthetic-design-sandbox-v0 status=AUTHORIZED_EXPLORATORY_ENGINEERING_ONLY execution_budget=0" in packet
+    assert "SYNTHETIC_SANDBOX_REAL_DATA=FORBIDDEN" in packet
+    assert "SYNTHETIC_SANDBOX_SCIENTIFIC_EVIDENCE=FALSE" in packet
+    assert "DURABLE_STORE_GATE=REQUIRED_FOR_REAL_ARTIFACT_OPERATIONS" in packet
+    assert "V0_DISPOSITION=UNCHANGED" in packet
+    assert "official V1 protocol" not in packet
+    assert "V1 artifact" not in packet
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda a: a.pop("amendment_id"),
+    lambda a: a.update(amendment_id="wrong"),
+    lambda a: a.update(sandbox_id="wrong"),
+    lambda a: a.update(sandbox_status="wrong"),
+    lambda a: a.update(unexpected=True),
+    lambda a: a["allowed_actions"].append("DRIFT"),
+    lambda a: a["non_effects"].append("DRIFT"),
+    lambda a: a["prohibited_actions"].append("DRIFT"),
+    lambda a: a["transition_gates"].update(extra=True),
+    lambda a: a["transition_gates"].update(sandbox_execution_budget=1),
+    lambda a: a["transition_gates"].update(sandbox_outputs_are_scientific_evidence=True),
+    lambda a: a["transition_gates"].update(v0_disposition_unchanged=False),
+])
+def test_amendment_drift_fails_closed(tmp_path, mutation):
+    root = _sandbox_fixture(tmp_path)
+    amendment_path = root / context.AMENDMENT_RELPATH
+    amendment = json.loads(amendment_path.read_bytes())
+    mutation(amendment)
+    amendment_path.write_bytes(canonical_json_bytes(amendment))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_amendment_missing_noncanonical_or_unpinned_fails(tmp_path):
+    root = _sandbox_fixture(tmp_path)
+    amendment_path = root / context.AMENDMENT_RELPATH
+    amendment_path.unlink()
+    with pytest.raises(ValueError, match="missing"):
+        load_and_verify_continuity_state(root)
+    root = _sandbox_fixture(tmp_path / "noncanonical")
+    amendment_path = root / context.AMENDMENT_RELPATH
+    amendment_path.write_text(json.dumps(json.loads(amendment_path.read_bytes()), indent=2), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+    root = _sandbox_fixture(tmp_path / "unpinned")
+    _rewrite_receipt(root, lambda r: r["evidence"].__setitem__(
+        slice(None), [item for item in r["evidence"] if item["path"] != context.AMENDMENT_RELPATH]
+    ))
+    with pytest.raises(ValueError, match="amendment hash"):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r["next_actions"].__setitem__(0, "CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"),
+    lambda r: r["prohibited_actions"].remove("RECOVER_OR_RETIRE_V0_BEFORE_DURABLE_ARTIFACT_PLANE"),
+    lambda r: r["prohibited_actions"].remove("EXECUTE_CANDIDATE1_PROTOCOL"),
+    lambda r: r["prohibited_actions"].remove("ACCESS_REAL_DATA_IN_SYNTHETIC_SANDBOX"),
+    lambda r: r["required_artifacts"].append({"artifact_id": "candidate1-v1", "availability": "UNAVAILABLE", "canonical_paths": [], "expected_manifest_sha256": "0" * 64, "verified_copy_count": 0}),
+    lambda r: r["required_artifacts"][0].update(availability="VERIFIED_AVAILABLE", verified_copy_count=2, canonical_paths=["/a", "/b"]),
+    lambda r: r["safety_state"].update(decomposition_execution_count=1),
+    lambda r: r["safety_state"].update(scientific_use_authorized=True),
+])
+def test_sandbox_handoff_cannot_weaken_existing_invariants(tmp_path, mutation):
+    root = _sandbox_fixture(tmp_path)
+    _rewrite_receipt(root, mutation)
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)

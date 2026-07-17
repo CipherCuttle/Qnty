@@ -39,6 +39,7 @@ REQUIRED_ARTIFACT_MANIFEST_SHA256 = "3dec994114769a16939afa9b0041a8162a308dcb05c
 ACTIVE_TASK_RELPATH = "docs/control/active_task.json"
 ARTIFACT_RECORDS_DIR_RELPATH = "docs/artifacts"
 STORE_REGISTRY_RELPATH = "docs/artifacts/stores.json"
+AMENDMENT_RELPATH = "docs/control/amendments/candidate1_v1_synthetic_sandbox_v001.json"
 START_HERE_RELPATH = "docs/agent/START_HERE.md"
 CLAUDE_ENTRYPOINT_RELPATH = "CLAUDE.md"
 CODEX_ENTRYPOINT_RELPATH = "AGENTS.md"
@@ -108,6 +109,68 @@ _EXPECTED_SAFETY = {
     "scientific_use_authorized": False,
 }
 _AVAILABILITY_STATES = ("UNAVAILABLE", "VERIFIED_AVAILABLE")
+_SANDBOX_PHASE = "candidate1_v1_synthetic_sandbox_governance"
+_SANDBOX_NEXT_ACTION = "IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"
+_AMENDMENT_KEYS = {
+    "allowed_actions", "amendment_id", "amendment_kind", "governed_protocol_id",
+    "non_effects", "prohibited_actions", "rationale", "sandbox_id", "sandbox_status",
+    "schema_version", "transition_gates",
+}
+_SANDBOX_ALLOWED_ACTIONS = [
+    "BUILD_SYNTHETIC_FIXTURES",
+    "DRAFT_SYNTHETIC_ONLY_INTERFACES",
+    "IMPLEMENT_SYNTHETIC_ONLY_LIFECYCLE_SCAFFOLD",
+    "RECORD_ALL_EXPLORED_VARIANTS",
+    "RUN_SYNTHETIC_FAILURE_INJECTION",
+    "RUN_SYNTHETIC_MECHANICAL_TESTS",
+]
+_SANDBOX_NON_EFFECTS = [
+    "DOES_NOT_AUTHORIZE_OFFICIAL_V1_PROTOCOL",
+    "DOES_NOT_AUTHORIZE_REAL_ARTIFACT_IDENTITY",
+    "DOES_NOT_CHANGE_V0_ARTIFACT_STATE",
+    "DOES_NOT_CHANGE_V0_EXECUTION_BUDGET",
+    "DOES_NOT_RECOVER_V0",
+    "DOES_NOT_RETIRE_V0",
+    "DOES_NOT_SATISFY_DURABLE_STORE_GATE",
+    "DOES_NOT_SUPERSEDE_V0_PROHIBITIONS",
+]
+_SANDBOX_PROHIBITED_ACTIONS = [
+    "ACCESS_ANY_REAL_BARS_OR_FUNDING",
+    "ACCESS_CANDIDATE1_V0_INPUT_OR_QUARANTINE",
+    "ASSIGN_OR_CONSUME_SANDBOX_EXECUTION_BUDGET",
+    "CALIBRATE_SYNTHETIC_PARAMETERS_TO_UNDOCUMENTED_REAL_BTC_BEHAVIOR",
+    "CLAIM_SANDBOX_OUTPUT_AS_EDGE_EVIDENCE",
+    "CREATE_OFFICIAL_V1_PROTOCOL",
+    "CREATE_OR_BIND_REAL_V1_ARTIFACT",
+    "FREEZE_OR_SELECT_REAL_V1_DATA",
+    "GRANT_SCIENTIFIC_PAPER_OR_LIVE_AUTHORIZATION",
+    "PREREGISTER_REAL_V1_PROTOCOL",
+    "USE_SANDBOX_OUTPUT_TO_SILENTLY_SELECT_CONFIRMATORY_HYPOTHESIS",
+]
+_SANDBOX_TRANSITION_GATES = {
+    "independent_review_required_before_sandbox_implementation": True,
+    "official_v1_protocol_requires_separate_governance": True,
+    "real_artifact_operations_require_two_qualified_durable_stores": True,
+    "sandbox_execution_budget": 0,
+    "sandbox_outputs_are_scientific_evidence": False,
+    "v0_disposition_unchanged": True,
+}
+_V0_REQUIRED_PROHIBITIONS = {
+    "RECOVER_OR_RETIRE_V0_BEFORE_DURABLE_ARTIFACT_PLANE",
+    "EXECUTE_CANDIDATE1_PROTOCOL",
+    "INSPECT_REAL_BARS_OR_FUNDING_BYTES",
+    "ACCESS_QUARANTINE",
+    "INCREMENT_EXECUTION_COUNTS",
+    "GRANT_SCIENTIFIC_PAPER_OR_LIVE_AUTHORIZATION",
+}
+_SANDBOX_HANDOFF_PROHIBITIONS = {
+    "ACCESS_REAL_DATA_IN_SYNTHETIC_SANDBOX",
+    "ASSIGN_SANDBOX_EXECUTION_BUDGET",
+    "CLAIM_SANDBOX_OUTPUT_AS_EDGE_EVIDENCE",
+    "CREATE_OFFICIAL_V1_PROTOCOL_FROM_SANDBOX",
+    "FREEZE_OR_SELECT_REAL_V1_DATA",
+    "USE_UNDOCUMENTED_REAL_MARKET_MEMORY_FOR_SYNTHETIC_CALIBRATION",
+}
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -279,6 +342,43 @@ def _validate_evidence(evidence: object, root: Path, *, verify_files: bool) -> l
     return evidence
 
 
+def _validate_sandbox_amendment(receipt: dict, root: Path) -> dict:
+    path = root / AMENDMENT_RELPATH
+    if not path.is_file():
+        _fail(f"sandbox amendment {AMENDMENT_RELPATH} is missing")
+    amendment = _load_canonical_document(path.read_bytes(), "sandbox amendment")
+    _require_exact_keys(amendment, _AMENDMENT_KEYS, "sandbox amendment")
+    exact_strings = {
+        "schema_version": "0.1.0", "amendment_kind": "qnty_governance_amendment",
+        "amendment_id": "candidate1-v1-synthetic-sandbox-v001",
+        "governed_protocol_id": PROTOCOL_ID, "sandbox_id": "candidate1-v1-synthetic-design-sandbox-v0",
+        "sandbox_status": "AUTHORIZED_EXPLORATORY_ENGINEERING_ONLY",
+    }
+    for key, expected in exact_strings.items():
+        if amendment[key] != expected:
+            _fail(f"sandbox amendment {key} is wrong")
+    for key, expected in (("allowed_actions", _SANDBOX_ALLOWED_ACTIONS), ("non_effects", _SANDBOX_NON_EFFECTS), ("prohibited_actions", _SANDBOX_PROHIBITED_ACTIONS)):
+        value = _require_str_list(amendment[key], f"sandbox amendment {key}")
+        if value != expected or len(value) != len(set(value)) or value != sorted(value):
+            _fail(f"sandbox amendment {key} drifted")
+    gates = _require_exact_keys(amendment["transition_gates"], set(_SANDBOX_TRANSITION_GATES), "sandbox amendment transition_gates")
+    if gates != _SANDBOX_TRANSITION_GATES:
+        _fail("sandbox amendment transition_gates drifted")
+    evidence = {item["path"]: item["sha256"] for item in receipt["evidence"]}
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if evidence.get(AMENDMENT_RELPATH) != digest:
+        _fail("sandbox amendment hash is not evidenced by the active handoff receipt")
+    if receipt["next_actions"] != [_SANDBOX_NEXT_ACTION]:
+        _fail("sandbox phase next action is wrong")
+    if not _V0_REQUIRED_PROHIBITIONS.issubset(receipt["prohibited_actions"]):
+        _fail("sandbox phase dropped an existing V0 prohibition")
+    if not _SANDBOX_HANDOFF_PROHIBITIONS.issubset(receipt["prohibited_actions"]):
+        _fail("sandbox phase is missing a sandbox prohibition")
+    if len(receipt["required_artifacts"]) != 1 or receipt["required_artifacts"][0]["artifact_id"] != REQUIRED_ARTIFACT_ID:
+        _fail("sandbox phase cannot add a V1 required artifact")
+    return amendment
+
+
 def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evidence_files: bool) -> int:
     """Structural fail-closed validation shared by the active receipt and every
     historical receipt in the predecessor chain. Does not validate the
@@ -322,6 +422,7 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
         _fail("handoff_receipt task_id does not match active_task")
     if parsed["protocol_id"] != active["protocol_id"]:
         _fail("handoff_receipt protocol_id does not match active_task")
+    amendment = None
     if active["phase"] == "durable_artifact_store_configuration":
         _cross_check_artifact_records(parsed, root)
         if parsed["safety_state"]["real_data_execution_requested"]:
@@ -329,7 +430,13 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
                 validate_operational_registry(root)
             except ArtifactRegistryError as error:
                 _fail(f"current artifact operational verification failed: {error}")
+    elif active["phase"] == _SANDBOX_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        amendment = _validate_sandbox_amendment(parsed, root)
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
+    if amendment is not None:
+        parsed = dict(parsed)
+        parsed["_validated_sandbox_amendment"] = amendment
     return parsed
 
 
@@ -448,6 +555,7 @@ def load_and_verify_continuity_state(root: Path) -> dict:
         "active_task": active,
         "handoff_receipt": receipt,
         "handoff_receipt_sha256": digest,
+        **({"sandbox_amendment": receipt["_validated_sandbox_amendment"]} if "_validated_sandbox_amendment" in receipt else {}),
     }
 
 
@@ -498,6 +606,15 @@ def render_context_packet(state: dict) -> str:
             f" availability={artifact['availability']}"
             f" verified_copies={artifact['verified_copy_count']}"
         )
+    if active["phase"] == _SANDBOX_PHASE:
+        amendment = state["sandbox_amendment"]
+        lines.extend([
+            f"SYNTHETIC_SANDBOX id={amendment['sandbox_id']} status={amendment['sandbox_status']} execution_budget={amendment['transition_gates']['sandbox_execution_budget']}",
+            "SYNTHETIC_SANDBOX_REAL_DATA=FORBIDDEN",
+            f"SYNTHETIC_SANDBOX_SCIENTIFIC_EVIDENCE={str(amendment['transition_gates']['sandbox_outputs_are_scientific_evidence']).upper()}",
+            "DURABLE_STORE_GATE=REQUIRED_FOR_REAL_ARTIFACT_OPERATIONS",
+            "V0_DISPOSITION=UNCHANGED",
+        ])
     for prohibited in receipt["prohibited_actions"]:
         lines.append(f"PROHIBITED={prohibited}")
     return "\n".join(lines)
