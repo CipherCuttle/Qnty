@@ -41,6 +41,7 @@ ARTIFACT_RECORDS_DIR_RELPATH = "docs/artifacts"
 STORE_REGISTRY_RELPATH = "docs/artifacts/stores.json"
 AMENDMENT_RELPATH = "docs/control/amendments/candidate1_v1_synthetic_sandbox_v001.json"
 REAL_H001_AMENDMENT_RELPATH = "docs/control/amendments/candidate1_h001_real_falsification_design_v001.json"
+H001_DESIGN_JSON_RELPATH = "docs/experiments/candidate1_h001_real_data_falsification_v0.json"
 START_HERE_RELPATH = "docs/agent/START_HERE.md"
 CLAUDE_ENTRYPOINT_RELPATH = "CLAUDE.md"
 CODEX_ENTRYPOINT_RELPATH = "AGENTS.md"
@@ -120,6 +121,8 @@ _H001_COMPLETE_PHASE = "candidate1_h001_synthetic_falsification_complete"
 _H001_COMPLETE_NEXT_ACTION = "AUTHORIZE_H001_REAL_FALSIFICATION_PREREGISTRATION_DESIGN_GOVERNANCE"
 _H001_DESIGN_PHASE = "candidate1_h001_real_falsification_preregistration_design_governance"
 _H001_DESIGN_NEXT_ACTION = "DRAFT_H001_REAL_FALSIFICATION_PREREGISTRATION_DESIGN"
+_H001_PREREGISTERED_PHASE = "candidate1_h001_real_falsification_preregistered_design_only"
+_H001_PREREGISTERED_NEXT_ACTION = "ADVERSARIAL_REVIEW_H001_REAL_FALSIFICATION_PREREGISTRATION"
 _H001_BUNDLE_RELPATH = "docs/sandbox/example_candidate1_v1_hypothesis_001.json"
 _H001_BUNDLE_SHA256 = "322b58eb5aa7b8b02d488ab182b38420afa8390cc36e054e1c1e96558905b82e"
 _H001_BATCH_RECEIPT_SHA256 = "cb634f40a27204e2465392f3d8d2aaaf8e8af6f71dacba77b8506a66e465b3d5"
@@ -566,7 +569,7 @@ def _validate_h001_completion_handoff(receipt: dict, root: Path) -> None:
         _fail("H001 completion is missing a real-data or synthetic-evidence prohibition")
 
 
-def _validate_h001_design_amendment(receipt: dict, root: Path) -> dict:
+def _validate_h001_design_amendment(receipt: dict, root: Path, *, expected_next_action: str = _H001_DESIGN_NEXT_ACTION) -> dict:
     path = root / REAL_H001_AMENDMENT_RELPATH
     if not path.is_file():
         _fail(f"H001 design amendment {REAL_H001_AMENDMENT_RELPATH} is missing")
@@ -613,7 +616,7 @@ def _validate_h001_design_amendment(receipt: dict, root: Path) -> dict:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if evidence.get(REAL_H001_AMENDMENT_RELPATH) != digest:
         _fail("H001 design amendment hash is not evidenced by the active handoff receipt")
-    if receipt["next_actions"] != [_H001_DESIGN_NEXT_ACTION]:
+    if receipt["next_actions"] != [expected_next_action]:
         _fail("H001 design phase next action is wrong")
     if receipt["required_artifacts"] != [{
         "artifact_id": REQUIRED_ARTIFACT_ID,
@@ -631,6 +634,41 @@ def _validate_h001_design_amendment(receipt: dict, root: Path) -> dict:
     }
     if not required_prohibitions.issubset(receipt["prohibited_actions"]):
         _fail("H001 design phase is missing a required prohibition")
+    return amendment
+
+
+def _validate_h001_preregistered_handoff(receipt: dict, root: Path) -> dict:
+    """Validate the post-preregistration, review-only handoff."""
+    amendment = _validate_h001_design_amendment(
+        receipt, root, expected_next_action=_H001_PREREGISTERED_NEXT_ACTION
+    )
+    expected_scope = {
+        "docs/experiments/CANDIDATE1_H001_REAL_DATA_FALSIFICATION_V0.md",
+        H001_DESIGN_JSON_RELPATH,
+        "quantbot/experiment/h001_real_falsification_preregistration.py",
+        "tests/experiment/test_h001_real_falsification_preregistration.py",
+        "quantbot/continuity/context.py",
+        "tests/continuity/test_cross_agent_continuity.py",
+        f"docs/control/tasks/{TASK_ID}/handoff_v011.json",
+        ACTIVE_TASK_RELPATH,
+    }
+    if set(receipt["changed_file_scope"]) != expected_scope:
+        _fail("H001 preregistered handoff changed_file_scope is not the exact eight-file scope")
+    evidence = {item["path"]: item["sha256"] for item in receipt["evidence"]}
+    # active_task points back to this receipt, so its bytes cannot be included
+    # without creating a circular hash. The immutable receipt itself is likewise
+    # identified by active_task rather than self-evidence.
+    required_evidence = expected_scope - {f"docs/control/tasks/{TASK_ID}/handoff_v011.json", ACTIVE_TASK_RELPATH}
+    required_evidence |= {AMENDMENT_RELPATH, REAL_H001_AMENDMENT_RELPATH}
+    if not required_evidence.issubset(evidence):
+        _fail("H001 preregistered handoff is missing required evidence")
+    design_path = root / H001_DESIGN_JSON_RELPATH
+    if not design_path.is_file() or evidence.get(H001_DESIGN_JSON_RELPATH) != hashlib.sha256(design_path.read_bytes()).hexdigest():
+        _fail("H001 preregistration design JSON hash is not evidenced")
+    if receipt["receipt_index"] != 11:
+        _fail("H001 preregistered handoff must be receipt index 11")
+    if receipt["source_branch"] != "feat/h001-real-falsification-preregistration-v0":
+        _fail("H001 preregistered handoff source branch is wrong")
     return amendment
 
 
@@ -702,12 +740,15 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_DESIGN_PHASE:
         _cross_check_artifact_records(parsed, root)
         amendment = _validate_h001_design_amendment(parsed, root)
+    elif active["phase"] == _H001_PREREGISTERED_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        amendment = _validate_h001_preregistered_handoff(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
     if amendment is not None:
         parsed = dict(parsed)
-        if phase == _H001_DESIGN_PHASE:
+        if phase in (_H001_DESIGN_PHASE, _H001_PREREGISTERED_PHASE):
             parsed["_validated_h001_design_amendment"] = amendment
         else:
             parsed["_validated_sandbox_amendment"] = amendment
@@ -930,6 +971,27 @@ def render_context_packet(state: dict) -> str:
             "H001_REAL_DATA_EXECUTION=FORBIDDEN",
             "H001_PRIMARY_EXECUTION_BUDGET=0",
             "H001_PRIMARY_EXECUTION_COUNT=0",
+            "H001_REQUIRED_DURABLE_COPIES=2",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+            "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+            "H001_LIVE_AUTHORIZATION=FALSE",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "EDGE_STATUS=EDGE_UNPROVEN",
+            "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
+        ])
+    elif active["phase"] == _H001_PREREGISTERED_PHASE:
+        lines.extend([
+            "H001_REAL_FALSIFICATION_PROTOCOL=PREREGISTERED_DESIGN_ONLY",
+            "H001_PROTOCOL_ID=real_btc_h001_funding_crowding_reversal_falsification_v0",
+            "H001_DATA_IDENTITY=UNBOUND_DESIGN_ONLY",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_ARTIFACT_OPERATIONS=FORBIDDEN",
+            "H001_VALIDATION_EXECUTION_AUTHORIZED=FALSE",
+            "H001_HOLDOUT_EXECUTION_AUTHORIZED=FALSE",
+            "H001_CURRENT_EXECUTION_BUDGET=0",
+            "H001_CURRENT_EXECUTION_COUNT=0",
+            "H001_CANDIDATE_TRIAL_COUNT=9",
             "H001_REQUIRED_DURABLE_COPIES=2",
             "H001_DURABLE_STORES_CONFIGURED=FALSE",
             "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
