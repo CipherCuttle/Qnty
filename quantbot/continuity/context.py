@@ -109,6 +109,8 @@ _EXPECTED_SAFETY = {
     "scientific_use_authorized": False,
 }
 _AVAILABILITY_STATES = ("UNAVAILABLE", "VERIFIED_AVAILABLE")
+_DURABLE_PHASE = "durable_artifact_store_configuration"
+_DURABLE_NEXT_ACTION = "CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"
 _SANDBOX_PHASE = "candidate1_v1_synthetic_sandbox_governance"
 _SANDBOX_NEXT_ACTION = "IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"
 _AMENDMENT_KEYS = {
@@ -422,8 +424,11 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
         _fail("handoff_receipt task_id does not match active_task")
     if parsed["protocol_id"] != active["protocol_id"]:
         _fail("handoff_receipt protocol_id does not match active_task")
+    phase = active["phase"]
     amendment = None
-    if active["phase"] == "durable_artifact_store_configuration":
+    if phase == _DURABLE_PHASE:
+        if parsed["next_actions"] != [_DURABLE_NEXT_ACTION]:
+            _fail("durable phase next action is wrong")
         _cross_check_artifact_records(parsed, root)
         if parsed["safety_state"]["real_data_execution_requested"]:
             try:
@@ -433,6 +438,8 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _SANDBOX_PHASE:
         _cross_check_artifact_records(parsed, root)
         amendment = _validate_sandbox_amendment(parsed, root)
+    else:
+        _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
     if amendment is not None:
         parsed = dict(parsed)

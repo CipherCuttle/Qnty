@@ -71,7 +71,7 @@ def base_receipt():
         ],
         "blockers": ["synthetic blocker"],
         "verified_commands": ["python -m pytest tests/continuity -q"],
-        "next_actions": ["IMPLEMENT_DURABLE_ARTIFACT_PLANE"],
+        "next_actions": ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"],
         "prohibited_actions": ["EXECUTE_CANDIDATE1_PROTOCOL"],
     }
 
@@ -86,7 +86,7 @@ def write_tree(
     agents_text=AGENTS_TEXT,
     start_here_text=START_HERE_TEXT,
     extra_receipts=(),
-    phase="frozen_input_recovery_design",
+    phase="durable_artifact_store_configuration",
 ):
     (root / TASK_DIR).mkdir(parents=True, exist_ok=True)
     (root / "docs/agent").mkdir(parents=True, exist_ok=True)
@@ -95,6 +95,28 @@ def write_tree(
         (root / TASK_DIR / name).write_bytes(canonical_json_bytes(extra))
     receipt_bytes = canonical_json_bytes(receipt)
     (root / TASK_DIR / receipt_name).write_bytes(receipt_bytes)
+    if (
+        phase == "durable_artifact_store_configuration"
+        and not (root / "docs/artifacts").exists()
+        and "evidence" in receipt
+        and receipt.get("required_artifacts")
+    ):
+        verified = receipt["required_artifacts"][0]["availability"] == "VERIFIED_AVAILABLE"
+        first, active_receipt, record, registry = durable_artifact_receipt_and_record(verified=verified)
+        del first
+        del active_receipt
+        artifacts = root / "docs/artifacts"
+        artifacts.mkdir(parents=True)
+        record_bytes = canonical_json_bytes(record)
+        (artifacts / "candidate1-real-input-v0.json").write_bytes(record_bytes)
+        registry_bytes = canonical_json_bytes(registry)
+        (artifacts / "stores.json").write_bytes(registry_bytes)
+        receipt["evidence"].extend([
+            {"path": "docs/artifacts/candidate1-real-input-v0.json", "sha256": hashlib.sha256(record_bytes).hexdigest()},
+            {"path": "docs/artifacts/stores.json", "sha256": hashlib.sha256(registry_bytes).hexdigest()},
+        ])
+        receipt_bytes = canonical_json_bytes(receipt)
+        (root / TASK_DIR / receipt_name).write_bytes(receipt_bytes)
     active = {
         "schema_version": "0.1.0",
         "control_kind": "qnty_active_task_pointer",
@@ -171,7 +193,7 @@ def test_synthetic_tree_verifies_and_renders(tmp_path):
     state = load_and_verify_continuity_state(tmp_path)
     packet = render_context_packet(state)
     assert "TASK=" + TASK_ID in packet
-    assert "NEXT_ACTION=IMPLEMENT_DURABLE_ARTIFACT_PLANE" in packet
+    assert "NEXT_ACTION=CONFIGURE_TWO_DURABLE_ARTIFACT_STORES" in packet
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert f"artifact_not_verified_available:{context.REQUIRED_ARTIFACT_ID}" in packet
 
@@ -489,7 +511,7 @@ def test_two_unique_canonical_copies_accept(tmp_path):
     receipt["required_artifacts"][0].update(
         availability="VERIFIED_AVAILABLE",
         verified_copy_count=2,
-        canonical_paths=["/home/viktor/qnty-artifacts/copy-a", "/mnt/qnty-backup/copy-b"],
+            canonical_paths=["qnty-artifact://store-a/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "qnty-artifact://store-b/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
     )
     write_tree(tmp_path, receipt)
     state = load_and_verify_continuity_state(tmp_path)
@@ -725,11 +747,29 @@ def _sandbox_fixture(tmp_path):
         target = tmp_path / relpath
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relpath, target)
+    for receipt_name in ("handoff_v002.json", "handoff_v003.json"):
+        receipt_path = tmp_path / TASK_DIR / receipt_name
+        receipt = json.loads(receipt_path.read_bytes())
+        for item in receipt["evidence"]:
+            evidence_path = tmp_path / item["path"]
+            if evidence_path.is_file():
+                item["sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+        receipt_path.write_bytes(canonical_json_bytes(receipt))
+    v003_path = tmp_path / TASK_DIR / "handoff_v003.json"
+    v003 = json.loads(v003_path.read_bytes())
+    v003["predecessor"]["sha256"] = hashlib.sha256(
+        (tmp_path / TASK_DIR / "handoff_v002.json").read_bytes()
+    ).hexdigest()
+    v003_path.write_bytes(canonical_json_bytes(v003))
+    active_path = tmp_path / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(v003_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
     return tmp_path
 
 
-def _rewrite_receipt(root, mutate):
-    path = root / TASK_DIR / "handoff_v003.json"
+def _rewrite_receipt(root, mutate, receipt_name="handoff_v003.json"):
+    path = root / TASK_DIR / receipt_name
     receipt = json.loads(path.read_bytes())
     mutate(receipt)
     data = canonical_json_bytes(receipt)
@@ -738,6 +778,80 @@ def _rewrite_receipt(root, mutate):
     active = json.loads(active_path.read_bytes())
     active["handoff_receipt_sha256"] = hashlib.sha256(data).hexdigest()
     active_path.write_bytes(canonical_json_bytes(active))
+
+
+def _rewrite_active_phase_only(root, phase):
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    receipt_sha = active["handoff_receipt_sha256"]
+    active["phase"] = phase
+    active_path.write_bytes(canonical_json_bytes(active))
+    assert json.loads(active_path.read_bytes())["handoff_receipt_sha256"] == receipt_sha
+
+
+@pytest.mark.parametrize("phase", [
+    "unknown_phase",
+    "candidate1_v1_synthetic_sandbox_governanc",
+    "frozen_input_recovery_design",
+])
+def test_unsupported_phase_dispatch_fails_closed(tmp_path, phase):
+    root = _sandbox_fixture(tmp_path)
+    _rewrite_active_phase_only(root, phase)
+    with pytest.raises(ValueError, match="unsupported active phase"):
+        load_and_verify_continuity_state(root)
+
+
+def test_empty_phase_dispatch_fails_closed(tmp_path):
+    root = _sandbox_fixture(tmp_path)
+    _rewrite_active_phase_only(root, "")
+    with pytest.raises(ValueError, match="active_task phase"):
+        load_and_verify_continuity_state(root)
+
+
+def test_durable_phase_cannot_activate_sandbox_v003(tmp_path):
+    root = _sandbox_fixture(tmp_path)
+    _rewrite_active_phase_only(root, "durable_artifact_store_configuration")
+    with pytest.raises(ValueError, match="durable phase next action"):
+        load_and_verify_continuity_state(root)
+
+
+def test_sandbox_phase_cannot_activate_durable_v002(tmp_path):
+    root = _sandbox_fixture(tmp_path)
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    receipt_path = root / TASK_DIR / "handoff_v002.json"
+    active["handoff_receipt_path"] = f"{TASK_DIR}/handoff_v002.json"
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="sandbox amendment"):
+        load_and_verify_continuity_state(root)
+
+
+def test_sandbox_phase_rejects_durable_next_action(tmp_path):
+    root = _sandbox_fixture(tmp_path)
+    _rewrite_receipt(root, lambda receipt: receipt.update(next_actions=["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"]))
+    with pytest.raises(ValueError, match="sandbox phase next action"):
+        load_and_verify_continuity_state(root)
+
+
+def test_durable_phase_rejects_sandbox_next_action(tmp_path):
+    root = write_durable_artifact_tree(tmp_path)
+    _rewrite_receipt(root, lambda receipt: receipt.update(next_actions=[context._SANDBOX_NEXT_ACTION]), "handoff_v002.json")
+    with pytest.raises(ValueError, match="durable phase next action"):
+        load_and_verify_continuity_state(root)
+
+
+def test_durable_phase_v002_contract_passes(tmp_path):
+    state = load_and_verify_continuity_state(write_durable_artifact_tree(tmp_path))
+    assert state["active_task"]["phase"] == "durable_artifact_store_configuration"
+    assert "sandbox_amendment" not in state
+
+
+def test_sandbox_phase_v003_contract_passes_and_renders_boundary(tmp_path):
+    root = _sandbox_fixture(tmp_path)
+    state = load_and_verify_continuity_state(root)
+    assert "sandbox_amendment" in state
+    assert "SYNTHETIC_SANDBOX_REAL_DATA=FORBIDDEN" in render_context_packet(state)
 
 
 def test_valid_v003_amendment_chain_and_boundary_rendering():
