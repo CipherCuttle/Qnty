@@ -46,17 +46,69 @@ expressions, plugins, or user code are accepted.
 `ALTERNATING_REVERSAL_ZERO_FUNDING`, `FLAT_POSITIVE_FUNDING`,
 `FLAT_NEGATIVE_FUNDING`, and `TREND_WITH_OPPOSING_FUNDING` are fixed and ordered.
 
+## Accounting semantics
+
+For a scenario with `N` observations there are `N-1` evaluated intervals indexed
+`t = 0 .. N-2`; interval `t` spans observations `t` and `t+1`. Each rule chooses
+`position(t)` in `{-1, 0, 1}` **before** interval `t`, reading only observations
+with index strictly less than `t`, and holds it across the whole interval. The
+initial position is flat: `position(-1) = 0`.
+
+Per interval:
+
+- `price_component(t) = position(t) * (price[t+1] - price[t])`
+- `funding_component(t) = -position(t) * funding[t]`
+- `cost(t) = transaction_cost * abs(position(t) - position(t-1))`, with
+  `position(-1) = 0`, so entering from the initial flat state is charged
+- `net(t) = price_component(t) + funding_component(t) - cost(t)`
+
+`turnover_count` is the number of intervals where `position(t) != position(t-1)`
+(again `position(-1) = 0`). **Terminal liquidation is excluded**: the position
+held over the final evaluated interval is not flattened and incurs no terminal
+closing transaction cost.
+
+Slot counts are `active_slot_count` (positions in `{-1, 1}`), `long_slot_count`
+(`+1`), `short_slot_count` (`-1`), and `flat_slot_count` (`0`). They satisfy
+`active_slot_count == long_slot_count + short_slot_count` and
+`active_slot_count + flat_slot_count == N-1`. Every reported mean divides its
+summed component by the evaluated-interval count `N-1`. `transaction_cost` is a
+declared arbitrary constant for mechanical path coverage, not a market estimate.
+
 ## Receipts and replay
 
 Receipts contain the raw input digest, canonical bundle, contract fingerprints,
 every variant/scenario mechanical result, safety invariants, and a
-`run_fingerprint`. Verification requires canonical bytes and replays every
-result. Results are sorted only by `variant_id`, then `scenario_id`; there is no
-ranking, winner, recommendation, selection, or scientific metric.
+`run_fingerprint`. Results are sorted only by `variant_id`, then `scenario_id`;
+there is no ranking, winner, recommendation, selection, or scientific metric.
+
+`raw_input_sha256` records the SHA-256 of the original variant bundle bytes as
+submitted; `canonical_bundle_sha256` identifies the semantic bundle after
+canonicalisation, so equivalent pretty/compact inputs share it. The
+`rule_contract_sha256` and `accounting_contract_sha256` fingerprints bind the
+full machine-readable rule and accounting contracts (rule IDs, parameter
+schemas and ranges, deadband and warm-up semantics, the decision information
+set, and every component/turnover/timing formula above); they change whenever
+those generic mechanical assumptions change.
+
+Verification requires exact canonical bytes, checks every SHA-256 field is a
+lowercase 64-character hex string, re-validates the embedded bundle and contract
+fingerprints, and deterministically replays every result. Receipt verification
+therefore proves deterministic self-consistency and exact replay only — it is
+**not** a cryptographic signature or any form of external authentication, and it
+asserts nothing about market behaviour.
 
 To create a new batch, copy the example, change only declarative variants,
 provide an explicit rationale for each, and run into a new existing workspace
 directory. Repeat the run and compare bytes before verification.
+
+Publication is atomic and fail-closed: the parent directory must already exist,
+the destination must not exist, canonical bytes are written to a temporary file
+in the same directory, flushed and fsynced, then published with no-overwrite
+semantics and read back. A run never reports success unless the final file
+exists with exactly the canonical bytes, and an interrupted or failed run leaves
+no partial destination. The CLI exit codes are `0` success, `2` input/bundle
+validation failure, `3` receipt verification failure, and `4` output
+publication failure; expected failures print a short message with no traceback.
 
 ## Interpretation and prohibitions
 
