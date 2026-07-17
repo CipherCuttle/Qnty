@@ -11,12 +11,13 @@ from quantbot.sandbox import candidate1_v1_cli as cli
 
 ROOT = Path(__file__).parents[2]
 EXAMPLE = ROOT / "docs/sandbox/example_candidate1_v1_variants.json"
+H001_EXAMPLE = ROOT / "docs/sandbox/example_candidate1_v1_hypothesis_001.json"
 
 # Stable contract fingerprints after the accounting/contract repair. They change
 # only when the generic mechanical assumptions change, which must be deliberate.
-RULE_CONTRACT_SHA256 = "7f55506bd7b6f43988fb4c2eb2aefac6e7526e9064231649ae1f0495bab1ecad"
+RULE_CONTRACT_SHA256 = "62718e4dc67e3c20a904e197ac7587f8cedbbc5a91b90e6315c189fc4072396a"
 ACCOUNTING_CONTRACT_SHA256 = "922977fc74ad59ba32c848bf27977f0579a61f544d830bac64fbb25abd15436c"
-SCENARIO_CONTRACT_SHA256 = "7c42391951b2e4cc3dc56402504a47827d2898f8a32d211b71f125ad6f0b516a"
+SCENARIO_CONTRACT_SHA256 = "cde35c4f785525dce3639e38eb37ba9f64c55cdc63d6e82c16b87d7d60df7b30"
 
 HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
 
@@ -68,6 +69,20 @@ def test_example_and_determinism(tmp_path):
     assert a["explored_variant_count"] == 7
     assert all(not key in a for key in ("winner", "rank", "recommendation", "best_variant"))
     assert a["scientific_evidence"] is False and a["real_data_accessed"] is False
+
+
+def test_h001_batch_002_is_exactly_thirteen_unranked_variants():
+    b, raw, digest = s.load_bundle(H001_EXAMPLE)
+    assert [v["variant_id"] for v in b["variants"]] == [
+        "h001-l1-pdb0-fdb0", "h001-l1-pdb0p5-fdb0p05", "h001-l1-pdb1-fdb0p1",
+        "h001-l2-pdb0-fdb0", "h001-l2-pdb1-fdb0p05", "h001-l2-pdb2-fdb0p1",
+        "h001-l4-pdb0-fdb0", "h001-l4-pdb1-fdb0p05", "h001-l4-pdb2-fdb0p1",
+        "ALWAYS_FLAT", "FUNDING_SIGN_FADE", "LAGGED_RETURN_SIGN", "LAGGED_RETURN_FADE",
+    ]
+    receipt = s.build_receipt(b, raw, digest)
+    assert receipt["explored_variant_count"] == 13
+    assert len(receipt["results"]) == 13 * len(s.SCENARIOS)
+    assert all(key not in receipt for key in ("winner", "rank", "recommendation", "best_variant"))
 
 
 def test_pretty_and_compact_semantically_match(tmp_path):
@@ -171,6 +186,12 @@ def test_rule_contract_binds_all_rules():
         assert schema["lookback"] == {"type": "int", "min": 1, "max": 16}
         assert schema["deadband"]["type"] == "decimal_string"
     assert contract["parameter_schema"]["FUNDING_SIGN_FADE"]["deadband"]["type"] == "decimal_string"
+    assert contract["parameter_schema"]["FUNDING_CROWDING_REVERSAL"] == {
+        "lookback": {"type": "int", "min": 1, "max": 16},
+        "price_deadband": {"type": "decimal_string", "min": "0", "finite": True},
+        "funding_deadband": {"type": "decimal_string", "min": "0", "finite": True},
+    }
+    assert "strict_activation" in contract
     for key in ("sign_definition", "deadband_comparison", "information_set", "decision_constraint"):
         assert contract[key]
 
@@ -228,6 +249,14 @@ def test_non_hex_sha_field_fails_verification():
         s.verify_receipt_bytes(s.canonical_json_bytes(bad))
 
 
+def test_previous_rule_contract_fingerprint_is_rejected():
+    receipt = s.build_receipt(*s.load_bundle(EXAMPLE))
+    bad = copy.deepcopy(receipt)
+    bad["rule_contract_sha256"] = "7f55506bd7b6f43988fb4c2eb2aefac6e7526e9064231649ae1f0495bab1ecad"
+    with pytest.raises(s.SandboxVerificationError, match="contract fingerprint"):
+        s.verify_receipt_bytes(s.canonical_json_bytes(bad))
+
+
 # --------------------------------------------------------------------------- #
 # No-lookahead on active (non-warm-up) decisions
 # --------------------------------------------------------------------------- #
@@ -274,6 +303,62 @@ def test_funding_deadband_inclusive():
     f = [Decimal("0.1"), Decimal("0.2"), Decimal("-999")]
     assert s.position_for(variant, p, f, 1) == 0   # abs(0.1) <= deadband -> flat
     assert s.position_for(variant, p, f, 2) == -1  # abs(0.2) > deadband -> fade short
+
+
+# --------------------------------------------------------------------------- #
+# H001 funding crowding reversal mechanics
+# --------------------------------------------------------------------------- #
+
+def _h001(**params):
+    return _variant("FUNDING_CROWDING_REVERSAL", **params)
+
+
+def test_h001_requires_both_crowding_and_reversal():
+    prices_up = [Decimal(str(i)) for i in range(14)]
+    prices_down = [Decimal(str(14 - i)) for i in range(14)]
+    positive = [Decimal("0.2")] * 14
+    negative = [Decimal("-0.2")] * 14
+    neutral = [Decimal("0")] * 14
+    variant = _h001(lookback=1, price_deadband="0", funding_deadband="0")
+    assert all(s.position_for(variant, prices_up, positive, t) == 0 for t in range(13))
+    assert all(s.position_for(variant, prices_down, negative, t) == 0 for t in range(13))
+    assert all(s.position_for(variant, prices_down, neutral, t) == 0 for t in range(13))
+    assert all(s.position_for(variant, prices_up, neutral, t) == 0 for t in range(13))
+    assert s.position_for(variant, prices_down, positive, 2) == -1
+    assert s.position_for(variant, prices_up, negative, 2) == 1
+
+
+def test_h001_warmup_and_strict_deadbands():
+    prices = [Decimal("5"), Decimal("4"), Decimal("3"), Decimal("2"), Decimal("1"), Decimal("0")]
+    funding = [Decimal("0.1")] * len(prices)
+    assert s.position_for(_h001(lookback=4, price_deadband="0", funding_deadband="0"), prices, funding, 4) == 0
+    assert s.position_for(_h001(lookback=1, price_deadband="1", funding_deadband="0"), prices, funding, 2) == 0
+    assert s.position_for(_h001(lookback=1, price_deadband="0", funding_deadband="0.1"), prices, funding, 2) == 0
+
+
+@pytest.mark.parametrize("lookback", [1, 2, 4])
+def test_h001_lookbacks_have_active_path_coverage(lookback):
+    prices = [Decimal("1"), Decimal("2"), Decimal("3"), Decimal("4"), Decimal("5"), Decimal("4"), Decimal("3"), Decimal("2"), Decimal("1"), Decimal("0"), Decimal("-1"), Decimal("-2"), Decimal("-3"), Decimal("-4")]
+    funding = [Decimal("0.2")] * len(prices)
+    positions = [s.position_for(_h001(lookback=lookback, price_deadband="0", funding_deadband="0"), prices, funding, t) for t in range(len(prices) - 1)]
+    assert -1 in positions
+    assert positions[:lookback + 1] == [0] * (lookback + 1)
+
+
+def test_h001_no_lookahead_and_relevant_prior_sensitivity():
+    variant = _h001(lookback=2, price_deadband="0", funding_deadband="0")
+    prices = [Decimal("1"), Decimal("4"), Decimal("3"), Decimal("2"), Decimal("1"), Decimal("0"), Decimal("-1")]
+    funding = [Decimal("0.2")] * len(prices)
+    t = 4
+    baseline = s.position_for(variant, prices, funding, t)
+    future_prices = prices.copy(); future_prices[4] = Decimal("1000"); future_prices[6] = Decimal("1000")
+    future_funding = funding.copy(); future_funding[4] = Decimal("-1000"); future_funding[6] = Decimal("-1000")
+    assert s.position_for(variant, future_prices, future_funding, t) == baseline
+    prior_prices = prices.copy(); prior_prices[1] = Decimal("2")
+    prior_funding = funding.copy(); prior_funding[3] = Decimal("-0.2")
+    assert s.position_for(variant, prior_prices, funding, t) != baseline
+    assert s.position_for(variant, prices, prior_funding, t) != baseline
+    assert all(position in {-1, 0, 1} for position in [s.position_for(variant, prices, funding, i) for i in range(len(prices) - 1)])
 
 
 # --------------------------------------------------------------------------- #

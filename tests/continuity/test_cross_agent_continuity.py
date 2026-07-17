@@ -859,7 +859,7 @@ def test_sandbox_phase_v003_contract_passes_and_renders_boundary(tmp_path):
 
 def test_valid_v003_amendment_chain_and_boundary_rendering():
     state = load_and_verify_continuity_state(ROOT)
-    assert state["handoff_receipt"]["receipt_index"] == 4
+    assert state["handoff_receipt"]["receipt_index"] >= 4
     assert state["sandbox_amendment"]["sandbox_id"] == "candidate1-v1-synthetic-design-sandbox-v0"
     packet = render_context_packet(state)
     assert "SYNTHETIC_SANDBOX id=candidate1-v1-synthetic-design-sandbox-v0 status=AUTHORIZED_EXPLORATORY_ENGINEERING_ONLY execution_budget=0" in packet

@@ -1,0 +1,20 @@
+{
+  "bundle_id": "candidate1-v1-funding-crowding-reversal-h001-batch-002",
+  "bundle_kind": "qnty_candidate1_v1_synthetic_variant_bundle",
+  "schema_version": "0.1.0",
+  "variants": [
+    {"variant_id":"h001-l1-pdb0-fdb0","rule_kind":"FUNDING_CROWDING_REVERSAL","parameters":{"lookback":1,"price_deadband":"0","funding_deadband":"0"},"rationale_kind":"DECLARED_ARBITRARY_ASSUMPTION","rationale":"H001 baseline with one-observation lag and zero strict activation deadbands."},
+    {"variant_id":"h001-l1-pdb0p5-fdb0p05","rule_kind":"FUNDING_CROWDING_REVERSAL","parameters":{"lookback":1,"price_deadband":"0.5","funding_deadband":"0.05"},"rationale_kind":"DECLARED_ARBITRARY_ASSUMPTION","rationale":"H001 boundary-coverage variant using small declared price and funding deadbands."},
+    {"variant_id":"h001-l1-pdb1-fdb0p1","rule_kind":"FUNDING_CROWDING_REVERSAL","parameters":{"lookback":1,"price_deadband":"1","funding_deadband":"0.1"},"rationale_kind":"DECLARED_ARBITRARY_ASSUMPTION","rationale":"H001 strict-threshold coverage for one-observation lag."},
+    {"variant_id":"h001-l2-pdb0-fdb0","rule_kind":"FUNDING_CROWDING_REVERSAL","parameters":{"lookback":2,"price_deadband":"0","funding_deadband":"0"},"rationale_kind":"DECLARED_ARBITRARY_ASSUMPTION","rationale":"H001 baseline with a two-observation lag."},
+    {"variant_id":"h001-l2-pdb1-fdb0p05","rule_kind":"FUNDING_CROWDING_REVERSAL","parameters":{"lookback":2,"price_deadband":"1","funding_deadband":"0.05"},"rationale_kind":"DECLARED_ARBITRARY_ASSUMPTION","rationale":"H001 two-observation lag with explicit strict deadband coverage."},
+    {"variant_id":"h001-l2-pdb2-fdb0p1","rule_kind":"FUNDING_CROWDING_REVERSAL","parameters":{"lookback":2,"price_deadband":"2","funding_deadband":"0.1"},"rationale_kind":"DECLARED_ARBITRARY_ASSUMPTION","rationale":"H001 two-observation lag at larger declared boundaries."},
+    {"variant_id":"h001-l4-pdb0-fdb0","rule_kind":"FUNDING_CROWDING_REVERSAL","parameters":{"lookback":4,"price_deadband":"0","funding_deadband":"0"},"rationale_kind":"DECLARED_ARBITRARY_ASSUMPTION","rationale":"H001 baseline with the maximum requested four-observation scenario lookback."},
+    {"variant_id":"h001-l4-pdb1-fdb0p05","rule_kind":"FUNDING_CROWDING_REVERSAL","parameters":{"lookback":4,"price_deadband":"1","funding_deadband":"0.05"},"rationale_kind":"DECLARED_ARBITRARY_ASSUMPTION","rationale":"H001 four-observation lag with small declared deadbands."},
+    {"variant_id":"h001-l4-pdb2-fdb0p1","rule_kind":"FUNDING_CROWDING_REVERSAL","parameters":{"lookback":4,"price_deadband":"2","funding_deadband":"0.1"},"rationale_kind":"DECLARED_ARBITRARY_ASSUMPTION","rationale":"H001 four-observation lag with larger declared deadbands."},
+    {"variant_id":"ALWAYS_FLAT","rule_kind":"ALWAYS_FLAT","parameters":{},"rationale_kind":"MECHANICAL_BASELINE","rationale":"Control baseline that is always flat."},
+    {"variant_id":"FUNDING_SIGN_FADE","rule_kind":"FUNDING_SIGN_FADE","parameters":{"deadband":"0"},"rationale_kind":"SOFTWARE_PATH_COVERAGE","rationale":"Control isolating funding-sign fade mechanics with zero deadband."},
+    {"variant_id":"LAGGED_RETURN_SIGN","rule_kind":"LAGGED_RETURN_SIGN","parameters":{"lookback":1,"deadband":"0"},"rationale_kind":"SOFTWARE_PATH_COVERAGE","rationale":"Control isolating one-period lagged return sign mechanics."},
+    {"variant_id":"LAGGED_RETURN_FADE","rule_kind":"LAGGED_RETURN_FADE","parameters":{"lookback":1,"deadband":"0"},"rationale_kind":"SOFTWARE_PATH_COVERAGE","rationale":"Control isolating one-period lagged return fade mechanics."}
+  ]
+}

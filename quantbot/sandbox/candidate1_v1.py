@@ -26,7 +26,7 @@ TRANSACTION_COST = Decimal("0.001")
 TRANSACTION_COST_RATIONALE = "DECLARED_ARBITRARY_ASSUMPTION_FOR_MECHANICAL_PATH_COVERAGE"
 RULE_KINDS = (
     "ALWAYS_FLAT", "ALWAYS_LONG", "ALWAYS_SHORT", "LAGGED_RETURN_SIGN",
-    "LAGGED_RETURN_FADE", "FUNDING_SIGN_FADE",
+    "LAGGED_RETURN_FADE", "FUNDING_SIGN_FADE", "FUNDING_CROWDING_REVERSAL",
 )
 RATIONALE_KINDS = (
     "MECHANICAL_BASELINE", "SOFTWARE_PATH_COVERAGE",
@@ -124,6 +124,14 @@ SCENARIOS = (
     _scenario("FLAT_POSITIVE_FUNDING", "Constant price with positive generic funding.", ("1",) * 6, ("0.1",) * 6),
     _scenario("FLAT_NEGATIVE_FUNDING", "Constant price with negative generic funding.", ("1",) * 6, ("-0.1",) * 6),
     _scenario("TREND_WITH_OPPOSING_FUNDING", "Increasing price with negative generic funding.", ("1", "2", "3", "4", "5", "6"), ("-0.1",) * 6),
+    _scenario("POSITIVE_FUNDING_TREND_CONTINUES", "Positive funding with continuing upward price movement.", tuple(str(i) for i in range(1, 15)), ("0.2",) * 14),
+    _scenario("POSITIVE_FUNDING_THEN_REVERSAL_DOWN", "Positive funding followed by a sustained downward price reversal.", ("1", "2", "3", "4", "5", "4", "3", "2", "1", "0", "-1", "-2", "-3", "-4"), ("0.2",) * 14),
+    _scenario("NEGATIVE_FUNDING_TREND_CONTINUES", "Negative funding with continuing downward price movement.", tuple(str(i) for i in range(14, 0, -1)), ("-0.2",) * 14),
+    _scenario("NEGATIVE_FUNDING_THEN_REVERSAL_UP", "Negative funding followed by a sustained upward price reversal.", ("14", "13", "12", "11", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"), ("-0.2",) * 14),
+    _scenario("FUNDING_FLIPS_WITHOUT_PRICE_CONFIRMATION", "Funding changes sign while price remains neutral.", ("1",) * 14, ("0.2", "0.2", "0.2", "0.2", "0.2", "-0.2", "-0.2", "-0.2", "-0.2", "-0.2", "-0.2", "-0.2", "-0.2", "-0.2")),
+    _scenario("PRICE_REVERSAL_WITHOUT_FUNDING_CROWDING", "Price reverses while funding remains at the neutral boundary.", ("1", "2", "3", "4", "5", "4", "3", "2", "1", "0", "-1", "-2", "-3", "-4"), ("0",) * 14),
+    _scenario("DELAYED_REVERSAL_AFTER_CROWDING", "Positive funding persists before a delayed downward reversal.", ("1", "2", "3", "4", "5", "6", "7", "8", "9", "8", "7", "6", "5", "4"), ("0.2",) * 14),
+    _scenario("FALSE_REVERSAL_THEN_CONTINUATION", "A brief downward move is followed by continuation of the prior trend.", ("1", "2", "3", "4", "5", "4", "5", "6", "7", "8", "9", "10", "11", "12"), ("0.2",) * 14),
 )
 SCENARIO_CONTRACT = {"schema_version": SCHEMA_VERSION, "scenarios": list(SCENARIOS)}
 
@@ -143,6 +151,11 @@ RULE_PARAMETER_SCHEMA = {
     "LAGGED_RETURN_SIGN": dict(_LAGGED_PARAMS),
     "LAGGED_RETURN_FADE": dict(_LAGGED_PARAMS),
     "FUNDING_SIGN_FADE": {"deadband": {"type": "decimal_string", "min": "0", "finite": True}},
+    "FUNDING_CROWDING_REVERSAL": {
+        "lookback": {"type": "int", "min": LOOKBACK_MIN, "max": LOOKBACK_MAX},
+        "price_deadband": {"type": "decimal_string", "min": "0", "finite": True},
+        "funding_deadband": {"type": "decimal_string", "min": "0", "finite": True},
+    },
 }
 RULE_WARMUP = {
     "ALWAYS_FLAT": "none",
@@ -151,6 +164,7 @@ RULE_WARMUP = {
     "LAGGED_RETURN_SIGN": "position(t) = 0 while t <= lookback",
     "LAGGED_RETURN_FADE": "position(t) = 0 while t <= lookback",
     "FUNDING_SIGN_FADE": "position(t) = 0 while t == 0",
+    "FUNDING_CROWDING_REVERSAL": "position(t) = 0 while t <= lookback",
 }
 RULE_FORMULAS = {
     "ALWAYS_FLAT": "position(t) = 0",
@@ -159,6 +173,7 @@ RULE_FORMULAS = {
     "LAGGED_RETURN_SIGN": "d = price[t-1] - price[t-1-lookback]; position(t) = 0 if t <= lookback else (0 if abs(d) <= deadband else sign(d))",
     "LAGGED_RETURN_FADE": "d = price[t-1] - price[t-1-lookback]; position(t) = 0 if t <= lookback else (0 if abs(d) <= deadband else -sign(d))",
     "FUNDING_SIGN_FADE": "g = funding[t-1]; position(t) = 0 if t == 0 else (0 if abs(g) <= deadband else -sign(g))",
+    "FUNDING_CROWDING_REVERSAL": "d = price[t-1] - price[t-1-lookback]; g = funding[t-1]; position(t) = 0 if t <= lookback else (-1 if g > funding_deadband and d < -price_deadband else 1 if g < -funding_deadband and d > price_deadband else 0)",
 }
 RULE_CONTRACT = {
     "schema_version": SCHEMA_VERSION,
@@ -166,6 +181,7 @@ RULE_CONTRACT = {
     "position_domain": list(POSITION_DOMAIN),
     "sign_definition": "sign(x) = 1 if x > 0, -1 if x < 0, 0 if x == 0",
     "deadband_comparison": "a decision is flat when abs(signal) <= deadband; the deadband upper bound is inclusive",
+    "strict_activation": "FUNDING_CROWDING_REVERSAL activates only when prior_funding > funding_deadband and lagged_price_change < -price_deadband, or prior_funding < -funding_deadband and lagged_price_change > price_deadband",
     "information_set": "a decision at evaluated interval index t may read only observations with index strictly less than t (indices 0..t-1)",
     "decision_constraint": "indices strictly less than evaluated interval index",
     "parameter_schema": RULE_PARAMETER_SCHEMA,
@@ -246,6 +262,12 @@ def validate_bundle(bundle: Any) -> dict[str, Any]:
             if set(parameters) != expected:
                 raise SandboxValidationError("invalid funding parameters")
             _decimal(parameters["deadband"], "deadband", nonnegative=True)
+        elif rule == "FUNDING_CROWDING_REVERSAL":
+            expected = {"lookback", "price_deadband", "funding_deadband"}
+            if set(parameters) != expected or type(parameters.get("lookback")) is not int or not LOOKBACK_MIN <= parameters["lookback"] <= LOOKBACK_MAX:
+                raise SandboxValidationError("invalid funding crowding reversal parameters")
+            _decimal(parameters["price_deadband"], "price_deadband", nonnegative=True)
+            _decimal(parameters["funding_deadband"], "funding_deadband", nonnegative=True)
         if set(parameters) != expected:
             raise SandboxValidationError(f"parameters for {rule} must be {sorted(expected)}")
         if item["rationale_kind"] == "GENERIC_STYLIZED_FACT":
@@ -280,13 +302,27 @@ def position_for(variant: dict[str, Any], prices: list[Decimal], funding: list[D
     if rule == "ALWAYS_FLAT": return 0
     if rule == "ALWAYS_LONG": return 1
     if rule == "ALWAYS_SHORT": return -1
-    deadband = _decimal(params["deadband"], "deadband")
     if rule in ("LAGGED_RETURN_SIGN", "LAGGED_RETURN_FADE"):
+        deadband = _decimal(params["deadband"], "deadband")
         lookback = params["lookback"]
         if t <= lookback: return 0
         value = prices[t - 1] - prices[t - 1 - lookback]
         position = 0 if abs(value) <= deadband else _sign(value)
         return -position if rule == "LAGGED_RETURN_FADE" else position
+    if rule == "FUNDING_CROWDING_REVERSAL":
+        lookback = params["lookback"]
+        if t <= lookback:
+            return 0
+        price_deadband = _decimal(params["price_deadband"], "price_deadband")
+        funding_deadband = _decimal(params["funding_deadband"], "funding_deadband")
+        lagged_price_change = prices[t - 1] - prices[t - 1 - lookback]
+        prior_funding = funding[t - 1]
+        if prior_funding > funding_deadband and lagged_price_change < -price_deadband:
+            return -1
+        if prior_funding < -funding_deadband and lagged_price_change > price_deadband:
+            return 1
+        return 0
+    deadband = _decimal(params["deadband"], "deadband")
     if t == 0: return 0
     prior = funding[t - 1]
     return 0 if abs(prior) <= deadband else -_sign(prior)
