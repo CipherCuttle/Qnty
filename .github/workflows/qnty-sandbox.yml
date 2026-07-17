@@ -1,0 +1,29 @@
+name: qnty-sandbox
+
+on:
+  push:
+    paths: ["quantbot/sandbox/**", "tests/sandbox/**", "docs/sandbox/**", "quantbot/continuity/**", "tests/continuity/**", "docs/control/**"]
+  pull_request:
+    paths: ["quantbot/sandbox/**", "tests/sandbox/**", "docs/sandbox/**", "quantbot/continuity/**", "tests/continuity/**", "docs/control/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-sandbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -e ".[test]"
+      - run: python -m pytest tests/sandbox -q
+      - run: python -m pytest tests/continuity -q
+      - run: python -m quantbot.continuity verify
+      - name: Replay committed example twice
+        run: |
+          d="$(mktemp -d)"
+          python -m quantbot.sandbox.candidate1_v1_cli run --variants docs/sandbox/example_candidate1_v1_variants.json --out "$d/a.json"
+          python -m quantbot.sandbox.candidate1_v1_cli run --variants docs/sandbox/example_candidate1_v1_variants.json --out "$d/b.json"
+          cmp "$d/a.json" "$d/b.json"
+          python -m quantbot.sandbox.candidate1_v1_cli verify --receipt "$d/a.json"

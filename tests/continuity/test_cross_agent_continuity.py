@@ -202,10 +202,11 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
+    assert state["active_task"]["phase"] == "candidate1_v1_synthetic_sandbox_ready"
 
 
 def test_rendering_is_deterministic_and_does_not_mutate_state(tmp_path):
@@ -763,6 +764,8 @@ def _sandbox_fixture(tmp_path):
     v003_path.write_bytes(canonical_json_bytes(v003))
     active_path = tmp_path / "docs/control/active_task.json"
     active = json.loads(active_path.read_bytes())
+    active["phase"] = "candidate1_v1_synthetic_sandbox_governance"
+    active["handoff_receipt_path"] = f"{TASK_DIR}/handoff_v003.json"
     active["handoff_receipt_sha256"] = hashlib.sha256(v003_path.read_bytes()).hexdigest()
     active_path.write_bytes(canonical_json_bytes(active))
     return tmp_path
@@ -856,7 +859,7 @@ def test_sandbox_phase_v003_contract_passes_and_renders_boundary(tmp_path):
 
 def test_valid_v003_amendment_chain_and_boundary_rendering():
     state = load_and_verify_continuity_state(ROOT)
-    assert state["handoff_receipt"]["receipt_index"] == 3
+    assert state["handoff_receipt"]["receipt_index"] == 4
     assert state["sandbox_amendment"]["sandbox_id"] == "candidate1-v1-synthetic-design-sandbox-v0"
     packet = render_context_packet(state)
     assert "SYNTHETIC_SANDBOX id=candidate1-v1-synthetic-design-sandbox-v0 status=AUTHORIZED_EXPLORATORY_ENGINEERING_ONLY execution_budget=0" in packet
@@ -866,6 +869,7 @@ def test_valid_v003_amendment_chain_and_boundary_rendering():
     assert "V0_DISPOSITION=UNCHANGED" in packet
     assert "official V1 protocol" not in packet
     assert "V1 artifact" not in packet
+    assert "SYNTHETIC_SANDBOX_IMPLEMENTATION=READY" in packet
 
 
 @pytest.mark.parametrize("mutation", [

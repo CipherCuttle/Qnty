@@ -113,6 +113,17 @@ _DURABLE_PHASE = "durable_artifact_store_configuration"
 _DURABLE_NEXT_ACTION = "CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"
 _SANDBOX_PHASE = "candidate1_v1_synthetic_sandbox_governance"
 _SANDBOX_NEXT_ACTION = "IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"
+_SANDBOX_READY_PHASE = "candidate1_v1_synthetic_sandbox_ready"
+_SANDBOX_READY_NEXT_ACTION = "RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"
+_SANDBOX_READY_FILES = [
+    ".github/workflows/qnty-sandbox.yml",
+    "docs/sandbox/CANDIDATE1_V1_SYNTHETIC_SANDBOX.md",
+    "docs/sandbox/example_candidate1_v1_variants.json",
+    "quantbot/sandbox/__init__.py",
+    "quantbot/sandbox/candidate1_v1.py",
+    "quantbot/sandbox/candidate1_v1_cli.py",
+    "tests/sandbox/test_candidate1_v1.py",
+]
 _AMENDMENT_KEYS = {
     "allowed_actions", "amendment_id", "amendment_kind", "governed_protocol_id",
     "non_effects", "prohibited_actions", "rationale", "sandbox_id", "sandbox_status",
@@ -344,7 +355,7 @@ def _validate_evidence(evidence: object, root: Path, *, verify_files: bool) -> l
     return evidence
 
 
-def _validate_sandbox_amendment(receipt: dict, root: Path) -> dict:
+def _validate_sandbox_amendment(receipt: dict, root: Path, *, expected_next_action: str = _SANDBOX_NEXT_ACTION) -> dict:
     path = root / AMENDMENT_RELPATH
     if not path.is_file():
         _fail(f"sandbox amendment {AMENDMENT_RELPATH} is missing")
@@ -370,7 +381,7 @@ def _validate_sandbox_amendment(receipt: dict, root: Path) -> dict:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if evidence.get(AMENDMENT_RELPATH) != digest:
         _fail("sandbox amendment hash is not evidenced by the active handoff receipt")
-    if receipt["next_actions"] != [_SANDBOX_NEXT_ACTION]:
+    if receipt["next_actions"] != [expected_next_action]:
         _fail("sandbox phase next action is wrong")
     if not _V0_REQUIRED_PROHIBITIONS.issubset(receipt["prohibited_actions"]):
         _fail("sandbox phase dropped an existing V0 prohibition")
@@ -379,6 +390,39 @@ def _validate_sandbox_amendment(receipt: dict, root: Path) -> dict:
     if len(receipt["required_artifacts"]) != 1 or receipt["required_artifacts"][0]["artifact_id"] != REQUIRED_ARTIFACT_ID:
         _fail("sandbox phase cannot add a V1 required artifact")
     return amendment
+
+
+def _validate_ready_handoff(receipt: dict, root: Path) -> None:
+    """Validate the narrow post-implementation synthetic-only transition."""
+    amendment = _validate_sandbox_amendment(receipt, root, expected_next_action=_SANDBOX_READY_NEXT_ACTION)
+    del amendment
+    if receipt["next_actions"] != [_SANDBOX_READY_NEXT_ACTION]:
+        _fail("ready sandbox phase next action is wrong")
+    if receipt["required_artifacts"] != [{
+        "artifact_id": REQUIRED_ARTIFACT_ID,
+        "availability": "UNAVAILABLE",
+        "canonical_paths": [],
+        "expected_manifest_sha256": REQUIRED_ARTIFACT_MANIFEST_SHA256,
+        "verified_copy_count": 0,
+    }]:
+        _fail("ready sandbox phase changed the required V0 artifact state")
+    evidence_paths = {item["path"] for item in receipt["evidence"]}
+    for path in _SANDBOX_READY_FILES + [AMENDMENT_RELPATH]:
+        if path not in evidence_paths:
+            _fail(f"ready sandbox handoff is missing evidence for {path}")
+        target = root / path
+        if not target.is_file():
+            _fail(f"ready sandbox evidence file {path} is missing")
+    if receipt["safety_state"]["decomposition_execution_count"] != 0:
+        _fail("ready sandbox changed V0 execution count")
+    if receipt["safety_state"]["scientific_use_authorized"]:
+        _fail("ready sandbox granted scientific authorization")
+    if "USE_SANDBOX_OUTPUT_TO_SELECT_OFFICIAL_PROTOCOL" not in receipt["prohibited_actions"]:
+        _fail("ready sandbox is missing selection prohibition")
+    if "RANK_OR_RECOMMEND_SYNTHETIC_VARIANTS" not in receipt["prohibited_actions"]:
+        _fail("ready sandbox is missing ranking prohibition")
+    if "TREAT_SYNTHETIC_RECEIPT_AS_SCIENTIFIC_EVIDENCE" not in receipt["prohibited_actions"]:
+        _fail("ready sandbox is missing evidence prohibition")
 
 
 def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evidence_files: bool) -> int:
@@ -438,6 +482,10 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _SANDBOX_PHASE:
         _cross_check_artifact_records(parsed, root)
         amendment = _validate_sandbox_amendment(parsed, root)
+    elif active["phase"] == _SANDBOX_READY_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        _validate_ready_handoff(parsed, root)
+        amendment = _validate_sandbox_amendment(parsed, root, expected_next_action=_SANDBOX_READY_NEXT_ACTION)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -619,6 +667,21 @@ def render_context_packet(state: dict) -> str:
             f"SYNTHETIC_SANDBOX id={amendment['sandbox_id']} status={amendment['sandbox_status']} execution_budget={amendment['transition_gates']['sandbox_execution_budget']}",
             "SYNTHETIC_SANDBOX_REAL_DATA=FORBIDDEN",
             f"SYNTHETIC_SANDBOX_SCIENTIFIC_EVIDENCE={str(amendment['transition_gates']['sandbox_outputs_are_scientific_evidence']).upper()}",
+            "DURABLE_STORE_GATE=REQUIRED_FOR_REAL_ARTIFACT_OPERATIONS",
+            "V0_DISPOSITION=UNCHANGED",
+        ])
+    elif active["phase"] == _SANDBOX_READY_PHASE:
+        amendment = state["sandbox_amendment"]
+        lines.extend([
+            "SYNTHETIC_SANDBOX_IMPLEMENTATION=READY",
+            "SYNTHETIC_STRATEGY_BATCH=AUTHORIZED_MECHANICAL_ONLY",
+            "SYNTHETIC_VARIANT_PROVENANCE=REQUIRED",
+            "SYNTHETIC_SELECTION=FORBIDDEN",
+            "REAL_DATA_ACCESS=FORBIDDEN",
+            "SCIENTIFIC_EVIDENCE=FALSE",
+            f"SYNTHETIC_SANDBOX id={amendment['sandbox_id']} status={amendment['sandbox_status']} execution_budget={amendment['transition_gates']['sandbox_execution_budget']}",
+            "SYNTHETIC_SANDBOX_REAL_DATA=FORBIDDEN",
+            "SYNTHETIC_SANDBOX_SCIENTIFIC_EVIDENCE=FALSE",
             "DURABLE_STORE_GATE=REQUIRED_FOR_REAL_ARTIFACT_OPERATIONS",
             "V0_DISPOSITION=UNCHANGED",
         ])
