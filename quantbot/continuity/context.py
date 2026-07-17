@@ -178,24 +178,32 @@ _H001_PRE_DATA_REVIEW_BINDING_KEYS = {
     "design_sha256", "review_verdict", "reviewed_implementation_head", "validator_sha256",
 }
 _H001_PRE_DATA_ALLOWED_ACTIONS = sorted([
-    "DRAFT_APPEND_ONLY_H001_TEMPORAL_CAUSALITY_AMENDMENT",
-    "DRAFT_AND_FREEZE_H001_SYNTHETIC_NULL_CALIBRATION_SPEC",
-    "IMPLEMENT_DURABLE_STORE_FAILURE_DOMAIN_EVIDENCE_SCHEMA",
-    "IMPLEMENT_GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER",
+    "DRAFT_APPEND_ONLY_H001_TEMPORAL_CAUSALITY_AMENDMENT_WITHOUT_APPLYING",
+    "DRAFT_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_WITHOUT_FREEZING_OR_EXECUTION",
+    "IMPLEMENT_APPEND_ONLY_GLOBAL_REAL_PROTOCOL_HOLDOUT_DISCLOSURE_LEDGER_SCHEMA_WITHOUT_DATA_ACCESS_OR_BACKFILL",
+    "IMPLEMENT_DURABLE_STORE_FAILURE_DOMAIN_EVIDENCE_METADATA_SCHEMA_WITHOUT_STORE_ACCESS_OR_CONFIGURATION",
     "IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_HARNESS_WITHOUT_EXECUTION",
-    "IMPLEMENT_REPLAYABLE_REVIEW_EVIDENCE_PACKET_SCHEMA",
-    "IMPLEMENT_SYNTHETIC_ARTIFACT_CANARY_SCAFFOLD_WITHOUT_STORE_CONFIGURATION",
+    "IMPLEMENT_REPLAYABLE_REVIEW_EVIDENCE_PACKET_SCHEMA_WITHOUT_REAL_DATA_OR_SECRETS",
+    "IMPLEMENT_SYNTHETIC_ARTIFACT_CANARY_SCAFFOLD_WITHOUT_STORE_CONFIGURATION_OR_EXECUTION",
     "REVIEW_H001_PRE_DATA_ASSURANCE_AND_SYNTHETIC_INFRASTRUCTURE_SCAFFOLD",
 ])
 _H001_PRE_DATA_ASSURANCE_CONTROLS = sorted([
+    "CALIBRATION_SPEC_FREEZE_REQUIRES_SEPARATE_GOVERNANCE",
     "DYNAMIC_FUNDING_INTERVAL_FIXTURES_REQUIRED", "FAILURE_DOMAIN_LABEL_SELF_ASSERTION_IS_INSUFFICIENT",
+    "FAILURE_DOMAIN_SCHEMA_IMPLEMENTATION_CANNOT_PROBE_STORES",
     "FROZEN_NULL_DGP_SPEC_REQUIRED_BEFORE_CALIBRATION", "GLOBAL_HOLDOUT_DISCLOSURE_LEDGER_REQUIRED",
     "HAC_LAG_TUNING_FORBIDDEN", "INDEPENDENT_RESTORE_AND_REHASH_REQUIRED",
+    "HOLDOUT_LEDGER_IMPLEMENTATION_IS_SCHEMA_ONLY", "HOLDOUT_LEDGER_REAL_DATA_ACCESS_FORBIDDEN",
+    "HOLDOUT_LEDGER_RETROACTIVE_BACKFILL_FORBIDDEN",
     "MULTIPLE_FUNDING_EVENTS_PER_BAR_FIXTURES_REQUIRED", "REPLAYABLE_REVIEW_PACKET_REQUIRED",
+    "REVIEW_PACKET_REAL_DATA_AND_SECRETS_FORBIDDEN",
     "STATIONARY_BOOTSTRAP_BLOCK_LENGTH_TUNING_FORBIDDEN", "STRICT_TEMPORAL_PRECEDENCE_AMENDMENT_TARGET",
     "SYNTHETIC_CANARY_CANNOT_BECOME_REAL_ARTIFACT",
 ])
 _H001_PRE_DATA_NON_EFFECTS = sorted([
+    "DOES_NOT_AUTHORIZE_CALIBRATION_SPEC_FREEZE", "DOES_NOT_AUTHORIZE_CANDIDATE_STORE_ACCESS_OR_PROBING",
+    "DOES_NOT_AUTHORIZE_HOLDOUT_LEDGER_BACKFILL", "DOES_NOT_AUTHORIZE_HOLDOUT_OR_REAL_ARTIFACT_BYTE_ACCESS",
+    "DOES_NOT_AUTHORIZE_NETWORK_ACCESS", "DOES_NOT_AUTHORIZE_REVIEW_PACKET_REAL_DATA_OR_SECRET_INCLUSION",
     "DOES_NOT_ACCESS_BINANCE", "DOES_NOT_ACCESS_REAL_DATA", "DOES_NOT_AMEND_THE_H001_PREREGISTRATION",
     "DOES_NOT_AUTHORIZE_ASSURANCE_EXECUTION", "DOES_NOT_AUTHORIZE_BOOTSTRAP_OR_HAC_TUNING",
     "DOES_NOT_AUTHORIZE_CANDIDATE_STORE_CONFIGURATION", "DOES_NOT_AUTHORIZE_H001_HOLDOUT",
@@ -210,6 +218,7 @@ _H001_PRE_DATA_NON_EFFECTS = sorted([
     "DOES_NOT_RECOVER_OR_RETIRE_V0",
 ])
 _H001_PRE_DATA_REQUIRED_PROHIBITIONS = sorted(set([
+    "ACCESS_HOLDOUT_OR_REAL_ARTIFACT_BYTES_FOR_LEDGER_IMPLEMENTATION", "ACCESS_OR_PROBE_CANDIDATE_STORE_ROOTS",
     "ACCESS_ANY_REAL_BARS_OR_FUNDING", "ACCESS_BINANCE_OR_ANY_MARKET_DATA_SOURCE",
     "ACCESS_CANDIDATE1_V0_INPUT_OR_QUARANTINE", "APPLY_TEMPORAL_CAUSALITY_CHANGE_WITHOUT_APPEND_ONLY_AMENDMENT",
     "CALCULATE_H001_REAL_RETURNS", "CONFIGURE_CANDIDATE_DURABLE_STORES", "CONFIGURE_DURABLE_ARTIFACT_STORES",
@@ -224,18 +233,28 @@ _H001_PRE_DATA_REQUIRED_PROHIBITIONS = sorted(set([
     "ACCESS_QUARANTINE", "CLAIM_H001_HAS_MARKET_EDGE", "CHOOSE_OR_INSPECT_REAL_DATASET_BYTES",
     "CONSUME_H001_EXECUTION_BUDGET", "FREEZE_REAL_DATA", "RECOVER_OR_RETIRE_V0",
     "AUTHORIZE_H001_REAL_DATA_INFRASTRUCTURE_WITHOUT_SEPARATE_GOVERNANCE",
+    "ACCESS_STORE_CREDENTIALS_OR_SECRET_CONFIGURATION", "BACKFILL_GLOBAL_HOLDOUT_LEDGER_FROM_REAL_DATA_OR_UNVERIFIED_HISTORY",
+    "FREEZE_H001_SYNTHETIC_NULL_CALIBRATION_SPEC", "INCLUDE_REAL_DATA_OR_SECRETS_IN_REVIEW_EVIDENCE_PACKET",
+    "MUTATE_PRIOR_HOLDOUT_LEDGER_DISCLOSURES", "QUERY_NETWORK_OR_MARKET_DATA_FOR_SCAFFOLD_IMPLEMENTATION",
 ]))
 _H001_PRE_DATA_TRANSITION_GATES = {
     "existing_h001_design_unchanged": True, "existing_h001_validator_unchanged": True, "existing_h001_review_passed": True,
     "temporal_causality_amendment_required": True, "temporal_causality_amendment_applied": False,
     "temporal_causality_amendment_requires_independent_review": True, "synthetic_null_calibration_spec_required": True,
+    "synthetic_null_calibration_spec_draft_authorized": True, "synthetic_null_calibration_spec_freeze_authorized": False,
+    "synthetic_null_calibration_spec_frozen": False,
     "synthetic_null_calibration_harness_authorized": True, "synthetic_null_calibration_execution_authorized": False,
     "synthetic_null_calibration_results_exposed": False, "bootstrap_block_length_tuning_authorized": False,
     "hac_lag_tuning_authorized": False, "global_holdout_ledger_required": True, "global_holdout_ledger_implemented": False,
+    "global_holdout_ledger_schema_authorized": True, "global_holdout_ledger_data_access_authorized": False,
+    "global_holdout_ledger_backfill_authorized": False, "global_holdout_ledger_prior_history_mutation_authorized": False,
     "failure_domain_evidence_schema_required": True, "synthetic_store_canary_scaffold_authorized": True,
+    "failure_domain_evidence_metadata_schema_authorized": True, "candidate_store_access_authorized": False,
+    "candidate_store_probe_authorized": False, "candidate_store_credential_access_authorized": False,
     "candidate_store_configuration_authorized": False, "synthetic_store_canary_execution_authorized": False,
     "real_artifact_store_operations_authorized": False, "review_evidence_packet_required": True,
     "review_evidence_packet_implemented": False, "real_data_access_authorized": False,
+    "review_packet_real_data_inclusion_authorized": False, "review_packet_secret_inclusion_authorized": False,
     "real_artifact_creation_authorized": False, "validation_execution_authorized": False,
     "holdout_execution_authorized": False, "h001_primary_execution_budget": 0, "h001_primary_execution_count": 0,
     "required_durable_copy_count": 2, "scientific_authorization": False, "paper_trade_authorization": False,
@@ -867,9 +886,10 @@ def _validate_h001_pre_data_handoff(receipt: dict, root: Path) -> dict:
         if amendment[key] != expected:
             _fail(f"H001 pre-data assurance amendment {key} is wrong")
     if amendment["authorization_scope"] != (
-        "Only a repository-owned, synthetic-only scaffold for pre-data scientific assurance, global disclosure accounting, "
-        "candidate-store qualification and replayable review evidence is authorized; assurance runs and real-store configuration "
-        "are not authorized in this PR."
+        "Only repository-owned schema, validator, harness, documentation and synthetic-fixture scaffolding may be implemented. "
+        "All implementation must operate without network access, Binance or market-data access, holdout access, real artifact bytes, "
+        "artifact-store roots, store credentials, candidate-store probing, candidate-store configuration, ledger backfill, calibration "
+        "execution, calibration-result exposure or calibration-spec freezing. The scaffold may describe later work but may not perform it."
     ):
         _fail("H001 pre-data assurance authorization_scope is wrong")
     for key, expected in (("allowed_actions", _H001_PRE_DATA_ALLOWED_ACTIONS), ("assurance_controls", _H001_PRE_DATA_ASSURANCE_CONTROLS),
@@ -1318,14 +1338,24 @@ def render_context_packet(state: dict) -> str:
         lines.extend([
             "H001_PRE_DATA_ASSURANCE_GOVERNANCE=AUTHORIZED_SCAFFOLD_ONLY",
             "H001_PRE_DATA_ASSURANCE_EXECUTION=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_DRAFT=AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC=REQUIRED_NOT_FROZEN",
             "H001_TEMPORAL_CAUSALITY_AMENDMENT=REQUIRED_NOT_CREATED",
             "H001_TEMPORAL_CAUSALITY_TARGET=FUNDING_TIME_STRICTLY_BEFORE_DECISION",
             "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
             "H001_BOOTSTRAP_BLOCK_LENGTH_TUNING=FORBIDDEN",
             "H001_HAC_LAG_TUNING=FORBIDDEN",
+            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_SCOPE=SCHEMA_ONLY",
+            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_DATA_ACCESS=FORBIDDEN",
+            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_BACKFILL=FORBIDDEN",
             "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER=REQUIRED_NOT_IMPLEMENTED",
             "H001_SYNTHETIC_STORE_CANARY_SCAFFOLD=AUTHORIZED_NOT_IMPLEMENTED",
+            "H001_FAILURE_DOMAIN_EVIDENCE_SCOPE=METADATA_SCHEMA_ONLY",
+            "H001_CANDIDATE_STORE_ACCESS_OR_PROBING=FORBIDDEN",
             "H001_CANDIDATE_STORE_CONFIGURATION=NOT_AUTHORIZED",
+            "H001_REVIEW_PACKET_REAL_DATA_INCLUSION=FORBIDDEN",
+            "H001_REVIEW_PACKET_SECRET_INCLUSION=FORBIDDEN",
             "H001_REAL_DATA_ACCESS=FORBIDDEN",
             "H001_EXECUTION=0/0",
             f"UMBRELLA_DECOMPOSITION_EXECUTION={safety['decomposition_execution_count']}/{safety['decomposition_execution_budget']}",
