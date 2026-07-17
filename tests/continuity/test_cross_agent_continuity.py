@@ -1102,6 +1102,35 @@ _REVIEW_COMPLETE_FILES = (
     "tests/experiment/test_h001_real_falsification_preregistration.py",
 ) + tuple(f"{TASK_DIR}/handoff_v{idx:03d}.json" for idx in range(1, 13))
 
+_REVIEW_COMPLETE_ACTIVE_TASK = {
+    "control_kind": "qnty_active_task_pointer",
+    "handoff_receipt_path": f"{TASK_DIR}/handoff_v012.json",
+    "handoff_receipt_sha256": "260414954f579b7b1d6c56f1c2d68dbf5796017292630c6a3b36a28c9340c326",
+    "phase": context._H001_REVIEW_COMPLETE_PHASE,
+    "protocol_id": PROTOCOL_ID,
+    "schema_version": "0.1.0",
+    "task_id": TASK_ID,
+}
+
+_EXPECTED_PRE_V013_SHA256 = {
+    **{f"{TASK_DIR}/handoff_v{idx:03d}.json": sha for idx, sha in enumerate((
+        "97de4e8b17eb76546b6af451c62a739b035c510c1957717201117fcb95c99998",
+        "12eb5ee0a364af025414c2ef430bee44611e91010a34684ec2ebb6ca8e033640",
+        "8dd9e03f6783afc6cd2a9a223aa7f4e2564d6047c023fecc76f8db22eacf0361",
+        "6d01c548bceb069d7f056bc97071d21a4be9ffa8142e5084141ffde44a0c4560",
+        "dc8f92ce481b1680e451bc5583af7fb0ff51fbad4f55f7c866d4c19221b133ad",
+        "21593eaaf0ce199ce5903fbd4f85fac5c5f4f7b8e2a44ba42340365e484fea20",
+        "64c34a7f5a1149261f0cc03689796f000b495f97ef0953e2a04fb399b4210239",
+        "dc1be7a4374c5704116a5ae46c1664c9e775cc5ac7cac74bdd06421c72a3e9bf",
+        "863a36a374338c3e67391f1805a639aad285dd652a6e4100b2b4d287e1b24350",
+        "4a1a5287ffb8ddfd1753ea0715fc351ebef3ac1f4af77755e6acd241d81c5cc6",
+        "888dd194c35df018a8b1e2d1e3786fdd6368004aae725f2e177e5b68d24dc2b6",
+        "260414954f579b7b1d6c56f1c2d68dbf5796017292630c6a3b36a28c9340c326",
+    ), start=1)},
+    "docs/control/amendments/candidate1_v1_synthetic_sandbox_v001.json": "46100af25d0b68d374e38df9c6c1902ac02e6c8d1c2df8307f56ed2ed37e32d0",
+    "docs/control/amendments/candidate1_h001_real_falsification_design_v001.json": "5e3eff235212f52480fa00ba7ffabb4d75f4160d51d359dc6e5aa6b9d1b8b1e1",
+}
+
 
 def _review_complete_fixture(tmp_path):
     """Copy the committed review-completion control plane verbatim.
@@ -1114,9 +1143,7 @@ def _review_complete_fixture(tmp_path):
         target = tmp_path / relpath
         target.parent.mkdir(parents=True, exist_ok=True)
         if relpath == "docs/control/active_task.json":
-            target.write_bytes(__import__("subprocess").check_output([
-                "git", "show", "9a9e6b16c372cef9dfc99ff9ccd49fdc8e16b8f4:" + relpath
-            ]))
+            target.write_bytes(canonical_json_bytes(_REVIEW_COMPLETE_ACTIVE_TASK))
         else:
             shutil.copy2(ROOT / relpath, target)
     return tmp_path
@@ -1452,9 +1479,11 @@ def test_v013_handoff_drift_fails_closed(tmp_path, mutation):
 
 
 def test_v001_through_v012_remain_byte_identical_to_pinned_base():
-    for relpath in tuple(f"{TASK_DIR}/handoff_v{idx:03d}.json" for idx in range(1, 13)) + (
-        "docs/control/amendments/candidate1_h001_real_falsification_design_v001.json",
-        "docs/control/amendments/candidate1_v1_synthetic_sandbox_v001.json",
-    ):
-        expected = __import__("subprocess").check_output(["git", "show", "9a9e6b16c372cef9dfc99ff9ccd49fdc8e16b8f4:" + relpath])
-        assert (ROOT / relpath).read_bytes() == expected
+    assert set(_EXPECTED_PRE_V013_SHA256) == set(
+        tuple(f"{TASK_DIR}/handoff_v{idx:03d}.json" for idx in range(1, 13)) + (
+            "docs/control/amendments/candidate1_v1_synthetic_sandbox_v001.json",
+            "docs/control/amendments/candidate1_h001_real_falsification_design_v001.json",
+        )
+    )
+    for relpath, expected_sha256 in _EXPECTED_PRE_V013_SHA256.items():
+        assert hashlib.sha256((ROOT / relpath).read_bytes()).hexdigest() == expected_sha256
