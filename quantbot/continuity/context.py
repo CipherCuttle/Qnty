@@ -128,6 +128,18 @@ _H001_REVIEW_COMPLETE_PHASE = "candidate1_h001_real_falsification_preregistratio
 _H001_REVIEW_COMPLETE_NEXT_ACTION = "AUTHORIZE_H001_REAL_DATA_INFRASTRUCTURE_PREPARATION_GOVERNANCE"
 _H001_PRE_DATA_PHASE = "candidate1_h001_pre_data_assurance_governance"
 _H001_PRE_DATA_NEXT_ACTION = "IMPLEMENT_H001_PRE_DATA_ASSURANCE_AND_SYNTHETIC_INFRASTRUCTURE_SCAFFOLD"
+_H001_SCAFFOLD_PHASE = "candidate1_h001_pre_data_assurance_scaffold_implemented_review_required"
+_H001_SCAFFOLD_NEXT_ACTION = "ADVERSARIAL_REVIEW_H001_PRE_DATA_ASSURANCE_AND_SYNTHETIC_INFRASTRUCTURE_SCAFFOLD"
+_H001_SCAFFOLD_BASE_SHA = "28d6c70e9d7cb11c55d1afdf8b4e5ad9754f7aba"
+_H001_SCAFFOLD_V013_SHA256 = "89e3fc9181017d70bc793db87efd7932f63a75784c117b3bc49ad2a26b243bc1"
+_H001_ASSURANCE_DOCS = {
+    "docs/assurance/h001_temporal_causality_amendment_draft_v001.json": "03c57d0c0935eb37d53ee68410935e258e3bde0f5b2c8d19048e4c1d979d5639",
+    "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json": "7e05a0b2b44dd4e3fbadf3e121791eb2ee76385a6b2ec6b872984cbb3510ecf6",
+    "docs/assurance/global_real_protocol_holdout_disclosure_ledger_v001.json": "71b8ff5eb74461b0789eeb75388808fc787692fc6d84fad1acb573d4b36315ee",
+    "docs/assurance/durable_store_failure_domain_evidence_schema_v001.json": "8f13f87ce97fbdf7771004e02e33809805a75338383e93c870ce564a48968985",
+    "docs/assurance/replayable_review_evidence_packet_schema_v001.json": "990052469571b2ff100180c706e0e38257fd952e32320b665753d23212cfbcbb",
+    "docs/assurance/synthetic_artifact_canary_scaffold_v001.json": "45e6f95fece2328df2c39f2fce790bba37a0944ea7c5bc33b8e505820beb5392",
+}
 # Immutable identities recorded by the H001 preregistration review-completion
 # transition. These pin the exact reviewed artifacts; the external adversarial
 # review is process assurance only and is never scientific evidence.
@@ -910,6 +922,8 @@ def _validate_h001_pre_data_handoff(receipt: dict, root: Path) -> dict:
     gates = _require_exact_keys(amendment["transition_gates"], set(_H001_PRE_DATA_TRANSITION_GATES), "transition_gates")
     if gates != _H001_PRE_DATA_TRANSITION_GATES:
         _fail("H001 pre-data assurance transition gates drifted")
+    if receipt["receipt_index"] == 14:
+        return amendment
     evidence = {item["path"]: item["sha256"] for item in receipt["evidence"]}
     required_evidence = {
         PRE_DATA_H001_AMENDMENT_RELPATH: hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -957,6 +971,61 @@ def _validate_h001_pre_data_handoff(receipt: dict, root: Path) -> dict:
         _fail("H001 pre-data assurance changed the V0 artifact state")
     if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
         _fail("H001 pre-data assurance changed an execution or authorization boundary")
+    return amendment
+
+
+def _validate_h001_scaffold_handoff(receipt: dict, root: Path) -> dict:
+    """Validate the implemented, still non-executable assurance scaffold."""
+    amendment = _validate_h001_pre_data_handoff(receipt, root)
+    if receipt["receipt_index"] != 14:
+        _fail("H001 assurance scaffold handoff must be receipt index 14")
+    if receipt["source_branch"] != "feat/h001-predata-assurance-scaffold" or receipt["source_head_commit"] != _H001_SCAFFOLD_BASE_SHA:
+        _fail("H001 assurance scaffold source identity is wrong")
+    if receipt["predecessor"] != {"path": f"docs/control/tasks/{TASK_ID}/handoff_v013.json", "sha256": _H001_SCAFFOLD_V013_SHA256}:
+        _fail("H001 assurance scaffold predecessor is wrong")
+    expected_scope = {
+        "docs/assurance/H001_PRE_DATA_ASSURANCE_SCAFFOLD.md",
+        *sorted(_H001_ASSURANCE_DOCS),
+        "quantbot/assurance/__init__.py", "quantbot/assurance/contracts.py", "quantbot/assurance/h001_null_calibration.py",
+        "tests/assurance/test_contracts.py", "tests/assurance/test_h001_null_calibration.py",
+        f"docs/control/tasks/{TASK_ID}/handoff_v014.json", ACTIVE_TASK_RELPATH,
+        "quantbot/continuity/context.py", "tests/continuity/test_cross_agent_continuity.py",
+    }
+    if set(receipt["changed_file_scope"]) != expected_scope or len(receipt["changed_file_scope"]) != len(expected_scope):
+        _fail("H001 assurance scaffold changed_file_scope is not the exact sixteen-file scope")
+    if receipt["next_actions"] != [_H001_SCAFFOLD_NEXT_ACTION]:
+        _fail("H001 assurance scaffold next action is wrong")
+    required_decisions = {
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT_DRAFT=CREATED_NOT_APPLIED", "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=UNCHANGED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_DRAFT=CREATED_UNFROZEN", "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_HARNESS=IMPLEMENTED_NOT_EXECUTED", "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+        "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_SCHEMA=IMPLEMENTED", "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_STATE=EMPTY_NO_BACKFILL",
+        "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_DATA_ACCESS=FORBIDDEN", "H001_FAILURE_DOMAIN_EVIDENCE_SCHEMA=IMPLEMENTED_METADATA_ONLY",
+        "H001_CANDIDATE_STORE_ACCESS_OR_PROBING=FORBIDDEN", "H001_CANDIDATE_STORE_CONFIGURATION=NOT_AUTHORIZED",
+        "H001_REVIEW_EVIDENCE_PACKET_SCHEMA=IMPLEMENTED", "H001_REVIEW_EVIDENCE_PACKET_CREATED=FALSE",
+        "H001_REVIEW_PACKET_REAL_DATA_INCLUSION=FORBIDDEN", "H001_REVIEW_PACKET_SECRET_INCLUSION=FORBIDDEN",
+        "H001_SYNTHETIC_ARTIFACT_CANARY_SCAFFOLD=IMPLEMENTED_NOT_EXECUTED", "H001_SYNTHETIC_ARTIFACT_CANARY_REGISTERED_AS_REAL_ARTIFACT=FALSE",
+        "H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEW=REQUIRED_NOT_COMPLETED", "H001_REAL_DATA_ACCESS=FORBIDDEN",
+        "H001_ARTIFACT_OPERATIONS=FORBIDDEN", "H001_CURRENT_EXECUTION_BUDGET=0", "H001_CURRENT_EXECUTION_COUNT=0",
+        "H001_SCIENTIFIC_AUTHORIZATION=FALSE", "H001_PAPER_TRADE_AUTHORIZATION=FALSE", "H001_LIVE_AUTHORIZATION=FALSE",
+        "V0_AVAILABILITY=UNAVAILABLE", "V0_VERIFIED_COPY_COUNT=0", "DURABLE_STORES=UNCONFIGURED", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
+    }
+    if not required_decisions.issubset(set(receipt["decisions"])):
+        _fail("H001 assurance scaffold handoff is missing required decisions")
+    evidence = {item["path"]: item["sha256"] for item in receipt["evidence"]}
+    required_paths = set(_H001_ASSURANCE_DOCS) | {
+        "docs/assurance/H001_PRE_DATA_ASSURANCE_SCAFFOLD.md", "quantbot/assurance/__init__.py", "quantbot/assurance/contracts.py", "quantbot/assurance/h001_null_calibration.py",
+        "tests/assurance/test_contracts.py", "tests/assurance/test_h001_null_calibration.py", "quantbot/continuity/context.py", "tests/continuity/test_cross_agent_continuity.py",
+        f"docs/control/tasks/{TASK_ID}/handoff_v013.json", PRE_DATA_H001_AMENDMENT_RELPATH, H001_DESIGN_JSON_RELPATH, _H001_VALIDATOR_RELPATH,
+        "tests/experiment/test_h001_real_falsification_preregistration.py", "docs/artifacts/candidate1-real-input-v0.json", STORE_REGISTRY_RELPATH,
+    }
+    for relpath in required_paths:
+        target = root / relpath
+        if not target.is_file() or evidence.get(relpath) != hashlib.sha256(target.read_bytes()).hexdigest():
+            _fail(f"H001 assurance scaffold evidence missing or wrong for {relpath}")
+    for relpath, expected in _H001_ASSURANCE_DOCS.items():
+        if evidence.get(relpath) != expected:
+            _fail(f"H001 assurance document hash is not independently pinned for {relpath}")
     return amendment
 
 
@@ -1037,6 +1106,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_PRE_DATA_PHASE:
         _cross_check_artifact_records(parsed, root)
         amendment = _validate_h001_pre_data_handoff(parsed, root)
+    elif active["phase"] == _H001_SCAFFOLD_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        amendment = _validate_h001_scaffold_handoff(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -1044,7 +1116,7 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
         parsed = dict(parsed)
         if phase in (_H001_DESIGN_PHASE, _H001_PREREGISTERED_PHASE, _H001_REVIEW_COMPLETE_PHASE):
             parsed["_validated_h001_design_amendment"] = amendment
-        elif phase == _H001_PRE_DATA_PHASE:
+        elif phase in (_H001_PRE_DATA_PHASE, _H001_SCAFFOLD_PHASE):
             parsed["_validated_h001_pre_data_amendment"] = amendment
         else:
             parsed["_validated_sandbox_amendment"] = amendment
@@ -1334,14 +1406,16 @@ def render_context_packet(state: dict) -> str:
             "EDGE_STATUS=EDGE_UNPROVEN",
             "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
         ])
-    elif active["phase"] == _H001_PRE_DATA_PHASE:
+    elif active["phase"] in (_H001_PRE_DATA_PHASE, _H001_SCAFFOLD_PHASE):
         lines.extend([
             "H001_PRE_DATA_ASSURANCE_GOVERNANCE=AUTHORIZED_SCAFFOLD_ONLY",
             "H001_PRE_DATA_ASSURANCE_EXECUTION=NOT_AUTHORIZED",
             "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_DRAFT=AUTHORIZED",
             "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED",
             "H001_SYNTHETIC_NULL_CALIBRATION_SPEC=REQUIRED_NOT_FROZEN",
-            "H001_TEMPORAL_CAUSALITY_AMENDMENT=REQUIRED_NOT_CREATED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE" if active["phase"] == _H001_SCAFFOLD_PHASE else "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+            "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=UNCHANGED" if active["phase"] == _H001_SCAFFOLD_PHASE else "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=UNCHANGED",
+            "H001_TEMPORAL_CAUSALITY_AMENDMENT=CREATED_NOT_APPLIED" if active["phase"] == _H001_SCAFFOLD_PHASE else "H001_TEMPORAL_CAUSALITY_AMENDMENT=REQUIRED_NOT_CREATED",
             "H001_TEMPORAL_CAUSALITY_TARGET=FUNDING_TIME_STRICTLY_BEFORE_DECISION",
             "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
             "H001_BOOTSTRAP_BLOCK_LENGTH_TUNING=FORBIDDEN",
@@ -1349,13 +1423,19 @@ def render_context_packet(state: dict) -> str:
             "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_SCOPE=SCHEMA_ONLY",
             "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_DATA_ACCESS=FORBIDDEN",
             "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_BACKFILL=FORBIDDEN",
-            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER=REQUIRED_NOT_IMPLEMENTED",
-            "H001_SYNTHETIC_STORE_CANARY_SCAFFOLD=AUTHORIZED_NOT_IMPLEMENTED",
+            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER=IMPLEMENTED" if active["phase"] == _H001_SCAFFOLD_PHASE else "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER=REQUIRED_NOT_IMPLEMENTED",
+            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_STATE=EMPTY_NO_BACKFILL" if active["phase"] == _H001_SCAFFOLD_PHASE else "H001_SYNTHETIC_STORE_CANARY_SCAFFOLD=AUTHORIZED_NOT_IMPLEMENTED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_HARNESS=IMPLEMENTED_NOT_EXECUTED" if active["phase"] == _H001_SCAFFOLD_PHASE else "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
             "H001_FAILURE_DOMAIN_EVIDENCE_SCOPE=METADATA_SCHEMA_ONLY",
             "H001_CANDIDATE_STORE_ACCESS_OR_PROBING=FORBIDDEN",
             "H001_CANDIDATE_STORE_CONFIGURATION=NOT_AUTHORIZED",
             "H001_REVIEW_PACKET_REAL_DATA_INCLUSION=FORBIDDEN",
             "H001_REVIEW_PACKET_SECRET_INCLUSION=FORBIDDEN",
+            "H001_REVIEW_EVIDENCE_PACKET_SCHEMA=IMPLEMENTED" if active["phase"] == _H001_SCAFFOLD_PHASE else "H001_REVIEW_PACKET_SECRET_INCLUSION=FORBIDDEN",
+            "H001_REVIEW_EVIDENCE_PACKET_CREATED=FALSE" if active["phase"] == _H001_SCAFFOLD_PHASE else "H001_REVIEW_PACKET_SECRET_INCLUSION=FORBIDDEN",
+            "H001_SYNTHETIC_ARTIFACT_CANARY_SCAFFOLD=IMPLEMENTED_NOT_EXECUTED" if active["phase"] == _H001_SCAFFOLD_PHASE else "H001_SYNTHETIC_STORE_CANARY_SCAFFOLD=AUTHORIZED_NOT_IMPLEMENTED",
+            "H001_SYNTHETIC_ARTIFACT_CANARY_REGISTERED_AS_REAL_ARTIFACT=FALSE" if active["phase"] == _H001_SCAFFOLD_PHASE else "H001_REVIEW_PACKET_REAL_DATA_INCLUSION=FORBIDDEN",
+            "H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEW=REQUIRED_NOT_COMPLETED" if active["phase"] == _H001_SCAFFOLD_PHASE else "H001_REVIEW_PACKET_SECRET_INCLUSION=FORBIDDEN",
             "H001_REAL_DATA_ACCESS=FORBIDDEN",
             "H001_EXECUTION=0/0",
             f"UMBRELLA_DECOMPOSITION_EXECUTION={safety['decomposition_execution_count']}/{safety['decomposition_execution_budget']}",
@@ -1364,6 +1444,8 @@ def render_context_packet(state: dict) -> str:
             "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
             "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
             "H001_LIVE_AUTHORIZATION=FALSE",
+            "EDGE_STATUS=EDGE_UNPROVEN",
+            "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
         ])
     for prohibited in receipt["prohibited_actions"]:
         lines.append(f"PROHIBITED={prohibited}")
