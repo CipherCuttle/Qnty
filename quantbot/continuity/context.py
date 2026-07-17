@@ -123,6 +123,47 @@ _H001_DESIGN_PHASE = "candidate1_h001_real_falsification_preregistration_design_
 _H001_DESIGN_NEXT_ACTION = "DRAFT_H001_REAL_FALSIFICATION_PREREGISTRATION_DESIGN"
 _H001_PREREGISTERED_PHASE = "candidate1_h001_real_falsification_preregistered_design_only"
 _H001_PREREGISTERED_NEXT_ACTION = "ADVERSARIAL_REVIEW_H001_REAL_FALSIFICATION_PREREGISTRATION"
+_H001_REVIEW_COMPLETE_PHASE = "candidate1_h001_real_falsification_preregistration_review_complete"
+_H001_REVIEW_COMPLETE_NEXT_ACTION = "AUTHORIZE_H001_REAL_DATA_INFRASTRUCTURE_PREPARATION_GOVERNANCE"
+# Immutable identities recorded by the H001 preregistration review-completion
+# transition. These pin the exact reviewed artifacts; the external adversarial
+# review is process assurance only and is never scientific evidence.
+_H001_PREREGISTERED_HANDOFF_SHA256 = "888dd194c35df018a8b1e2d1e3786fdd6368004aae725f2e177e5b68d24dc2b6"
+_H001_REVIEW_MERGED_MAIN_SHA = "f9166c3f03938f0b3c0a1ea87a7260ae6eaf24b3"
+_H001_REVIEW_SOURCE_BRANCH = "feat/h001-preregistration-review-completion"
+_H001_REVIEW_REVIEWED_HEAD = "23653b84ab3ab21d394bbeebaac790d45c2d90c7"
+_H001_REVIEW_DESIGN_SHA256 = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+_H001_REVIEW_VALIDATOR_SHA256 = "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"
+_H001_REVIEW_FOCUSED_TEST_SHA256 = "4cf6478701f70ab7ecee4f5d84b39b042344daeb928da38d59c0389a2a8ca7c6"
+_H001_REVIEW_VERDICT = "QNTY_H001_REAL_FALSIFICATION_PREREGISTRATION_REREVIEW_PASSED"
+_H001_VALIDATOR_RELPATH = "quantbot/experiment/h001_real_falsification_preregistration.py"
+_H001_FOCUSED_TEST_RELPATH = "tests/experiment/test_h001_real_falsification_preregistration.py"
+_H001_REVIEW_REQUIRED_DECISIONS = {
+    "H001_PREREGISTRATION_REVIEW_STATUS=PASSED",
+    f"H001_PREREGISTRATION_REVIEWED_HEAD={_H001_REVIEW_REVIEWED_HEAD}",
+    f"H001_PREREGISTRATION_DESIGN_SHA256={_H001_REVIEW_DESIGN_SHA256}",
+    f"H001_PREREGISTRATION_VALIDATOR_SHA256={_H001_REVIEW_VALIDATOR_SHA256}",
+    "H001_PREREGISTRATION_REVIEW_NAMED_PROBES=67/67_REJECTED",
+    "H001_PREREGISTRATION_REVIEW_GENUINE_MUTATIONS=1136/1136_REJECTED",
+    "H001_PREREGISTRATION_REVIEW_BLOCKERS=NONE",
+    "H001_PREREGISTRATION_REVIEW_MAJOR_FINDINGS=NONE",
+    f"H001_PREREGISTRATION_REVIEW_VERDICT={_H001_REVIEW_VERDICT}",
+    "H001_REAL_DATA_ACCESS=FORBIDDEN",
+    "H001_ARTIFACT_OPERATIONS=FORBIDDEN",
+    "H001_CURRENT_EXECUTION_BUDGET=0",
+    "H001_CURRENT_EXECUTION_COUNT=0",
+    "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+    "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+    "H001_LIVE_AUTHORIZATION=FALSE",
+    "H001_REQUIRED_DURABLE_COPIES=2",
+}
+_H001_REVIEW_REQUIRED_PROHIBITIONS = {
+    "AUTHORIZE_H001_REAL_DATA_INFRASTRUCTURE_WITHOUT_SEPARATE_GOVERNANCE",
+    "TREAT_EXTERNAL_REVIEW_AS_SCIENTIFIC_EVIDENCE",
+    "CONFIGURE_DURABLE_ARTIFACT_STORES",
+    "GRANT_REAL_DATA_ACCESS",
+    "GRANT_SCIENTIFIC_AUTHORIZATION",
+}
 _H001_BUNDLE_RELPATH = "docs/sandbox/example_candidate1_v1_hypothesis_001.json"
 _H001_BUNDLE_SHA256 = "322b58eb5aa7b8b02d488ab182b38420afa8390cc36e054e1c1e96558905b82e"
 _H001_BATCH_RECEIPT_SHA256 = "cb634f40a27204e2465392f3d8d2aaaf8e8af6f71dacba77b8506a66e465b3d5"
@@ -672,6 +713,64 @@ def _validate_h001_preregistered_handoff(receipt: dict, root: Path) -> dict:
     return amendment
 
 
+def _validate_h001_review_complete_handoff(receipt: dict, root: Path) -> dict:
+    """Validate the append-only handoff that records completion of the
+    independent adversarial re-review of the H001 real-data falsification
+    preregistration.
+
+    The preregistration design, validator, experiment, artifact records, store
+    registry, and both governance amendments are unchanged; this transition only
+    records the passed review and advances the next action to authorizing a
+    *separate* infrastructure-preparation governance amendment. The external
+    review is process assurance, not scientific evidence of any market edge, and
+    every real-data, artifact, execution, scientific, paper, and live boundary
+    stays exactly where the preregistered-design-only phase left it.
+    """
+    amendment = _validate_h001_design_amendment(
+        receipt, root, expected_next_action=_H001_REVIEW_COMPLETE_NEXT_ACTION
+    )
+    if receipt["receipt_index"] != 12:
+        _fail("H001 review-completion handoff must be receipt index 12")
+    if receipt["source_branch"] != _H001_REVIEW_SOURCE_BRANCH:
+        _fail("H001 review-completion handoff source branch is wrong")
+    if receipt["source_head_commit"] != _H001_REVIEW_MERGED_MAIN_SHA:
+        _fail("H001 review-completion handoff source_head_commit must be the merged-main base SHA")
+    predecessor = receipt["predecessor"]
+    if (
+        type(predecessor) is not dict
+        or predecessor.get("path") != f"docs/control/tasks/{TASK_ID}/handoff_v011.json"
+        or predecessor.get("sha256") != _H001_PREREGISTERED_HANDOFF_SHA256
+    ):
+        _fail("H001 review-completion predecessor must be the exact v011 preregistration receipt")
+    expected_scope = {
+        "quantbot/continuity/context.py",
+        "tests/continuity/test_cross_agent_continuity.py",
+        f"docs/control/tasks/{TASK_ID}/handoff_v012.json",
+        ACTIVE_TASK_RELPATH,
+    }
+    if set(receipt["changed_file_scope"]) != expected_scope:
+        _fail("H001 review-completion changed_file_scope is not the exact four-file scope")
+    if len(receipt["changed_file_scope"]) != len(expected_scope):
+        _fail("H001 review-completion changed_file_scope has duplicate entries")
+    if not _H001_REVIEW_REQUIRED_DECISIONS.issubset(receipt["decisions"]):
+        missing = sorted(_H001_REVIEW_REQUIRED_DECISIONS - set(receipt["decisions"]))
+        _fail(f"H001 review-completion handoff is missing required review decisions {missing}")
+    if not _H001_REVIEW_REQUIRED_PROHIBITIONS.issubset(receipt["prohibited_actions"]):
+        _fail("H001 review-completion handoff is missing a required prohibition")
+    # Bind the reviewed preregistration artifacts by their exact reviewed bytes.
+    evidence = {item["path"]: item["sha256"] for item in receipt["evidence"]}
+    exact_evidence = {
+        H001_DESIGN_JSON_RELPATH: _H001_REVIEW_DESIGN_SHA256,
+        _H001_VALIDATOR_RELPATH: _H001_REVIEW_VALIDATOR_SHA256,
+        _H001_FOCUSED_TEST_RELPATH: _H001_REVIEW_FOCUSED_TEST_SHA256,
+        f"docs/control/tasks/{TASK_ID}/handoff_v011.json": _H001_PREREGISTERED_HANDOFF_SHA256,
+    }
+    for path, expected in exact_evidence.items():
+        if evidence.get(path) != expected:
+            _fail(f"H001 review-completion must evidence {path!r} by its exact reviewed sha256")
+    return amendment
+
+
 def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evidence_files: bool) -> int:
     """Structural fail-closed validation shared by the active receipt and every
     historical receipt in the predecessor chain. Does not validate the
@@ -743,12 +842,15 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_PREREGISTERED_PHASE:
         _cross_check_artifact_records(parsed, root)
         amendment = _validate_h001_preregistered_handoff(parsed, root)
+    elif active["phase"] == _H001_REVIEW_COMPLETE_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        amendment = _validate_h001_review_complete_handoff(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
     if amendment is not None:
         parsed = dict(parsed)
-        if phase in (_H001_DESIGN_PHASE, _H001_PREREGISTERED_PHASE):
+        if phase in (_H001_DESIGN_PHASE, _H001_PREREGISTERED_PHASE, _H001_REVIEW_COMPLETE_PHASE):
             parsed["_validated_h001_design_amendment"] = amendment
         else:
             parsed["_validated_sandbox_amendment"] = amendment
@@ -997,6 +1099,42 @@ def render_context_packet(state: dict) -> str:
             "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
             "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
             "H001_LIVE_AUTHORIZATION=FALSE",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "EDGE_STATUS=EDGE_UNPROVEN",
+            "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
+        ])
+    elif active["phase"] == _H001_REVIEW_COMPLETE_PHASE:
+        lines.extend([
+            "H001_PREREGISTRATION_REVIEW_STATUS=PASSED",
+            f"H001_PREREGISTRATION_REVIEW_VERDICT={_H001_REVIEW_VERDICT}",
+            f"H001_PREREGISTRATION_REVIEWED_HEAD={_H001_REVIEW_REVIEWED_HEAD}",
+            f"H001_PREREGISTRATION_DESIGN_SHA256={_H001_REVIEW_DESIGN_SHA256}",
+            f"H001_PREREGISTRATION_VALIDATOR_SHA256={_H001_REVIEW_VALIDATOR_SHA256}",
+            "H001_PREREGISTRATION_REVIEW_NAMED_PROBES=67/67_REJECTED",
+            "H001_PREREGISTRATION_REVIEW_GENUINE_MUTATIONS=1136/1136_REJECTED",
+            "H001_PREREGISTRATION_REVIEW_BLOCKERS=NONE",
+            "H001_PREREGISTRATION_REVIEW_MAJOR_FINDINGS=NONE",
+            "H001_EXTERNAL_REVIEW_IS_SCIENTIFIC_EVIDENCE=FALSE",
+            "H001_REAL_FALSIFICATION_PROTOCOL=PREREGISTERED_DESIGN_ONLY",
+            "H001_PROTOCOL_ID=real_btc_h001_funding_crowding_reversal_falsification_v0",
+            "H001_DATA_IDENTITY=UNBOUND_DESIGN_ONLY",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_ARTIFACT_OPERATIONS=FORBIDDEN",
+            "H001_VALIDATION_EXECUTION_AUTHORIZED=FALSE",
+            "H001_HOLDOUT_EXECUTION_AUTHORIZED=FALSE",
+            # Execution budgets are rendered with distinct labels so the umbrella
+            # decomposition budget can never be misread as an H001 budget.
+            f"UMBRELLA_DECOMPOSITION_EXECUTION={safety['decomposition_execution_count']}/{safety['decomposition_execution_budget']}",
+            "H001_EXECUTION=0/0",
+            "H001_CURRENT_EXECUTION_BUDGET=0",
+            "H001_CURRENT_EXECUTION_COUNT=0",
+            "H001_REQUIRED_DURABLE_COPIES=2",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+            "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+            "H001_LIVE_AUTHORIZATION=FALSE",
+            "H001_REAL_DATA_INFRASTRUCTURE_GOVERNANCE=NOT_YET_AUTHORIZED",
+            "H001_REAL_DATA_INFRASTRUCTURE_PREPARATION=REQUIRES_SEPARATE_GOVERNANCE_AMENDMENT",
             "V0_AVAILABILITY=UNAVAILABLE",
             "EDGE_STATUS=EDGE_UNPROVEN",
             "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
