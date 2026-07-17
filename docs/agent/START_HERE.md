@@ -62,6 +62,11 @@ Chat history, MemPalace, and local untracked notes are recall aids only and are
   or modify production/VM checkouts unless the validated next action says so
   explicitly.
 
+When the active phase is `candidate1_v1_synthetic_sandbox_governance`, the
+machine-readable amendment is authoritative for the exploratory engineering
+sandbox only. Real-data and scientific operations remain blocked, and the
+existing V0 recovery/retirement prohibition remains active.
+
 ## Durable artifact-plane invariants
 
 - `HASHED DOES NOT MEAN PRESERVED`: a fingerprint does not prove a durable copy
