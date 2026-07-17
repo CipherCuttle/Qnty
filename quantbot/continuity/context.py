@@ -140,6 +140,13 @@ _H001_ASSURANCE_DOCS = {
     "docs/assurance/replayable_review_evidence_packet_schema_v001.json": "990052469571b2ff100180c706e0e38257fd952e32320b665753d23212cfbcbb",
     "docs/assurance/synthetic_artifact_canary_scaffold_v001.json": "45e6f95fece2328df2c39f2fce790bba37a0944ea7c5bc33b8e505820beb5392",
 }
+_H001_SCAFFOLD_REPAIRED_FILE_SHA256 = {
+    "quantbot/assurance/contracts.py": "4d7c18e5e97732b08752515acb126e50c051cf71275c77b51613f3d3eb93e9aa",
+    "quantbot/assurance/h001_null_calibration.py": "deaceeec03578a7f430972c8f4de2bb96798e660b0cbe64504c6fbf8da512bdd",
+    "tests/assurance/test_contracts.py": "0a90c085cf5dd24be277562b65ec2b0307af8c3ab73056c531fb8e0583b9e8b2",
+    "tests/assurance/test_h001_null_calibration.py": "47bb18360165effc826102c84b931a51a198a994b99cc6bae24b2bf9bd87a06c",
+    "tests/continuity/test_cross_agent_continuity.py": "e068e2ca6860094136bcbe21a0ae0b73041b39b963e9b0d3d3e97e7fa7fcc079",
+}
 # Immutable identities recorded by the H001 preregistration review-completion
 # transition. These pin the exact reviewed artifacts; the external adversarial
 # review is process assurance only and is never scientific evidence.
@@ -1026,6 +1033,9 @@ def _validate_h001_scaffold_handoff(receipt: dict, root: Path) -> dict:
     for relpath, expected in _H001_ASSURANCE_DOCS.items():
         if evidence.get(relpath) != expected:
             _fail(f"H001 assurance document hash is not independently pinned for {relpath}")
+    for relpath, expected in _H001_SCAFFOLD_REPAIRED_FILE_SHA256.items():
+        if evidence.get(relpath) != expected:
+            _fail(f"H001 repaired scaffold hash is not independently pinned for {relpath}")
     return amendment
 
 

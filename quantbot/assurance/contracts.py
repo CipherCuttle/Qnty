@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 SCHEMA_VERSION = "0.1.0"
 H001_PROTOCOL_ID = "real_btc_h001_funding_crowding_reversal_falsification_v0"
@@ -17,8 +17,14 @@ H001_VALIDATOR_SHA256 = "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b2
 GOVERNANCE_AMENDMENT_SHA256 = "a22d0cf260f31d7104fc4d4fe96030c8666179c20c7737dfe20a59f3c7200ddc"
 
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+IDENTIFIER_RE = re.compile(r"[a-z0-9][a-z0-9._:-]*\Z")
+CANONICAL_UTC_TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
+CONTROL_RECEIPT_PATH_RE = re.compile(r"docs/control/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.json\Z")
 SECRET_KEYS = {"token", "secret", "password", "credential", "private_key", "cookie", "authorization", "api_key"}
 FORBIDDEN_KEYS = {"returns", "prices", "funding", "p_values", "p-values", "statistics", "performance", "strategy_ranking", "raw_data", "artifact_bytes", "store_roots", "store_uri", "credentials", "private_reasoning", "chain_of_thought", "scientific_claim", "result_payload"}
+DISCLOSURE_KINDS = {"DESIGNATED_DEVELOPMENT", "DESIGNATED_VALIDATION", "DESIGNATED_HOLDOUT", "VALIDATION_STATISTIC_EXPOSED", "HOLDOUT_UNSEALED", "HOLDOUT_STATISTIC_EXPOSED", "REGION_GLOBALLY_CONSUMED", "DESCRIPTIVE_REUSE_ONLY"}
+DISCLOSURE_STATUSES = {"RECORDED_APPEND_ONLY"}
+LEDGER_STATUSES = {"SCHEMA_IMPLEMENTED_EMPTY_NO_BACKFILL", "APPEND_ONLY_METADATA_DISCLOSURES"}
 
 class AssuranceValidationError(ValueError):
     pass
@@ -42,6 +48,28 @@ def _str(value: object, label: str) -> str:
 def _sha(value: object, label: str) -> str:
     if type(value) is not str or not SHA256_RE.fullmatch(value):
         _fail(f"{label}: lowercase sha256 required")
+    return value
+
+def _identifier(value: object, label: str) -> str:
+    value = _str(value, label)
+    if not IDENTIFIER_RE.fullmatch(value):
+        _fail(f"{label}: lowercase identifier required")
+    return value
+
+def _parse_canonical_utc_timestamp(value: object, label: str) -> datetime:
+    if type(value) is not str or not CANONICAL_UTC_TIMESTAMP_RE.fullmatch(value):
+        _fail(f"{label}: canonical UTC timestamp required")
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError as error:
+        raise AssuranceValidationError(f"{label}: canonical UTC timestamp required") from error
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(None):
+        _fail(f"{label}: UTC timestamp required")
+    return parsed
+
+def _validate_control_receipt_path(value: object) -> str:
+    if type(value) is not str or not CONTROL_RECEIPT_PATH_RE.fullmatch(value) or any(segment in {"", ".", ".."} for segment in value.split("/")):
+        _fail("source_control_receipt_path: docs/control JSON path required")
     return value
 
 def _list(value: object, label: str, *, sorted_unique: bool = False) -> list:
@@ -114,33 +142,70 @@ def validate_calibration_spec_draft(value: object) -> dict:
 
 def _entry(value: object) -> dict:
     data = _keys(value, {"dataset_region_id", "disclosure_kind", "disclosure_status", "entry_id", "hypothesis_id", "protocol_id", "recorded_at_utc", "region_end_utc", "region_start_utc", "source_control_receipt_path", "source_control_receipt_sha256"}, "ledger entry")
-    _str(data["entry_id"], "entry_id"); _str(data["protocol_id"], "protocol_id"); _str(data["hypothesis_id"], "hypothesis_id"); _str(data["dataset_region_id"], "dataset_region_id")
-    _sha(data["source_control_receipt_sha256"], "source_control_receipt_sha256")
-    for key in ("region_start_utc", "region_end_utc", "recorded_at_utc"):
-        try: datetime.fromisoformat(_str(data[key], key).replace("Z", "+00:00"))
-        except ValueError: _fail(f"{key}: UTC timestamp required")
-    if data["region_start_utc"] >= data["region_end_utc"]:
-        _fail("region boundaries must be increasing")
-    if data["disclosure_kind"] not in {"DESIGNATED_DEVELOPMENT", "DESIGNATED_VALIDATION", "DESIGNATED_HOLDOUT", "VALIDATION_STATISTIC_EXPOSED", "HOLDOUT_UNSEALED", "HOLDOUT_STATISTIC_EXPOSED", "REGION_GLOBALLY_CONSUMED", "DESCRIPTIVE_REUSE_ONLY"}:
+    for key in ("entry_id", "protocol_id", "hypothesis_id", "dataset_region_id"):
+        _identifier(data[key], key)
+    if type(data["disclosure_kind"]) is not str or data["disclosure_kind"] not in DISCLOSURE_KINDS:
         _fail("unknown disclosure kind")
+    if type(data["disclosure_status"]) is not str or data["disclosure_status"] not in DISCLOSURE_STATUSES:
+        _fail("unknown disclosure status")
+    _validate_control_receipt_path(data["source_control_receipt_path"])
+    _sha(data["source_control_receipt_sha256"], "source_control_receipt_sha256")
+    start = _parse_canonical_utc_timestamp(data["region_start_utc"], "region_start_utc")
+    end = _parse_canonical_utc_timestamp(data["region_end_utc"], "region_end_utc")
+    _parse_canonical_utc_timestamp(data["recorded_at_utc"], "recorded_at_utc")
+    if start >= end:
+        _fail("region boundaries must be increasing")
     _walk_forbidden(data)
     return data
 
-def validate_holdout_disclosure_ledger(value: object) -> dict:
-    data = _base(value, "qnty_global_real_protocol_holdout_disclosure_ledger", "global-real-protocol-holdout-disclosure-ledger-v001", "SCHEMA_IMPLEMENTED_EMPTY_NO_BACKFILL", {"document_id", "document_kind", "entries", "status", "schema_version"})
-    entries = _list(data["entries"], "entries")
-    seen = set()
+def _semantic_disclosure_key(entry: dict) -> tuple[str, ...]:
+    return tuple(entry[key] for key in ("protocol_id", "hypothesis_id", "dataset_region_id", "region_start_utc", "region_end_utc", "disclosure_kind"))
+
+def _validate_ledger_entries(entries: list) -> None:
+    seen_ids = set()
+    seen_semantics = set()
+    previous_recorded_at = None
     for entry in entries:
         item = _entry(entry)
-        if item["entry_id"] in seen: _fail("duplicate entry ID")
-        seen.add(item["entry_id"])
+        if item["entry_id"] in seen_ids:
+            _fail("duplicate entry ID")
+        seen_ids.add(item["entry_id"])
+        semantic_key = _semantic_disclosure_key(item)
+        if semantic_key in seen_semantics:
+            _fail("duplicate semantic disclosure")
+        seen_semantics.add(semantic_key)
+        recorded_at = _parse_canonical_utc_timestamp(item["recorded_at_utc"], "recorded_at_utc")
+        if previous_recorded_at is not None and recorded_at < previous_recorded_at:
+            _fail("ledger entries must be ordered by recorded_at_utc")
+        previous_recorded_at = recorded_at
+
+def validate_holdout_disclosure_ledger(value: object) -> dict:
+    data = _keys(value, {"document_id", "document_kind", "entries", "status", "schema_version"}, "qnty_global_real_protocol_holdout_disclosure_ledger")
+    if data["schema_version"] != SCHEMA_VERSION or data["document_kind"] != "qnty_global_real_protocol_holdout_disclosure_ledger" or data["document_id"] != "global-real-protocol-holdout-disclosure-ledger-v001":
+        _fail("qnty_global_real_protocol_holdout_disclosure_ledger: identity drifted")
+    if type(data["status"]) is not str or data["status"] not in LEDGER_STATUSES:
+        _fail("unknown ledger status")
+    _walk_forbidden(data)
+    entries = _list(data["entries"], "entries")
+    if data["status"] == "SCHEMA_IMPLEMENTED_EMPTY_NO_BACKFILL" and entries:
+        _fail("empty ledger status requires no entries")
+    if data["status"] == "APPEND_ONLY_METADATA_DISCLOSURES" and not entries:
+        _fail("populated ledger status requires entries")
+    _validate_ledger_entries(entries)
     return data
 
-def validate_ledger_append(previous: object, candidate: object) -> dict:
-    before = validate_holdout_disclosure_ledger(previous); after = validate_holdout_disclosure_ledger(candidate)
+def validate_ledger_append(previous: bytes, candidate: bytes) -> dict:
+    if type(previous) is not bytes or type(candidate) is not bytes:
+        _fail("ledger append requires canonical JSON bytes")
+    before = load_and_validate_assurance_scaffold(previous, validate_holdout_disclosure_ledger)
+    after = load_and_validate_assurance_scaffold(candidate, validate_holdout_disclosure_ledger)
     old = before["entries"]; new = after["entries"]
-    if len(new) < len(old) or new[:len(old)] != old or len({item["entry_id"] for item in new}) != len(new):
+    if len(new) < len(old) or [canonical_json_bytes(item) for item in new[:len(old)]] != [canonical_json_bytes(item) for item in old]:
         _fail("ledger append must preserve previous entries byte-semantically and in order")
+    if before["status"] == "SCHEMA_IMPLEMENTED_EMPTY_NO_BACKFILL" and old:
+        _fail("empty ledger cannot contain prior entries")
+    if len(new) > len(old) and after["status"] != "APPEND_ONLY_METADATA_DISCLOSURES":
+        _fail("appended ledger must use populated status")
     return after
 
 def validate_failure_domain_evidence_schema(value: object) -> dict:

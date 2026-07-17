@@ -1562,3 +1562,10 @@ def test_implemented_assurance_scaffold_phase_renders_non_execution_boundaries()
         "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
     ):
         assert line in packet
+
+def test_repaired_assurance_scaffold_hashes_are_independently_pinned():
+    state = load_and_verify_continuity_state(ROOT)
+    if state["active_task"]["phase"] != context._H001_SCAFFOLD_PHASE:
+        pytest.skip("production tree is before the implemented assurance scaffold transition")
+    for relpath, expected in context._H001_SCAFFOLD_REPAIRED_FILE_SHA256.items():
+        assert hashlib.sha256((ROOT / relpath).read_bytes()).hexdigest() == expected
