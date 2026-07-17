@@ -1,0 +1,14 @@
+{
+  "bundle_id": "starter-strategy-batch-v001",
+  "bundle_kind": "qnty_candidate1_v1_synthetic_variant_bundle",
+  "schema_version": "0.1.0",
+  "variants": [
+    {"variant_id":"always-flat-v001","rule_kind":"ALWAYS_FLAT","parameters":{},"rationale_kind":"MECHANICAL_BASELINE","rationale":"Mechanical flat baseline."},
+    {"variant_id":"always-long-v001","rule_kind":"ALWAYS_LONG","parameters":{},"rationale_kind":"MECHANICAL_BASELINE","rationale":"Mechanical long baseline."},
+    {"variant_id":"always-short-v001","rule_kind":"ALWAYS_SHORT","parameters":{},"rationale_kind":"MECHANICAL_BASELINE","rationale":"Mechanical short baseline."},
+    {"variant_id":"lagged-momentum-1-v001","rule_kind":"LAGGED_RETURN_SIGN","parameters":{"lookback":1,"deadband":"0"},"rationale_kind":"SOFTWARE_PATH_COVERAGE","rationale":"Covers one-period lagged sign mechanics."},
+    {"variant_id":"lagged-fade-1-v001","rule_kind":"LAGGED_RETURN_FADE","parameters":{"lookback":1,"deadband":"0"},"rationale_kind":"SOFTWARE_PATH_COVERAGE","rationale":"Covers one-period lagged fade mechanics."},
+    {"variant_id":"lagged-momentum-4-v001","rule_kind":"LAGGED_RETURN_SIGN","parameters":{"lookback":4,"deadband":"0"},"rationale_kind":"SOFTWARE_PATH_COVERAGE","rationale":"Covers four-period warm-up mechanics."},
+    {"variant_id":"funding-fade-v001","rule_kind":"FUNDING_SIGN_FADE","parameters":{"deadband":"0"},"rationale_kind":"DECLARED_ARBITRARY_ASSUMPTION","rationale":"Covers prior-funding sign handling."}
+  ]
+}
