@@ -411,6 +411,136 @@ def test_entrypoint_drift_fails_closed(tmp_path, kwargs):
         load_and_verify_continuity_state(tmp_path)
 
 
+@pytest.mark.parametrize("mutation", [
+    lambda a: a.update(availability="VERIFIED_AVAILABLE", verified_copy_count=2,
+                       canonical_paths=["/archive/a"]),
+    lambda a: a.update(availability="VERIFIED_AVAILABLE", verified_copy_count=2,
+                       canonical_paths=["/archive/a", "/archive/a"]),
+    lambda a: a.update(availability="VERIFIED_AVAILABLE", verified_copy_count=3,
+                       canonical_paths=["/archive/a", "/archive/b"]),
+    lambda a: a.update(availability="VERIFIED_AVAILABLE", verified_copy_count=True,
+                       canonical_paths=["/archive/a", "/archive/b"]),
+    lambda a: a.update(canonical_paths=["/archive/a"]),
+    lambda a: a.update(canonical_paths=["/archive/a", "/archive/a", "/archive/b"]),
+])
+def test_copy_evidence_gaps_fail_closed(tmp_path, mutation):
+    receipt = base_receipt()
+    mutation(receipt["required_artifacts"][0])
+    write_tree(tmp_path, receipt)
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(tmp_path)
+
+
+def test_two_unique_canonical_copies_accept(tmp_path):
+    receipt = base_receipt()
+    receipt["required_artifacts"][0].update(
+        availability="VERIFIED_AVAILABLE",
+        verified_copy_count=2,
+        canonical_paths=["/home/viktor/qnty-artifacts/copy-a", "/mnt/qnty-backup/copy-b"],
+    )
+    write_tree(tmp_path, receipt)
+    state = load_and_verify_continuity_state(tmp_path)
+    artifact = state["handoff_receipt"]["required_artifacts"][0]
+    assert artifact["verified_copy_count"] == len(artifact["canonical_paths"]) == 2
+
+
+def build_chain(tmp_path, mutate_v001=None, mutate_v002=None):
+    v001 = base_receipt()
+    if mutate_v001 is not None:
+        mutate_v001(v001)
+    v002 = base_receipt()
+    v002["receipt_index"] = 2
+    v002["predecessor"] = {
+        "path": f"{TASK_DIR}/handoff_v001.json",
+        "sha256": hashlib.sha256(canonical_json_bytes(v001)).hexdigest(),
+    }
+    if mutate_v002 is not None:
+        mutate_v002(v002)
+    v003 = base_receipt()
+    v003["receipt_index"] = 3
+    v003["predecessor"] = {
+        "path": f"{TASK_DIR}/handoff_v002.json",
+        "sha256": hashlib.sha256(canonical_json_bytes(v002)).hexdigest(),
+    }
+    return write_tree(
+        tmp_path,
+        v003,
+        receipt_name="handoff_v003.json",
+        extra_receipts=[("handoff_v001.json", v001), ("handoff_v002.json", v002)],
+    )
+
+
+def test_three_level_chain_verifies(tmp_path):
+    build_chain(tmp_path)
+    state = load_and_verify_continuity_state(tmp_path)
+    assert state["handoff_receipt"]["receipt_index"] == 3
+
+
+def test_corrupted_genesis_bytes_reject_despite_valid_immediate_link(tmp_path):
+    build_chain(tmp_path)
+    corrupted = base_receipt()
+    corrupted["decisions"] = ["forged history"]
+    (tmp_path / TASK_DIR / "handoff_v001.json").write_bytes(canonical_json_bytes(corrupted))
+    with pytest.raises(ValueError, match="sha256"):
+        load_and_verify_continuity_state(tmp_path)
+
+
+def test_wrong_genesis_hash_recorded_in_v002_rejects(tmp_path):
+    build_chain(tmp_path, mutate_v002=lambda r: r["predecessor"].update(sha256="0" * 64))
+    with pytest.raises(ValueError, match="sha256"):
+        load_and_verify_continuity_state(tmp_path)
+
+
+def test_missing_genesis_receipt_rejects(tmp_path):
+    build_chain(tmp_path)
+    (tmp_path / TASK_DIR / "handoff_v001.json").unlink()
+    with pytest.raises(ValueError, match="missing"):
+        load_and_verify_continuity_state(tmp_path)
+
+
+@pytest.mark.parametrize("mutate_v002", [
+    lambda r: r.update(receipt_index=5),
+    lambda r: r.update(task_id="OTHER_TASK"),
+    lambda r: r.update(protocol_id="other_protocol"),
+    lambda r: r.update(predecessor="GENESIS"),
+    lambda r: r["predecessor"].update(path=f"{TASK_DIR}/handoff_v002.json"),
+    lambda r: r["predecessor"].update(path=f"{TASK_DIR}/handoff_v003.json"),
+    lambda r: r["predecessor"].update(path="docs/control/tasks/OTHER_TASK/handoff_v001.json"),
+    lambda r: r["predecessor"].update(path=f"{TASK_DIR}/../escape/handoff_v001.json"),
+    lambda r: r["predecessor"].update(path=f"{TASK_DIR}/notes_v001.json"),
+])
+def test_deep_chain_link_mutations_fail_closed(tmp_path, mutate_v002):
+    build_chain(tmp_path, mutate_v002=mutate_v002)
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(tmp_path)
+
+
+@pytest.mark.parametrize("mutate_v001", [
+    lambda r: r.update(extra_key="no"),
+    lambda r: r.update(receipt_index=True),
+    lambda r: r.update(predecessor={"path": f"{TASK_DIR}/handoff_v000.json", "sha256": "0" * 64}),
+    lambda r: r["safety_state"].update(decomposition_execution_count=1),
+    lambda r: r["safety_state"].update(live_integration_authorized=True),
+    lambda r: r.update(next_actions=["A", "B"]),
+])
+def test_deep_chain_genesis_receipt_mutations_fail_closed(tmp_path, mutate_v001):
+    build_chain(tmp_path, mutate_v001=mutate_v001)
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(tmp_path)
+
+
+def test_historical_receipt_evidence_files_are_format_checked_not_rehashed(tmp_path):
+    def add_stale_evidence(receipt):
+        receipt["evidence"] = [
+            {"path": "docs/evidence.txt", "sha256": EVIDENCE_SHA},
+            {"path": "docs/no_longer_present.txt", "sha256": "1" * 64},
+        ]
+
+    build_chain(tmp_path, mutate_v001=add_stale_evidence)
+    state = load_and_verify_continuity_state(tmp_path)
+    assert state["handoff_receipt"]["receipt_index"] == 3
+
+
 def test_cli_verify_and_show_roundtrip(tmp_path, capsys):
     from quantbot.continuity.__main__ import main
 

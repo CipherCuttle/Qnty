@@ -227,13 +227,20 @@ def _validate_required_artifacts(artifacts: object) -> list:
             for prefix in _PROHIBITED_CANONICAL_PATH_PREFIXES:
                 if path == prefix or path.startswith(prefix + "/"):
                     _fail(f"canonical artifact path {path!r} is under prohibited prefix {prefix!r}")
-        if availability == "UNAVAILABLE" and count != 0:
-            _fail("UNAVAILABLE artifact must have verified_copy_count 0")
+        if len(set(paths)) != len(paths):
+            _fail("canonical_paths must be unique; duplicates cannot evidence independent copies")
+        if availability == "UNAVAILABLE":
+            if count != 0:
+                _fail("UNAVAILABLE artifact must have verified_copy_count 0")
+            if paths:
+                _fail("UNAVAILABLE artifact must not record canonical paths")
         if availability == "VERIFIED_AVAILABLE":
             if count < 2:
                 _fail("VERIFIED_AVAILABLE requires at least two independently verified copies")
-            if not paths:
-                _fail("VERIFIED_AVAILABLE requires at least one canonical path")
+            if len(paths) < 2:
+                _fail("VERIFIED_AVAILABLE requires at least two unique canonical paths")
+            if count != len(paths):
+                _fail("verified_copy_count must equal the number of unique canonical paths")
     if REQUIRED_ARTIFACT_ID not in seen:
         _fail(f"required artifact record {REQUIRED_ARTIFACT_ID!r} is missing")
     for artifact in artifacts:
@@ -243,13 +250,17 @@ def _validate_required_artifacts(artifacts: object) -> list:
     return artifacts
 
 
-def _validate_evidence(evidence: object, root: Path) -> list:
+def _validate_evidence(evidence: object, root: Path, *, verify_files: bool) -> list:
+    """Validate evidence entries; historical receipts skip file re-hashing because
+    evidence records what was observed when the immutable receipt was written."""
     if type(evidence) is not list:
         _fail("evidence must be a list")
     for item in evidence:
         _require_exact_keys(item, _EVIDENCE_KEYS, "evidence entry")
         path = _require_repo_relative(item["path"], "evidence path")
         expected = _require_sha256(item["sha256"], "evidence sha256")
+        if not verify_files:
+            continue
         target = root / path
         if not target.is_file():
             _fail(f"evidence file {path!r} is missing")
@@ -258,68 +269,90 @@ def _validate_evidence(evidence: object, root: Path) -> list:
     return evidence
 
 
-def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
-    _require_exact_keys(parsed, _RECEIPT_KEYS, "handoff_receipt")
+def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evidence_files: bool) -> int:
+    """Structural fail-closed validation shared by the active receipt and every
+    historical receipt in the predecessor chain. Does not validate the
+    ``predecessor`` link itself; the chain walk owns that."""
+    _require_exact_keys(parsed, _RECEIPT_KEYS, label)
     if parsed["schema_version"] != "0.1.0":
-        _fail("handoff_receipt schema_version is not 0.1.0")
+        _fail(f"{label} schema_version is not 0.1.0")
     if parsed["receipt_kind"] != "qnty_cross_agent_handoff_receipt":
-        _fail("handoff_receipt receipt_kind is wrong")
+        _fail(f"{label} receipt_kind is wrong")
+    index = _require_int(parsed["receipt_index"], f"{label} receipt_index")
+    if index < 1:
+        _fail(f"{label} receipt_index must be >= 1")
+    _require_str(parsed["source_branch"], f"{label} source_branch")
+    head = parsed["source_head_commit"]
+    if type(head) is not str or not _COMMIT_RE.fullmatch(head):
+        _fail(f"{label} source_head_commit must be a lowercase 40-hex commit")
+    _require_str_list(parsed["decisions"], f"{label} decisions", minimum=1)
+    _validate_safety_state(parsed["safety_state"])
+    scope = _require_str_list(parsed["changed_file_scope"], f"{label} changed_file_scope", minimum=1)
+    for path in scope:
+        _require_repo_relative(path, f"{label} changed_file_scope entry")
+    _validate_evidence(parsed["evidence"], root, verify_files=verify_evidence_files)
+    artifacts = _validate_required_artifacts(parsed["required_artifacts"])
+    _require_str_list(parsed["blockers"], f"{label} blockers")
+    _require_str_list(parsed["verified_commands"], f"{label} verified_commands", minimum=1)
+    next_actions = parsed["next_actions"]
+    if type(next_actions) is not list or len(next_actions) != 1:
+        _fail(f"{label} next_actions must contain exactly one action")
+    _require_str(next_actions[0], f"{label} next_actions entry")
+    _require_str_list(parsed["prohibited_actions"], f"{label} prohibited_actions", minimum=1)
+    if parsed["safety_state"]["real_data_execution_requested"]:
+        for artifact in artifacts:
+            if artifact["availability"] != "VERIFIED_AVAILABLE":
+                _fail(f"{label}: real-data execution requested while a required artifact is not VERIFIED_AVAILABLE")
+    return index
+
+
+def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
+    _validate_receipt_body(parsed, "handoff_receipt", root, verify_evidence_files=True)
     if parsed["task_id"] != active["task_id"]:
         _fail("handoff_receipt task_id does not match active_task")
     if parsed["protocol_id"] != active["protocol_id"]:
         _fail("handoff_receipt protocol_id does not match active_task")
-    index = _require_int(parsed["receipt_index"], "receipt_index")
-    if index < 1:
-        _fail("receipt_index must be >= 1")
-    _require_str(parsed["source_branch"], "source_branch")
-    head = parsed["source_head_commit"]
-    if type(head) is not str or not _COMMIT_RE.fullmatch(head):
-        _fail("source_head_commit must be a lowercase 40-hex commit")
-    _validate_predecessor(parsed, index, root)
-    _require_str_list(parsed["decisions"], "decisions", minimum=1)
-    _validate_safety_state(parsed["safety_state"])
-    scope = _require_str_list(parsed["changed_file_scope"], "changed_file_scope", minimum=1)
-    for path in scope:
-        _require_repo_relative(path, "changed_file_scope entry")
-    _validate_evidence(parsed["evidence"], root)
-    artifacts = _validate_required_artifacts(parsed["required_artifacts"])
-    _require_str_list(parsed["blockers"], "blockers")
-    _require_str_list(parsed["verified_commands"], "verified_commands", minimum=1)
-    next_actions = parsed["next_actions"]
-    if type(next_actions) is not list or len(next_actions) != 1:
-        _fail("next_actions must contain exactly one action")
-    _require_str(next_actions[0], "next_actions entry")
-    _require_str_list(parsed["prohibited_actions"], "prohibited_actions", minimum=1)
-    if parsed["safety_state"]["real_data_execution_requested"]:
-        for artifact in artifacts:
-            if artifact["availability"] != "VERIFIED_AVAILABLE":
-                _fail("real-data execution requested while a required artifact is not VERIFIED_AVAILABLE")
+    _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
     return parsed
 
 
-def _validate_predecessor(parsed: dict, index: int, root: Path) -> None:
-    predecessor = parsed["predecessor"]
-    if index == 1:
-        if predecessor != "GENESIS":
-            _fail("receipt_index 1 must declare the explicit genesis state 'GENESIS'")
-        return
-    _require_exact_keys(predecessor, _PREDECESSOR_KEYS, "predecessor")
-    path = _require_repo_relative(predecessor["path"], "predecessor path")
+def _validate_predecessor_chain(parsed: dict, root: Path, receipt_relpath: str) -> None:
+    """Iteratively walk the append-only receipt chain from the active receipt all
+    the way to the explicit GENESIS state, failing closed on any broken link."""
     expected_dir = f"docs/control/tasks/{TASK_ID}/"
-    if not path.startswith(expected_dir):
-        _fail("predecessor path must stay within the task's control directory")
-    expected_sha = _require_sha256(predecessor["sha256"], "predecessor sha256")
-    target = root / path
-    if not target.is_file():
-        _fail("predecessor receipt is missing")
-    data = target.read_bytes()
-    if hashlib.sha256(data).hexdigest() != expected_sha:
-        _fail("predecessor receipt bytes do not match the recorded sha256")
-    previous = _load_canonical_document(data, "predecessor receipt")
-    if previous.get("receipt_index") != index - 1:
-        _fail("predecessor receipt_index does not chain to this receipt")
-    if previous.get("task_id") != parsed["task_id"] or previous.get("protocol_id") != parsed["protocol_id"]:
-        _fail("predecessor identity does not match this receipt")
+    visited = {receipt_relpath}
+    current = parsed
+    current_index = parsed["receipt_index"]
+    while True:
+        predecessor = current["predecessor"]
+        if current_index == 1:
+            if predecessor != "GENESIS":
+                _fail("receipt_index 1 must declare the explicit genesis state 'GENESIS'")
+            return
+        if predecessor == "GENESIS":
+            _fail("GENESIS is only valid at receipt_index 1")
+        _require_exact_keys(predecessor, _PREDECESSOR_KEYS, "predecessor")
+        path = _require_repo_relative(predecessor["path"], "predecessor path")
+        if not path.startswith(expected_dir) or not _RECEIPT_BASENAME_RE.fullmatch(path[len(expected_dir):]):
+            _fail("predecessor path must be docs/control/tasks/<task_id>/handoff_vNNN.json")
+        if path in visited:
+            _fail("predecessor chain contains a cycle or repeated receipt path")
+        visited.add(path)
+        expected_sha = _require_sha256(predecessor["sha256"], "predecessor sha256")
+        target = root / path
+        if not target.is_file():
+            _fail(f"predecessor receipt {path!r} is missing")
+        data = target.read_bytes()
+        if hashlib.sha256(data).hexdigest() != expected_sha:
+            _fail(f"predecessor receipt {path!r} bytes do not match the recorded sha256")
+        previous = _load_canonical_document(data, "predecessor receipt")
+        previous_index = _validate_receipt_body(previous, "predecessor receipt", root, verify_evidence_files=False)
+        if previous_index != current_index - 1:
+            _fail("predecessor receipt_index does not chain to this receipt")
+        if previous["task_id"] != parsed["task_id"] or previous["protocol_id"] != parsed["protocol_id"]:
+            _fail("predecessor identity does not match this receipt")
+        current = previous
+        current_index = previous_index
 
 
 def _validate_entrypoints(root: Path) -> None:
