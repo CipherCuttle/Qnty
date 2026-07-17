@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
-
-from quantbot.continuity.context import canonical_json_bytes
 
 PROTOCOL_ID = "real_btc_h001_funding_crowding_reversal_falsification_v0"
 HYPOTHESIS_ID = "candidate1-v1-funding-crowding-reversal-h001"
@@ -61,6 +60,11 @@ VARIANTS = (
 )
 CONTROLS = ["ALWAYS_FLAT", "ALWAYS_LONG", "ALWAYS_SHORT", "FUNDING_SIGN_FADE", "LAGGED_RETURN_SIGN", "LAGGED_RETURN_FADE"]
 
+# This digest is an independently recorded fingerprint of the complete frozen
+# canonical design.  It is deliberately not read from DESIGN_PATH: the input
+# file is the value under test, not the validator's source of truth.
+EXPECTED_CANONICAL_SHA256 = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+
 
 class DesignValidationError(ValueError):
     pass
@@ -82,6 +86,10 @@ def _keys(value: object, expected: set[str], label: str) -> dict:
 def _eq(value: object, expected: object, label: str) -> None:
     if value != expected:
         _fail(f"{label} drifted: expected {expected!r}")
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
 
 
 def _false_auth(data: dict) -> None:
@@ -188,8 +196,10 @@ def verify(path: str | Path) -> None:
         data = json.loads(raw.decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise DesignValidationError(f"cannot load design: {exc}") from exc
-    if raw.endswith(b"\n") or raw != canonical_json_bytes(data):
+    if raw.endswith(b"\n") or raw != _canonical_json_bytes(data):
         _fail("design JSON is not canonical")
+    if hashlib.sha256(raw).hexdigest() != EXPECTED_CANONICAL_SHA256:
+        _fail("design does not equal the independently frozen canonical contract")
     _validate(data)
 
 

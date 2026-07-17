@@ -20,7 +20,7 @@ def loaded():
 
 def write_design(tmp_path, data, *, canonical=True):
     path = tmp_path / "design.json"
-    raw = canonical_json_bytes(data) if canonical else json.dumps(data, indent=2).encode()
+    raw = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode() if canonical else json.dumps(data, indent=2).encode()
     path.write_bytes(raw)
     return path
 
@@ -30,6 +30,116 @@ def assert_rejected(tmp_path, mutation):
     mutation(data)
     with pytest.raises(DesignValidationError):
         verify(write_design(tmp_path, data))
+
+
+def _walk(value, path=()):
+    yield path, value
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield from _walk(child, path + (key,))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _walk(child, path + (index,))
+
+
+def _parent(value, path):
+    for part in path[:-1]:
+        value = value[part]
+    return value, path[-1]
+
+
+def _scalar_mutations():
+    for path, value in _walk(loaded()):
+        if isinstance(value, bool):
+            replacement = not value
+        elif isinstance(value, int):
+            replacement = value + 1
+        elif isinstance(value, float):
+            replacement = value + 1.0
+        elif isinstance(value, str):
+            replacement = value + "__mutation__"
+        elif value is None:
+            replacement = "__non_null_sentinel__"
+        else:
+            continue
+
+        def mutate(data, path=path, replacement=replacement):
+            parent, key = _parent(data, path)
+            parent[key] = replacement
+
+        yield ".".join(map(str, path)), mutate
+
+
+def _object_mutations():
+    for path, value in _walk(loaded()):
+        if not isinstance(value, dict):
+            continue
+        for key in ("__unknown_nested_field__", next(iter(value), None)):
+            if key is None:
+                continue
+
+            def mutate(data, path=path, key=key):
+                target = data
+                for part in path:
+                    target = target[part]
+                if key == "__unknown_nested_field__":
+                    target[key] = True
+                else:
+                    target.pop(key)
+
+            kind = "unknown" if key.startswith("__") else "missing"
+            yield f"{kind}:{'.'.join(map(str, path))}:{key}", mutate
+
+
+def _sequence_mutations():
+    for path, value in _walk(loaded()):
+        if not isinstance(value, list) or not value:
+            continue
+
+        def remove(data, path=path):
+            target = data
+            for part in path:
+                target = target[part]
+            target.pop()
+
+        def append_invalid(data, path=path):
+            target = data
+            for part in path:
+                target = target[part]
+            target.append({"__invalid_sequence_item__": True})
+
+        def duplicate(data, path=path):
+            target = data
+            for part in path:
+                target = target[part]
+            target.append(copy.deepcopy(target[0]))
+
+        yield f"remove:{'.'.join(map(str, path))}", remove
+        yield f"append:{'.'.join(map(str, path))}", append_invalid
+        yield f"duplicate:{'.'.join(map(str, path))}", duplicate
+        if len(value) > 1:
+            def reorder(data, path=path):
+                target = data
+                for part in path:
+                    target = target[part]
+                target.reverse()
+
+            yield f"reorder:{'.'.join(map(str, path))}", reorder
+
+
+@pytest.mark.parametrize("label,mutator", list(_scalar_mutations()))
+def test_every_scalar_leaf_is_frozen(tmp_path, label, mutator):
+    assert_rejected(tmp_path, mutator)
+
+
+@pytest.mark.parametrize("label,mutator", list(_object_mutations()))
+def test_every_object_key_set_is_frozen(tmp_path, label, mutator):
+    assert_rejected(tmp_path, mutator)
+
+
+@pytest.mark.parametrize("label,mutator", list(_sequence_mutations()))
+def test_every_sequence_structure_is_frozen(tmp_path, label, mutator):
+    assert_rejected(tmp_path, mutator)
 
 
 def test_canonical_design_passes():
@@ -148,4 +258,34 @@ def test_validation_test_mutations_fail(tmp_path, mutator):
     lambda d: d["custody_gates"].update(canonical_paths_forbidden=["/home/swirky/DevHub/repos/Qnty"]),
 ])
 def test_execution_and_custody_mutations_fail(tmp_path, mutator):
+    assert_rejected(tmp_path, mutator)
+
+
+@pytest.mark.parametrize("mutator", [
+    lambda d: d["split_contract"]["development"].update(allowed_purposes=[]),
+    lambda d: d["split_contract"]["development"].update(performance_selection_forbidden=False),
+    lambda d: d["split_contract"]["holdout"].update(warmup_bars_max=0),
+    lambda d: d["accounting_contract"].update(compounding_primary=True),
+    lambda d: d["accounting_contract"].update(funding_return="wrong"),
+    lambda d: d["accounting_contract"].update(gross_price_return="wrong"),
+    lambda d: d["accounting_contract"].update(leverage="wrong"),
+    lambda d: d["accounting_contract"].update(net_return="wrong"),
+    lambda d: d["accounting_contract"].update(normalized_notional="wrong"),
+    lambda d: d["accounting_contract"].update(terminal_liquidation="wrong"),
+    lambda d: d["accounting_contract"].update(turnover="wrong"),
+    lambda d: d["validation_test"].update(null=None),
+    lambda d: d["validation_test"].update(record=None),
+    lambda d: d["holdout_test"].update(seed="random"),
+    lambda d: d["validation_eligibility"].update(active_intervals_min=0),
+    lambda d: d["validation_selection"].update(primary="wrong"),
+    lambda d: d["validation_selection"].update(tie_break=[]),
+    lambda d: d["future_execution_sequence"].clear(),
+    lambda d: d["classifications"].clear(),
+    lambda d: d["stop_conditions"].clear(),
+    lambda d: d["future_execution_sequence"].append("unknown step"),
+    lambda d: d["classifications"].update(unknown="UNKNOWN"),
+    lambda d: d["stop_conditions"].append("UNKNOWN"),
+    lambda d: d["validation_test"].update(unknown_nested_field=True),
+])
+def test_named_adversarial_review_mutations_fail_closed(tmp_path, mutator):
     assert_rejected(tmp_path, mutator)
