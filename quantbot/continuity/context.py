@@ -13,6 +13,13 @@ import json
 import re
 from pathlib import Path
 
+from quantbot.artifacts.registry import (
+    ArtifactRegistryError,
+    cross_check_receipt_artifact,
+    validate_artifact_record_bytes,
+    validate_store_registry_bytes,
+)
+
 __all__ = [
     "canonical_json_bytes",
     "load_and_verify_continuity_state",
@@ -29,6 +36,8 @@ REQUIRED_ARTIFACT_ID = "candidate1-real-input-v0"
 REQUIRED_ARTIFACT_MANIFEST_SHA256 = "3dec994114769a16939afa9b0041a8162a308dcb05ca196557407b26a0d35b0d"
 
 ACTIVE_TASK_RELPATH = "docs/control/active_task.json"
+ARTIFACT_RECORDS_DIR_RELPATH = "docs/artifacts"
+STORE_REGISTRY_RELPATH = "docs/artifacts/stores.json"
 START_HERE_RELPATH = "docs/agent/START_HERE.md"
 CLAUDE_ENTRYPOINT_RELPATH = "CLAUDE.md"
 CODEX_ENTRYPOINT_RELPATH = "AGENTS.md"
@@ -312,8 +321,43 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
         _fail("handoff_receipt task_id does not match active_task")
     if parsed["protocol_id"] != active["protocol_id"]:
         _fail("handoff_receipt protocol_id does not match active_task")
+    if active["phase"] == "durable_artifact_store_configuration":
+        _cross_check_artifact_records(parsed, root)
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
     return parsed
+
+
+def _cross_check_artifact_records(receipt: dict, root: Path) -> None:
+    """Cross-check the active receipt's artifact summaries against the Git-owned
+    artifact records under docs/artifacts/ (durable artifact plane v1).
+
+    Applies to the active receipt only: historical receipts predate or
+    postdate the registry state and stay validated by their immutable bytes.
+    Fails closed when a record or the store registry is missing, noncanonical,
+    not evidenced by the active receipt, or divergent from the receipt summary.
+    """
+    store_registry_path = root / STORE_REGISTRY_RELPATH
+    if not store_registry_path.is_file():
+        _fail(f"artifact store registry {STORE_REGISTRY_RELPATH} is missing")
+    try:
+        store_registry = validate_store_registry_bytes(store_registry_path.read_bytes())
+    except ArtifactRegistryError as error:
+        _fail(f"store registry invalid: {error}")
+    evidence_by_path = {item["path"]: item["sha256"] for item in receipt["evidence"]}
+    for artifact in receipt["required_artifacts"]:
+        record_relpath = f"{ARTIFACT_RECORDS_DIR_RELPATH}/{artifact['artifact_id']}.json"
+        record_path = root / record_relpath
+        if not record_path.is_file():
+            _fail(f"artifact record {record_relpath} is missing")
+        record_bytes = record_path.read_bytes()
+        record_sha = hashlib.sha256(record_bytes).hexdigest()
+        if evidence_by_path.get(record_relpath) != record_sha:
+            _fail(f"artifact record {record_relpath} hash is not evidenced by the active handoff receipt")
+        try:
+            record = validate_artifact_record_bytes(record_bytes, expected_artifact_id=artifact["artifact_id"])
+            cross_check_receipt_artifact(artifact, record, store_registry)
+        except ArtifactRegistryError as error:
+            _fail(f"artifact record {record_relpath} invalid: {error}")
 
 
 def _validate_predecessor_chain(parsed: dict, root: Path, receipt_relpath: str) -> None:

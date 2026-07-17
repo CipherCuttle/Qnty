@@ -62,6 +62,18 @@ Chat history, MemPalace, and local untracked notes are recall aids only and are
   or modify production/VM checkouts unless the validated next action says so
   explicitly.
 
+## Durable artifact-plane invariants
+
+- `HASHED DOES NOT MEAN PRESERVED`: a fingerprint does not prove a durable copy
+  exists.
+- `/tmp` is workspace, never canonical storage; neither is `/srv/qnty`.
+- Legacy path-sensitive fingerprints are historical protocol bindings, not
+  portable content identities.
+- No real-data protocol proceeds without a portable manifest, and no artifact
+  is `VERIFIED_AVAILABLE` without two independently restored durable copies.
+- Agents resolve artifact identity through Git-owned artifact records under
+  `docs/artifacts/`, never from a local path or chat history.
+
 ## Repo basics
 
 - Install: `python -m venv .venv && source .venv/bin/activate && pip install -e ".[test]"`

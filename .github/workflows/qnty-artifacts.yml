@@ -1,0 +1,32 @@
+name: qnty-artifacts
+
+# Synthetic governance checks only: no secrets, network, configured stores, or
+# real data. The committed registry stays unconfigured in this workflow.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package (test extras only)
+        run: python -m pip install -e ".[test]"
+      - name: Synthetic artifact tests
+        run: python -m pytest tests/artifacts -q
+      - name: Validate unconfigured artifact registry
+        run: python -m quantbot.artifacts verify-registry
+      - name: Verify blocked continuity and deterministic packet
+        run: |
+          python -m quantbot.continuity verify
+          python -m quantbot.continuity show > packet_a.txt
+          python -m quantbot.continuity show > packet_b.txt
+          diff packet_a.txt packet_b.txt
