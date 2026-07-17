@@ -41,6 +41,7 @@ ARTIFACT_RECORDS_DIR_RELPATH = "docs/artifacts"
 STORE_REGISTRY_RELPATH = "docs/artifacts/stores.json"
 AMENDMENT_RELPATH = "docs/control/amendments/candidate1_v1_synthetic_sandbox_v001.json"
 REAL_H001_AMENDMENT_RELPATH = "docs/control/amendments/candidate1_h001_real_falsification_design_v001.json"
+PRE_DATA_H001_AMENDMENT_RELPATH = "docs/control/amendments/candidate1_h001_pre_data_assurance_v001.json"
 H001_DESIGN_JSON_RELPATH = "docs/experiments/candidate1_h001_real_data_falsification_v0.json"
 START_HERE_RELPATH = "docs/agent/START_HERE.md"
 CLAUDE_ENTRYPOINT_RELPATH = "CLAUDE.md"
@@ -125,6 +126,8 @@ _H001_PREREGISTERED_PHASE = "candidate1_h001_real_falsification_preregistered_de
 _H001_PREREGISTERED_NEXT_ACTION = "ADVERSARIAL_REVIEW_H001_REAL_FALSIFICATION_PREREGISTRATION"
 _H001_REVIEW_COMPLETE_PHASE = "candidate1_h001_real_falsification_preregistration_review_complete"
 _H001_REVIEW_COMPLETE_NEXT_ACTION = "AUTHORIZE_H001_REAL_DATA_INFRASTRUCTURE_PREPARATION_GOVERNANCE"
+_H001_PRE_DATA_PHASE = "candidate1_h001_pre_data_assurance_governance"
+_H001_PRE_DATA_NEXT_ACTION = "IMPLEMENT_H001_PRE_DATA_ASSURANCE_AND_SYNTHETIC_INFRASTRUCTURE_SCAFFOLD"
 # Immutable identities recorded by the H001 preregistration review-completion
 # transition. These pin the exact reviewed artifacts; the external adversarial
 # review is process assurance only and is never scientific evidence.
@@ -163,6 +166,99 @@ _H001_REVIEW_REQUIRED_PROHIBITIONS = {
     "CONFIGURE_DURABLE_ARTIFACT_STORES",
     "GRANT_REAL_DATA_ACCESS",
     "GRANT_SCIENTIFIC_AUTHORIZATION",
+}
+_H001_PRE_DATA_AMENDMENT_KEYS = {
+    "allowed_actions", "amendment_id", "amendment_kind", "assurance_controls",
+    "authorization_scope", "authorization_status", "governed_h001_protocol_id",
+    "governed_protocol_id", "non_effects", "predecessor_amendment", "prohibited_actions",
+    "review_binding", "schema_version", "source_handoff", "source_main_commit",
+    "strict_temporal_precedence_target", "transition_gates",
+}
+_H001_PRE_DATA_REVIEW_BINDING_KEYS = {
+    "design_sha256", "review_verdict", "reviewed_implementation_head", "validator_sha256",
+}
+_H001_PRE_DATA_ALLOWED_ACTIONS = sorted([
+    "DRAFT_APPEND_ONLY_H001_TEMPORAL_CAUSALITY_AMENDMENT_WITHOUT_APPLYING",
+    "DRAFT_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_WITHOUT_FREEZING_OR_EXECUTION",
+    "IMPLEMENT_APPEND_ONLY_GLOBAL_REAL_PROTOCOL_HOLDOUT_DISCLOSURE_LEDGER_SCHEMA_WITHOUT_DATA_ACCESS_OR_BACKFILL",
+    "IMPLEMENT_DURABLE_STORE_FAILURE_DOMAIN_EVIDENCE_METADATA_SCHEMA_WITHOUT_STORE_ACCESS_OR_CONFIGURATION",
+    "IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_HARNESS_WITHOUT_EXECUTION",
+    "IMPLEMENT_REPLAYABLE_REVIEW_EVIDENCE_PACKET_SCHEMA_WITHOUT_REAL_DATA_OR_SECRETS",
+    "IMPLEMENT_SYNTHETIC_ARTIFACT_CANARY_SCAFFOLD_WITHOUT_STORE_CONFIGURATION_OR_EXECUTION",
+    "REVIEW_H001_PRE_DATA_ASSURANCE_AND_SYNTHETIC_INFRASTRUCTURE_SCAFFOLD",
+])
+_H001_PRE_DATA_ASSURANCE_CONTROLS = sorted([
+    "CALIBRATION_SPEC_FREEZE_REQUIRES_SEPARATE_GOVERNANCE",
+    "DYNAMIC_FUNDING_INTERVAL_FIXTURES_REQUIRED", "FAILURE_DOMAIN_LABEL_SELF_ASSERTION_IS_INSUFFICIENT",
+    "FAILURE_DOMAIN_SCHEMA_IMPLEMENTATION_CANNOT_PROBE_STORES",
+    "FROZEN_NULL_DGP_SPEC_REQUIRED_BEFORE_CALIBRATION", "GLOBAL_HOLDOUT_DISCLOSURE_LEDGER_REQUIRED",
+    "HAC_LAG_TUNING_FORBIDDEN", "INDEPENDENT_RESTORE_AND_REHASH_REQUIRED",
+    "HOLDOUT_LEDGER_IMPLEMENTATION_IS_SCHEMA_ONLY", "HOLDOUT_LEDGER_REAL_DATA_ACCESS_FORBIDDEN",
+    "HOLDOUT_LEDGER_RETROACTIVE_BACKFILL_FORBIDDEN",
+    "MULTIPLE_FUNDING_EVENTS_PER_BAR_FIXTURES_REQUIRED", "REPLAYABLE_REVIEW_PACKET_REQUIRED",
+    "REVIEW_PACKET_REAL_DATA_AND_SECRETS_FORBIDDEN",
+    "STATIONARY_BOOTSTRAP_BLOCK_LENGTH_TUNING_FORBIDDEN", "STRICT_TEMPORAL_PRECEDENCE_AMENDMENT_TARGET",
+    "SYNTHETIC_CANARY_CANNOT_BECOME_REAL_ARTIFACT",
+])
+_H001_PRE_DATA_NON_EFFECTS = sorted([
+    "DOES_NOT_AUTHORIZE_CALIBRATION_SPEC_FREEZE", "DOES_NOT_AUTHORIZE_CANDIDATE_STORE_ACCESS_OR_PROBING",
+    "DOES_NOT_AUTHORIZE_HOLDOUT_LEDGER_BACKFILL", "DOES_NOT_AUTHORIZE_HOLDOUT_OR_REAL_ARTIFACT_BYTE_ACCESS",
+    "DOES_NOT_AUTHORIZE_NETWORK_ACCESS", "DOES_NOT_AUTHORIZE_REVIEW_PACKET_REAL_DATA_OR_SECRET_INCLUSION",
+    "DOES_NOT_ACCESS_BINANCE", "DOES_NOT_ACCESS_REAL_DATA", "DOES_NOT_AMEND_THE_H001_PREREGISTRATION",
+    "DOES_NOT_AUTHORIZE_ASSURANCE_EXECUTION", "DOES_NOT_AUTHORIZE_BOOTSTRAP_OR_HAC_TUNING",
+    "DOES_NOT_AUTHORIZE_CANDIDATE_STORE_CONFIGURATION", "DOES_NOT_AUTHORIZE_H001_HOLDOUT",
+    "DOES_NOT_AUTHORIZE_H001_VALIDATION", "DOES_NOT_AUTHORIZE_LIVE_INTEGRATION",
+    "DOES_NOT_AUTHORIZE_PAPER_TRADING", "DOES_NOT_AUTHORIZE_REAL_ARTIFACT_CREATION",
+    "DOES_NOT_AUTHORIZE_REAL_DATA_ACCESS", "DOES_NOT_AUTHORIZE_SCIENTIFIC_CLAIMS",
+    "DOES_NOT_CHANGE_BLOCK_LIVE_INTEGRATION", "DOES_NOT_CHANGE_EDGE_UNPROVEN",
+    "DOES_NOT_CHANGE_V0_ARTIFACT_STATE", "DOES_NOT_CONFIGURE_DURABLE_STORES",
+    "DOES_NOT_CREATE_OR_BIND_REAL_DATA_ARTIFACTS", "DOES_NOT_INCREMENT_ANY_EXECUTION_COUNT",
+    "DOES_NOT_MARK_SYNTHETIC_RESULTS_AS_MARKET_EVIDENCE", "DOES_NOT_MODIFY_EXISTING_AMENDMENTS",
+    "DOES_NOT_MODIFY_EXISTING_HANDOFF_RECEIPTS", "DOES_NOT_RANK_OR_SELECT_H001_VARIANTS",
+    "DOES_NOT_RECOVER_OR_RETIRE_V0",
+])
+_H001_PRE_DATA_REQUIRED_PROHIBITIONS = sorted(set([
+    "ACCESS_HOLDOUT_OR_REAL_ARTIFACT_BYTES_FOR_LEDGER_IMPLEMENTATION", "ACCESS_OR_PROBE_CANDIDATE_STORE_ROOTS",
+    "ACCESS_ANY_REAL_BARS_OR_FUNDING", "ACCESS_BINANCE_OR_ANY_MARKET_DATA_SOURCE",
+    "ACCESS_CANDIDATE1_V0_INPUT_OR_QUARANTINE", "APPLY_TEMPORAL_CAUSALITY_CHANGE_WITHOUT_APPEND_ONLY_AMENDMENT",
+    "CALCULATE_H001_REAL_RETURNS", "CONFIGURE_CANDIDATE_DURABLE_STORES", "CONFIGURE_DURABLE_ARTIFACT_STORES",
+    "CREATE_OR_BIND_REAL_DATA_ARTIFACT", "EXECUTE_H001", "EXECUTE_H001_HOLDOUT", "EXECUTE_H001_VALIDATION",
+    "EXPOSE_SYNTHETIC_NULL_CALIBRATION_RESULTS_BEFORE_SEPARATE_AUTHORIZATION", "GRANT_LIVE_INTEGRATION_AUTHORIZATION",
+    "GRANT_PAPER_TRADE_AUTHORIZATION", "GRANT_REAL_DATA_ACCESS", "GRANT_SCIENTIFIC_AUTHORIZATION",
+    "INCREMENT_EXECUTION_COUNTS", "MARK_CANDIDATE1_REAL_INPUT_V0_AVAILABLE", "MODIFY_EXISTING_GOVERNANCE_AMENDMENTS",
+    "MODIFY_EXISTING_HANDOFF_RECEIPTS", "RANK_OR_SELECT_H001_VARIANTS", "REGISTER_SYNTHETIC_CANARY_AS_REAL_ARTIFACT",
+    "RUN_SYNTHETIC_STORE_CANARY_BEFORE_SEPARATE_AUTHORIZATION", "TREAT_ASSURANCE_RESULTS_AS_MARKET_EVIDENCE",
+    "TREAT_REVIEW_RESULTS_AS_SCIENTIFIC_EVIDENCE", "TUNE_BOOTSTRAP_BLOCK_LENGTH_FROM_CALIBRATION_RESULTS",
+    "TUNE_HAC_LAG_FROM_CALIBRATION_RESULTS", "USE_H001_HOLDOUT_DATA", "USE_REAL_DATA_IN_ASSURANCE_SCAFFOLD",
+    "ACCESS_QUARANTINE", "CLAIM_H001_HAS_MARKET_EDGE", "CHOOSE_OR_INSPECT_REAL_DATASET_BYTES",
+    "CONSUME_H001_EXECUTION_BUDGET", "FREEZE_REAL_DATA", "RECOVER_OR_RETIRE_V0",
+    "AUTHORIZE_H001_REAL_DATA_INFRASTRUCTURE_WITHOUT_SEPARATE_GOVERNANCE",
+    "ACCESS_STORE_CREDENTIALS_OR_SECRET_CONFIGURATION", "BACKFILL_GLOBAL_HOLDOUT_LEDGER_FROM_REAL_DATA_OR_UNVERIFIED_HISTORY",
+    "FREEZE_H001_SYNTHETIC_NULL_CALIBRATION_SPEC", "INCLUDE_REAL_DATA_OR_SECRETS_IN_REVIEW_EVIDENCE_PACKET",
+    "MUTATE_PRIOR_HOLDOUT_LEDGER_DISCLOSURES", "QUERY_NETWORK_OR_MARKET_DATA_FOR_SCAFFOLD_IMPLEMENTATION",
+]))
+_H001_PRE_DATA_TRANSITION_GATES = {
+    "existing_h001_design_unchanged": True, "existing_h001_validator_unchanged": True, "existing_h001_review_passed": True,
+    "temporal_causality_amendment_required": True, "temporal_causality_amendment_applied": False,
+    "temporal_causality_amendment_requires_independent_review": True, "synthetic_null_calibration_spec_required": True,
+    "synthetic_null_calibration_spec_draft_authorized": True, "synthetic_null_calibration_spec_freeze_authorized": False,
+    "synthetic_null_calibration_spec_frozen": False,
+    "synthetic_null_calibration_harness_authorized": True, "synthetic_null_calibration_execution_authorized": False,
+    "synthetic_null_calibration_results_exposed": False, "bootstrap_block_length_tuning_authorized": False,
+    "hac_lag_tuning_authorized": False, "global_holdout_ledger_required": True, "global_holdout_ledger_implemented": False,
+    "global_holdout_ledger_schema_authorized": True, "global_holdout_ledger_data_access_authorized": False,
+    "global_holdout_ledger_backfill_authorized": False, "global_holdout_ledger_prior_history_mutation_authorized": False,
+    "failure_domain_evidence_schema_required": True, "synthetic_store_canary_scaffold_authorized": True,
+    "failure_domain_evidence_metadata_schema_authorized": True, "candidate_store_access_authorized": False,
+    "candidate_store_probe_authorized": False, "candidate_store_credential_access_authorized": False,
+    "candidate_store_configuration_authorized": False, "synthetic_store_canary_execution_authorized": False,
+    "real_artifact_store_operations_authorized": False, "review_evidence_packet_required": True,
+    "review_evidence_packet_implemented": False, "real_data_access_authorized": False,
+    "review_packet_real_data_inclusion_authorized": False, "review_packet_secret_inclusion_authorized": False,
+    "real_artifact_creation_authorized": False, "validation_execution_authorized": False,
+    "holdout_execution_authorized": False, "h001_primary_execution_budget": 0, "h001_primary_execution_count": 0,
+    "required_durable_copy_count": 2, "scientific_authorization": False, "paper_trade_authorization": False,
+    "live_authorization": False, "v0_disposition_unchanged": True,
 }
 _H001_BUNDLE_RELPATH = "docs/sandbox/example_candidate1_v1_hypothesis_001.json"
 _H001_BUNDLE_SHA256 = "322b58eb5aa7b8b02d488ab182b38420afa8390cc36e054e1c1e96558905b82e"
@@ -771,6 +867,99 @@ def _validate_h001_review_complete_handoff(receipt: dict, root: Path) -> dict:
     return amendment
 
 
+def _validate_h001_pre_data_handoff(receipt: dict, root: Path) -> dict:
+    path = root / PRE_DATA_H001_AMENDMENT_RELPATH
+    if not path.is_file():
+        _fail(f"H001 pre-data assurance amendment {PRE_DATA_H001_AMENDMENT_RELPATH} is missing")
+    amendment = _load_canonical_document(path.read_bytes(), "H001 pre-data assurance amendment")
+    _require_exact_keys(amendment, _H001_PRE_DATA_AMENDMENT_KEYS, "H001 pre-data assurance amendment")
+    exact = {
+        "schema_version": "0.1.0", "amendment_kind": "qnty_governance_transition_amendment",
+        "amendment_id": "candidate1-h001-pre-data-assurance-v001",
+        "authorization_status": "AUTHORIZED_PRE_DATA_ASSURANCE_AND_SYNTHETIC_INFRASTRUCTURE_SCAFFOLD_ONLY",
+        "governed_protocol_id": PROTOCOL_ID,
+        "governed_h001_protocol_id": "real_btc_h001_funding_crowding_reversal_falsification_v0",
+        "source_main_commit": "9a9e6b16c372cef9dfc99ff9ccd49fdc8e16b8f4",
+        "strict_temporal_precedence_target": "funding_time_utc < decision_timestamp",
+    }
+    for key, expected in exact.items():
+        if amendment[key] != expected:
+            _fail(f"H001 pre-data assurance amendment {key} is wrong")
+    if amendment["authorization_scope"] != (
+        "Only repository-owned schema, validator, harness, documentation and synthetic-fixture scaffolding may be implemented. "
+        "All implementation must operate without network access, Binance or market-data access, holdout access, real artifact bytes, "
+        "artifact-store roots, store credentials, candidate-store probing, candidate-store configuration, ledger backfill, calibration "
+        "execution, calibration-result exposure or calibration-spec freezing. The scaffold may describe later work but may not perform it."
+    ):
+        _fail("H001 pre-data assurance authorization_scope is wrong")
+    for key, expected in (("allowed_actions", _H001_PRE_DATA_ALLOWED_ACTIONS), ("assurance_controls", _H001_PRE_DATA_ASSURANCE_CONTROLS),
+                          ("non_effects", _H001_PRE_DATA_NON_EFFECTS), ("prohibited_actions", _H001_PRE_DATA_REQUIRED_PROHIBITIONS)):
+        value = _require_str_list(amendment[key], f"H001 pre-data assurance amendment {key}")
+        if value != expected or len(value) != len(set(value)) or value != sorted(value):
+            _fail(f"H001 pre-data assurance amendment {key} drifted")
+    predecessor = _require_exact_keys(amendment["predecessor_amendment"], {"path", "sha256"}, "predecessor_amendment")
+    if predecessor != {"path": REAL_H001_AMENDMENT_RELPATH, "sha256": "5e3eff235212f52480fa00ba7ffabb4d75f4160d51d359dc6e5aa6b9d1b8b1e1"}:
+        _fail("H001 pre-data assurance predecessor amendment drifted")
+    source_handoff = _require_exact_keys(amendment["source_handoff"], {"path", "sha256"}, "source_handoff")
+    if source_handoff != {"path": f"docs/control/tasks/{TASK_ID}/handoff_v012.json", "sha256": "260414954f579b7b1d6c56f1c2d68dbf5796017292630c6a3b36a28c9340c326"}:
+        _fail("H001 pre-data assurance source handoff drifted")
+    review = _require_exact_keys(amendment["review_binding"], _H001_PRE_DATA_REVIEW_BINDING_KEYS, "review_binding")
+    if review != {"design_sha256": _H001_REVIEW_DESIGN_SHA256, "validator_sha256": _H001_REVIEW_VALIDATOR_SHA256,
+                  "reviewed_implementation_head": _H001_REVIEW_REVIEWED_HEAD, "review_verdict": _H001_REVIEW_VERDICT}:
+        _fail("H001 pre-data assurance review binding drifted")
+    gates = _require_exact_keys(amendment["transition_gates"], set(_H001_PRE_DATA_TRANSITION_GATES), "transition_gates")
+    if gates != _H001_PRE_DATA_TRANSITION_GATES:
+        _fail("H001 pre-data assurance transition gates drifted")
+    evidence = {item["path"]: item["sha256"] for item in receipt["evidence"]}
+    required_evidence = {
+        PRE_DATA_H001_AMENDMENT_RELPATH: hashlib.sha256(path.read_bytes()).hexdigest(),
+        f"docs/control/tasks/{TASK_ID}/handoff_v012.json": "260414954f579b7b1d6c56f1c2d68dbf5796017292630c6a3b36a28c9340c326",
+        REAL_H001_AMENDMENT_RELPATH: "5e3eff235212f52480fa00ba7ffabb4d75f4160d51d359dc6e5aa6b9d1b8b1e1",
+        H001_DESIGN_JSON_RELPATH: _H001_REVIEW_DESIGN_SHA256,
+        _H001_VALIDATOR_RELPATH: _H001_REVIEW_VALIDATOR_SHA256,
+        _H001_FOCUSED_TEST_RELPATH: _H001_REVIEW_FOCUSED_TEST_SHA256,
+        "docs/artifacts/candidate1-real-input-v0.json": "9c53466fe87ecc58c46ec63dd5fdde1e947318036a6c071e837e01ebb74a1324",
+        STORE_REGISTRY_RELPATH: "ac53bea147d2e6bb91e779f64e43edb7b8eb6e5531a36884bea2499e7e111148",
+        "quantbot/continuity/context.py": hashlib.sha256((root / "quantbot/continuity/context.py").read_bytes()).hexdigest(),
+        "tests/continuity/test_cross_agent_continuity.py": hashlib.sha256((root / "tests/continuity/test_cross_agent_continuity.py").read_bytes()).hexdigest(),
+    }
+    for evidence_path, expected in required_evidence.items():
+        if evidence.get(evidence_path) != expected:
+            _fail(f"H001 pre-data assurance missing or wrong evidence for {evidence_path}")
+    if receipt["receipt_index"] != 13:
+        _fail("H001 pre-data assurance handoff must be receipt index 13")
+    if receipt["source_branch"] != "feat/h001-predata-assurance-governance" or receipt["source_head_commit"] != "9a9e6b16c372cef9dfc99ff9ccd49fdc8e16b8f4":
+        _fail("H001 pre-data assurance handoff source identity is wrong")
+    if receipt["predecessor"] != {"path": f"docs/control/tasks/{TASK_ID}/handoff_v012.json", "sha256": "260414954f579b7b1d6c56f1c2d68dbf5796017292630c6a3b36a28c9340c326"}:
+        _fail("H001 pre-data assurance handoff predecessor is wrong")
+    expected_scope = {ACTIVE_TASK_RELPATH, PRE_DATA_H001_AMENDMENT_RELPATH, f"docs/control/tasks/{TASK_ID}/handoff_v013.json", "quantbot/continuity/context.py", "tests/continuity/test_cross_agent_continuity.py"}
+    if set(receipt["changed_file_scope"]) != expected_scope or len(receipt["changed_file_scope"]) != len(expected_scope):
+        _fail("H001 pre-data assurance handoff changed_file_scope is not the exact five-file scope")
+    if receipt["next_actions"] != [_H001_PRE_DATA_NEXT_ACTION]:
+        _fail("H001 pre-data assurance handoff next action is wrong")
+    required_decisions = {
+        "H001_PRE_DATA_ASSURANCE_GOVERNANCE=AUTHORIZED_SCAFFOLD_ONLY", "H001_PRE_DATA_ASSURANCE_EXECUTION=NOT_AUTHORIZED",
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT=REQUIRED_NOT_CREATED", "H001_TEMPORAL_CAUSALITY_TARGET=FUNDING_TIME_STRICTLY_BEFORE_DECISION",
+        "H001_SYNTHETIC_NULL_CALIBRATION_SPEC=REQUIRED_NOT_FROZEN", "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+        "H001_BOOTSTRAP_BLOCK_LENGTH_TUNING=FORBIDDEN", "H001_HAC_LAG_TUNING=FORBIDDEN",
+        "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER=REQUIRED_NOT_IMPLEMENTED", "H001_SYNTHETIC_STORE_CANARY_SCAFFOLD=AUTHORIZED_NOT_IMPLEMENTED",
+        "H001_CANDIDATE_STORE_CONFIGURATION=NOT_AUTHORIZED", "H001_REVIEW_EVIDENCE_PACKET=REQUIRED_NOT_IMPLEMENTED",
+        "H001_REAL_DATA_ACCESS=FORBIDDEN", "H001_ARTIFACT_OPERATIONS=FORBIDDEN", "H001_CURRENT_EXECUTION_BUDGET=0",
+        "H001_CURRENT_EXECUTION_COUNT=0", "H001_SCIENTIFIC_AUTHORIZATION=FALSE", "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+        "H001_LIVE_AUTHORIZATION=FALSE", "V0_AVAILABILITY=UNAVAILABLE", "V0_VERIFIED_COPY_COUNT=0",
+        "DURABLE_STORES=UNCONFIGURED", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
+    }
+    if not required_decisions.issubset(receipt["decisions"]):
+        _fail("H001 pre-data assurance handoff is missing required boundary decisions")
+    if not set(_H001_PRE_DATA_REQUIRED_PROHIBITIONS).issubset(receipt["prohibited_actions"]):
+        _fail("H001 pre-data assurance handoff is missing required prohibitions")
+    if receipt["required_artifacts"] != [{"artifact_id": REQUIRED_ARTIFACT_ID, "availability": "UNAVAILABLE", "canonical_paths": [], "expected_manifest_sha256": REQUIRED_ARTIFACT_MANIFEST_SHA256, "verified_copy_count": 0}]:
+        _fail("H001 pre-data assurance changed the V0 artifact state")
+    if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 pre-data assurance changed an execution or authorization boundary")
+    return amendment
+
+
 def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evidence_files: bool) -> int:
     """Structural fail-closed validation shared by the active receipt and every
     historical receipt in the predecessor chain. Does not validate the
@@ -845,6 +1034,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_REVIEW_COMPLETE_PHASE:
         _cross_check_artifact_records(parsed, root)
         amendment = _validate_h001_review_complete_handoff(parsed, root)
+    elif active["phase"] == _H001_PRE_DATA_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        amendment = _validate_h001_pre_data_handoff(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -852,6 +1044,8 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
         parsed = dict(parsed)
         if phase in (_H001_DESIGN_PHASE, _H001_PREREGISTERED_PHASE, _H001_REVIEW_COMPLETE_PHASE):
             parsed["_validated_h001_design_amendment"] = amendment
+        elif phase == _H001_PRE_DATA_PHASE:
+            parsed["_validated_h001_pre_data_amendment"] = amendment
         else:
             parsed["_validated_sandbox_amendment"] = amendment
     return parsed
@@ -974,6 +1168,7 @@ def load_and_verify_continuity_state(root: Path) -> dict:
         "handoff_receipt_sha256": digest,
         **({"sandbox_amendment": receipt["_validated_sandbox_amendment"]} if "_validated_sandbox_amendment" in receipt else {}),
         **({"h001_design_amendment": receipt["_validated_h001_design_amendment"]} if "_validated_h001_design_amendment" in receipt else {}),
+        **({"h001_pre_data_amendment": receipt["_validated_h001_pre_data_amendment"]} if "_validated_h001_pre_data_amendment" in receipt else {}),
     }
 
 
@@ -1138,6 +1333,37 @@ def render_context_packet(state: dict) -> str:
             "V0_AVAILABILITY=UNAVAILABLE",
             "EDGE_STATUS=EDGE_UNPROVEN",
             "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
+        ])
+    elif active["phase"] == _H001_PRE_DATA_PHASE:
+        lines.extend([
+            "H001_PRE_DATA_ASSURANCE_GOVERNANCE=AUTHORIZED_SCAFFOLD_ONLY",
+            "H001_PRE_DATA_ASSURANCE_EXECUTION=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_DRAFT=AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC=REQUIRED_NOT_FROZEN",
+            "H001_TEMPORAL_CAUSALITY_AMENDMENT=REQUIRED_NOT_CREATED",
+            "H001_TEMPORAL_CAUSALITY_TARGET=FUNDING_TIME_STRICTLY_BEFORE_DECISION",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+            "H001_BOOTSTRAP_BLOCK_LENGTH_TUNING=FORBIDDEN",
+            "H001_HAC_LAG_TUNING=FORBIDDEN",
+            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_SCOPE=SCHEMA_ONLY",
+            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_DATA_ACCESS=FORBIDDEN",
+            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_BACKFILL=FORBIDDEN",
+            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER=REQUIRED_NOT_IMPLEMENTED",
+            "H001_SYNTHETIC_STORE_CANARY_SCAFFOLD=AUTHORIZED_NOT_IMPLEMENTED",
+            "H001_FAILURE_DOMAIN_EVIDENCE_SCOPE=METADATA_SCHEMA_ONLY",
+            "H001_CANDIDATE_STORE_ACCESS_OR_PROBING=FORBIDDEN",
+            "H001_CANDIDATE_STORE_CONFIGURATION=NOT_AUTHORIZED",
+            "H001_REVIEW_PACKET_REAL_DATA_INCLUSION=FORBIDDEN",
+            "H001_REVIEW_PACKET_SECRET_INCLUSION=FORBIDDEN",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_EXECUTION=0/0",
+            f"UMBRELLA_DECOMPOSITION_EXECUTION={safety['decomposition_execution_count']}/{safety['decomposition_execution_budget']}",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+            "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+            "H001_LIVE_AUTHORIZATION=FALSE",
         ])
     for prohibited in receipt["prohibited_actions"]:
         lines.append(f"PROHIBITED={prohibited}")
