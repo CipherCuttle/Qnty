@@ -202,15 +202,17 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
-    assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
+    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE)
 
 
 def test_h001_completion_phase_verifies_and_renders_boundaries():
     state = load_and_verify_continuity_state(ROOT)
+    if state["active_task"]["phase"] == context._H001_DESIGN_PHASE:
+        pytest.skip("production tree has advanced past synthetic completion")
     assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
     assert state["handoff_receipt"]["next_actions"] == [context._H001_COMPLETE_NEXT_ACTION]
     packet = render_context_packet(state)
@@ -225,6 +227,34 @@ def test_h001_completion_phase_verifies_and_renders_boundaries():
         "H001_EXECUTION_AUTHORIZED=FALSE",
         "H001_PRIMARY_EXECUTION_COUNT=0",
         "H001_DURABLE_STORES_CONFIGURED=FALSE",
+        "EDGE_STATUS=EDGE_UNPROVEN",
+        "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
+    ):
+        assert line in packet
+
+
+def test_h001_design_governance_phase_verifies_and_renders_boundaries():
+    state = load_and_verify_continuity_state(ROOT)
+    if state["active_task"]["phase"] != context._H001_DESIGN_PHASE:
+        pytest.skip("production tree is before the H001 design-governance transition")
+    assert state["handoff_receipt"]["next_actions"] == [context._H001_DESIGN_NEXT_ACTION]
+    amendment = state["h001_design_amendment"]
+    assert amendment["authorization_status"] == "AUTHORIZED_PREREGISTRATION_DESIGN_ONLY"
+    assert amendment["predecessor_amendment"]["sha256"] == context._SYNTHETIC_AMENDMENT_SHA256
+    packet = render_context_packet(state)
+    for line in (
+        "H001_REAL_FALSIFICATION_GOVERNANCE=AUTHORIZED_PREREGISTRATION_DESIGN_ONLY",
+        "H001_PREREGISTRATION_DESIGN=ALLOWED",
+        "H001_REAL_DATA_ACCESS=FORBIDDEN",
+        "H001_REAL_DATA_EXECUTION=FORBIDDEN",
+        "H001_PRIMARY_EXECUTION_BUDGET=0",
+        "H001_PRIMARY_EXECUTION_COUNT=0",
+        "H001_REQUIRED_DURABLE_COPIES=2",
+        "H001_DURABLE_STORES_CONFIGURED=FALSE",
+        "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+        "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+        "H001_LIVE_AUTHORIZATION=FALSE",
+        "V0_AVAILABILITY=UNAVAILABLE",
         "EDGE_STATUS=EDGE_UNPROVEN",
         "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
     ):
@@ -935,13 +965,24 @@ def test_sandbox_phase_v003_contract_passes_and_renders_boundary(tmp_path):
 def test_valid_v003_amendment_chain_and_boundary_rendering():
     state = load_and_verify_continuity_state(ROOT)
     assert state["handoff_receipt"]["receipt_index"] >= 4
-    assert state["sandbox_amendment"]["sandbox_id"] == "candidate1-v1-synthetic-design-sandbox-v0"
+    if state["active_task"]["phase"] == context._H001_DESIGN_PHASE:
+        assert state["h001_design_amendment"]["amendment_id"] == "candidate1-h001-real-falsification-design-v001"
+    else:
+        assert state["sandbox_amendment"]["sandbox_id"] == "candidate1-v1-synthetic-design-sandbox-v0"
     packet = render_context_packet(state)
-    assert "H001_SYNTHETIC_STATUS=FALSIFICATION_COMPLETE_MECHANICAL_ONLY" in packet
+    if state["active_task"]["phase"] == context._H001_DESIGN_PHASE:
+        assert "H001_REAL_FALSIFICATION_GOVERNANCE=AUTHORIZED_PREREGISTRATION_DESIGN_ONLY" in packet
+    else:
+        assert "H001_SYNTHETIC_STATUS=FALSIFICATION_COMPLETE_MECHANICAL_ONLY" in packet
     assert "H001_REAL_DATA_ACCESS=FORBIDDEN" in packet
-    assert "H001_SCIENTIFIC_EVIDENCE=FALSE" in packet
-    assert "DURABLE_STORE_GATE=REQUIRED_FOR_REAL_ARTIFACT_OPERATIONS" in packet
-    assert "V0_DISPOSITION=UNCHANGED" in packet
+    if state["active_task"]["phase"] == context._H001_DESIGN_PHASE:
+        assert "H001_SCIENTIFIC_AUTHORIZATION=FALSE" in packet
+        assert "H001_REQUIRED_DURABLE_COPIES=2" in packet
+        assert "V0_AVAILABILITY=UNAVAILABLE" in packet
+    else:
+        assert "H001_SCIENTIFIC_EVIDENCE=FALSE" in packet
+        assert "DURABLE_STORE_GATE=REQUIRED_FOR_REAL_ARTIFACT_OPERATIONS" in packet
+        assert "V0_DISPOSITION=UNCHANGED" in packet
     assert "official V1 protocol" not in packet
     assert "V1 artifact" not in packet
 
