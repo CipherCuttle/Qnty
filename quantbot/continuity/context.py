@@ -115,6 +115,32 @@ _SANDBOX_PHASE = "candidate1_v1_synthetic_sandbox_governance"
 _SANDBOX_NEXT_ACTION = "IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"
 _SANDBOX_READY_PHASE = "candidate1_v1_synthetic_sandbox_ready"
 _SANDBOX_READY_NEXT_ACTION = "RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"
+_H001_COMPLETE_PHASE = "candidate1_h001_synthetic_falsification_complete"
+_H001_COMPLETE_NEXT_ACTION = "AUTHORIZE_H001_REAL_FALSIFICATION_PREREGISTRATION_DESIGN_GOVERNANCE"
+_H001_BUNDLE_RELPATH = "docs/sandbox/example_candidate1_v1_hypothesis_001.json"
+_H001_BUNDLE_SHA256 = "322b58eb5aa7b8b02d488ab182b38420afa8390cc36e054e1c1e96558905b82e"
+_H001_BATCH_RECEIPT_SHA256 = "cb634f40a27204e2465392f3d8d2aaaf8e8af6f71dacba77b8506a66e465b3d5"
+_H001_COMPLETION_DECISIONS = {
+    "H001_HYPOTHESIS_ID=candidate1-v1-funding-crowding-reversal-h001",
+    "H001_BATCH_IDENTITY=H001_SYNTHETIC_BATCH_002",
+    "H001_BATCH_002_STATUS=COMPLETED_MECHANICAL_ONLY",
+    f"H001_BATCH_002_RECEIPT_SHA256={_H001_BATCH_RECEIPT_SHA256}",
+    "H001_RUN_FINGERPRINT=13ba5ef1180f29bc1601c6fde2f5dc7f021f66ebb87de4e3ac967ab4bc2403b7",
+    "H001_RULE_CONTRACT_SHA256=62718e4dc67e3c20a904e197ac7587f8cedbbc5a91b90e6315c189fc4072396a",
+    "H001_SCENARIO_CONTRACT_SHA256=cde35c4f785525dce3639e38eb37ba9f64c55cdc63d6e82c16b87d7d60df7b30",
+    "H001_ACCOUNTING_CONTRACT_SHA256=922977fc74ad59ba32c848bf27977f0579a61f544d830bac64fbb25abd15436c",
+    "H001_SHAPE=variants:13,scenarios:15,results:195",
+    "H001_SYNTHETIC_FALSIFICATION_CONDITIONS=15/15_PASS",
+    "H001_DETERMINISTIC_REPLAY=PASSED",
+    "H001_RECEIPT_VERIFICATION=PASSED",
+    "H001_DISTINGUISHABLE_FROM_REGISTERED_SYNTHETIC_CONTROLS=TRUE",
+    "H001_SYNTHETIC_IMPLEMENTATION_BLOCKER=NONE",
+    "H001_SYNTHETIC_IMPLEMENTATION_MAJOR_FINDING=NONE",
+    "H001_SYNTHETIC_IMPLEMENTATION_MINOR_FINDING=NONE",
+    "H001_VARIANT_SELECTION=NONE",
+    "H001_SCIENTIFIC_EVIDENCE=FALSE",
+    "H001_REAL_FALSIFICATION_GOVERNANCE=NOT_YET_AUTHORIZED",
+}
 _SANDBOX_READY_FILES = [
     ".github/workflows/qnty-sandbox.yml",
     "docs/sandbox/CANDIDATE1_V1_SYNTHETIC_SANDBOX.md",
@@ -425,6 +451,40 @@ def _validate_ready_handoff(receipt: dict, root: Path) -> None:
         _fail("ready sandbox is missing evidence prohibition")
 
 
+def _validate_h001_completion_handoff(receipt: dict, root: Path) -> None:
+    """Validate the mechanical-only completion of H001 Synthetic Batch 002."""
+    _validate_sandbox_amendment(receipt, root, expected_next_action=_H001_COMPLETE_NEXT_ACTION)
+    if receipt["decisions"] and not _H001_COMPLETION_DECISIONS.issubset(receipt["decisions"]):
+        _fail("H001 completion handoff is missing an exact Batch 002 completion decision")
+    if receipt["required_artifacts"] != [{
+        "artifact_id": REQUIRED_ARTIFACT_ID,
+        "availability": "UNAVAILABLE",
+        "canonical_paths": [],
+        "expected_manifest_sha256": REQUIRED_ARTIFACT_MANIFEST_SHA256,
+        "verified_copy_count": 0,
+    }]:
+        _fail("H001 completion changed the required V0 artifact state")
+    evidence = {item["path"]: item["sha256"] for item in receipt["evidence"]}
+    if evidence.get(_H001_BUNDLE_RELPATH) != _H001_BUNDLE_SHA256:
+        _fail("H001 committed synthetic bundle is missing or has the wrong sha256")
+    bundle = root / _H001_BUNDLE_RELPATH
+    if not bundle.is_file() or hashlib.sha256(bundle.read_bytes()).hexdigest() != _H001_BUNDLE_SHA256:
+        _fail("H001 committed synthetic bundle is missing or changed")
+    expected_safety = dict(_EXPECTED_SAFETY, real_data_execution_requested=False)
+    if receipt["safety_state"] != expected_safety:
+        _fail("H001 completion changed an execution or authorization boundary")
+    required_prohibitions = {
+        "ACCESS_REAL_DATA_IN_SYNTHETIC_SANDBOX", "ACCESS_QUARANTINE", "FREEZE_OR_SELECT_REAL_V1_DATA",
+        "CREATE_OR_BIND_REAL_V1_ARTIFACT", "EXECUTE_H001", "CALCULATE_H001_REAL_RETURNS",
+        "INCREMENT_EXECUTION_COUNTS", "GRANT_SCIENTIFIC_PAPER_OR_LIVE_AUTHORIZATION",
+        "RANK_OR_SELECT_H001_VARIANTS", "TREAT_SYNTHETIC_RESULTS_AS_SCIENTIFIC_EVIDENCE",
+        "CREATE_OFFICIAL_H001_REAL_PROTOCOL", "PREREGISTER_H001_REAL_PROTOCOL_WITHOUT_SEPARATE_GOVERNANCE",
+        "USE_SANDBOX_OUTPUT_TO_SELECT_OFFICIAL_PROTOCOL", "REGISTER_SYNTHETIC_RECEIPT_AS_REAL_ARTIFACT",
+    }
+    if not required_prohibitions.issubset(receipt["prohibited_actions"]):
+        _fail("H001 completion is missing a real-data or synthetic-evidence prohibition")
+
+
 def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evidence_files: bool) -> int:
     """Structural fail-closed validation shared by the active receipt and every
     historical receipt in the predecessor chain. Does not validate the
@@ -486,6 +546,10 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
         _cross_check_artifact_records(parsed, root)
         _validate_ready_handoff(parsed, root)
         amendment = _validate_sandbox_amendment(parsed, root, expected_next_action=_SANDBOX_READY_NEXT_ACTION)
+    elif active["phase"] == _H001_COMPLETE_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        _validate_h001_completion_handoff(parsed, root)
+        amendment = _validate_sandbox_amendment(parsed, root, expected_next_action=_H001_COMPLETE_NEXT_ACTION)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -682,6 +746,23 @@ def render_context_packet(state: dict) -> str:
             f"SYNTHETIC_SANDBOX id={amendment['sandbox_id']} status={amendment['sandbox_status']} execution_budget={amendment['transition_gates']['sandbox_execution_budget']}",
             "SYNTHETIC_SANDBOX_REAL_DATA=FORBIDDEN",
             "SYNTHETIC_SANDBOX_SCIENTIFIC_EVIDENCE=FALSE",
+            "DURABLE_STORE_GATE=REQUIRED_FOR_REAL_ARTIFACT_OPERATIONS",
+            "V0_DISPOSITION=UNCHANGED",
+        ])
+    elif active["phase"] == _H001_COMPLETE_PHASE:
+        lines.extend([
+            "H001_SYNTHETIC_STATUS=FALSIFICATION_COMPLETE_MECHANICAL_ONLY",
+            f"H001_BATCH_002_RECEIPT_SHA256={_H001_BATCH_RECEIPT_SHA256}",
+            "H001_SYNTHETIC_FALSIFICATION_CONDITIONS=15/15_PASS",
+            "H001_VARIANT_SELECTION=NONE",
+            "H001_SCIENTIFIC_EVIDENCE=FALSE",
+            "H001_REAL_FALSIFICATION_GOVERNANCE=NOT_YET_AUTHORIZED",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_EXECUTION_AUTHORIZED=FALSE",
+            f"H001_PRIMARY_EXECUTION_COUNT={safety['decomposition_execution_count']}",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "EDGE_STATUS=EDGE_UNPROVEN",
+            "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
             "DURABLE_STORE_GATE=REQUIRED_FOR_REAL_ARTIFACT_OPERATIONS",
             "V0_DISPOSITION=UNCHANGED",
         ])

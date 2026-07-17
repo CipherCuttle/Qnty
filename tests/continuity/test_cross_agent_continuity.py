@@ -202,11 +202,86 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
-    assert state["active_task"]["phase"] == "candidate1_v1_synthetic_sandbox_ready"
+    assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
+
+
+def test_h001_completion_phase_verifies_and_renders_boundaries():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
+    assert state["handoff_receipt"]["next_actions"] == [context._H001_COMPLETE_NEXT_ACTION]
+    packet = render_context_packet(state)
+    for line in (
+        "H001_SYNTHETIC_STATUS=FALSIFICATION_COMPLETE_MECHANICAL_ONLY",
+        "H001_BATCH_002_RECEIPT_SHA256=" + context._H001_BATCH_RECEIPT_SHA256,
+        "H001_SYNTHETIC_FALSIFICATION_CONDITIONS=15/15_PASS",
+        "H001_VARIANT_SELECTION=NONE",
+        "H001_SCIENTIFIC_EVIDENCE=FALSE",
+        "H001_REAL_FALSIFICATION_GOVERNANCE=NOT_YET_AUTHORIZED",
+        "H001_REAL_DATA_ACCESS=FORBIDDEN",
+        "H001_EXECUTION_AUTHORIZED=FALSE",
+        "H001_PRIMARY_EXECUTION_COUNT=0",
+        "H001_DURABLE_STORES_CONFIGURED=FALSE",
+        "EDGE_STATUS=EDGE_UNPROVEN",
+        "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
+    ):
+        assert line in packet
+
+
+def test_sandbox_ready_phase_still_requires_synthetic_batch_action(tmp_path):
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT, root)
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    receipt_path = root / TASK_DIR / "handoff_v008.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    for item in receipt["evidence"]:
+        evidence_path = root / item["path"]
+        if evidence_path.is_file():
+            item["sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active.update(
+        phase="candidate1_v1_synthetic_sandbox_ready",
+        handoff_receipt_path=f"{TASK_DIR}/handoff_v008.json",
+        handoff_receipt_sha256=hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+    )
+    active_path.write_bytes(canonical_json_bytes(active))
+    state = load_and_verify_continuity_state(root)
+    assert state["handoff_receipt"]["next_actions"] == ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"]
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r["decisions"].remove(f"H001_BATCH_002_RECEIPT_SHA256={context._H001_BATCH_RECEIPT_SHA256}"),
+    lambda r: r["decisions"].remove("H001_BATCH_002_STATUS=COMPLETED_MECHANICAL_ONLY"),
+    lambda r: r["decisions"].remove("H001_SCIENTIFIC_EVIDENCE=FALSE"),
+    lambda r: r["decisions"].remove("H001_VARIANT_SELECTION=NONE"),
+    lambda r: r["decisions"].remove("H001_SYNTHETIC_FALSIFICATION_CONDITIONS=15/15_PASS"),
+    lambda r: r.update(next_actions=["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"]),
+    lambda r: r["required_artifacts"][0].update(availability="VERIFIED_AVAILABLE", verified_copy_count=2, canonical_paths=["qnty-artifact://a", "qnty-artifact://b"]),
+    lambda r: r["safety_state"].update(real_data_execution_requested=True),
+    lambda r: r["safety_state"].update(decomposition_execution_count=1),
+    lambda r: r["safety_state"].update(scientific_use_authorized=True),
+    lambda r: r["safety_state"].update(paper_trade_authorized=True),
+    lambda r: r["safety_state"].update(live_integration_authorized=True),
+    lambda r: r["prohibited_actions"].remove("CREATE_OFFICIAL_V1_PROTOCOL_FROM_SANDBOX"),
+])
+def test_h001_completion_phase_drift_fails_closed(tmp_path, mutation):
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT, root)
+    receipt_path = root / TASK_DIR / "handoff_v009.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    mutation(receipt)
+    receipt_bytes = canonical_json_bytes(receipt)
+    receipt_path.write_bytes(receipt_bytes)
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_bytes).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
 
 
 def test_rendering_is_deterministic_and_does_not_mutate_state(tmp_path):
@@ -862,14 +937,13 @@ def test_valid_v003_amendment_chain_and_boundary_rendering():
     assert state["handoff_receipt"]["receipt_index"] >= 4
     assert state["sandbox_amendment"]["sandbox_id"] == "candidate1-v1-synthetic-design-sandbox-v0"
     packet = render_context_packet(state)
-    assert "SYNTHETIC_SANDBOX id=candidate1-v1-synthetic-design-sandbox-v0 status=AUTHORIZED_EXPLORATORY_ENGINEERING_ONLY execution_budget=0" in packet
-    assert "SYNTHETIC_SANDBOX_REAL_DATA=FORBIDDEN" in packet
-    assert "SYNTHETIC_SANDBOX_SCIENTIFIC_EVIDENCE=FALSE" in packet
+    assert "H001_SYNTHETIC_STATUS=FALSIFICATION_COMPLETE_MECHANICAL_ONLY" in packet
+    assert "H001_REAL_DATA_ACCESS=FORBIDDEN" in packet
+    assert "H001_SCIENTIFIC_EVIDENCE=FALSE" in packet
     assert "DURABLE_STORE_GATE=REQUIRED_FOR_REAL_ARTIFACT_OPERATIONS" in packet
     assert "V0_DISPOSITION=UNCHANGED" in packet
     assert "official V1 protocol" not in packet
     assert "V1 artifact" not in packet
-    assert "SYNTHETIC_SANDBOX_IMPLEMENTATION=READY" in packet
 
 
 @pytest.mark.parametrize("mutation", [
