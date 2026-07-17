@@ -202,16 +202,16 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
-    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE)
+    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE)
 
 
 def test_h001_completion_phase_verifies_and_renders_boundaries():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE):
+    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE):
         pytest.skip("production tree has advanced past synthetic completion")
     assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
     assert state["handoff_receipt"]["next_actions"] == [context._H001_COMPLETE_NEXT_ACTION]
@@ -993,7 +993,8 @@ def test_sandbox_phase_v003_contract_passes_and_renders_boundary(tmp_path):
 def test_valid_v003_amendment_chain_and_boundary_rendering():
     state = load_and_verify_continuity_state(ROOT)
     assert state["handoff_receipt"]["receipt_index"] >= 4
-    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE):
+    _design_family = (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE)
+    if state["active_task"]["phase"] in _design_family:
         assert state["h001_design_amendment"]["amendment_id"] == "candidate1-h001-real-falsification-design-v001"
     else:
         assert state["sandbox_amendment"]["sandbox_id"] == "candidate1-v1-synthetic-design-sandbox-v0"
@@ -1002,10 +1003,12 @@ def test_valid_v003_amendment_chain_and_boundary_rendering():
         assert "H001_REAL_FALSIFICATION_GOVERNANCE=AUTHORIZED_PREREGISTRATION_DESIGN_ONLY" in packet
     elif state["active_task"]["phase"] == context._H001_PREREGISTERED_PHASE:
         assert "H001_REAL_FALSIFICATION_PROTOCOL=PREREGISTERED_DESIGN_ONLY" in packet
+    elif state["active_task"]["phase"] == context._H001_REVIEW_COMPLETE_PHASE:
+        assert "H001_PREREGISTRATION_REVIEW_STATUS=PASSED" in packet
     else:
         assert "H001_SYNTHETIC_STATUS=FALSIFICATION_COMPLETE_MECHANICAL_ONLY" in packet
     assert "H001_REAL_DATA_ACCESS=FORBIDDEN" in packet
-    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE):
+    if state["active_task"]["phase"] in _design_family:
         assert "H001_SCIENTIFIC_AUTHORIZATION=FALSE" in packet
         assert "H001_REQUIRED_DURABLE_COPIES=2" in packet
         assert "V0_AVAILABILITY=UNAVAILABLE" in packet
@@ -1075,3 +1078,236 @@ def test_sandbox_handoff_cannot_weaken_existing_invariants(tmp_path, mutation):
     _rewrite_receipt(root, mutation)
     with pytest.raises(ValueError):
         load_and_verify_continuity_state(root)
+
+
+# --------------------------------------------------------------------------
+# H001 preregistration review-completion (phase v012)
+# --------------------------------------------------------------------------
+
+_REVIEW_COMPLETE_FILES = (
+    "CLAUDE.md", "AGENTS.md", "docs/agent/START_HERE.md",
+    "docs/control/active_task.json",
+    "docs/control/amendments/candidate1_v1_synthetic_sandbox_v001.json",
+    "docs/control/amendments/candidate1_h001_real_falsification_design_v001.json",
+    "docs/artifacts/stores.json",
+    "docs/artifacts/candidate1-real-input-v0.json",
+    "docs/experiments/candidate1_h001_real_data_falsification_v0.json",
+    "quantbot/experiment/h001_real_falsification_preregistration.py",
+    "tests/experiment/test_h001_real_falsification_preregistration.py",
+) + tuple(f"{TASK_DIR}/handoff_v{idx:03d}.json" for idx in range(1, 13))
+
+
+def _review_complete_fixture(tmp_path):
+    """Copy the committed review-completion control plane verbatim.
+
+    No hash fixups are needed: the committed receipts and evidence bytes are
+    already self-consistent, so the copied tree validates as-is. Mutation tests
+    then perturb only the active v012 receipt via ``_rewrite_v012``.
+    """
+    for relpath in _REVIEW_COMPLETE_FILES:
+        target = tmp_path / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relpath, target)
+    return tmp_path
+
+
+def _rewrite_v012(root, mutate):
+    path = root / TASK_DIR / "handoff_v012.json"
+    receipt = json.loads(path.read_bytes())
+    mutate(receipt)
+    data = canonical_json_bytes(receipt)
+    path.write_bytes(data)
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(data).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+
+
+def _swap_decision(receipt, old, new):
+    assert old in receipt["decisions"], f"expected decision not present: {old}"
+    receipt["decisions"] = [new if d == old else d for d in receipt["decisions"]]
+
+
+def _set_evidence(receipt, path, sha):
+    matched = False
+    for item in receipt["evidence"]:
+        if item["path"] == path:
+            item["sha256"] = sha
+            matched = True
+    assert matched, f"expected evidence path not present: {path}"
+
+
+def _skip_unless_review_complete(state):
+    if state["active_task"]["phase"] != context._H001_REVIEW_COMPLETE_PHASE:
+        pytest.skip("production tree is not at the H001 review-completion phase")
+
+
+_REVIEW_COMPLETE_RENDER_LINES = (
+    "PHASE=candidate1_h001_real_falsification_preregistration_review_complete",
+    "NEXT_ACTION=AUTHORIZE_H001_REAL_DATA_INFRASTRUCTURE_PREPARATION_GOVERNANCE",
+    "H001_PREREGISTRATION_REVIEW_STATUS=PASSED",
+    "H001_PREREGISTRATION_REVIEW_VERDICT=" + context._H001_REVIEW_VERDICT,
+    "H001_PREREGISTRATION_REVIEWED_HEAD=" + context._H001_REVIEW_REVIEWED_HEAD,
+    "H001_PREREGISTRATION_DESIGN_SHA256=" + context._H001_REVIEW_DESIGN_SHA256,
+    "H001_PREREGISTRATION_VALIDATOR_SHA256=" + context._H001_REVIEW_VALIDATOR_SHA256,
+    "H001_PREREGISTRATION_REVIEW_NAMED_PROBES=67/67_REJECTED",
+    "H001_PREREGISTRATION_REVIEW_GENUINE_MUTATIONS=1136/1136_REJECTED",
+    "H001_PREREGISTRATION_REVIEW_BLOCKERS=NONE",
+    "H001_PREREGISTRATION_REVIEW_MAJOR_FINDINGS=NONE",
+    "H001_EXTERNAL_REVIEW_IS_SCIENTIFIC_EVIDENCE=FALSE",
+    "H001_REAL_DATA_ACCESS=FORBIDDEN",
+    "H001_ARTIFACT_OPERATIONS=FORBIDDEN",
+    "H001_CURRENT_EXECUTION_BUDGET=0",
+    "H001_CURRENT_EXECUTION_COUNT=0",
+    "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+    "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+    "H001_LIVE_AUTHORIZATION=FALSE",
+    "H001_REQUIRED_DURABLE_COPIES=2",
+    "H001_REAL_DATA_INFRASTRUCTURE_GOVERNANCE=NOT_YET_AUTHORIZED",
+    "V0_AVAILABILITY=UNAVAILABLE",
+    "EDGE_STATUS=EDGE_UNPROVEN",
+    "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
+)
+
+
+def test_review_complete_fixture_verifies_and_renders_boundaries(tmp_path):
+    root = _review_complete_fixture(tmp_path)
+    state = load_and_verify_continuity_state(root)
+    assert state["active_task"]["phase"] == context._H001_REVIEW_COMPLETE_PHASE
+    receipt = state["handoff_receipt"]
+    assert receipt["receipt_index"] == 12
+    assert receipt["next_actions"] == [context._H001_REVIEW_COMPLETE_NEXT_ACTION]
+    assert receipt["source_head_commit"] == context._H001_REVIEW_MERGED_MAIN_SHA
+    assert receipt["source_branch"] == context._H001_REVIEW_SOURCE_BRANCH
+    assert receipt["predecessor"] == {
+        "path": f"{TASK_DIR}/handoff_v011.json",
+        "sha256": context._H001_PREREGISTERED_HANDOFF_SHA256,
+    }
+    # Every authority boundary is preserved exactly.
+    safety = receipt["safety_state"]
+    assert safety["edge_status"] == "EDGE_UNPROVEN"
+    assert safety["live_status"] == "BLOCK_LIVE_INTEGRATION"
+    assert safety["scientific_use_authorized"] is False
+    assert safety["paper_trade_authorized"] is False
+    assert safety["live_integration_authorized"] is False
+    assert safety["real_data_execution_requested"] is False
+    assert safety["decomposition_execution_budget"] == 1
+    assert safety["decomposition_execution_count"] == 0
+    assert safety["quarantine_access"] == "forbidden"
+    artifact = receipt["required_artifacts"][0]
+    assert artifact["availability"] == "UNAVAILABLE"
+    assert artifact["verified_copy_count"] == 0
+    packet = render_context_packet(state)
+    for line in _REVIEW_COMPLETE_RENDER_LINES:
+        assert line in packet
+    assert "PROTOCOL_EXECUTION=BLOCKED" in packet
+
+
+def test_review_complete_render_distinguishes_execution_budgets(tmp_path):
+    state = load_and_verify_continuity_state(_review_complete_fixture(tmp_path))
+    packet = render_context_packet(state)
+    # Umbrella decomposition and H001 execution budgets are labeled distinctly;
+    # no bare/ambiguous "execution 0/1" appears in the H001-specific output.
+    assert "UMBRELLA_DECOMPOSITION_EXECUTION=0/1" in packet
+    assert "H001_EXECUTION=0/0" in packet
+    assert "H001_EXECUTION=0/1" not in packet
+    assert "H001_CURRENT_EXECUTION_BUDGET=0" in packet
+    assert "H001_CURRENT_EXECUTION_BUDGET=1" not in packet
+    assert "H001_CURRENT_EXECUTION_COUNT=1" not in packet
+
+
+def test_production_review_complete_phase_verifies_and_renders():
+    state = load_and_verify_continuity_state(ROOT)
+    _skip_unless_review_complete(state)
+    assert state["handoff_receipt"]["next_actions"] == [context._H001_REVIEW_COMPLETE_NEXT_ACTION]
+    packet = render_context_packet(state)
+    for line in _REVIEW_COMPLETE_RENDER_LINES:
+        assert line in packet
+    # The transition must not claim infrastructure governance is authorized.
+    assert "H001_REAL_DATA_INFRASTRUCTURE_GOVERNANCE=AUTHORIZED" not in packet
+
+
+def test_v001_through_v011_remain_byte_identical_and_chained():
+    """No historical receipt was mutated by the review-completion transition:
+    each predecessor's on-disk bytes must match the sha recorded by its
+    successor, and v011 must equal the pinned reviewed-preregistration hash."""
+    for idx in range(12, 1, -1):
+        succ = json.loads((ROOT / TASK_DIR / f"handoff_v{idx:03d}.json").read_bytes())
+        pred_bytes = (ROOT / succ["predecessor"]["path"]).read_bytes()
+        assert hashlib.sha256(pred_bytes).hexdigest() == succ["predecessor"]["sha256"]
+    v011_bytes = (ROOT / TASK_DIR / "handoff_v011.json").read_bytes()
+    assert hashlib.sha256(v011_bytes).hexdigest() == context._H001_PREREGISTERED_HANDOFF_SHA256
+    v001 = json.loads((ROOT / TASK_DIR / "handoff_v001.json").read_bytes())
+    assert v001["predecessor"] == "GENESIS"
+
+
+_HEAD_DECISION = f"H001_PREREGISTRATION_REVIEWED_HEAD={context._H001_REVIEW_REVIEWED_HEAD}"
+_DESIGN_DECISION = f"H001_PREREGISTRATION_DESIGN_SHA256={context._H001_REVIEW_DESIGN_SHA256}"
+_VALIDATOR_DECISION = f"H001_PREREGISTRATION_VALIDATOR_SHA256={context._H001_REVIEW_VALIDATOR_SHA256}"
+_VERDICT_DECISION = f"H001_PREREGISTRATION_REVIEW_VERDICT={context._H001_REVIEW_VERDICT}"
+
+
+@pytest.mark.parametrize("mutation", [
+    # wrong reviewed head
+    lambda r: _swap_decision(r, _HEAD_DECISION, "H001_PREREGISTRATION_REVIEWED_HEAD=" + "0" * 40),
+    # wrong design hash (recorded decision and evidence binding)
+    lambda r: _swap_decision(r, _DESIGN_DECISION, "H001_PREREGISTRATION_DESIGN_SHA256=" + "0" * 64),
+    lambda r: _set_evidence(r, "docs/experiments/candidate1_h001_real_data_falsification_v0.json", "0" * 64),
+    # wrong validator hash (recorded decision and evidence binding)
+    lambda r: _swap_decision(r, _VALIDATOR_DECISION, "H001_PREREGISTRATION_VALIDATOR_SHA256=" + "0" * 64),
+    lambda r: _set_evidence(r, "quantbot/experiment/h001_real_falsification_preregistration.py", "0" * 64),
+    # wrong predecessor v011 evidence binding
+    lambda r: _set_evidence(r, f"{TASK_DIR}/handoff_v011.json", "0" * 64),
+    # failed review verdict / status
+    lambda r: _swap_decision(r, _VERDICT_DECISION, "H001_PREREGISTRATION_REVIEW_VERDICT=QNTY_H001_REAL_FALSIFICATION_PREREGISTRATION_REREVIEW_FAILED"),
+    lambda r: _swap_decision(r, "H001_PREREGISTRATION_REVIEW_STATUS=PASSED", "H001_PREREGISTRATION_REVIEW_STATUS=FAILED"),
+    # nonzero blocker / major counts
+    lambda r: _swap_decision(r, "H001_PREREGISTRATION_REVIEW_BLOCKERS=NONE", "H001_PREREGISTRATION_REVIEW_BLOCKERS=1"),
+    lambda r: _swap_decision(r, "H001_PREREGISTRATION_REVIEW_MAJOR_FINDINGS=NONE", "H001_PREREGISTRATION_REVIEW_MAJOR_FINDINGS=1"),
+    # wrong probe counts
+    lambda r: _swap_decision(r, "H001_PREREGISTRATION_REVIEW_NAMED_PROBES=67/67_REJECTED", "H001_PREREGISTRATION_REVIEW_NAMED_PROBES=66/67_REJECTED"),
+    lambda r: _swap_decision(r, "H001_PREREGISTRATION_REVIEW_GENUINE_MUTATIONS=1136/1136_REJECTED", "H001_PREREGISTRATION_REVIEW_GENUINE_MUTATIONS=1135/1136_REJECTED"),
+    # wrong receipt index
+    lambda r: r.update(receipt_index=13),
+    lambda r: r.update(receipt_index=11),
+    # wrong predecessor pointer
+    lambda r: r["predecessor"].update(sha256="0" * 64),
+    lambda r: r["predecessor"].update(path=f"{TASK_DIR}/handoff_v010.json"),
+    # wrong next action
+    lambda r: r.update(next_actions=["AUTHORIZE_SOMETHING_ELSE"]),
+    lambda r: r.update(next_actions=[context._H001_PREREGISTERED_NEXT_ACTION]),
+    # wrong source base SHA / branch
+    lambda r: r.update(source_head_commit="0" * 40),
+    lambda r: r.update(source_branch="feat/wrong-branch"),
+    # changed-file scope drift (extra / missing)
+    lambda r: r["changed_file_scope"].append("docs/extra.md"),
+    lambda r: r["changed_file_scope"].remove("quantbot/continuity/context.py"),
+    # real-data execution / authorization
+    lambda r: r["safety_state"].update(real_data_execution_requested=True),
+    lambda r: r["safety_state"].update(scientific_use_authorized=True),
+    lambda r: r["safety_state"].update(paper_trade_authorized=True),
+    lambda r: r["safety_state"].update(live_integration_authorized=True),
+    lambda r: r["safety_state"].update(edge_status="EDGE_PROVEN"),
+    lambda r: r["safety_state"].update(live_status="ALLOW_LIVE_INTEGRATION"),
+    # artifact authorization / changed V0 availability + copy count
+    lambda r: r["required_artifacts"][0].update(availability="VERIFIED_AVAILABLE", verified_copy_count=2, canonical_paths=["qnty-artifact://store-a/sha256/" + "a" * 64, "qnty-artifact://store-b/sha256/" + "a" * 64]),
+    lambda r: r["required_artifacts"][0].update(verified_copy_count=2),
+    # nonzero H001 execution budget / count
+    lambda r: _swap_decision(r, "H001_CURRENT_EXECUTION_BUDGET=0", "H001_CURRENT_EXECUTION_BUDGET=1"),
+    lambda r: _swap_decision(r, "H001_CURRENT_EXECUTION_COUNT=0", "H001_CURRENT_EXECUTION_COUNT=1"),
+    # dropped review-specific and design-governance prohibitions
+    lambda r: r["prohibited_actions"].remove("TREAT_EXTERNAL_REVIEW_AS_SCIENTIFIC_EVIDENCE"),
+    lambda r: r["prohibited_actions"].remove("AUTHORIZE_H001_REAL_DATA_INFRASTRUCTURE_WITHOUT_SEPARATE_GOVERNANCE"),
+    lambda r: r["prohibited_actions"].remove("PREREGISTER_H001_REAL_PROTOCOL_WITHOUT_SEPARATE_GOVERNANCE"),
+])
+def test_review_complete_drift_fails_closed(tmp_path, mutation):
+    root = _review_complete_fixture(tmp_path)
+    _rewrite_v012(root, mutation)
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_review_complete_unmutated_fixture_is_the_control(tmp_path):
+    """Control: the fixture verifies before any mutation, so the drift matrix
+    proves the mutation caused the rejection rather than a broken fixture."""
+    load_and_verify_continuity_state(_review_complete_fixture(tmp_path))
