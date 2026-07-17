@@ -202,16 +202,16 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
-    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE)
+    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE)
 
 
 def test_h001_completion_phase_verifies_and_renders_boundaries():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE):
         pytest.skip("production tree has advanced past synthetic completion")
     assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
     assert state["handoff_receipt"]["next_actions"] == [context._H001_COMPLETE_NEXT_ACTION]
@@ -994,6 +994,12 @@ def test_valid_v003_amendment_chain_and_boundary_rendering():
     state = load_and_verify_continuity_state(ROOT)
     assert state["handoff_receipt"]["receipt_index"] >= 4
     _design_family = (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE)
+    if state["active_task"]["phase"] == context._H001_PRE_DATA_PHASE:
+        assert state["h001_pre_data_amendment"]["amendment_id"] == "candidate1-h001-pre-data-assurance-v001"
+        packet = render_context_packet(state)
+        assert "H001_PRE_DATA_ASSURANCE_GOVERNANCE=AUTHORIZED_SCAFFOLD_ONLY" in packet
+        assert "H001_REAL_DATA_ACCESS=FORBIDDEN" in packet
+        return
     if state["active_task"]["phase"] in _design_family:
         assert state["h001_design_amendment"]["amendment_id"] == "candidate1-h001-real-falsification-design-v001"
     else:
@@ -1107,7 +1113,12 @@ def _review_complete_fixture(tmp_path):
     for relpath in _REVIEW_COMPLETE_FILES:
         target = tmp_path / relpath
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / relpath, target)
+        if relpath == "docs/control/active_task.json":
+            target.write_bytes(__import__("subprocess").check_output([
+                "git", "show", "9a9e6b16c372cef9dfc99ff9ccd49fdc8e16b8f4:" + relpath
+            ]))
+        else:
+            shutil.copy2(ROOT / relpath, target)
     return tmp_path
 
 
@@ -1311,3 +1322,139 @@ def test_review_complete_unmutated_fixture_is_the_control(tmp_path):
     """Control: the fixture verifies before any mutation, so the drift matrix
     proves the mutation caused the rejection rather than a broken fixture."""
     load_and_verify_continuity_state(_review_complete_fixture(tmp_path))
+
+
+# --------------------------------------------------------------------------
+# H001 pre-data assurance governance (phase v013)
+# --------------------------------------------------------------------------
+
+_PRE_DATA_FILES = _REVIEW_COMPLETE_FILES + (
+    "docs/control/amendments/candidate1_h001_pre_data_assurance_v001.json",
+    f"{TASK_DIR}/handoff_v013.json",
+)
+
+
+def _pre_data_fixture(tmp_path):
+    for relpath in _PRE_DATA_FILES + ("quantbot/continuity/context.py", "tests/continuity/test_cross_agent_continuity.py"):
+        target = tmp_path / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relpath, target)
+    return tmp_path
+
+
+def _rewrite_v013(root, mutate):
+    path = root / TASK_DIR / "handoff_v013.json"
+    receipt = json.loads(path.read_bytes())
+    mutate(receipt)
+    data = canonical_json_bytes(receipt)
+    path.write_bytes(data)
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(data).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+
+
+def _rewrite_pre_data_amendment(root, mutate):
+    path = root / context.PRE_DATA_H001_AMENDMENT_RELPATH
+    amendment = json.loads(path.read_bytes())
+    mutate(amendment)
+    path.write_bytes(canonical_json_bytes(amendment))
+
+
+def test_valid_v013_pre_data_assurance_fixture_verifies_and_renders(tmp_path):
+    state = load_and_verify_continuity_state(_pre_data_fixture(tmp_path))
+    assert state["active_task"]["phase"] == context._H001_PRE_DATA_PHASE
+    assert state["handoff_receipt"]["receipt_index"] == 13
+    packet = render_context_packet(state)
+    for line in (
+        "H001_PRE_DATA_ASSURANCE_GOVERNANCE=AUTHORIZED_SCAFFOLD_ONLY",
+        "H001_PRE_DATA_ASSURANCE_EXECUTION=NOT_AUTHORIZED",
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT=REQUIRED_NOT_CREATED",
+        "H001_TEMPORAL_CAUSALITY_TARGET=FUNDING_TIME_STRICTLY_BEFORE_DECISION",
+        "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+        "H001_BOOTSTRAP_BLOCK_LENGTH_TUNING=FORBIDDEN",
+        "H001_HAC_LAG_TUNING=FORBIDDEN",
+        "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER=REQUIRED_NOT_IMPLEMENTED",
+        "H001_SYNTHETIC_STORE_CANARY_SCAFFOLD=AUTHORIZED_NOT_IMPLEMENTED",
+        "H001_CANDIDATE_STORE_CONFIGURATION=NOT_AUTHORIZED",
+        "H001_REAL_DATA_ACCESS=FORBIDDEN", "H001_EXECUTION=0/0", "UMBRELLA_DECOMPOSITION_EXECUTION=0/1",
+        "V0_AVAILABILITY=UNAVAILABLE", "H001_DURABLE_STORES_CONFIGURED=FALSE",
+        "H001_SCIENTIFIC_AUTHORIZATION=FALSE", "H001_PAPER_TRADE_AUTHORIZATION=FALSE", "H001_LIVE_AUTHORIZATION=FALSE",
+    ):
+        assert line in packet
+    assert "infrastructure authorized" not in packet
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda a: a.update(amendment_id="wrong"),
+    lambda a: a.update(authorization_status="wrong"),
+    lambda a: a.update(governed_h001_protocol_id="wrong"),
+    lambda a: a.update(source_main_commit="0" * 40),
+    lambda a: a["source_handoff"].update(sha256="0" * 64),
+    lambda a: a["review_binding"].update(design_sha256="0" * 64),
+    lambda a: a["review_binding"].update(validator_sha256="0" * 64),
+    lambda a: a["review_binding"].update(review_verdict="FAILED"),
+    lambda a: a["predecessor_amendment"].update(path="wrong"),
+    lambda a: a["allowed_actions"].remove(context._H001_PRE_DATA_ALLOWED_ACTIONS[0]),
+    lambda a: a["allowed_actions"].append("EXTRA"),
+    lambda a: a["assurance_controls"].remove(context._H001_PRE_DATA_ASSURANCE_CONTROLS[0]),
+    lambda a: a["assurance_controls"].append("EXTRA"),
+    lambda a: a["transition_gates"].update(temporal_causality_amendment_applied=True),
+    lambda a: a["transition_gates"].update(synthetic_null_calibration_execution_authorized=True),
+    lambda a: a["transition_gates"].update(bootstrap_block_length_tuning_authorized=True),
+    lambda a: a["transition_gates"].update(hac_lag_tuning_authorized=True),
+    lambda a: a["transition_gates"].update(candidate_store_configuration_authorized=True),
+    lambda a: a["transition_gates"].update(synthetic_store_canary_execution_authorized=True),
+    lambda a: a["transition_gates"].update(real_artifact_store_operations_authorized=True),
+    lambda a: a["transition_gates"].update(real_data_access_authorized=True),
+    lambda a: a["transition_gates"].update(validation_execution_authorized=True),
+    lambda a: a["transition_gates"].update(holdout_execution_authorized=True),
+    lambda a: a["transition_gates"].update(h001_primary_execution_budget=1),
+    lambda a: a["transition_gates"].update(h001_primary_execution_count=1),
+    lambda a: a["transition_gates"].update(scientific_authorization=True),
+    lambda a: a["transition_gates"].update(paper_trade_authorization=True),
+    lambda a: a["transition_gates"].update(live_authorization=True),
+    lambda a: a["transition_gates"].update(v0_disposition_unchanged=False),
+    lambda a: a.update(unexpected=True),
+    lambda a: a["transition_gates"].update(unexpected=True),
+    lambda a: a.pop("review_binding"),
+])
+def test_v013_amendment_drift_fails_closed(tmp_path, mutation):
+    root = _pre_data_fixture(tmp_path)
+    _rewrite_pre_data_amendment(root, mutation)
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r.update(receipt_index=12),
+    lambda r: r["predecessor"].update(path=f"{TASK_DIR}/handoff_v011.json"),
+    lambda r: r.update(next_actions=["WRONG"]),
+    lambda r: r["changed_file_scope"].append("extra.md"),
+    lambda r: r["changed_file_scope"].remove("quantbot/continuity/context.py"),
+    lambda r: r["safety_state"].update(real_data_execution_requested=True),
+    lambda r: r["safety_state"].update(scientific_use_authorized=True),
+    lambda r: r["safety_state"].update(paper_trade_authorized=True),
+    lambda r: r["safety_state"].update(live_integration_authorized=True),
+    lambda r: r["safety_state"].update(edge_status="EDGE_PROVEN"),
+    lambda r: r["safety_state"].update(live_status="ALLOW_LIVE_INTEGRATION"),
+    lambda r: r["required_artifacts"][0].update(availability="VERIFIED_AVAILABLE", verified_copy_count=2),
+    lambda r: r["decisions"].remove("H001_CURRENT_EXECUTION_BUDGET=0"),
+    lambda r: r["decisions"].__setitem__(r["decisions"].index("H001_CURRENT_EXECUTION_BUDGET=0"), "H001_CURRENT_EXECUTION_BUDGET=1"),
+    lambda r: r["prohibited_actions"].remove("EXECUTE_H001"),
+    lambda r: r.update(unknown_nested={}),
+])
+def test_v013_handoff_drift_fails_closed(tmp_path, mutation):
+    root = _pre_data_fixture(tmp_path)
+    _rewrite_v013(root, mutation)
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_v001_through_v012_remain_byte_identical_to_pinned_base():
+    for relpath in tuple(f"{TASK_DIR}/handoff_v{idx:03d}.json" for idx in range(1, 13)) + (
+        "docs/control/amendments/candidate1_h001_real_falsification_design_v001.json",
+        "docs/control/amendments/candidate1_v1_synthetic_sandbox_v001.json",
+    ):
+        expected = __import__("subprocess").check_output(["git", "show", "9a9e6b16c372cef9dfc99ff9ccd49fdc8e16b8f4:" + relpath])
+        assert (ROOT / relpath).read_bytes() == expected
