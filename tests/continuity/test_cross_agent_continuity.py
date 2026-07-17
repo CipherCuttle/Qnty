@@ -202,16 +202,16 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION], [context._H001_ASSURANCE_REVIEW_NEXT_ACTION])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
-    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE)
+    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE)
 
 
 def test_h001_completion_phase_verifies_and_renders_boundaries():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE):
+    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE):
         pytest.skip("production tree has advanced past synthetic completion")
     assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
     assert state["handoff_receipt"]["next_actions"] == [context._H001_COMPLETE_NEXT_ACTION]
@@ -993,7 +993,10 @@ def test_sandbox_phase_v003_contract_passes_and_renders_boundary(tmp_path):
 def test_valid_v003_amendment_chain_and_boundary_rendering():
     state = load_and_verify_continuity_state(ROOT)
     assert state["handoff_receipt"]["receipt_index"] >= 4
-    _design_family = (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE)
+    _design_family = (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE)
+    if state["active_task"]["phase"] == context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE:
+        assert "H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEW=COMPLETED_PASSED" in render_context_packet(state)
+        return
     if state["active_task"]["phase"] == context._H001_PRE_DATA_PHASE:
         assert state["h001_pre_data_amendment"]["amendment_id"] == "candidate1-h001-pre-data-assurance-v001"
         packet = render_context_packet(state)
@@ -1569,3 +1572,52 @@ def test_repaired_assurance_scaffold_hashes_are_independently_pinned():
         pytest.skip("production tree is before the implemented assurance scaffold transition")
     for relpath, expected in context._H001_SCAFFOLD_REPAIRED_FILE_SHA256.items():
         assert hashlib.sha256((ROOT / relpath).read_bytes()).hexdigest() == expected
+
+
+def test_h001_assurance_review_completion_transition_renders_and_binds():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE
+    assert state["handoff_receipt"]["receipt_index"] == 15
+    assert state["handoff_receipt"]["review_binding"]["reviewed_pr_number"] == 282
+    packet = render_context_packet(state)
+    for line in (
+        "H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEW=COMPLETED_PASSED",
+        "H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEWED_HEAD=c52c607045803ab6d6e2a961f0f697aa72bf7581",
+        "H001_PRE_DATA_ASSURANCE_SCAFFOLD_MERGE_COMMIT=ae61c6162f3164e0b24dd567a6ef73bdb5ecf8ea",
+        "H001_REVIEW_PROTOCOL_RECORD=RECORDED_AFTER_REVIEW_NOT_PREREGISTERED",
+        "H001_REVIEW_EVIDENCE_PACKET=CREATED_METADATA_ONLY",
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT_IMPLEMENTATION_FOR_REVIEW=AUTHORIZED",
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=FALSE",
+        "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=UNCHANGED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+        "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_STATE=EMPTY_NO_BACKFILL",
+        "H001_CANDIDATE_STORE_ACCESS_OR_PROBING=FORBIDDEN",
+        "H001_REAL_DATA_ACCESS=FORBIDDEN",
+        "H001_EXECUTION=0/0",
+        "V0_AVAILABILITY=UNAVAILABLE",
+        "EDGE_UNPROVEN",
+        "BLOCK_LIVE_INTEGRATION",
+    ):
+        assert line in packet
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda binding: binding.update(reviewed_pr_number=True),
+    lambda binding: binding.update(reviewed_implementation_head="0" * 40),
+    lambda binding: binding.update(final_review_verdict="WRONG"),
+    lambda binding: binding.update(review_packet_sha256="0" * 64),
+])
+def test_h001_assurance_review_binding_drift_fails_closed(tmp_path, mutation):
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT, root)
+    receipt_path = root / TASK_DIR / "handoff_v015.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    mutation(receipt["review_binding"])
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)

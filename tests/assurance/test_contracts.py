@@ -9,6 +9,7 @@ from quantbot.assurance import contracts
 
 ROOT = Path(__file__).parents[2]
 DOCS = ROOT / "docs/assurance"
+REVIEWS = DOCS / "reviews"
 VALIDATORS = {
     "h001_temporal_causality_amendment_draft_v001.json": contracts.validate_temporal_amendment_draft,
     "h001_synthetic_null_calibration_spec_draft_v001.json": contracts.validate_calibration_spec_draft,
@@ -144,3 +145,43 @@ def test_import_boundary_is_standard_library_only():
                 assert all(alias.name.split(".")[0] in {"dataclasses", "datetime", "hashlib", "json", "re"} for alias in node.names)
             if isinstance(node, ast.ImportFrom) and node.module:
                 assert node.module.split(".")[0] in {"__future__", "dataclasses", "datetime", "hashlib", "json", "re", "typing", "contracts"}
+
+
+def test_h001_review_records_are_canonical_and_validate():
+    for name, validator in (
+        ("h001_pre_data_assurance_scaffold_rereview_protocol_v001.json", contracts.validate_review_protocol_record),
+        ("h001_pre_data_assurance_scaffold_rereview_packet_v001.json", contracts.validate_review_evidence_packet),
+    ):
+        raw = (REVIEWS / name).read_bytes()
+        assert contracts.load_and_validate_assurance_scaffold(raw, validator)
+        assert contracts.canonical_json_bytes(json.loads(raw)) == raw
+        assert not raw.endswith(b"\n")
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda value: value.update(status="PREREGISTERED_BEFORE_REVIEW"),
+    lambda value: value.update(review_requirements=["x"]),
+    lambda value: value.update(merged_main_commit_sha="0" * 40),
+])
+def test_h001_review_protocol_is_not_retroactively_preregistered(tmp_path, mutation):
+    del tmp_path
+    value = json.loads((REVIEWS / "h001_pre_data_assurance_scaffold_rereview_protocol_v001.json").read_bytes())
+    mutation(value)
+    with pytest.raises(ValueError):
+        contracts.validate_review_protocol_record(value)
+
+
+@pytest.mark.parametrize("field", ["reviewed_commit_sha", "verdict", "review_specification_hash", "stdout_artifact_hashes", "stderr_artifact_hashes"])
+def test_h001_review_packet_rejects_drift(field):
+    value = json.loads((REVIEWS / "h001_pre_data_assurance_scaffold_rereview_packet_v001.json").read_bytes())
+    value[field] = "wrong" if field not in {"stdout_artifact_hashes", "stderr_artifact_hashes"} else ["a" * 64]
+    with pytest.raises(ValueError):
+        contracts.validate_review_evidence_packet(value)
+
+
+@pytest.mark.parametrize("field", ["token", "real_data", "private_reasoning", "scientific_claim"])
+def test_h001_review_packet_rejects_forbidden_fields(field):
+    value = json.loads((REVIEWS / "h001_pre_data_assurance_scaffold_rereview_packet_v001.json").read_bytes())
+    value[field] = False
+    with pytest.raises(ValueError):
+        contracts.validate_review_evidence_packet(value)
