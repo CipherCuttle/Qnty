@@ -130,6 +130,77 @@ _H001_PRE_DATA_PHASE = "candidate1_h001_pre_data_assurance_governance"
 _H001_PRE_DATA_NEXT_ACTION = "IMPLEMENT_H001_PRE_DATA_ASSURANCE_AND_SYNTHETIC_INFRASTRUCTURE_SCAFFOLD"
 _H001_SCAFFOLD_PHASE = "candidate1_h001_pre_data_assurance_scaffold_implemented_review_required"
 _H001_SCAFFOLD_NEXT_ACTION = "ADVERSARIAL_REVIEW_H001_PRE_DATA_ASSURANCE_AND_SYNTHETIC_INFRASTRUCTURE_SCAFFOLD"
+_H001_ASSURANCE_REVIEW_COMPLETE_PHASE = "candidate1_h001_pre_data_assurance_scaffold_review_complete"
+_H001_ASSURANCE_REVIEW_NEXT_ACTION = "IMPLEMENT_H001_TEMPORAL_CAUSALITY_AMENDMENT_FOR_INDEPENDENT_REVIEW"
+_H001_ASSURANCE_REVIEWED_HEAD = "c52c607045803ab6d6e2a961f0f697aa72bf7581"
+_H001_ASSURANCE_MERGE_SHA = "ae61c6162f3164e0b24dd567a6ef73bdb5ecf8ea"
+_H001_ASSURANCE_PROTOCOL_RELPATH = "docs/assurance/reviews/h001_pre_data_assurance_scaffold_rereview_protocol_v001.json"
+_H001_ASSURANCE_PACKET_RELPATH = "docs/assurance/reviews/h001_pre_data_assurance_scaffold_rereview_packet_v001.json"
+_H001_ASSURANCE_PROTOCOL_SHA256 = "c6e4919c697103b584a7cf07c96f881c3adf7d009dbe13c43bc5b5389e0424e5"
+_H001_ASSURANCE_PACKET_SHA256 = "067c05ee378c4412c8135dd0bb2a7c91faa1370160caf6010b5c634f888de8ed"
+_H001_ASSURANCE_INITIAL_HEAD = "3fc6186b7644e8fbdf5f18f2f70275b20ca741d0"
+_H001_ASSURANCE_INITIAL_VERDICT = "QNTY_H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEW_FAILED"
+_H001_ASSURANCE_FINAL_VERDICT = "QNTY_H001_PRE_DATA_ASSURANCE_SCAFFOLD_REREVIEW_PASSED"
+_H001_ASSURANCE_SCOPE = {
+    _H001_ASSURANCE_PROTOCOL_RELPATH, _H001_ASSURANCE_PACKET_RELPATH,
+    f"docs/control/tasks/{TASK_ID}/handoff_v015.json", ACTIVE_TASK_RELPATH,
+    "quantbot/assurance/contracts.py", "quantbot/continuity/context.py",
+    "tests/assurance/test_contracts.py", "tests/continuity/test_cross_agent_continuity.py",
+}
+_H001_ASSURANCE_DECISIONS = [
+    'BLOCK_LIVE_INTEGRATION',
+    'DURABLE_STORES=UNCONFIGURED',
+    'EDGE_UNPROVEN',
+    'GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_BACKFILL=FORBIDDEN',
+    'GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_DATA_ACCESS=FORBIDDEN',
+    'GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_PRIOR_RECORD_MUTATION=FORBIDDEN',
+    'GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_SCHEMA=IMPLEMENTED',
+    'GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_STATE=EMPTY_NO_BACKFILL',
+    'H001_ARTIFACT_OPERATIONS=FORBIDDEN',
+    'H001_BOOTSTRAP_BLOCK_LENGTH_TUNING=FORBIDDEN',
+    'H001_CANDIDATE_STORE_ACCESS_OR_PROBING=FORBIDDEN',
+    'H001_CANDIDATE_STORE_CONFIGURATION=NOT_AUTHORIZED',
+    'H001_CANDIDATE_STORE_CREDENTIAL_ACCESS=FORBIDDEN',
+    'H001_CURRENT_EXECUTION_BUDGET=0',
+    'H001_CURRENT_EXECUTION_COUNT=0',
+    'H001_FAILURE_DOMAIN_EVIDENCE_SCHEMA=IMPLEMENTED_METADATA_ONLY',
+    'H001_HAC_LAG_TUNING=FORBIDDEN',
+    'H001_LIVE_AUTHORIZATION=FALSE',
+    'H001_PAPER_TRADE_AUTHORIZATION=FALSE',
+    'H001_PRE_DATA_ASSURANCE_EXECUTION=NOT_AUTHORIZED',
+    'H001_PRE_DATA_ASSURANCE_GOVERNANCE=AUTHORIZED_SCAFFOLD_ONLY',
+    'H001_PRE_DATA_ASSURANCE_SCAFFOLD_MERGE_COMMIT=ae61c6162f3164e0b24dd567a6ef73bdb5ecf8ea',
+    'H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEW=COMPLETED_PASSED',
+    'H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEWED_HEAD=c52c607045803ab6d6e2a961f0f697aa72bf7581',
+    'H001_REAL_DATA_ACCESS=FORBIDDEN',
+    'H001_REVIEW_EVIDENCE_PACKET=CREATED_METADATA_ONLY',
+    'H001_REVIEW_EVIDENCE_PACKET_SCHEMA=IMPLEMENTED',
+    'H001_REVIEW_EVIDENCE_PACKET_VERDICT=QNTY_H001_PRE_DATA_ASSURANCE_SCAFFOLD_REREVIEW_PASSED',
+    'H001_REVIEW_PACKET_PRIVATE_REASONING_INCLUSION=FALSE',
+    'H001_REVIEW_PACKET_REAL_DATA_INCLUSION=FALSE',
+    'H001_REVIEW_PACKET_REAL_DATA_INCLUSION=FORBIDDEN',
+    'H001_REVIEW_PACKET_SECRET_INCLUSION=FALSE',
+    'H001_REVIEW_PACKET_SECRET_INCLUSION=FORBIDDEN',
+    'H001_REVIEW_PROTOCOL_RECORD=RECORDED_AFTER_REVIEW_NOT_PREREGISTERED',
+    'H001_SCIENTIFIC_AUTHORIZATION=FALSE',
+    'H001_SYNTHETIC_ARTIFACT_CANARY_REGISTERED_AS_REAL_ARTIFACT=FALSE',
+    'H001_SYNTHETIC_ARTIFACT_CANARY_SCAFFOLD=IMPLEMENTED_NOT_EXECUTED',
+    'H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED',
+    'H001_SYNTHETIC_NULL_CALIBRATION_HARNESS=IMPLEMENTED_NOT_EXECUTED',
+    'H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE',
+    'H001_SYNTHETIC_NULL_CALIBRATION_SPEC=REQUIRED_NOT_FROZEN',
+    'H001_SYNTHETIC_NULL_CALIBRATION_SPEC_DRAFT=AUTHORIZED',
+    'H001_SYNTHETIC_NULL_CALIBRATION_SPEC_DRAFT=CREATED_UNFROZEN',
+    'H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED',
+    'H001_SYNTHETIC_STORE_CANARY_SCAFFOLD=AUTHORIZED_NOT_IMPLEMENTED',
+    'H001_TEMPORAL_CAUSALITY_AMENDMENT_DRAFT=CREATED_NOT_APPLIED',
+    'H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=FALSE',
+    'H001_TEMPORAL_CAUSALITY_AMENDMENT_IMPLEMENTATION_FOR_REVIEW=AUTHORIZED',
+    'H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=UNCHANGED',
+    'H001_TEMPORAL_CAUSALITY_TARGET=FUNDING_TIME_STRICTLY_BEFORE_DECISION',
+    'V0_AVAILABILITY=UNAVAILABLE',
+    'V0_VERIFIED_COPY_COUNT=0',
+]
 _H001_SCAFFOLD_BASE_SHA = "28d6c70e9d7cb11c55d1afdf8b4e5ad9754f7aba"
 _H001_SCAFFOLD_V013_SHA256 = "89e3fc9181017d70bc793db87efd7932f63a75784c117b3bc49ad2a26b243bc1"
 _H001_ASSURANCE_DOCS = {
@@ -1039,11 +1110,67 @@ def _validate_h001_scaffold_handoff(receipt: dict, root: Path) -> dict:
     return amendment
 
 
+def _validate_h001_assurance_review_complete_handoff(receipt: dict, root: Path) -> None:
+    contracts = __import__("quantbot.assurance.contracts", fromlist=[
+        "load_and_validate_assurance_scaffold", "validate_review_evidence_packet", "validate_review_protocol_record",
+    ])
+    if receipt["receipt_index"] != 15:
+        _fail("H001 assurance review-completion handoff must be receipt index 15")
+    if receipt["source_branch"] != "chore/h001-assurance-review-completion" or receipt["source_head_commit"] != _H001_ASSURANCE_MERGE_SHA:
+        _fail("H001 assurance review-completion source identity is wrong")
+    if receipt["predecessor"] != {"path": f"docs/control/tasks/{TASK_ID}/handoff_v014.json", "sha256": "96ff0d934548e02fbcfec8368829520d6add22abe83413adfbc456c009b1d117"}:
+        _fail("H001 assurance review-completion predecessor is wrong")
+    if set(receipt["changed_file_scope"]) != _H001_ASSURANCE_SCOPE or len(receipt["changed_file_scope"]) != len(_H001_ASSURANCE_SCOPE):
+        _fail("H001 assurance review-completion changed_file_scope is not the exact eight-file scope")
+    if receipt["next_actions"] != [_H001_ASSURANCE_REVIEW_NEXT_ACTION]:
+        _fail("H001 assurance review-completion next action is wrong")
+    binding = _require_exact_keys(receipt.get("review_binding"), {
+        "final_review_verdict", "initial_failed_review_head", "initial_failed_review_verdict", "merged_main_commit",
+        "review_packet_path", "review_packet_sha256", "review_protocol_path", "review_protocol_sha256",
+        "reviewed_implementation_head", "reviewed_pr_number",
+    }, "H001 review_binding")
+    expected_binding = {
+        "final_review_verdict": _H001_ASSURANCE_FINAL_VERDICT, "initial_failed_review_head": _H001_ASSURANCE_INITIAL_HEAD,
+        "initial_failed_review_verdict": _H001_ASSURANCE_INITIAL_VERDICT, "merged_main_commit": _H001_ASSURANCE_MERGE_SHA,
+        "review_packet_path": _H001_ASSURANCE_PACKET_RELPATH, "review_packet_sha256": _H001_ASSURANCE_PACKET_SHA256,
+        "review_protocol_path": _H001_ASSURANCE_PROTOCOL_RELPATH, "review_protocol_sha256": _H001_ASSURANCE_PROTOCOL_SHA256,
+        "reviewed_implementation_head": _H001_ASSURANCE_REVIEWED_HEAD, "reviewed_pr_number": 282,
+    }
+    if binding != expected_binding:
+        _fail("H001 review_binding drifted")
+    if hashlib.sha256((root / _H001_ASSURANCE_PACKET_RELPATH).read_bytes()).hexdigest() != _H001_ASSURANCE_PACKET_SHA256:
+        _fail("H001 review packet independently pinned hash drifted")
+    if receipt["decisions"] != _H001_ASSURANCE_DECISIONS or len(receipt["decisions"]) != len(set(receipt["decisions"])):
+        _fail("H001 assurance review-completion decisions must match the exact sorted unique contract")
+    required_blockers = {"V0 remains unavailable", "durable stores remain unconfigured", "real data access remains forbidden", "H001 temporal causality amendment remains not effective", "H001 calibration specification remains unfrozen", "H001 synthetic calibration execution remains unauthorized", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION"}
+    if set(receipt["blockers"]) != required_blockers:
+        _fail("H001 assurance review-completion blockers drifted")
+    evidence_paths = [entry["path"] for entry in receipt["evidence"]]
+    v014_path = f"docs/control/tasks/{TASK_ID}/handoff_v014.json"
+    if evidence_paths.count(v014_path) != 1:
+        _fail("H001 assurance evidence must contain exactly one v014 predecessor entry")
+    v014_entry = next(entry for entry in receipt["evidence"] if entry["path"] == v014_path)
+    if v014_entry["sha256"] != "96ff0d934548e02fbcfec8368829520d6add22abe83413adfbc456c009b1d117":
+        _fail("H001 assurance v014 evidence binding drifted")
+    for path in (_H001_ASSURANCE_PROTOCOL_RELPATH, _H001_ASSURANCE_PACKET_RELPATH):
+        item = next((entry for entry in receipt["evidence"] if entry["path"] == path), None)
+        if item is None or item["sha256"] != hashlib.sha256((root / path).read_bytes()).hexdigest():
+            _fail(f"H001 assurance review evidence missing or wrong for {path}")
+    predecessor = root / f"docs/control/tasks/{TASK_ID}/handoff_v014.json"
+    if not predecessor.is_file() or hashlib.sha256(predecessor.read_bytes()).hexdigest() != "96ff0d934548e02fbcfec8368829520d6add22abe83413adfbc456c009b1d117":
+        _fail("H001 assurance v014 predecessor bytes drifted")
+    contracts.validate_review_protocol_record(json.loads((root / _H001_ASSURANCE_PROTOCOL_RELPATH).read_bytes()))
+    contracts.load_and_validate_assurance_scaffold((root / _H001_ASSURANCE_PACKET_RELPATH).read_bytes(), contracts.validate_review_evidence_packet)
+
+
 def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evidence_files: bool) -> int:
     """Structural fail-closed validation shared by the active receipt and every
     historical receipt in the predecessor chain. Does not validate the
     ``predecessor`` link itself; the chain walk owns that."""
-    _require_exact_keys(parsed, _RECEIPT_KEYS, label)
+    receipt_keys = set(_RECEIPT_KEYS)
+    if parsed.get("receipt_index") == 15:
+        receipt_keys.add("review_binding")
+    _require_exact_keys(parsed, receipt_keys, label)
     if parsed["schema_version"] != "0.1.0":
         _fail(f"{label} schema_version is not 0.1.0")
     if parsed["receipt_kind"] != "qnty_cross_agent_handoff_receipt":
@@ -1119,6 +1246,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_SCAFFOLD_PHASE:
         _cross_check_artifact_records(parsed, root)
         amendment = _validate_h001_scaffold_handoff(parsed, root)
+    elif active["phase"] == _H001_ASSURANCE_REVIEW_COMPLETE_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        _validate_h001_assurance_review_complete_handoff(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -1456,6 +1586,34 @@ def render_context_packet(state: dict) -> str:
             "H001_LIVE_AUTHORIZATION=FALSE",
             "EDGE_STATUS=EDGE_UNPROVEN",
             "LIVE_STATUS=BLOCK_LIVE_INTEGRATION",
+        ])
+    elif active["phase"] == _H001_ASSURANCE_REVIEW_COMPLETE_PHASE:
+        lines.extend([
+            "H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEW=COMPLETED_PASSED",
+            f"H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEWED_HEAD={_H001_ASSURANCE_REVIEWED_HEAD}",
+            f"H001_PRE_DATA_ASSURANCE_SCAFFOLD_MERGE_COMMIT={_H001_ASSURANCE_MERGE_SHA}",
+            "H001_REVIEW_PROTOCOL_RECORD=RECORDED_AFTER_REVIEW_NOT_PREREGISTERED",
+            "H001_REVIEW_EVIDENCE_PACKET=CREATED_METADATA_ONLY",
+            "H001_REVIEW_PACKET_PRIVATE_REASONING_INCLUSION=FALSE",
+            "H001_REVIEW_PACKET_REAL_DATA_INCLUSION=FALSE",
+            "H001_REVIEW_PACKET_SECRET_INCLUSION=FALSE",
+            "H001_TEMPORAL_CAUSALITY_AMENDMENT_IMPLEMENTATION_FOR_REVIEW=AUTHORIZED",
+            "H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=FALSE",
+            "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=UNCHANGED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+            "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_STATE=EMPTY_NO_BACKFILL",
+            "H001_CANDIDATE_STORE_ACCESS_OR_PROBING=FORBIDDEN",
+            "H001_SYNTHETIC_ARTIFACT_CANARY_SCAFFOLD=IMPLEMENTED_NOT_EXECUTED",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_EXECUTION=0/0",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+            "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+            "H001_LIVE_AUTHORIZATION=FALSE",
+            "EDGE_UNPROVEN",
+            "BLOCK_LIVE_INTEGRATION",
         ])
     for prohibited in receipt["prohibited_actions"]:
         lines.append(f"PROHIBITED={prohibited}")

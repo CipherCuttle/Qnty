@@ -26,6 +26,168 @@ DISCLOSURE_KINDS = {"DESIGNATED_DEVELOPMENT", "DESIGNATED_VALIDATION", "DESIGNAT
 DISCLOSURE_STATUSES = {"RECORDED_APPEND_ONLY"}
 LEDGER_STATUSES = {"SCHEMA_IMPLEMENTED_EMPTY_NO_BACKFILL", "APPEND_ONLY_METADATA_DISCLOSURES"}
 
+_REVIEW_PROTOCOL_KEYS = {
+    "base_commit_sha", "document_id", "document_kind", "failure_verdict", "initial_failed_review_head",
+    "initial_failure_verdict", "merged_main_commit_sha", "non_effects", "pass_verdict", "prohibited_actions",
+    "review_kind", "review_requirements", "reviewed_commit_sha", "schema_version", "status",
+}
+_REVIEW_PROTOCOL_EXPECTED = {
+    "schema_version": SCHEMA_VERSION,
+    "document_kind": "qnty_replayable_review_protocol_record",
+    "document_id": "h001-pre-data-assurance-scaffold-rereview-protocol-v001",
+    "status": "RECORDED_AFTER_REVIEW_NOT_PREREGISTERED",
+    "review_kind": "INDEPENDENT_ADVERSARIAL_REREVIEW",
+    "base_commit_sha": "28d6c70e9d7cb11c55d1afdf8b4e5ad9754f7aba",
+    "initial_failed_review_head": "3fc6186b7644e8fbdf5f18f2f70275b20ca741d0",
+    "reviewed_commit_sha": "c52c607045803ab6d6e2a961f0f697aa72bf7581",
+    "merged_main_commit_sha": "ae61c6162f3164e0b24dd567a6ef73bdb5ecf8ea",
+    "initial_failure_verdict": "QNTY_H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEW_FAILED",
+    "pass_verdict": "QNTY_H001_PRE_DATA_ASSURANCE_SCAFFOLD_REREVIEW_PASSED",
+    "failure_verdict": "QNTY_H001_PRE_DATA_ASSURANCE_SCAFFOLD_REREVIEW_FAILED",
+    "review_requirements": [
+        "APPEND_ONLY_CHAIN_INTACT", "AUTHORITY_DRIFT_ABSENT", "CALIBRATION_BOUNDARY_FAIL_CLOSED",
+        "CANONICAL_APPEND_VALIDATION", "CANONICAL_JSON_VALIDATION", "CONTROL_RECEIPT_PATH_CONTRACT",
+        "EXACT_HEAD_AND_SCOPE", "FULL_TEST_SUITE_PASS", "NO_GIT_EXPORT_PASS", "REMOTE_CI_PASS",
+        "UTC_TIMESTAMP_CONTRACT",
+    ],
+    "prohibited_actions": [
+        "ACCESS_REAL_DATA", "ACCESS_STORES", "APPLY_TEMPORAL_CAUSALITY_AMENDMENT", "EXECUTE_CALIBRATION",
+        "FREEZE_CALIBRATION_SPECIFICATION", "GRANT_SCIENTIFIC_PAPER_OR_LIVE_AUTHORITY", "RUN_SYNTHETIC_CANARY",
+    ],
+    "non_effects": [
+        "DOES_NOT_AUTHORIZE_EXECUTION", "DOES_NOT_AUTHORIZE_REAL_DATA", "DOES_NOT_AUTHORIZE_STORE_ACCESS",
+        "DOES_NOT_PROVE_MARKET_EDGE", "REVIEW_PROTOCOL_WAS_NOT_PREREGISTERED_BEFORE_REVIEW",
+    ],
+}
+_REVIEW_PACKET_KEYS = {
+    "commands", "document_id", "document_kind", "environment_identity", "finding_counts", "harness_source_hashes",
+    "redaction_manifest", "review_id", "review_kind", "review_specification_hash", "reviewed_artifact_hashes",
+    "reviewed_commit_sha", "schema_version", "status", "stderr_artifact_hashes", "stdout_artifact_hashes", "verdict",
+}
+_REVIEW_ARTIFACT_HASHES = {
+    "docs/assurance/H001_PRE_DATA_ASSURANCE_SCAFFOLD.md": "2db845247b8737bce60ed1ca049552dd7fb6c0025bcaa566fbf1d928b44686aa",
+    "docs/assurance/durable_store_failure_domain_evidence_schema_v001.json": "8f13f87ce97fbdf7771004e02e33809805a75338383e93c870ce564a48968985",
+    "docs/assurance/global_real_protocol_holdout_disclosure_ledger_v001.json": "71b8ff5eb74461b0789eeb75388808fc787692fc6d84fad1acb573d4b36315ee",
+    "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json": "7e05a0b2b44dd4e3fbadf3e121791eb2ee76385a6b2ec6b872984cbb3510ecf6",
+    "docs/assurance/h001_temporal_causality_amendment_draft_v001.json": "03c57d0c0935eb37d53ee68410935e258e3bde0f5b2c8d19048e4c1d979d5639",
+    "docs/assurance/replayable_review_evidence_packet_schema_v001.json": "990052469571b2ff100180c706e0e38257fd952e32320b665753d23212cfbcbb",
+    "docs/assurance/synthetic_artifact_canary_scaffold_v001.json": "45e6f95fece2328df2c39f2fce790bba37a0944ea7c5bc33b8e505820beb5392",
+    "docs/control/active_task.json": "c4bd97ae3895143a930d9b873251b701aa8edb8dfd9c875b169a107e3294e0e3",
+    "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v014.json": "96ff0d934548e02fbcfec8368829520d6add22abe83413adfbc456c009b1d117",
+    "quantbot/assurance/__init__.py": "31e165747eb5cfa462237d163faab0bbacbd9eb36c815ea42d6418192a378cbe",
+    "quantbot/assurance/contracts.py": "4d7c18e5e97732b08752515acb126e50c051cf71275c77b51613f3d3eb93e9aa",
+    "quantbot/assurance/h001_null_calibration.py": "deaceeec03578a7f430972c8f4de2bb96798e660b0cbe64504c6fbf8da512bdd",
+    "quantbot/continuity/context.py": "ff05b4165032f21ac2cd645096d2f0e5f4861175857478ed1a8c332194a1edf4",
+    "tests/assurance/test_contracts.py": "0a90c085cf5dd24be277562b65ec2b0307af8c3ab73056c531fb8e0583b9e8b2",
+    "tests/assurance/test_h001_null_calibration.py": "47bb18360165effc826102c84b931a51a198a994b99cc6bae24b2bf9bd87a06c",
+    "tests/continuity/test_cross_agent_continuity.py": "e068e2ca6860094136bcbe21a0ae0b73041b39b963e9b0d3d3e97e7fa7fcc079",
+}
+_REVIEW_HARNESS_HASHES = {key: _REVIEW_ARTIFACT_HASHES[key] for key in (
+    "quantbot/assurance/contracts.py", "quantbot/assurance/h001_null_calibration.py", "quantbot/continuity/context.py",
+    "tests/assurance/test_contracts.py", "tests/assurance/test_h001_null_calibration.py", "tests/continuity/test_cross_agent_continuity.py",
+)}
+_REVIEW_COMMANDS = [
+    "set -euo pipefail",
+    "REPO=/home/swirky/DevHub/repos/Qnty",
+    "BASE=28d6c70e9d7cb11c55d1afdf8b4e5ad9754f7aba",
+    "HEAD=c52c607045803ab6d6e2a961f0f697aa72bf7581",
+    "PY=$REPO/.venv/bin/python",
+    "REVIEW_DIR=$(mktemp -d /tmp/qnty-pr282-rereview.XXXXXX)",
+    "SCOPE_DIR=$(mktemp -d /tmp/qnty-pr282-scope.XXXXXX)",
+    "EXPORT=$(mktemp -d /tmp/qnty-h001-review-export.XXXXXX)",
+    "git -C $REPO worktree add --detach $REVIEW_DIR $HEAD",
+    "cd $REVIEW_DIR",
+    'test "$(git rev-parse HEAD)" = "$HEAD"',
+    'test "$(git merge-base "$BASE" "$HEAD")" = "$BASE"',
+    'git diff --name-only "$BASE...$HEAD"',
+    'test "$(git diff --name-only "$BASE...$HEAD" | wc -l)" -eq 16',
+    "printf '%s\\n' docs/assurance/H001_PRE_DATA_ASSURANCE_SCAFFOLD.md docs/assurance/durable_store_failure_domain_evidence_schema_v001.json docs/assurance/global_real_protocol_holdout_disclosure_ledger_v001.json docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json docs/assurance/h001_temporal_causality_amendment_draft_v001.json docs/assurance/replayable_review_evidence_packet_schema_v001.json docs/assurance/synthetic_artifact_canary_scaffold_v001.json docs/control/active_task.json docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v014.json quantbot/assurance/__init__.py quantbot/assurance/contracts.py quantbot/assurance/h001_null_calibration.py quantbot/continuity/context.py tests/assurance/test_contracts.py tests/assurance/test_h001_null_calibration.py tests/continuity/test_cross_agent_continuity.py | sort > $SCOPE_DIR/expected-scope.txt",
+    'git diff --name-only "$BASE...$HEAD" | sort > $SCOPE_DIR/observed-scope.txt',
+    "diff -u $SCOPE_DIR/expected-scope.txt $SCOPE_DIR/observed-scope.txt",
+    "sha256sum docs/assurance/H001_PRE_DATA_ASSURANCE_SCAFFOLD.md docs/assurance/replayable_review_evidence_packet_schema_v001.json quantbot/assurance/contracts.py quantbot/continuity/context.py",
+    "$PY -m pytest tests/assurance -q",
+    "$PY -m pytest tests/continuity -q",
+    "$PY -m pytest tests/sandbox -q",
+    "$PY -m pytest tests/artifacts -q",
+    "$PY -m pytest tests/experiment/test_h001_real_falsification_preregistration.py -q",
+    "$PY -m pytest -q",
+    "PATH=$REPO/.venv/bin:$PATH $REPO/scripts/release_smoke.sh",
+    "$PY -m quantbot.continuity verify",
+    "$PY -m quantbot.continuity show",
+    "$PY -m quantbot.artifacts verify-registry",
+    "$PY -m quantbot.artifacts status",
+    "git archive $HEAD | tar -x -C $EXPORT",
+    "test ! -e $EXPORT/.git",
+    "cd $EXPORT",
+    "PYTHONPATH=$EXPORT $PY -m pytest tests/assurance tests/continuity -q",
+    "PYTHONPATH=$EXPORT $PY -m quantbot.continuity verify",
+    "PYTHONPATH=$EXPORT $PY -m quantbot.continuity show",
+    "cd $REVIEW_DIR && git diff --check",
+    'test -z "$(git status --short)"',
+    "gh run list --repo CipherCuttle/Qnty --commit $HEAD --json name,status,conclusion,headSha",
+]
+
+def review_protocol_record() -> dict:
+    return json.loads(canonical_json_bytes(_REVIEW_PROTOCOL_EXPECTED).decode("utf-8"))
+
+def validate_review_protocol_record(value: object) -> dict:
+    data = _base(value, "qnty_replayable_review_protocol_record", _REVIEW_PROTOCOL_EXPECTED["document_id"], _REVIEW_PROTOCOL_EXPECTED["status"], _REVIEW_PROTOCOL_KEYS)
+    if data != _REVIEW_PROTOCOL_EXPECTED:
+        _fail("review protocol record drifted or claims preregistration/freezing before review")
+    for key in ("base_commit_sha", "initial_failed_review_head", "reviewed_commit_sha", "merged_main_commit_sha"):
+        if type(data[key]) is not str or not re.fullmatch(r"[0-9a-f]{40}", data[key]):
+            _fail(f"{key}: lowercase commit sha required")
+    return data
+
+def _validate_hash_records(value: object, expected: dict[str, str], label: str) -> None:
+    records = _list(value, label)
+    if records != [{"path": path, "sha256": expected[path]} for path in sorted(expected)]:
+        _fail(f"{label}: exact independently pinned hash set required")
+    for record in records:
+        _keys(record, {"path", "sha256"}, f"{label} entry")
+        if not re.fullmatch(r"[A-Za-z0-9._/-]+", record["path"]) or ".." in record["path"].split("/"):
+            _fail(f"{label}: unsafe relative path")
+        _sha(record["sha256"], f"{label} sha256")
+
+def validate_review_evidence_packet(value: object) -> dict:
+    data = _base(value, "qnty_replayable_review_evidence_packet", "h001-pre-data-assurance-scaffold-rereview-packet-v001", "COMPLETED_METADATA_ONLY_NO_REAL_DATA_OR_SECRETS", _REVIEW_PACKET_KEYS)
+    expected = {
+        "schema_version": SCHEMA_VERSION, "document_kind": "qnty_replayable_review_evidence_packet",
+        "document_id": "h001-pre-data-assurance-scaffold-rereview-packet-v001", "status": "COMPLETED_METADATA_ONLY_NO_REAL_DATA_OR_SECRETS",
+        "review_id": "h001-pre-data-assurance-scaffold-rereview-v001", "review_kind": "INDEPENDENT_ADVERSARIAL_REREVIEW",
+        "reviewed_commit_sha": "c52c607045803ab6d6e2a961f0f697aa72bf7581", "verdict": "QNTY_H001_PRE_DATA_ASSURANCE_SCAFFOLD_REREVIEW_PASSED",
+        "environment_identity": {"checkout_mode": "DETACHED_WORKTREE", "exported_tree_verified": True, "git_metadata_available": True, "network_access": "NOT_USED", "python_environment": "REPOSITORY_VENV", "reviewed_tree_source": "PINNED_COMMIT", "stdout_stderr_artifacts_persisted": False},
+        "finding_counts": {"blocker": 0, "major": 0, "minor": 0},
+        "redaction_manifest": {"private_reasoning_included": False, "real_data_included": False, "redaction_status": "NO_SECRET_BEARING_OUTPUT_PERSISTED", "secret_values_included": False, "stderr_persisted": False, "stdout_persisted": False},
+        "stdout_artifact_hashes": [], "stderr_artifact_hashes": [], "commands": _REVIEW_COMMANDS,
+    }
+    if data["reviewed_commit_sha"] != expected["reviewed_commit_sha"] or data["verdict"] != expected["verdict"]:
+        _fail("review packet head or verdict drifted")
+    if data["environment_identity"] != expected["environment_identity"] or data["finding_counts"] != expected["finding_counts"] or data["redaction_manifest"] != expected["redaction_manifest"]:
+        _fail("review packet environment, findings, or redaction metadata drifted")
+    if data["commands"] != _REVIEW_COMMANDS or data["stdout_artifact_hashes"] or data["stderr_artifact_hashes"]:
+        _fail("review packet commands or output hashes drifted")
+    if len(data["commands"]) != len(set(data["commands"])) or any(type(command) is not str or not command for command in data["commands"]):
+        _fail("review packet commands must be non-empty and unique")
+    if any(token in command for command in data["commands"] for token in ("--no-git-export", "remote CI checks", "token=", "password=", "credential=")):
+        _fail("review packet contains a non-replayable or secret-bearing command")
+    required_markers = (
+        "$HEAD", "$BASE", "BASE=28d6c70e9d7cb11c55d1afdf8b4e5ad9754f7aba", "git merge-base",
+        "worktree add --detach", "cd $REVIEW_DIR", "cd $EXPORT", "git diff --name-only", "diff -u",
+        "sha256sum", "git archive", "! -e $EXPORT/.git", "PYTHONPATH=$EXPORT", "gh run list", "git status --short",
+    )
+    if any(not any(marker in command for command in data["commands"]) for marker in required_markers):
+        _fail("review packet command coverage is incomplete")
+    if any(_REVIEW_PROTOCOL_EXPECTED["merged_main_commit_sha"] in command for command in data["commands"]):
+        _fail("review packet replay recipe must use the reviewed-PR base, not the merged-main commit")
+    _validate_hash_records(data["reviewed_artifact_hashes"], _REVIEW_ARTIFACT_HASHES, "reviewed_artifact_hashes")
+    _validate_hash_records(data["harness_source_hashes"], _REVIEW_HARNESS_HASHES, "harness_source_hashes")
+    expected_protocol_hash = hashlib.sha256(canonical_json_bytes(_REVIEW_PROTOCOL_EXPECTED)).hexdigest()
+    if data["review_specification_hash"] != expected_protocol_hash:
+        _fail("review packet protocol hash drifted")
+    _sha(data["review_specification_hash"], "review_specification_hash")
+    return data
+
 class AssuranceValidationError(ValueError):
     pass
 

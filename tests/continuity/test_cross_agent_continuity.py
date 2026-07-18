@@ -9,6 +9,9 @@ import copy
 import hashlib
 import json
 import shutil
+import subprocess
+import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -202,16 +205,16 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION], [context._H001_ASSURANCE_REVIEW_NEXT_ACTION])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
-    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE)
+    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE)
 
 
 def test_h001_completion_phase_verifies_and_renders_boundaries():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE):
+    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE):
         pytest.skip("production tree has advanced past synthetic completion")
     assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
     assert state["handoff_receipt"]["next_actions"] == [context._H001_COMPLETE_NEXT_ACTION]
@@ -993,7 +996,10 @@ def test_sandbox_phase_v003_contract_passes_and_renders_boundary(tmp_path):
 def test_valid_v003_amendment_chain_and_boundary_rendering():
     state = load_and_verify_continuity_state(ROOT)
     assert state["handoff_receipt"]["receipt_index"] >= 4
-    _design_family = (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE)
+    _design_family = (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE)
+    if state["active_task"]["phase"] == context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE:
+        assert "H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEW=COMPLETED_PASSED" in render_context_packet(state)
+        return
     if state["active_task"]["phase"] == context._H001_PRE_DATA_PHASE:
         assert state["h001_pre_data_amendment"]["amendment_id"] == "candidate1-h001-pre-data-assurance-v001"
         packet = render_context_packet(state)
@@ -1569,3 +1575,190 @@ def test_repaired_assurance_scaffold_hashes_are_independently_pinned():
         pytest.skip("production tree is before the implemented assurance scaffold transition")
     for relpath, expected in context._H001_SCAFFOLD_REPAIRED_FILE_SHA256.items():
         assert hashlib.sha256((ROOT / relpath).read_bytes()).hexdigest() == expected
+
+
+def test_h001_assurance_review_completion_transition_renders_and_binds():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE
+    assert state["handoff_receipt"]["receipt_index"] == 15
+    assert state["handoff_receipt"]["review_binding"]["reviewed_pr_number"] == 282
+    packet = render_context_packet(state)
+    for line in (
+        "H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEW=COMPLETED_PASSED",
+        "H001_PRE_DATA_ASSURANCE_SCAFFOLD_REVIEWED_HEAD=c52c607045803ab6d6e2a961f0f697aa72bf7581",
+        "H001_PRE_DATA_ASSURANCE_SCAFFOLD_MERGE_COMMIT=ae61c6162f3164e0b24dd567a6ef73bdb5ecf8ea",
+        "H001_REVIEW_PROTOCOL_RECORD=RECORDED_AFTER_REVIEW_NOT_PREREGISTERED",
+        "H001_REVIEW_EVIDENCE_PACKET=CREATED_METADATA_ONLY",
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT_IMPLEMENTATION_FOR_REVIEW=AUTHORIZED",
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=FALSE",
+        "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=UNCHANGED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+        "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_STATE=EMPTY_NO_BACKFILL",
+        "H001_CANDIDATE_STORE_ACCESS_OR_PROBING=FORBIDDEN",
+        "H001_REAL_DATA_ACCESS=FORBIDDEN",
+        "H001_EXECUTION=0/0",
+        "V0_AVAILABILITY=UNAVAILABLE",
+        "EDGE_UNPROVEN",
+        "BLOCK_LIVE_INTEGRATION",
+    ):
+        assert line in packet
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda binding: binding.update(reviewed_pr_number=True),
+    lambda binding: binding.update(reviewed_implementation_head="0" * 40),
+    lambda binding: binding.update(final_review_verdict="WRONG"),
+    lambda binding: binding.update(review_packet_sha256="0" * 64),
+])
+def test_h001_assurance_review_binding_drift_fails_closed(tmp_path, mutation):
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT, root)
+    receipt_path = root / TASK_DIR / "handoff_v015.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    mutation(receipt["review_binding"])
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r["decisions"].append("H001_REVIEW_EVIDENCE_PACKET=REQUIRED_NOT_IMPLEMENTED"),
+    lambda r: r["decisions"].append("INVENTED_DECISION=TRUE"),
+    lambda r: r["decisions"].pop(),
+    lambda r: r["decisions"].append(r["decisions"][0]),
+    lambda r: r["decisions"].append("H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=TRUE"),
+])
+def test_h001_assurance_exact_decision_contract_fails_closed(tmp_path, mutation):
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT, root)
+    receipt_path = root / TASK_DIR / "handoff_v015.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    mutation(receipt)
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r["evidence"].remove(next(x for x in r["evidence"] if x["path"].endswith("handoff_v014.json"))),
+    lambda r: next(x for x in r["evidence"] if x["path"].endswith("handoff_v014.json")).update(sha256="0" * 64),
+    lambda r: r["evidence"].append({"path": f"{TASK_DIR}/handoff_v014.json", "sha256": context._H001_ASSURANCE_PROTOCOL_SHA256}),
+    lambda r: r["predecessor"].update(sha256="0" * 64),
+])
+def test_h001_assurance_v014_evidence_binding_fails_closed(tmp_path, mutation):
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT, root)
+    receipt_path = root / TASK_DIR / "handoff_v015.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    mutation(receipt)
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / "docs/control/active_task.json"
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+# The exact sixteen-file scope of the reviewed PR #282 (base 28d6c70 -> head c52c607).
+REVIEW_PR282_SCOPE_16 = sorted([
+    "docs/assurance/H001_PRE_DATA_ASSURANCE_SCAFFOLD.md",
+    "docs/assurance/durable_store_failure_domain_evidence_schema_v001.json",
+    "docs/assurance/global_real_protocol_holdout_disclosure_ledger_v001.json",
+    "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json",
+    "docs/assurance/h001_temporal_causality_amendment_draft_v001.json",
+    "docs/assurance/replayable_review_evidence_packet_schema_v001.json",
+    "docs/assurance/synthetic_artifact_canary_scaffold_v001.json",
+    "docs/control/active_task.json",
+    f"docs/control/tasks/{TASK_ID}/handoff_v014.json",
+    "quantbot/assurance/__init__.py",
+    "quantbot/assurance/contracts.py",
+    "quantbot/assurance/h001_null_calibration.py",
+    "quantbot/continuity/context.py",
+    "tests/assurance/test_contracts.py",
+    "tests/assurance/test_h001_null_calibration.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+])
+
+
+def _git(args, cwd):
+    return subprocess.run(
+        ["git", "-c", "user.email=replay@example.com", "-c", "user.name=replay", *args],
+        cwd=str(cwd), check=True, capture_output=True, text=True,
+    )
+
+
+def test_review_recipe_binds_corrected_base_not_merged_main():
+    """The recorded recipe pins the reviewed-PR base, never the merged-main commit;
+    binding merged-main was the MAJOR replayability defect this repair corrects."""
+    from quantbot.assurance import contracts
+    base = context._H001_SCAFFOLD_BASE_SHA          # 28d6c70... = actual PR #282 base
+    merged_main = context._H001_ASSURANCE_MERGE_SHA  # ae61c61... = later merged-main commit
+    head = context._H001_ASSURANCE_REVIEWED_HEAD     # c52c607... = reviewed implementation head
+    assert base != merged_main and head != merged_main and base != head
+    assert any(f"BASE={base}" in command for command in contracts._REVIEW_COMMANDS)
+    assert all(merged_main not in command for command in contracts._REVIEW_COMMANDS)
+
+
+def test_review_recipe_safe_subset_replays_in_synthetic_repo(tmp_path):
+    """Independently replay the critical safe subset of the recorded recipe in a
+    throwaway git repository: corrected merge-base passes, the exact sixteen-file
+    scope is reproduced, a detached worktree reaches HEAD, and exported-tree imports
+    resolve with cwd under the export (never from the editable install)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(["init", "-q", "-b", "main"], repo)
+    # Base commit seeds an importable package so the exported tree is runnable.
+    (repo / "quantbot").mkdir()
+    (repo / "quantbot" / "__init__.py").write_text('EXPORT_TREE_MARKER = "synthetic-export-tree"\n')
+    (repo / "seed.txt").write_text("seed\n")
+    _git(["add", "-A"], repo)
+    _git(["commit", "-q", "-m", "base"], repo)
+    base = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+    # Head commit adds exactly the sixteen reviewed-scope files.
+    for rel in REVIEW_PR282_SCOPE_16:
+        target = repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"reviewed-scope:{rel}\n")
+    _git(["add", "-A"], repo)
+    _git(["commit", "-q", "-m", "head"], repo)
+    head = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+
+    # (1) merge-base with the base commit is exactly the base commit.
+    assert _git(["merge-base", base, head], repo).stdout.strip() == base
+    # (2) exact sixteen-file scope reproduced (not a count-only check).
+    observed = sorted(_git(["diff", "--name-only", f"{base}...{head}"], repo).stdout.split())
+    assert observed == REVIEW_PR282_SCOPE_16
+    assert len(observed) == 16
+    # (3) a detached worktree reaches the reviewed HEAD.
+    worktree = tmp_path / "wt"
+    _git(["worktree", "add", "--detach", str(worktree), head], repo)
+    try:
+        assert _git(["rev-parse", "HEAD"], worktree).stdout.strip() == head
+        # (4) git archive export contains no .git, and imports resolve from EXPORT.
+        export = tmp_path / "export"
+        export.mkdir()
+        archive = tmp_path / "head.tar"
+        _git(["archive", "--format=tar", "-o", str(archive), head], worktree)
+        with tarfile.open(archive) as tar:
+            tar.extractall(export, filter="data")
+        assert not (export / ".git").exists()
+        proc = subprocess.run(
+            [sys.executable, "-c",
+             "import quantbot; print(quantbot.__file__); print(quantbot.EXPORT_TREE_MARKER)"],
+            cwd=str(export), capture_output=True, text=True, check=True,
+        )
+        resolved, marker = proc.stdout.splitlines()[:2]
+        assert Path(resolved).resolve().is_relative_to(export.resolve())
+        assert marker == "synthetic-export-tree"
+    finally:
+        _git(["worktree", "remove", "--force", str(worktree)], repo)

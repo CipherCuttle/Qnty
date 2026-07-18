@@ -9,6 +9,7 @@ from quantbot.assurance import contracts
 
 ROOT = Path(__file__).parents[2]
 DOCS = ROOT / "docs/assurance"
+REVIEWS = DOCS / "reviews"
 VALIDATORS = {
     "h001_temporal_causality_amendment_draft_v001.json": contracts.validate_temporal_amendment_draft,
     "h001_synthetic_null_calibration_spec_draft_v001.json": contracts.validate_calibration_spec_draft,
@@ -144,3 +145,68 @@ def test_import_boundary_is_standard_library_only():
                 assert all(alias.name.split(".")[0] in {"dataclasses", "datetime", "hashlib", "json", "re"} for alias in node.names)
             if isinstance(node, ast.ImportFrom) and node.module:
                 assert node.module.split(".")[0] in {"__future__", "dataclasses", "datetime", "hashlib", "json", "re", "typing", "contracts"}
+
+
+def test_h001_review_records_are_canonical_and_validate():
+    for name, validator in (
+        ("h001_pre_data_assurance_scaffold_rereview_protocol_v001.json", contracts.validate_review_protocol_record),
+        ("h001_pre_data_assurance_scaffold_rereview_packet_v001.json", contracts.validate_review_evidence_packet),
+    ):
+        raw = (REVIEWS / name).read_bytes()
+        assert contracts.load_and_validate_assurance_scaffold(raw, validator)
+        assert contracts.canonical_json_bytes(json.loads(raw)) == raw
+        assert not raw.endswith(b"\n")
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda value: value.update(status="PREREGISTERED_BEFORE_REVIEW"),
+    lambda value: value.update(review_requirements=["x"]),
+    lambda value: value.update(merged_main_commit_sha="0" * 40),
+])
+def test_h001_review_protocol_is_not_retroactively_preregistered(tmp_path, mutation):
+    del tmp_path
+    value = json.loads((REVIEWS / "h001_pre_data_assurance_scaffold_rereview_protocol_v001.json").read_bytes())
+    mutation(value)
+    with pytest.raises(ValueError):
+        contracts.validate_review_protocol_record(value)
+
+
+@pytest.mark.parametrize("field", ["reviewed_commit_sha", "verdict", "review_specification_hash", "stdout_artifact_hashes", "stderr_artifact_hashes"])
+def test_h001_review_packet_rejects_drift(field):
+    value = json.loads((REVIEWS / "h001_pre_data_assurance_scaffold_rereview_packet_v001.json").read_bytes())
+    value[field] = "wrong" if field not in {"stdout_artifact_hashes", "stderr_artifact_hashes"} else ["a" * 64]
+    with pytest.raises(ValueError):
+        contracts.validate_review_evidence_packet(value)
+
+
+@pytest.mark.parametrize("field", ["token", "real_data", "private_reasoning", "scientific_claim"])
+def test_h001_review_packet_rejects_forbidden_fields(field):
+    value = json.loads((REVIEWS / "h001_pre_data_assurance_scaffold_rereview_packet_v001.json").read_bytes())
+    value[field] = False
+    with pytest.raises(ValueError):
+        contracts.validate_review_evidence_packet(value)
+
+
+def test_h001_review_packet_commands_are_executable_replay_records():
+    packet = json.loads((REVIEWS / "h001_pre_data_assurance_scaffold_rereview_packet_v001.json").read_bytes())
+    commands = packet["commands"]
+    joined = " ".join(commands)
+    assert "--no-git-export" not in joined
+    assert "remote CI checks" not in joined
+    assert len(commands) == len(set(commands))
+    # The recorded recipe is byte-identical to the independently pinned contract.
+    assert commands == contracts._REVIEW_COMMANDS
+    # MAJOR replayability fix: the recipe binds the actual PR #282 base, never the
+    # later merged-main commit (using merged-main breaks merge-base and 16-file scope).
+    assert any("BASE=28d6c70e9d7cb11c55d1afdf8b4e5ad9754f7aba" in command for command in commands)
+    assert all("ae61c6162f3164e0b24dd567a6ef73bdb5ecf8ea" not in command for command in commands)
+    # Detached-worktree setup and exported-tree cwd are recorded explicitly, and the
+    # scope check is an exact 16-file comparison rather than a count alone.
+    for marker in (
+        "$HEAD", "$BASE", "git merge-base", "worktree add --detach", "cd $REVIEW_DIR", "cd $EXPORT",
+        "git diff --name-only", "diff -u", "-eq 16", "sha256sum", "git archive", "! -e $EXPORT/.git",
+        "PYTHONPATH=$EXPORT", "gh run list", "git status --short",
+    ):
+        assert any(marker in command for command in commands)
+    # No command string is an absolute path, store URI, or network URL.
+    assert all(not command.startswith(("/", "http://", "https://", "qnty-artifact://")) for command in commands)
