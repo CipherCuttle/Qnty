@@ -1922,3 +1922,20 @@ def test_production_temporal_candidate_rereview_completion_verifies_and_renders_
         "H001_DURABLE_STORES_CONFIGURED=FALSE", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
     ):
         assert marker in packet
+
+
+def test_temporal_review_completion_rejects_shortened_review_record_decision(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / TASK_DIR / "handoff_v017.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["decisions"].remove("H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEW_RECORD=RECORDED_AFTER_REVIEW_NOT_PREREGISTERED")
+    receipt["decisions"].append("H001_CANDIDATE_REVIEW_RECORD=RECORDED_AFTER_REVIEW_NOT_PREREGISTERED")
+    receipt_bytes = canonical_json_bytes(receipt)
+    receipt_path.write_bytes(receipt_bytes)
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_bytes).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)

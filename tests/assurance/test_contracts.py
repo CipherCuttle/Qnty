@@ -1,6 +1,7 @@
 import ast
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -220,6 +221,52 @@ def test_h001_temporal_candidate_rereview_record_is_canonical_and_strict():
     assert value["recorded_after_review"] is True
     assert value["preregistered"] is False
     assert not raw.endswith(b"\n")
+
+
+def test_h001_temporal_candidate_rereview_scope_matches_historical_git_delta():
+    value = json.loads(TEMPORAL_REREVIEW.read_bytes())
+    expected = [
+        "docs/control/active_task.json",
+        "docs/control/amendments/candidate1_h001_temporal_causality_v001.json",
+        "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v016.json",
+        "quantbot/continuity/context.py", "quantbot/experiment/h001_temporal_causality.py",
+        "tests/continuity/test_cross_agent_continuity.py", "tests/experiment/test_h001_temporal_causality.py",
+    ]
+    actual = subprocess.run(
+        ["git", "diff", "--name-only", "9981a466d847305570f7e23826f0c9f40a7446a9", "74554e15f92cdb7f6c22238766bd6e1f16b60bf4"],
+        check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    assert actual == expected
+    assert value["repair_scope"] == expected
+    assert "docs/experiments/candidate1_h001_real_data_falsification_temporal_candidate_v001.json" not in value["repair_scope"]
+    assert not set(value["repair_scope"]) & {str(TEMPORAL_REREVIEW), "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v017.json", "quantbot/assurance/contracts.py", "tests/assurance/test_contracts.py"}
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda v: v.update(repair_scope=v["repair_scope"] + ["extra.py"]),
+    lambda v: v.update(repair_scope=v["repair_scope"][:-1]),
+    lambda v: v.update(repair_scope=v["repair_scope"] + [v["repair_scope"][0]]),
+    lambda v: v["repair_scope"].__setitem__(0, "substituted.py"),
+    lambda v: v["repair_scope"].__setitem__(0, "docs/assurance/reviews/h001_temporal_causality_amendment_candidate_rereview_record_v001.json"),
+])
+def test_h001_temporal_candidate_rereview_rejects_repair_scope_mutations(mutation):
+    value = json.loads(TEMPORAL_REREVIEW.read_bytes())
+    mutation(value)
+    with pytest.raises(ValueError):
+        contracts.validate_h001_temporal_candidate_rereview_record(contracts.canonical_json_bytes(value))
+
+
+def test_h001_temporal_candidate_rereview_verified_export_command_is_honest():
+    handoff = json.loads((ROOT / "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v017.json").read_bytes())
+    commands = handoff["verified_commands"]
+    assert 'PYTHONPATH="$EXPORT" "$PY" -m pytest tests/assurance tests/continuity -q' in commands
+    assert not any("test_h001_temporal_causality.py tests/continuity" in command for command in commands)
+
+
+@pytest.mark.parametrize("raw", [bytearray(TEMPORAL_REREVIEW.read_bytes()), memoryview(TEMPORAL_REREVIEW.read_bytes()), TEMPORAL_REREVIEW.read_text(), TEMPORAL_REREVIEW, object()])
+def test_h001_temporal_candidate_rereview_requires_exact_bytes(raw):
+    with pytest.raises(ValueError, match="exact bytes input"):
+        contracts.validate_h001_temporal_candidate_rereview_record(raw)
 
 
 @pytest.mark.parametrize("mutation", [

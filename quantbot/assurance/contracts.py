@@ -424,10 +424,11 @@ _H001_TEMPORAL_REREVIEW_PR_SCOPE = [
     "tests/continuity/test_cross_agent_continuity.py", "tests/experiment/test_h001_temporal_causality.py",
 ]
 _H001_TEMPORAL_REREVIEW_REPAIR_SCOPE = [
-    "docs/assurance/reviews/h001_temporal_causality_amendment_candidate_rereview_record_v001.json",
-    "docs/control/active_task.json", "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v017.json",
-    "quantbot/assurance/contracts.py", "quantbot/continuity/context.py",
-    "tests/assurance/test_contracts.py", "tests/continuity/test_cross_agent_continuity.py",
+    "docs/control/active_task.json",
+    "docs/control/amendments/candidate1_h001_temporal_causality_v001.json",
+    "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v016.json",
+    "quantbot/continuity/context.py", "quantbot/experiment/h001_temporal_causality.py",
+    "tests/continuity/test_cross_agent_continuity.py", "tests/experiment/test_h001_temporal_causality.py",
 ]
 _H001_TEMPORAL_REREVIEW_NON_EFFECTS = [
     "AMENDMENT_NOT_EFFECTIVE", "BLOCK_LIVE_INTEGRATION", "CURRENT_H001_CONTRACT_UNCHANGED",
@@ -448,9 +449,8 @@ def _reject_duplicate_json_keys(pairs):
 
 
 def validate_h001_temporal_candidate_rereview_record(raw: bytes) -> dict:
-    if type(raw) not in (bytes, bytearray):
+    if type(raw) is not bytes:
         _fail("exact bytes input required")
-    raw = bytes(raw)
     try:
         parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
     except (UnicodeDecodeError, json.JSONDecodeError, AssuranceValidationError) as error:
