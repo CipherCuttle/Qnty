@@ -10,6 +10,7 @@ from quantbot.assurance import contracts
 ROOT = Path(__file__).parents[2]
 DOCS = ROOT / "docs/assurance"
 REVIEWS = DOCS / "reviews"
+TEMPORAL_REREVIEW = REVIEWS / "h001_temporal_causality_amendment_candidate_rereview_record_v001.json"
 VALIDATORS = {
     "h001_temporal_causality_amendment_draft_v001.json": contracts.validate_temporal_amendment_draft,
     "h001_synthetic_null_calibration_spec_draft_v001.json": contracts.validate_calibration_spec_draft,
@@ -210,3 +211,37 @@ def test_h001_review_packet_commands_are_executable_replay_records():
         assert any(marker in command for command in commands)
     # No command string is an absolute path, store URI, or network URL.
     assert all(not command.startswith(("/", "http://", "https://", "qnty-artifact://")) for command in commands)
+
+
+def test_h001_temporal_candidate_rereview_record_is_canonical_and_strict():
+    raw = TEMPORAL_REREVIEW.read_bytes()
+    value = contracts.validate_h001_temporal_candidate_rereview_record(raw)
+    assert value["final_verdict"] == "QNTY_H001_TEMPORAL_CAUSALITY_AMENDMENT_CANDIDATE_REREVIEW_PASSED"
+    assert value["recorded_after_review"] is True
+    assert value["preregistered"] is False
+    assert not raw.endswith(b"\n")
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda v: v.update(review_bindings=dict(v["review_bindings"], pr_number=285)),
+    lambda v: v.update(final_verdict="QNTY_H001_TEMPORAL_CAUSALITY_AMENDMENT_CANDIDATE_REVIEW_FAILED"),
+    lambda v: v.update(preregistered=True),
+    lambda v: v.update(final_finding_counts={"blocker": 0, "major": 1, "minor": 0}),
+    lambda v: v.update(non_effects=["EDGE_PROVEN"]),
+    lambda v: v.update(repair_scope=v["repair_scope"] + ["unexpected.py"]),
+    lambda v: v["artifact_bindings"].__setitem__(0, dict(v["artifact_bindings"][0], sha256="0" * 64)),
+])
+def test_h001_temporal_candidate_rereview_record_rejects_mutations(mutation):
+    value = json.loads(TEMPORAL_REREVIEW.read_bytes())
+    mutation(value)
+    with pytest.raises(ValueError):
+        contracts.validate_h001_temporal_candidate_rereview_record(contracts.canonical_json_bytes(value))
+
+
+def test_h001_temporal_candidate_rereview_record_rejects_duplicate_or_noncanonical_bytes():
+    raw = TEMPORAL_REREVIEW.read_bytes()
+    duplicate = raw[:-1] + b',"status":"RECORDED_AFTER_REVIEW_NOT_PREREGISTERED"}'
+    with pytest.raises(ValueError):
+        contracts.validate_h001_temporal_candidate_rereview_record(duplicate)
+    with pytest.raises(ValueError):
+        contracts.validate_h001_temporal_candidate_rereview_record(json.dumps(json.loads(raw)).encode())
