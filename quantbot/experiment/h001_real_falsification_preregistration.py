@@ -63,7 +63,7 @@ CONTROLS = ["ALWAYS_FLAT", "ALWAYS_LONG", "ALWAYS_SHORT", "FUNDING_SIGN_FADE", "
 # This digest is an independently recorded fingerprint of the complete frozen
 # canonical design.  It is deliberately not read from DESIGN_PATH: the input
 # file is the value under test, not the validator's source of truth.
-EXPECTED_CANONICAL_SHA256 = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+EXPECTED_CANONICAL_SHA256 = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
 
 
 class DesignValidationError(ValueError):
@@ -138,7 +138,7 @@ def _validate(data: dict) -> None:
     _eq(data["signal_transformations"]["price_signal_value"], "100 * natural_log(raw_close)", "price transformation")
     _eq(data["signal_transformations"]["funding_signal_value"], "100 * raw_funding_rate_decimal", "funding transformation")
     join = data["temporal_join_contract"]
-    for key, expected in {"decision_timestamp": "bar[t].open_time_utc", "entry": "bar[t].open", "exit": "bar[t].close", "signal_bar_closes": "close_time_utc <= bar[t].open_time_utc", "prior_funding": "latest funding_time_utc <= bar[t].open_time_utc", "funding_cashflow_events": "bar[t].open_time_utc < funding_time_utc <= bar[t].close_time_utc", "funding_forward_fill_max_hours": 12, "nearest_neighbour_forbidden": True, "future_funding_forbidden": True, "equality_deadband_position": 0}.items():
+    for key, expected in {"decision_timestamp": "bar[t].open_time_utc", "entry": "bar[t].open", "exit": "bar[t].close", "signal_bar_closes": "close_time_utc <= bar[t].open_time_utc", "prior_funding": "latest funding_time_utc < bar[t].open_time_utc", "funding_cashflow_events": "bar[t].open_time_utc < funding_time_utc <= bar[t].close_time_utc", "funding_forward_fill_max_hours": 12, "nearest_neighbour_forbidden": True, "future_funding_forbidden": True, "equality_deadband_position": 0}.items():
         _eq(join[key], expected, f"temporal_join_contract.{key}")
     _validate_variants(data)
     _keys(data["split_contract"], SPLIT_KEYS, "split_contract")

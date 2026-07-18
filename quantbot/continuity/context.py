@@ -137,6 +137,61 @@ _H001_TEMPORAL_CANDIDATE_PHASE = "candidate1_h001_temporal_causality_amendment_i
 _H001_TEMPORAL_CANDIDATE_NEXT_ACTION = "ADVERSARIAL_REVIEW_H001_TEMPORAL_CAUSALITY_AMENDMENT_CANDIDATE"
 _H001_TEMPORAL_REVIEW_COMPLETE_PHASE = "candidate1_h001_temporal_causality_amendment_candidate_review_complete"
 _H001_TEMPORAL_REVIEW_COMPLETE_NEXT_ACTION = "ACTIVATE_REVIEWED_H001_TEMPORAL_CAUSALITY_AMENDMENT"
+_H001_TEMPORAL_ACTIVE_PHASE = "candidate1_h001_temporal_causality_amendment_effective"
+_H001_TEMPORAL_ACTIVE_NEXT_ACTION = "AUTHORIZE_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_GOVERNANCE"
+_H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH = "docs/control/amendments/candidate1_h001_temporal_causality_activation_v001.json"
+_H001_TEMPORAL_ACTIVE_HANDOFF_RELPATH = f"docs/control/tasks/{TASK_ID}/handoff_v018.json"
+_H001_TEMPORAL_ACTIVE_BASE_SHA = "eb953e04685b57e22d1b27d043618da4b44d549b"
+_H001_TEMPORAL_ACTIVE_V017_SHA = "687c8192403cc5c4ff62bbe2ed43e5a4c080868c0b4760386a0d7429798c8d32"
+_H001_TEMPORAL_ACTIVE_DESIGN_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
+_H001_TEMPORAL_ACTIVE_HISTORICAL_DESIGN_SHA = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+_H001_TEMPORAL_ACTIVE_VALIDATOR_SHA = "d9326c7b73c68f3958901899f46ef11a4f529ed1954f268de06ae6e8abdcede3"
+_H001_TEMPORAL_ACTIVE_HISTORICAL_VALIDATOR_SHA = "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"
+_H001_TEMPORAL_ACTIVE_SCOPE = [
+    _H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH,
+    H001_DESIGN_JSON_RELPATH,
+    "quantbot/experiment/h001_real_falsification_preregistration.py",
+    "tests/experiment/test_h001_real_falsification_preregistration.py",
+    _H001_TEMPORAL_ACTIVE_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+]
+_H001_TEMPORAL_ACTIVE_EVIDENCE = [
+    "docs/artifacts/candidate1-real-input-v0.json",
+    STORE_REGISTRY_RELPATH,
+    _H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH,
+    "docs/control/amendments/candidate1_h001_temporal_causality_v001.json",
+    "docs/assurance/reviews/h001_temporal_causality_amendment_candidate_rereview_record_v001.json",
+    f"docs/control/tasks/{TASK_ID}/handoff_v017.json",
+    H001_DESIGN_JSON_RELPATH,
+    "docs/experiments/candidate1_h001_real_data_falsification_temporal_candidate_v001.json",
+    "quantbot/experiment/h001_real_falsification_preregistration.py",
+    "quantbot/experiment/h001_temporal_causality.py",
+    "tests/experiment/test_h001_temporal_causality.py",
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+]
+_H001_TEMPORAL_ACTIVE_DECISIONS = sorted([
+    "BLOCK_LIVE_INTEGRATION", "DURABLE_STORES=UNCONFIGURED", "EDGE_UNPROVEN",
+    "H001_CANDIDATE_STORE_ACCESS_OR_PROBING=FORBIDDEN", "H001_CURRENT_EXECUTION_BUDGET=0",
+    "H001_CURRENT_EXECUTION_COUNT=0", "H001_EXECUTION=0/0", "H001_LIVE_AUTHORIZATION=FALSE",
+    "H001_PAPER_TRADE_AUTHORIZATION=FALSE", "H001_REAL_DATA_ACCESS=FORBIDDEN",
+    "H001_SCIENTIFIC_AUTHORIZATION=FALSE", "H001_SYNTHETIC_ARTIFACT_CANARY_SCAFFOLD=IMPLEMENTED_NOT_EXECUTED",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED", "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED", "H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=TRUE",
+    "H001_TEMPORAL_CAUSALITY_AMENDMENT=EFFECTIVE", "H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEW=COMPLETED_PASSED",
+    "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=STRICT_LT_EFFECTIVE",
+    "H001_TEMPORAL_CAUSALITY_PREVIOUS_SIGNAL_RULE=FUNDING_TIME_LTE_DECISION",
+    "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LT_DECISION",
+    "H001_TEMPORAL_CAUSALITY_EQUALITY_SIGNAL_EVENT=EXCLUDED", "H001_TEMPORAL_CAUSALITY_HELD_FUNDING_RULE=UNCHANGED",
+    "V0_AVAILABILITY=UNAVAILABLE", "V0_VERIFIED_COPY_COUNT=0",
+])
+_H001_TEMPORAL_ACTIVE_BLOCKERS = {
+    "V0 remains unavailable", "durable stores remain unconfigured", "real data access remains forbidden",
+    "H001 calibration specification remains unfrozen", "H001 synthetic calibration execution remains unauthorized",
+    "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
+}
 _H001_TEMPORAL_REREVIEW_RECORD_RELPATH = "docs/assurance/reviews/h001_temporal_causality_amendment_candidate_rereview_record_v001.json"
 _H001_TEMPORAL_REREVIEW_RECORD_SHA = "9ab3f89743a9697fcddc55ccb2128ab1180e24c097ffa5999e4c58b04b6f2c39"
 _H001_TEMPORAL_REREVIEW_SOURCE_BRANCH = "chore/h001-temporal-review-completion"
@@ -1307,6 +1362,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_TEMPORAL_REVIEW_COMPLETE_PHASE:
         _cross_check_artifact_records(parsed, root)
         _validate_h001_temporal_review_complete_handoff(parsed, root)
+    elif active["phase"] == _H001_TEMPORAL_ACTIVE_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        _validate_h001_temporal_activation_handoff(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -1549,6 +1607,96 @@ def _validate_h001_temporal_review_complete_handoff(receipt: dict, root: Path) -
     ]
     if receipt["evidence"] != expected_evidence:
         _fail("H001 temporal review-completion evidence list must be exact and ordered")
+
+
+def _validate_h001_temporal_activation_handoff(receipt: dict, root: Path) -> None:
+    if receipt["receipt_index"] != 18:
+        _fail("H001 temporal activation receipt index is wrong")
+    if receipt["source_branch"] != "feat/h001-strict-temporal-activation" or receipt["source_head_commit"] != _H001_TEMPORAL_ACTIVE_BASE_SHA:
+        _fail("H001 temporal activation source binding is wrong")
+    if receipt["predecessor"] != {"path": f"docs/control/tasks/{TASK_ID}/handoff_v017.json", "sha256": _H001_TEMPORAL_ACTIVE_V017_SHA}:
+        _fail("H001 temporal activation predecessor is wrong")
+    if receipt["changed_file_scope"] != _H001_TEMPORAL_ACTIVE_SCOPE:
+        _fail("H001 temporal activation changed_file_scope is not the exact ordered eight-file scope")
+    if receipt["next_actions"] != [_H001_TEMPORAL_ACTIVE_NEXT_ACTION]:
+        _fail("H001 temporal activation next action is wrong")
+    if receipt["decisions"] != _H001_TEMPORAL_ACTIVE_DECISIONS or len(receipt["decisions"]) != len(set(receipt["decisions"])):
+        _fail("H001 temporal activation decisions are not exact and unique")
+    if set(receipt["blockers"]) != _H001_TEMPORAL_ACTIVE_BLOCKERS or "reviewed H001 temporal causality amendment is not yet activated" in receipt["blockers"]:
+        _fail("H001 temporal activation blockers drifted")
+    safety = receipt["safety_state"]
+    if safety["decomposition_execution_count"] != 0 or safety["scientific_use_authorized"] or safety["paper_trade_authorized"] or safety["live_integration_authorized"] or safety["real_data_execution_requested"]:
+        _fail("H001 temporal activation changed persistent safety state")
+    expected_evidence = []
+    for path in _H001_TEMPORAL_ACTIVE_EVIDENCE:
+        target = root / path
+        if not target.is_file():
+            _fail(f"H001 temporal activation evidence file {path!r} is missing")
+        expected_evidence.append({"path": path, "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+    if receipt["evidence"] != expected_evidence or len(receipt["evidence"]) != len(set(item["path"] for item in receipt["evidence"])):
+        _fail("H001 temporal activation evidence must be exact, unique, and ordered")
+
+    amendment_path = root / _H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH
+    amendment = _load_canonical_document(amendment_path.read_bytes(), "H001 temporal activation amendment")
+    required = {"schema_version", "amendment_id", "amendment_kind", "governed_h001_protocol_id", "base_main_commit", "status", "effective", "current_contract_changed", "candidate_review_completed", "hash_bindings", "review_history", "change", "held_funding_rule", "non_effects"}
+    _require_exact_keys(amendment, required, "H001 temporal activation amendment")
+    exact = {
+        "schema_version": "0.1.0", "amendment_id": "candidate1-h001-temporal-causality-activation-v001",
+        "amendment_kind": "qnty_h001_temporal_causality_activation_amendment",
+        "governed_h001_protocol_id": "real_btc_h001_funding_crowding_reversal_falsification_v0",
+        "base_main_commit": _H001_TEMPORAL_ACTIVE_BASE_SHA, "status": "ACTIVATED_AFTER_INDEPENDENT_REVIEW",
+    }
+    for key, value in exact.items():
+        if amendment[key] != value:
+            _fail(f"H001 temporal activation amendment {key} is wrong")
+    if amendment["effective"] is not True or amendment["current_contract_changed"] is not True or amendment["candidate_review_completed"] is not True:
+        _fail("H001 temporal activation amendment status is unsafe")
+    if amendment["change"] != {"json_pointer": "/temporal_join_contract/prior_funding", "before": "latest funding_time_utc <= bar[t].open_time_utc", "after": "latest funding_time_utc < bar[t].open_time_utc"} or amendment["held_funding_rule"] != "bar[t].open_time_utc < funding_time_utc <= bar[t].close_time_utc":
+        _fail("H001 temporal activation amendment contract drifted")
+    expected_non_effects = sorted({"REAL_DATA_ACCESS_FORBIDDEN", "ARTIFACT_OPERATIONS_FORBIDDEN", "CANDIDATE_STORE_ACCESS_FORBIDDEN", "DURABLE_STORES_UNCONFIGURED", "CALIBRATION_SPEC_FREEZE_NOT_AUTHORIZED", "CALIBRATION_EXECUTION_NOT_AUTHORIZED", "SYNTHETIC_CANARY_NOT_EXECUTED", "H001_EXECUTION_NOT_AUTHORIZED", "NO_EXECUTION_COUNT_CONSUMED", "NO_SCIENTIFIC_AUTHORITY", "NO_PAPER_TRADING_AUTHORITY", "NO_LIVE_INTEGRATION_AUTHORITY", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION", "NO_EDGE_CLAIM"})
+    if amendment["non_effects"] != expected_non_effects:
+        _fail("H001 temporal activation amendment non-effects drifted")
+    bindings = amendment["hash_bindings"]
+    if type(bindings) is not dict or set(bindings) != {"candidate_amendment", "reviewed_candidate_design", "temporal_module", "temporal_tests", "candidate_rereview_record", "handoff_v017", "historical_effective_design", "effective_design", "historical_validator", "effective_validator"}:
+        _fail("H001 temporal activation amendment hash bindings drifted")
+    for key, binding in bindings.items():
+        _require_exact_keys(binding, {"path", "sha256"}, f"H001 temporal activation {key} binding")
+        target = root / _require_repo_relative(binding["path"], f"H001 temporal activation {key} path")
+        if key in {"historical_effective_design", "historical_validator", "temporal_tests"}:
+            continue
+        if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != binding["sha256"]:
+            _fail(f"H001 temporal activation {key} hash binding is wrong")
+    expected_bindings = {
+        "candidate_amendment": (_H001_TEMPORAL_CANDIDATE_AMENDMENT_RELPATH, "2e8c07ac3ea2721e182a82ce8437cc8db4adef0f4a0ec17066d29f65314da829"),
+        "reviewed_candidate_design": (_H001_TEMPORAL_CANDIDATE_DESIGN_RELPATH, _H001_TEMPORAL_ACTIVE_DESIGN_SHA),
+        "temporal_module": (_H001_TEMPORAL_CANDIDATE_MODULE_RELPATH, _H001_TEMPORAL_CANDIDATE_MODULE_SHA),
+        "temporal_tests": (_H001_TEMPORAL_CANDIDATE_TEST_RELPATH, _H001_TEMPORAL_CANDIDATE_TEST_SHA),
+        "candidate_rereview_record": (_H001_TEMPORAL_REREVIEW_RECORD_RELPATH, _H001_TEMPORAL_REREVIEW_RECORD_SHA),
+        "handoff_v017": (f"docs/control/tasks/{TASK_ID}/handoff_v017.json", _H001_TEMPORAL_ACTIVE_V017_SHA),
+        "historical_effective_design": (H001_DESIGN_JSON_RELPATH, _H001_TEMPORAL_ACTIVE_HISTORICAL_DESIGN_SHA),
+        "effective_design": (H001_DESIGN_JSON_RELPATH, _H001_TEMPORAL_ACTIVE_DESIGN_SHA),
+        "historical_validator": (_H001_VALIDATOR_RELPATH, _H001_TEMPORAL_ACTIVE_HISTORICAL_VALIDATOR_SHA),
+        "effective_validator": (_H001_VALIDATOR_RELPATH, _H001_TEMPORAL_ACTIVE_VALIDATOR_SHA),
+    }
+    if {key: (value["path"], value["sha256"]) for key, value in bindings.items()} != expected_bindings:
+        _fail("H001 temporal activation trusted hash bindings drifted")
+    if amendment["review_history"] != {"pr_284_reviewed_head": "74554e15f92cdb7f6c22238766bd6e1f16b60bf4", "pr_284_merge_commit": "5185add2e5da5add309d2602a473c23557e3c102", "pr_285_reviewed_head": "0515b5135f6f533da1953c1a725724e737a6446e", "pr_285_merge_commit": _H001_TEMPORAL_ACTIVE_BASE_SHA}:
+        _fail("H001 temporal activation review history drifted")
+    if (root / H001_DESIGN_JSON_RELPATH).read_bytes() != (root / _H001_TEMPORAL_CANDIDATE_DESIGN_RELPATH).read_bytes():
+        _fail("activated effective design is not byte-identical to reviewed candidate design")
+    historical = json.loads((root / H001_DESIGN_JSON_RELPATH).read_bytes())
+    historical["temporal_join_contract"]["prior_funding"] = "latest funding_time_utc <= bar[t].open_time_utc"
+    if hashlib.sha256(canonical_json_bytes(historical)).hexdigest() != _H001_TEMPORAL_ACTIVE_HISTORICAL_DESIGN_SHA:
+        _fail("historical effective design reconstruction hash is wrong")
+    validator = (root / _H001_VALIDATOR_RELPATH).read_bytes()
+    new_hash = _H001_TEMPORAL_ACTIVE_DESIGN_SHA.encode()
+    old_hash = _H001_TEMPORAL_ACTIVE_HISTORICAL_DESIGN_SHA.encode()
+    new_rule = b"latest funding_time_utc < bar[t].open_time_utc"
+    old_rule = b"latest funding_time_utc <= bar[t].open_time_utc"
+    if validator.count(new_hash) != 1 or validator.count(new_rule) != 1:
+        _fail("activated validator does not contain exactly the two reviewed literal changes")
+    if hashlib.sha256(validator.replace(new_hash, old_hash, 1).replace(new_rule, old_rule, 1)).hexdigest() != _H001_TEMPORAL_ACTIVE_HISTORICAL_VALIDATOR_SHA:
+        _fail("historical validator reconstruction hash is wrong")
 
 
 def _validate_entrypoints(root: Path) -> None:
@@ -1864,6 +2012,30 @@ def render_context_packet(state: dict) -> str:
             "H001_EXECUTION=0/0",
             "V0_AVAILABILITY=UNAVAILABLE",
             "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "EDGE_UNPROVEN",
+            "BLOCK_LIVE_INTEGRATION",
+        ])
+    elif active["phase"] == _H001_TEMPORAL_ACTIVE_PHASE:
+        lines.extend([
+            "H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEW=COMPLETED_PASSED",
+            "H001_TEMPORAL_CAUSALITY_AMENDMENT=EFFECTIVE",
+            "H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=TRUE",
+            "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=STRICT_LT_EFFECTIVE",
+            "H001_TEMPORAL_CAUSALITY_PREVIOUS_SIGNAL_RULE=FUNDING_TIME_LTE_DECISION",
+            "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LT_DECISION",
+            "H001_TEMPORAL_CAUSALITY_EQUALITY_SIGNAL_EVENT=EXCLUDED",
+            "H001_TEMPORAL_CAUSALITY_HELD_FUNDING_RULE=UNCHANGED",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_EXECUTION=0/0",
+            "H001_CURRENT_EXECUTION_BUDGET=0",
+            "H001_CURRENT_EXECUTION_COUNT=0",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+            "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+            "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+            "H001_LIVE_AUTHORIZATION=FALSE",
             "EDGE_UNPROVEN",
             "BLOCK_LIVE_INTEGRATION",
         ])
