@@ -39,6 +39,18 @@ AGENTS_TEXT = (
 START_HERE_TEXT = "# START_HERE\n\nControl state: docs/control/active_task.json\n"
 
 
+def copy_repo_without_runtime(source, destination):
+    shutil.copytree(
+        source,
+        destination,
+        ignore=shutil.ignore_patterns(
+            ".git", ".venv", ".pytest_cache", "__pycache__", "*.pyc", "tmp", "output", "data", "experiment_results"
+        ),
+    )
+    assert not (destination / ".git").exists()
+    assert not (destination / ".venv").exists()
+
+
 def base_receipt():
     return {
         "schema_version": "0.1.0",
@@ -294,7 +306,7 @@ def test_h001_preregistered_design_phase_renders_review_only_boundaries():
 
 def test_sandbox_ready_phase_still_requires_synthetic_batch_action(tmp_path):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     active_path = root / "docs/control/active_task.json"
     active = json.loads(active_path.read_bytes())
     receipt_path = root / TASK_DIR / "handoff_v008.json"
@@ -331,7 +343,7 @@ def test_sandbox_ready_phase_still_requires_synthetic_batch_action(tmp_path):
 ])
 def test_h001_completion_phase_drift_fails_closed(tmp_path, mutation):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     receipt_path = root / TASK_DIR / "handoff_v009.json"
     receipt = json.loads(receipt_path.read_bytes())
     mutation(receipt)
@@ -1620,7 +1632,7 @@ def test_h001_assurance_review_completion_transition_renders_and_binds():
 ])
 def test_h001_assurance_review_binding_drift_fails_closed(tmp_path, mutation):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     receipt_path = root / TASK_DIR / "handoff_v015.json"
     receipt = json.loads(receipt_path.read_bytes())
     mutation(receipt["review_binding"])
@@ -1642,7 +1654,7 @@ def test_h001_assurance_review_binding_drift_fails_closed(tmp_path, mutation):
 ])
 def test_h001_assurance_exact_decision_contract_fails_closed(tmp_path, mutation):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     receipt_path = root / TASK_DIR / "handoff_v015.json"
     receipt = json.loads(receipt_path.read_bytes())
     mutation(receipt)
@@ -1663,7 +1675,7 @@ def test_h001_assurance_exact_decision_contract_fails_closed(tmp_path, mutation)
 ])
 def test_h001_assurance_v014_evidence_binding_fails_closed(tmp_path, mutation):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     receipt_path = root / TASK_DIR / "handoff_v015.json"
     receipt = json.loads(receipt_path.read_bytes())
     mutation(receipt)
@@ -1773,7 +1785,7 @@ def test_review_recipe_safe_subset_replays_in_synthetic_repo(tmp_path):
 
 def _temporal_mutated_tree(tmp_path, mutate_receipt=None, mutate_amendment=None):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     receipt_path = root / TASK_DIR / "handoff_v016.json"
     receipt = json.loads(receipt_path.read_bytes())
     amendment_path = root / context._H001_TEMPORAL_CANDIDATE_AMENDMENT_RELPATH
@@ -1836,3 +1848,43 @@ def test_temporal_candidate_production_render_is_review_only():
         "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
     ):
         assert line in packet
+
+
+@pytest.mark.parametrize("mutate_receipt", [
+    lambda r: r["evidence"].append(dict(r["evidence"][0])),
+    lambda r: r["evidence"].append({"path": r["evidence"][0]["path"], "sha256": "0" * 64}),
+    lambda r: r["evidence"].append({"path": "extra.txt", "sha256": EVIDENCE_SHA}),
+    lambda r: r["evidence"].pop(),
+    lambda r: r["evidence"][0].update(sha256="0" * 64),
+    lambda r: r["evidence"][0].update(sha256="not-a-sha"),
+    lambda r: r["evidence"][0].update(path="/absolute.txt"),
+    lambda r: r["evidence"][0].update(path="../escape.txt"),
+    lambda r: r["evidence"][0].update(path=123),
+    lambda r: r["evidence"][0].update(unknown="key"),
+    lambda r: r["evidence"][0].pop("sha256"),
+])
+def test_temporal_candidate_evidence_integrity_mutations_fail_closed(tmp_path, mutate_receipt):
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(_temporal_mutated_tree(tmp_path, mutate_receipt=mutate_receipt))
+
+
+@pytest.mark.parametrize("relative_path", [
+    "quantbot/experiment/h001_temporal_causality.py",
+    "tests/experiment/test_h001_temporal_causality.py",
+])
+def test_temporal_candidate_literal_hash_bindings_reject_coordinated_evidence_mutation(tmp_path, relative_path):
+    root = _temporal_mutated_tree(tmp_path)
+    target = root / relative_path
+    target.write_bytes(target.read_bytes() + b"\n# independent mutation probe\n")
+    receipt_path = root / TASK_DIR / "handoff_v016.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    entry = next(item for item in receipt["evidence"] if item["path"] == relative_path)
+    entry["sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    receipt_bytes = canonical_json_bytes(receipt)
+    receipt_path.write_bytes(receipt_bytes)
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_bytes).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="independent literal hash"):
+        load_and_verify_continuity_state(root)

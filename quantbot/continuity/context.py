@@ -142,8 +142,9 @@ _H001_TEMPORAL_CANDIDATE_HANDOFF_RELPATH = f"docs/control/tasks/{TASK_ID}/handof
 _H001_TEMPORAL_CANDIDATE_BASE_SHA = "30a69ba1ba6a1908888ff1b34bdc072bd030e991"
 _H001_TEMPORAL_CANDIDATE_V015_SHA = "cc3d2f81b492d463e42189c6a1d35f63dfb205a4d7f1dd4c83adfacb19d496b0"
 _H001_TEMPORAL_CANDIDATE_DESIGN_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
-_H001_TEMPORAL_CANDIDATE_AMENDMENT_SHA = "ab6dd74ce6bd0ec4ceb593c9f5e2796d8be385b52a93e1f9914cdd4f94047363"
-_H001_TEMPORAL_CANDIDATE_V016_SHA = "97a8d90777f0fd9199217a14296dd5263fa8983fc55d08252697a0f8c67787b5"
+_H001_TEMPORAL_CANDIDATE_AMENDMENT_SHA = "2e8c07ac3ea2721e182a82ce8437cc8db4adef0f4a0ec17066d29f65314da829"
+_H001_TEMPORAL_CANDIDATE_MODULE_SHA = "be3f9b4aa229309af6974efeeea458189f1bdbf2b88d28cfc4e4284bfd566f4f"
+_H001_TEMPORAL_CANDIDATE_TEST_SHA = "0e1dea2e1ec06cea14f11455402282c56dd5ef598ed54b3ad401774d4d7ea628"
 _H001_ASSURANCE_REVIEWED_HEAD = "c52c607045803ab6d6e2a961f0f697aa72bf7581"
 _H001_ASSURANCE_MERGE_SHA = "ae61c6162f3164e0b24dd567a6ef73bdb5ecf8ea"
 _H001_ASSURANCE_PROTOCOL_RELPATH = "docs/assurance/reviews/h001_pre_data_assurance_scaffold_rereview_protocol_v001.json"
@@ -690,9 +691,13 @@ def _validate_evidence(evidence: object, root: Path, *, verify_files: bool) -> l
     evidence records what was observed when the immutable receipt was written."""
     if type(evidence) is not list:
         _fail("evidence must be a list")
+    seen_paths = set()
     for item in evidence:
         _require_exact_keys(item, _EVIDENCE_KEYS, "evidence entry")
         path = _require_repo_relative(item["path"], "evidence path")
+        if path in seen_paths:
+            _fail(f"duplicate evidence path {path!r}")
+        seen_paths.add(path)
         expected = _require_sha256(item["sha256"], "evidence sha256")
         if not verify_files:
             continue
@@ -1393,9 +1398,6 @@ _H001_TEMPORAL_BLOCKERS = {
 
 
 def _validate_h001_temporal_candidate_handoff(receipt: dict, root: Path) -> None:
-    handoff_path = root / _H001_TEMPORAL_CANDIDATE_HANDOFF_RELPATH
-    if hashlib.sha256(handoff_path.read_bytes()).hexdigest() != _H001_TEMPORAL_CANDIDATE_V016_SHA:
-        _fail("H001 temporal candidate handoff hash is not independently pinned")
     if receipt["receipt_index"] != 16 or receipt["source_branch"] != "feat/h001-strict-temporal-amendment-candidate" or receipt["source_head_commit"] != _H001_TEMPORAL_CANDIDATE_BASE_SHA:
         _fail("H001 temporal candidate receipt identity is wrong")
     if receipt["predecessor"] != {"path": f"docs/control/tasks/{TASK_ID}/handoff_v015.json", "sha256": _H001_TEMPORAL_CANDIDATE_V015_SHA}:
@@ -1417,11 +1419,19 @@ def _validate_h001_temporal_candidate_handoff(receipt: dict, root: Path) -> None
         _H001_VALIDATOR_RELPATH: _H001_REVIEW_VALIDATOR_SHA256,
         "docs/assurance/h001_temporal_causality_amendment_draft_v001.json": "03c57d0c0935eb37d53ee68410935e258e3bde0f5b2c8d19048e4c1d979d5639",
         PRE_DATA_H001_AMENDMENT_RELPATH: "a22d0cf260f31d7104fc4d4fe96030c8666179c20c7737dfe20a59f3c7200ddc",
+        _H001_TEMPORAL_CANDIDATE_MODULE_RELPATH: _H001_TEMPORAL_CANDIDATE_MODULE_SHA,
+        _H001_TEMPORAL_CANDIDATE_TEST_RELPATH: _H001_TEMPORAL_CANDIDATE_TEST_SHA,
+        "quantbot/continuity/context.py": hashlib.sha256((root / "quantbot/continuity/context.py").read_bytes()).hexdigest(),
+        "tests/continuity/test_cross_agent_continuity.py": hashlib.sha256((root / "tests/continuity/test_cross_agent_continuity.py").read_bytes()).hexdigest(),
     }
-    expected[_H001_TEMPORAL_CANDIDATE_MODULE_RELPATH] = hashlib.sha256((root / _H001_TEMPORAL_CANDIDATE_MODULE_RELPATH).read_bytes()).hexdigest()
-    expected[_H001_TEMPORAL_CANDIDATE_TEST_RELPATH] = hashlib.sha256((root / _H001_TEMPORAL_CANDIDATE_TEST_RELPATH).read_bytes()).hexdigest()
     expected["docs/artifacts/candidate1-real-input-v0.json"] = hashlib.sha256((root / "docs/artifacts/candidate1-real-input-v0.json").read_bytes()).hexdigest()
     expected[STORE_REGISTRY_RELPATH] = hashlib.sha256((root / STORE_REGISTRY_RELPATH).read_bytes()).hexdigest()
+    if set(evidence) != set(expected) or len(receipt["evidence"]) != len(expected):
+        _fail("H001 temporal candidate evidence set must be exact and unique")
+    if hashlib.sha256((root / _H001_TEMPORAL_CANDIDATE_MODULE_RELPATH).read_bytes()).hexdigest() != _H001_TEMPORAL_CANDIDATE_MODULE_SHA:
+        _fail("H001 temporal candidate module bytes do not match the independent literal hash")
+    if hashlib.sha256((root / _H001_TEMPORAL_CANDIDATE_TEST_RELPATH).read_bytes()).hexdigest() != _H001_TEMPORAL_CANDIDATE_TEST_SHA:
+        _fail("H001 temporal candidate test bytes do not match the independent literal hash")
     for path, digest in expected.items():
         if evidence.get(path) != digest:
             _fail(f"H001 temporal candidate evidence missing or wrong for {path}")
@@ -1440,12 +1450,16 @@ def _validate_h001_temporal_candidate_handoff(receipt: dict, root: Path) -> None
     if amendment["non_effects"] != sorted(set(amendment["non_effects"])) or set(amendment["non_effects"]) != {"CURRENT_H001_DESIGN_REMAINS_EFFECTIVE", "CURRENT_H001_VALIDATOR_REMAINS_EFFECTIVE", "CANDIDATE_NOT_EFFECTIVE", "EXECUTION_FORBIDDEN", "INDEPENDENT_REVIEW_REQUIRED", "REAL_DATA_ACCESS_FORBIDDEN", "STORE_ACCESS_FORBIDDEN", "CALIBRATION_UNCHANGED", "NO_EXECUTION_COUNT_CONSUMED", "NO_SCIENTIFIC_AUTHORITY", "NO_PAPER_OR_LIVE_AUTHORITY", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION"}:
         _fail("H001 temporal candidate non-effects drifted")
     bindings = amendment["hash_bindings"]
-    if not isinstance(bindings, dict) or set(bindings) != {"current_design", "current_validator", "draft_amendment", "governing_amendment", "candidate_design", "v015"}:
+    if not isinstance(bindings, dict) or set(bindings) != {"current_design", "current_validator", "draft_amendment", "governing_amendment", "candidate_design", "v015", "temporal_module", "temporal_tests"}:
         _fail("H001 temporal candidate hash bindings drifted")
     for item in bindings.values():
         _require_exact_keys(item, {"path", "sha256"}, "H001 temporal candidate hash binding")
     if bindings["candidate_design"] != {"path": _H001_TEMPORAL_CANDIDATE_DESIGN_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_DESIGN_SHA}:
         _fail("H001 temporal candidate design binding is wrong")
+    if bindings["temporal_module"] != {"path": _H001_TEMPORAL_CANDIDATE_MODULE_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_MODULE_SHA}:
+        _fail("H001 temporal candidate module binding is wrong")
+    if bindings["temporal_tests"] != {"path": _H001_TEMPORAL_CANDIDATE_TEST_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_TEST_SHA}:
+        _fail("H001 temporal candidate test binding is wrong")
     for key, (path, digest) in {"current_design": (H001_DESIGN_JSON_RELPATH, _H001_REVIEW_DESIGN_SHA256), "current_validator": (_H001_VALIDATOR_RELPATH, _H001_REVIEW_VALIDATOR_SHA256), "draft_amendment": ("docs/assurance/h001_temporal_causality_amendment_draft_v001.json", "03c57d0c0935eb37d53ee68410935e258e3bde0f5b2c8d19048e4c1d979d5639"), "governing_amendment": (PRE_DATA_H001_AMENDMENT_RELPATH, "a22d0cf260f31d7104fc4d4fe96030c8666179c20c7737dfe20a59f3c7200ddc"), "v015": (f"docs/control/tasks/{TASK_ID}/handoff_v015.json", _H001_TEMPORAL_CANDIDATE_V015_SHA)}.items():
         if bindings[key] != {"path": path, "sha256": digest}:
             _fail(f"H001 temporal candidate binding is wrong for {key}")

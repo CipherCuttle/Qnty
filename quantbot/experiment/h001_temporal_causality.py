@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _datetime
+import hashlib
 import json
 import math
 import re
@@ -12,6 +13,8 @@ from typing import Sequence
 
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 _CANDIDATE_RULE = "latest funding_time_utc < bar[t].open_time_utc"
+_HELD_FUNDING_RULE = "bar[t].open_time_utc < funding_time_utc <= bar[t].close_time_utc"
+_CANDIDATE_SHA256 = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
 
 
 class TemporalCausalityError(ValueError):
@@ -54,16 +57,30 @@ def _validate_events(events: Sequence[FundingEvent]) -> tuple[tuple[_datetime.da
     return tuple(parsed)
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("DUPLICATE_JSON_KEY")
+        result[key] = value
+    return result
+
+
 def load_and_validate_temporal_candidate(raw: bytes) -> dict:
-    """Validate the candidate design document without filesystem or network access."""
-    if not isinstance(raw, bytes):
+    """Validate the exact canonical candidate design without filesystem access."""
+    if type(raw) is not bytes:
         raise TemporalCausalityError("CANDIDATE_BYTES_REQUIRED")
     try:
-        parsed = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise TemporalCausalityError("INVALID_CANDIDATE_JSON") from exc
     if not isinstance(parsed, dict):
         raise TemporalCausalityError("INVALID_CANDIDATE_JSON")
+    canonical = json.dumps(parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    if raw != canonical:
+        raise TemporalCausalityError("NONCANONICAL_CANDIDATE_JSON")
+    if hashlib.sha256(raw).hexdigest() != _CANDIDATE_SHA256:
+        raise TemporalCausalityError("CANDIDATE_DOCUMENT_HASH_MISMATCH")
     try:
         rule = parsed["temporal_join_contract"]["prior_funding"]
     except (KeyError, TypeError) as exc:
@@ -71,7 +88,7 @@ def load_and_validate_temporal_candidate(raw: bytes) -> dict:
     if rule != _CANDIDATE_RULE:
         raise TemporalCausalityError("CANDIDATE_TEMPORAL_RULE_INVALID")
     contract = parsed["temporal_join_contract"]
-    if contract.get("funding_cashflow_events") != "bar[t].open_time_utc < funding_time_utc <= bar[t].close_time_utc":
+    if contract.get("funding_cashflow_events") != _HELD_FUNDING_RULE:
         raise TemporalCausalityError("HELD_FUNDING_RULE_CHANGED")
     return parsed
 

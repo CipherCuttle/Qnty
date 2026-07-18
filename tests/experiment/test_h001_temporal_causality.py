@@ -17,6 +17,7 @@ ROOT = Path(__file__).parents[2]
 CURRENT = ROOT / "docs/experiments/candidate1_h001_real_data_falsification_v0.json"
 CANDIDATE = ROOT / "docs/experiments/candidate1_h001_real_data_falsification_temporal_candidate_v001.json"
 CURRENT_SHA = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+CANDIDATE_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
 VALIDATOR_SHA = "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"
 DRAFT_SHA = "03c57d0c0935eb37d53ee68410935e258e3bde0f5b2c8d19048e4c1d979d5639"
 PRE_DATA_SHA = "a22d0cf260f31d7104fc4d4fe96030c8666179c20c7737dfe20a59f3c7200ddc"
@@ -29,7 +30,41 @@ def event(timestamp, rate=0.001):
 def test_candidate_is_canonical_and_valid():
     raw = CANDIDATE.read_bytes()
     assert raw == json.dumps(json.loads(raw), sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    assert hashlib.sha256(raw).hexdigest() == CANDIDATE_SHA
     assert load_and_validate_temporal_candidate(raw)["temporal_join_contract"]["prior_funding"].endswith("< bar[t].open_time_utc")
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda d: d.update(protocol_id="drifted-protocol"),
+    lambda d: d.update(hypothesis_id="drifted-hypothesis"),
+    lambda d: d.update(variant_family=[]),
+    lambda d: d.update(controls=[]),
+    lambda d: d["split_contract"]["validation"].update(end="2024-06-30T23:59:59Z"),
+    lambda d: d["cost_contract"].update(base_trading_cost="drifted"),
+    lambda d: d["validation_test"].update(bootstrap_repetitions=1),
+    lambda d: d["validation_test"].update(hac_lag_intervals=0),
+    lambda d: d["authorization_state"].update(execution_authorized=True),
+    lambda d: d["persistent_safety_state"].update(edge_status="EDGE_PROVEN"),
+    lambda d: d.update(unexpected_top_level_key=True),
+    lambda d: d.pop("cost_contract"),
+])
+def test_loader_rejects_any_non_temporal_candidate_mutation(mutation):
+    document = json.loads(CANDIDATE.read_bytes())
+    mutation(document)
+    raw = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    with pytest.raises(TemporalCausalityError, match="CANDIDATE_DOCUMENT_HASH_MISMATCH"):
+        load_and_validate_temporal_candidate(raw)
+
+
+@pytest.mark.parametrize("raw, error", [
+    (json.dumps(json.loads(CANDIDATE.read_bytes()), indent=2).encode(), "NONCANONICAL_CANDIDATE_JSON"),
+    (CANDIDATE.read_bytes() + b"\n", "NONCANONICAL_CANDIDATE_JSON"),
+    (b" \n" + CANDIDATE.read_bytes(), "NONCANONICAL_CANDIDATE_JSON"),
+    (b'{"temporal_join_contract":{"prior_funding":"latest funding_time_utc < bar[t].open_time_utc","prior_funding":"latest funding_time_utc < bar[t].open_time_utc"}}', "INVALID_CANDIDATE_JSON"),
+])
+def test_loader_rejects_noncanonical_candidate_bytes(raw, error):
+    with pytest.raises(TemporalCausalityError, match=error):
+        load_and_validate_temporal_candidate(raw)
 
 
 def test_current_bindings_and_one_leaf_difference():
