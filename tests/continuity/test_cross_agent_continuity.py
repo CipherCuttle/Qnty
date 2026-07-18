@@ -52,14 +52,91 @@ def copy_repo_without_runtime(source, destination):
 
 
 def restore_historical_h001_inputs(destination):
+    destination = Path(destination)
+    design_path = destination / "docs/experiments/candidate1_h001_real_data_falsification_v0.json"
+    design = json.loads(design_path.read_bytes())
+    design["temporal_join_contract"]["prior_funding"] = "latest funding_time_utc <= bar[t].open_time_utc"
+    design_bytes = canonical_json_bytes(design)
+    assert hashlib.sha256(design_bytes).hexdigest() == "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+    design_path.write_bytes(design_bytes)
+
+    validator_path = destination / "quantbot/experiment/h001_real_falsification_preregistration.py"
+    validator = validator_path.read_bytes()
+    activated_design_sha = b"c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
+    historical_design_sha = b"055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+    strict_rule = b"latest funding_time_utc < bar[t].open_time_utc"
+    historical_rule = b"latest funding_time_utc <= bar[t].open_time_utc"
+    assert validator.count(activated_design_sha) == 1
+    assert validator.count(strict_rule) == 1
+    validator = validator.replace(activated_design_sha, historical_design_sha, 1).replace(strict_rule, historical_rule, 1)
+    assert hashlib.sha256(validator).hexdigest() == "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"
+    validator_path.write_bytes(validator)
+
+    preregistration_path = destination / "tests/experiment/test_h001_real_falsification_preregistration.py"
+    preregistration = preregistration_path.read_text(encoding="utf-8")
+    activation_marker = "\n\nTEMPORAL_CANDIDATE = ROOT / "
+    assert preregistration.count(activation_marker) == 1
+    preregistration = preregistration[:preregistration.index(activation_marker)]
+    assert preregistration.count("import hashlib\n") == 1
+    preregistration = preregistration.replace("import hashlib\n", "", 1)
+    historical_preregistration = preregistration.encode("utf-8")
+    assert hashlib.sha256(historical_preregistration).hexdigest() == "4cf6478701f70ab7ecee4f5d84b39b042344daeb928da38d59c0389a2a8ca7c6"
+    preregistration_path.write_bytes(historical_preregistration)
+
+    temporal_test_path = destination / "tests/experiment/test_h001_temporal_causality.py"
+    if not temporal_test_path.is_file():
+        temporal_test_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "tests/experiment/test_h001_temporal_causality.py", temporal_test_path)
+    temporal_test = temporal_test_path.read_text(encoding="utf-8")
+    inverse_replacements = [
+        (
+            'HISTORICAL_SHA = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"\nCURRENT_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"',
+            'CURRENT_SHA = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"',
+        ),
+        (
+            'VALIDATOR_SHA = "d9326c7b73c68f3958901899f46ef11a4f529ed1954f268de06ae6e8abdcede3"',
+            'VALIDATOR_SHA = "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"',
+        ),
+        ('    assert CURRENT.read_bytes() == CANDIDATE.read_bytes()\n', ''),
+        (
+            '    assert current["temporal_join_contract"]["prior_funding"] == "latest funding_time_utc < bar[t].open_time_utc"\n'
+            '    assert current["temporal_join_contract"]["funding_cashflow_events"] == "bar[t].open_time_utc < funding_time_utc <= bar[t].close_time_utc"\n'
+            '    historical = json.loads(CURRENT.read_bytes())\n'
+            '    historical["temporal_join_contract"]["prior_funding"] = "latest funding_time_utc <= bar[t].open_time_utc"\n'
+            '    historical_bytes = json.dumps(historical, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()\n'
+            '    assert hashlib.sha256(historical_bytes).hexdigest() == HISTORICAL_SHA\n',
+            '',
+        ),
+        ('    walk(historical, current)\n', '    walk(current, candidate)\n'),
+    ]
+    for old, new in inverse_replacements:
+        assert temporal_test.count(old) == 1
+        temporal_test = temporal_test.replace(old, new, 1)
+    historical_test = temporal_test.encode("utf-8")
+    assert hashlib.sha256(historical_test).hexdigest() == "0e1dea2e1ec06cea14f11455402282c56dd5ef598ed54b3ad401774d4d7ea628"
+    temporal_test_path.write_bytes(historical_test)
+
+
+def test_historical_restoration_is_deterministic_without_git(tmp_path, monkeypatch):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("historical restoration must not invoke Git")
+
+    monkeypatch.setattr(subprocess, "check_output", fail_if_called)
     for relative_path in (
         "docs/experiments/candidate1_h001_real_data_falsification_v0.json",
         "quantbot/experiment/h001_real_falsification_preregistration.py",
-        "tests/experiment/test_h001_real_falsification_preregistration.py",
         "tests/experiment/test_h001_temporal_causality.py",
+        "tests/experiment/test_h001_real_falsification_preregistration.py",
     ):
-        data = subprocess.check_output(["git", "show", "eb953e04685b57e22d1b27d043618da4b44d549b:" + relative_path], cwd=ROOT)
-        (destination / relative_path).write_bytes(data)
+        source = ROOT / relative_path
+        target = tmp_path / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    restore_historical_h001_inputs(tmp_path)
+    assert hashlib.sha256((tmp_path / "docs/experiments/candidate1_h001_real_data_falsification_v0.json").read_bytes()).hexdigest() == "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+    assert hashlib.sha256((tmp_path / "quantbot/experiment/h001_real_falsification_preregistration.py").read_bytes()).hexdigest() == "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"
+    assert hashlib.sha256((tmp_path / "tests/experiment/test_h001_temporal_causality.py").read_bytes()).hexdigest() == "0e1dea2e1ec06cea14f11455402282c56dd5ef598ed54b3ad401774d4d7ea628"
+    assert hashlib.sha256((tmp_path / "tests/experiment/test_h001_real_falsification_preregistration.py").read_bytes()).hexdigest() == "4cf6478701f70ab7ecee4f5d84b39b042344daeb928da38d59c0389a2a8ca7c6"
 
 
 def base_receipt():
