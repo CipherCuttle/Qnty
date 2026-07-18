@@ -401,3 +401,92 @@ def load_and_validate_assurance_scaffold(value: object, validator) -> dict:
     parsed = json.loads(bytes(value).decode("utf-8"))
     if canonical_json_bytes(parsed) != bytes(value): _fail("non-canonical JSON bytes")
     return validator(parsed)
+
+
+_H001_TEMPORAL_REREVIEW_RECORD_KEYS = {
+    "artifact_bindings", "candidate_review_scope", "closed_findings", "document_id",
+    "document_kind", "final_finding_counts", "final_verdict", "non_effects",
+    "preregistered", "recorded_after_review", "repair_scope", "review_bindings",
+    "review_id", "review_results", "schema_version", "status",
+}
+_H001_TEMPORAL_REREVIEW_ARTIFACTS = [
+    {"path": "docs/control/amendments/candidate1_h001_temporal_causality_v001.json", "sha256": "2e8c07ac3ea2721e182a82ce8437cc8db4adef0f4a0ec17066d29f65314da829"},
+    {"path": "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v016.json", "sha256": "34bff7df542af4614b082478301441c86d41126b903395485b8c0ae9028def6a"},
+    {"path": "docs/experiments/candidate1_h001_real_data_falsification_temporal_candidate_v001.json", "sha256": "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"},
+    {"path": "quantbot/experiment/h001_temporal_causality.py", "sha256": "be3f9b4aa229309af6974efeeea458189f1bdbf2b88d28cfc4e4284bfd566f4f"},
+    {"path": "tests/experiment/test_h001_temporal_causality.py", "sha256": "0e1dea2e1ec06cea14f11455402282c56dd5ef598ed54b3ad401774d4d7ea628"},
+]
+_H001_TEMPORAL_REREVIEW_PR_SCOPE = [
+    "docs/control/active_task.json", "docs/control/amendments/candidate1_h001_temporal_causality_v001.json",
+    "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v016.json",
+    "docs/experiments/candidate1_h001_real_data_falsification_temporal_candidate_v001.json",
+    "quantbot/continuity/context.py", "quantbot/experiment/h001_temporal_causality.py",
+    "tests/continuity/test_cross_agent_continuity.py", "tests/experiment/test_h001_temporal_causality.py",
+]
+_H001_TEMPORAL_REREVIEW_REPAIR_SCOPE = [
+    "docs/control/active_task.json",
+    "docs/control/amendments/candidate1_h001_temporal_causality_v001.json",
+    "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v016.json",
+    "quantbot/continuity/context.py", "quantbot/experiment/h001_temporal_causality.py",
+    "tests/continuity/test_cross_agent_continuity.py", "tests/experiment/test_h001_temporal_causality.py",
+]
+_H001_TEMPORAL_REREVIEW_NON_EFFECTS = [
+    "AMENDMENT_NOT_EFFECTIVE", "BLOCK_LIVE_INTEGRATION", "CURRENT_H001_CONTRACT_UNCHANGED",
+    "CURRENT_SIGNAL_RULE_REMAINS_LTE", "EDGE_UNPROVEN", "NO_ARTIFACT_OR_STORE_ACCESS",
+    "NO_CALIBRATION_FREEZE_OR_EXECUTION", "NO_CANARY_EXECUTION", "NO_EXECUTION_COUNT_CONSUMED",
+    "NO_H001_EXECUTION", "NO_LIVE_AUTHORITY", "NO_MARKET_EDGE_CLAIM", "NO_PAPER_TRADING_AUTHORITY",
+    "NO_REAL_DATA_ACCESS", "NO_SCIENTIFIC_AUTHORITY",
+]
+
+
+def _reject_duplicate_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise AssuranceValidationError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def validate_h001_temporal_candidate_rereview_record(raw: bytes) -> dict:
+    if type(raw) is not bytes:
+        _fail("exact bytes input required")
+    try:
+        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, AssuranceValidationError) as error:
+        raise AssuranceValidationError("strict UTF-8 JSON without duplicate keys required") from error
+    if canonical_json_bytes(parsed) != raw:
+        _fail("non-canonical JSON bytes")
+    data = _base(parsed, "qnty_h001_temporal_causality_amendment_candidate_rereview_record", "candidate1-h001-temporal-causality-amendment-candidate-rereview-v001", "RECORDED_AFTER_REVIEW_NOT_PREREGISTERED", _H001_TEMPORAL_REREVIEW_RECORD_KEYS)
+    if data["recorded_after_review"] is not True or data["preregistered"] is not False:
+        _fail("review record must be recorded after review and not preregistered")
+    if data["review_bindings"] != {
+        "candidate_base_commit": "30a69ba1ba6a1908888ff1b34bdc072bd030e991", "candidate_merge_commit": "5185add2e5da5add309d2602a473c23557e3c102",
+        "final_reviewed_head": "74554e15f92cdb7f6c22238766bd6e1f16b60bf4", "initial_reviewed_head": "9981a466d847305570f7e23826f0c9f40a7446a9", "pr_number": 284,
+    }:
+        _fail("review binding drifted")
+    if data["closed_findings"] != ["PUBLIC_CANDIDATE_LOADER_ACCEPTED_MATERIAL_DOCUMENT_DRIFT", "TEMPORAL_MODULE_AND_TEST_HASHES_WERE_SELF_DERIVED"]:
+        _fail("closed findings drifted")
+    if data["final_verdict"] != "QNTY_H001_TEMPORAL_CAUSALITY_AMENDMENT_CANDIDATE_REREVIEW_PASSED":
+        _fail("final review verdict drifted")
+    if data["final_finding_counts"] != {"blocker": 0, "major": 0, "minor": 0}:
+        _fail("final finding counts must be zero")
+    if data["artifact_bindings"] != _H001_TEMPORAL_REREVIEW_ARTIFACTS:
+        _fail("reviewed artifact bindings drifted")
+    if data["candidate_review_scope"] != _H001_TEMPORAL_REREVIEW_PR_SCOPE or data["repair_scope"] != _H001_TEMPORAL_REREVIEW_REPAIR_SCOPE:
+        _fail("review scope drifted")
+    if data["review_results"] != {"assurance": "67 passed", "artifacts": "103 passed", "continuity": "356 passed, 7 skipped", "current_preregistration": "534 passed", "exported_temporal_continuity": "390 passed, 7 skipped", "full_suite": "6286 passed, 7 skipped", "release_smoke": "6 passed", "remote_ci": "ALL_REPORTED_CHECKS_SUCCESS", "sandbox": "53 passed", "temporal": "34 passed"}:
+        _fail("review results drifted")
+    if data["non_effects"] != _H001_TEMPORAL_REREVIEW_NON_EFFECTS:
+        _fail("review non-effects must be sorted and unique")
+    for artifact in data["artifact_bindings"]:
+        _keys(artifact, {"path", "sha256"}, "artifact binding")
+        _sha(artifact["sha256"], "artifact binding sha256")
+        _require_repo_relative_review_path(artifact["path"])
+    return data
+
+
+def _require_repo_relative_review_path(path: object) -> str:
+    if type(path) is not str or not re.fullmatch(r"[A-Za-z0-9._/-]+", path) or path.startswith("/") or ".." in path.split("/"):
+        _fail("unsafe repository-relative review path")
+    return path

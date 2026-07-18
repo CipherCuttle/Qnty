@@ -13,6 +13,7 @@ import json
 import re
 from pathlib import Path
 
+from quantbot.assurance import contracts
 from quantbot.artifacts.registry import (
     ArtifactRegistryError,
     cross_check_receipt_artifact,
@@ -134,6 +135,40 @@ _H001_ASSURANCE_REVIEW_COMPLETE_PHASE = "candidate1_h001_pre_data_assurance_scaf
 _H001_ASSURANCE_REVIEW_NEXT_ACTION = "IMPLEMENT_H001_TEMPORAL_CAUSALITY_AMENDMENT_FOR_INDEPENDENT_REVIEW"
 _H001_TEMPORAL_CANDIDATE_PHASE = "candidate1_h001_temporal_causality_amendment_implemented_review_required"
 _H001_TEMPORAL_CANDIDATE_NEXT_ACTION = "ADVERSARIAL_REVIEW_H001_TEMPORAL_CAUSALITY_AMENDMENT_CANDIDATE"
+_H001_TEMPORAL_REVIEW_COMPLETE_PHASE = "candidate1_h001_temporal_causality_amendment_candidate_review_complete"
+_H001_TEMPORAL_REVIEW_COMPLETE_NEXT_ACTION = "ACTIVATE_REVIEWED_H001_TEMPORAL_CAUSALITY_AMENDMENT"
+_H001_TEMPORAL_REREVIEW_RECORD_RELPATH = "docs/assurance/reviews/h001_temporal_causality_amendment_candidate_rereview_record_v001.json"
+_H001_TEMPORAL_REREVIEW_RECORD_SHA = "9ab3f89743a9697fcddc55ccb2128ab1180e24c097ffa5999e4c58b04b6f2c39"
+_H001_TEMPORAL_REREVIEW_SOURCE_BRANCH = "chore/h001-temporal-review-completion"
+_H001_TEMPORAL_REREVIEW_HEAD = "5185add2e5da5add309d2602a473c23557e3c102"
+_H001_TEMPORAL_REREVIEW_VERDICT = "QNTY_H001_TEMPORAL_CAUSALITY_AMENDMENT_CANDIDATE_REREVIEW_PASSED"
+_H001_TEMPORAL_REVIEW_SCOPE = {
+    _H001_TEMPORAL_REREVIEW_RECORD_RELPATH, ACTIVE_TASK_RELPATH,
+    f"docs/control/tasks/{TASK_ID}/handoff_v017.json", "quantbot/assurance/contracts.py",
+    "quantbot/continuity/context.py", "tests/assurance/test_contracts.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+}
+_H001_TEMPORAL_REVIEW_DECISIONS = sorted([
+    "BLOCK_LIVE_INTEGRATION", "DURABLE_STORES=UNCONFIGURED", "EDGE_UNPROVEN",
+    "GLOBAL_REAL_PROTOCOL_HOLDOUT_LEDGER_STATE=EMPTY_NO_BACKFILL", "H001_ARTIFACT_OPERATIONS=FORBIDDEN",
+    "H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEW_RECORD=RECORDED_AFTER_REVIEW_NOT_PREREGISTERED", "H001_CANDIDATE_STORE_ACCESS_OR_PROBING=FORBIDDEN",
+    "H001_CANDIDATE_STORE_CONFIGURATION=NOT_AUTHORIZED", "H001_CURRENT_EXECUTION_BUDGET=0", "H001_CURRENT_EXECUTION_COUNT=0",
+    "H001_EXECUTION=0/0", "H001_LIVE_AUTHORIZATION=FALSE", "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+    "H001_REAL_DATA_ACCESS=FORBIDDEN", "H001_SCIENTIFIC_AUTHORIZATION=FALSE", "H001_SYNTHETIC_ARTIFACT_CANARY_SCAFFOLD=IMPLEMENTED_NOT_EXECUTED",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED", "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED", "H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=FALSE",
+    "H001_TEMPORAL_CAUSALITY_ACTIVATION_IMPLEMENTATION_FOR_REVIEW=AUTHORIZED", "H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=FALSE",
+    "H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEW=COMPLETED_PASSED", "H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEWED_HEAD=74554e15f92cdb7f6c22238766bd6e1f16b60bf4",
+    "H001_TEMPORAL_CAUSALITY_CANDIDATE_MERGE_COMMIT=5185add2e5da5add309d2602a473c23557e3c102", "H001_TEMPORAL_CAUSALITY_CANDIDATE_SIGNAL_RULE=FUNDING_TIME_LT_DECISION",
+    "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=UNCHANGED", "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LTE_DECISION",
+    "H001_TEMPORAL_CAUSALITY_EQUALITY_SIGNAL_EVENT=EXCLUDED_IN_CANDIDATE", "H001_TEMPORAL_CAUSALITY_HELD_FUNDING_RULE=UNCHANGED",
+    "V0_AVAILABILITY=UNAVAILABLE", "V0_VERIFIED_COPY_COUNT=0",
+])
+_H001_TEMPORAL_REVIEW_BLOCKERS = {
+    "V0 remains unavailable", "durable stores remain unconfigured", "real data access remains forbidden",
+    "reviewed H001 temporal causality amendment is not yet activated", "H001 calibration specification remains unfrozen",
+    "H001 synthetic calibration execution remains unauthorized", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
+}
 _H001_TEMPORAL_CANDIDATE_AMENDMENT_RELPATH = "docs/control/amendments/candidate1_h001_temporal_causality_v001.json"
 _H001_TEMPORAL_CANDIDATE_DESIGN_RELPATH = "docs/experiments/candidate1_h001_real_data_falsification_temporal_candidate_v001.json"
 _H001_TEMPORAL_CANDIDATE_MODULE_RELPATH = "quantbot/experiment/h001_temporal_causality.py"
@@ -1269,6 +1304,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_TEMPORAL_CANDIDATE_PHASE:
         _cross_check_artifact_records(parsed, root)
         _validate_h001_temporal_candidate_handoff(parsed, root)
+    elif active["phase"] == _H001_TEMPORAL_REVIEW_COMPLETE_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        _validate_h001_temporal_review_complete_handoff(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -1477,6 +1515,40 @@ def _validate_h001_temporal_candidate_handoff(receipt: dict, root: Path) -> None
     walk(current, candidate)
     if differences != [("/temporal_join_contract/prior_funding", "latest funding_time_utc <= bar[t].open_time_utc", "latest funding_time_utc < bar[t].open_time_utc")]:
         _fail("H001 candidate design differs beyond strict temporal rule")
+
+
+def _validate_h001_temporal_review_complete_handoff(receipt: dict, root: Path) -> None:
+    if receipt["receipt_index"] != 17 or receipt["source_branch"] != _H001_TEMPORAL_REREVIEW_SOURCE_BRANCH or receipt["source_head_commit"] != _H001_TEMPORAL_REREVIEW_HEAD:
+        _fail("H001 temporal review-completion receipt identity is wrong")
+    if receipt["predecessor"] != {"path": f"docs/control/tasks/{TASK_ID}/handoff_v016.json", "sha256": "34bff7df542af4614b082478301441c86d41126b903395485b8c0ae9028def6a"}:
+        _fail("H001 temporal review-completion predecessor is wrong")
+    if set(receipt["changed_file_scope"]) != _H001_TEMPORAL_REVIEW_SCOPE or len(receipt["changed_file_scope"]) != len(_H001_TEMPORAL_REVIEW_SCOPE):
+        _fail("H001 temporal review-completion changed_file_scope is not the exact seven-file scope")
+    if receipt["next_actions"] != [_H001_TEMPORAL_REVIEW_COMPLETE_NEXT_ACTION] or receipt["decisions"] != _H001_TEMPORAL_REVIEW_DECISIONS:
+        _fail("H001 temporal review-completion transition drifted")
+    if set(receipt["blockers"]) != _H001_TEMPORAL_REVIEW_BLOCKERS:
+        _fail("H001 temporal review-completion blockers drifted")
+    record_path = root / _H001_TEMPORAL_REREVIEW_RECORD_RELPATH
+    if not record_path.is_file() or hashlib.sha256(record_path.read_bytes()).hexdigest() != _H001_TEMPORAL_REREVIEW_RECORD_SHA:
+        _fail("H001 temporal rereview record hash is wrong")
+    try:
+        contracts.validate_h001_temporal_candidate_rereview_record(record_path.read_bytes())
+    except ValueError as error:
+        _fail(f"H001 temporal rereview record invalid: {error}")
+    expected_evidence = [
+        {"path": "docs/artifacts/candidate1-real-input-v0.json", "sha256": hashlib.sha256((root / "docs/artifacts/candidate1-real-input-v0.json").read_bytes()).hexdigest()},
+        {"path": STORE_REGISTRY_RELPATH, "sha256": hashlib.sha256((root / STORE_REGISTRY_RELPATH).read_bytes()).hexdigest()},
+        {"path": _H001_TEMPORAL_REREVIEW_RECORD_RELPATH, "sha256": _H001_TEMPORAL_REREVIEW_RECORD_SHA},
+        {"path": _H001_TEMPORAL_CANDIDATE_AMENDMENT_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_AMENDMENT_SHA},
+        {"path": _H001_TEMPORAL_CANDIDATE_HANDOFF_RELPATH, "sha256": "34bff7df542af4614b082478301441c86d41126b903395485b8c0ae9028def6a"},
+        {"path": _H001_TEMPORAL_CANDIDATE_DESIGN_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_DESIGN_SHA},
+        {"path": "docs/experiments/candidate1_h001_real_data_falsification_v0.json", "sha256": _H001_REVIEW_DESIGN_SHA256},
+        {"path": _H001_VALIDATOR_RELPATH, "sha256": _H001_REVIEW_VALIDATOR_SHA256},
+        {"path": _H001_TEMPORAL_CANDIDATE_MODULE_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_MODULE_SHA},
+        {"path": _H001_TEMPORAL_CANDIDATE_TEST_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_TEST_SHA},
+    ]
+    if receipt["evidence"] != expected_evidence:
+        _fail("H001 temporal review-completion evidence list must be exact and ordered")
 
 
 def _validate_entrypoints(root: Path) -> None:
@@ -1767,6 +1839,27 @@ def render_context_packet(state: dict) -> str:
             "H001_TEMPORAL_CAUSALITY_HELD_FUNDING_RULE=UNCHANGED",
             "H001_TEMPORAL_CAUSALITY_SYNTHETIC_FIXTURES=PASSED",
             "H001_TEMPORAL_CAUSALITY_REAL_DATA_USED=FALSE",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_EXECUTION=0/0",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "EDGE_UNPROVEN",
+            "BLOCK_LIVE_INTEGRATION",
+        ])
+    elif active["phase"] == _H001_TEMPORAL_REVIEW_COMPLETE_PHASE:
+        lines.extend([
+            "H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEW=COMPLETED_PASSED",
+            f"H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEWED_HEAD=74554e15f92cdb7f6c22238766bd6e1f16b60bf4",
+            f"H001_TEMPORAL_CAUSALITY_CANDIDATE_MERGE_COMMIT=5185add2e5da5add309d2602a473c23557e3c102",
+            "H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEW_RECORD=RECORDED_AFTER_REVIEW_NOT_PREREGISTERED",
+            "H001_TEMPORAL_CAUSALITY_ACTIVATION_IMPLEMENTATION_FOR_REVIEW=AUTHORIZED",
+            "H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=FALSE",
+            "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=UNCHANGED",
+            "H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=FALSE",
+            "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LTE_DECISION",
+            "H001_TEMPORAL_CAUSALITY_CANDIDATE_SIGNAL_RULE=FUNDING_TIME_LT_DECISION",
+            "H001_TEMPORAL_CAUSALITY_EQUALITY_SIGNAL_EVENT=EXCLUDED_IN_CANDIDATE",
+            "H001_TEMPORAL_CAUSALITY_HELD_FUNDING_RULE=UNCHANGED",
             "H001_REAL_DATA_ACCESS=FORBIDDEN",
             "H001_EXECUTION=0/0",
             "V0_AVAILABILITY=UNAVAILABLE",
