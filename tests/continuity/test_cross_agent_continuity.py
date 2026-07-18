@@ -1924,6 +1924,22 @@ def test_production_temporal_candidate_rereview_completion_verifies_and_renders_
         assert marker in packet
 
 
+def test_temporal_review_completion_rejects_reordered_evidence_with_updated_pointer(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / TASK_DIR / "handoff_v017.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["evidence"][0], receipt["evidence"][1] = receipt["evidence"][1], receipt["evidence"][0]
+    receipt_bytes = canonical_json_bytes(receipt)
+    receipt_path.write_bytes(receipt_bytes)
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_bytes).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="evidence list must be exact and ordered"):
+        load_and_verify_continuity_state(root)
+
+
 def test_temporal_review_completion_rejects_shortened_review_record_decision(tmp_path):
     root = tmp_path / "repo"
     copy_repo_without_runtime(ROOT, root)

@@ -1535,24 +1535,20 @@ def _validate_h001_temporal_review_complete_handoff(receipt: dict, root: Path) -
         contracts.validate_h001_temporal_candidate_rereview_record(record_path.read_bytes())
     except ValueError as error:
         _fail(f"H001 temporal rereview record invalid: {error}")
-    evidence = {entry["path"]: entry["sha256"] for entry in receipt["evidence"]}
-    required = {
-        _H001_TEMPORAL_REREVIEW_RECORD_RELPATH: _H001_TEMPORAL_REREVIEW_RECORD_SHA,
-        "docs/control/amendments/candidate1_h001_temporal_causality_v001.json": _H001_TEMPORAL_CANDIDATE_AMENDMENT_SHA,
-        _H001_TEMPORAL_CANDIDATE_DESIGN_RELPATH: _H001_TEMPORAL_CANDIDATE_DESIGN_SHA,
-        _H001_TEMPORAL_CANDIDATE_MODULE_RELPATH: _H001_TEMPORAL_CANDIDATE_MODULE_SHA,
-        _H001_TEMPORAL_CANDIDATE_TEST_RELPATH: _H001_TEMPORAL_CANDIDATE_TEST_SHA,
-        f"docs/control/tasks/{TASK_ID}/handoff_v016.json": "34bff7df542af4614b082478301441c86d41126b903395485b8c0ae9028def6a",
-        H001_DESIGN_JSON_RELPATH: _H001_REVIEW_DESIGN_SHA256,
-        _H001_VALIDATOR_RELPATH: _H001_REVIEW_VALIDATOR_SHA256,
-        "docs/artifacts/candidate1-real-input-v0.json": hashlib.sha256((root / "docs/artifacts/candidate1-real-input-v0.json").read_bytes()).hexdigest(),
-        STORE_REGISTRY_RELPATH: hashlib.sha256((root / STORE_REGISTRY_RELPATH).read_bytes()).hexdigest(),
-    }
-    if set(evidence) != set(required) or len(receipt["evidence"]) != len(required):
-        _fail("H001 temporal review-completion evidence set must be exact and unique")
-    for path, digest in required.items():
-        if evidence.get(path) != digest:
-            _fail(f"H001 temporal review-completion evidence missing or wrong for {path}")
+    expected_evidence = [
+        {"path": "docs/artifacts/candidate1-real-input-v0.json", "sha256": hashlib.sha256((root / "docs/artifacts/candidate1-real-input-v0.json").read_bytes()).hexdigest()},
+        {"path": STORE_REGISTRY_RELPATH, "sha256": hashlib.sha256((root / STORE_REGISTRY_RELPATH).read_bytes()).hexdigest()},
+        {"path": _H001_TEMPORAL_REREVIEW_RECORD_RELPATH, "sha256": _H001_TEMPORAL_REREVIEW_RECORD_SHA},
+        {"path": _H001_TEMPORAL_CANDIDATE_AMENDMENT_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_AMENDMENT_SHA},
+        {"path": _H001_TEMPORAL_CANDIDATE_HANDOFF_RELPATH, "sha256": "34bff7df542af4614b082478301441c86d41126b903395485b8c0ae9028def6a"},
+        {"path": _H001_TEMPORAL_CANDIDATE_DESIGN_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_DESIGN_SHA},
+        {"path": "docs/experiments/candidate1_h001_real_data_falsification_v0.json", "sha256": _H001_REVIEW_DESIGN_SHA256},
+        {"path": _H001_VALIDATOR_RELPATH, "sha256": _H001_REVIEW_VALIDATOR_SHA256},
+        {"path": _H001_TEMPORAL_CANDIDATE_MODULE_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_MODULE_SHA},
+        {"path": _H001_TEMPORAL_CANDIDATE_TEST_RELPATH, "sha256": _H001_TEMPORAL_CANDIDATE_TEST_SHA},
+    ]
+    if receipt["evidence"] != expected_evidence:
+        _fail("H001 temporal review-completion evidence list must be exact and ordered")
 
 
 def _validate_entrypoints(root: Path) -> None:
