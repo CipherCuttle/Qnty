@@ -89,16 +89,21 @@ _REVIEW_HARNESS_HASHES = {key: _REVIEW_ARTIFACT_HASHES[key] for key in (
 _REVIEW_COMMANDS = [
     "set -euo pipefail",
     "REPO=/home/swirky/DevHub/repos/Qnty",
-    "BASE=ae61c6162f3164e0b24dd567a6ef73bdb5ecf8ea",
+    "BASE=28d6c70e9d7cb11c55d1afdf8b4e5ad9754f7aba",
     "HEAD=c52c607045803ab6d6e2a961f0f697aa72bf7581",
     "PY=$REPO/.venv/bin/python",
+    "REVIEW_DIR=$(mktemp -d /tmp/qnty-pr282-rereview.XXXXXX)",
+    "SCOPE_DIR=$(mktemp -d /tmp/qnty-pr282-scope.XXXXXX)",
     "EXPORT=$(mktemp -d /tmp/qnty-h001-review-export.XXXXXX)",
-    "cd $REPO",
-    "test $(git rev-parse HEAD) = $HEAD",
-    "test $(git merge-base $BASE $HEAD) = $BASE",
-    "git diff --name-only $BASE...$HEAD",
-    "test $(git diff --name-only $BASE...$HEAD | wc -l) = 16",
-    "test -z $(git status --short)",
+    "git -C $REPO worktree add --detach $REVIEW_DIR $HEAD",
+    "cd $REVIEW_DIR",
+    'test "$(git rev-parse HEAD)" = "$HEAD"',
+    'test "$(git merge-base "$BASE" "$HEAD")" = "$BASE"',
+    'git diff --name-only "$BASE...$HEAD"',
+    'test "$(git diff --name-only "$BASE...$HEAD" | wc -l)" -eq 16',
+    "printf '%s\\n' docs/assurance/H001_PRE_DATA_ASSURANCE_SCAFFOLD.md docs/assurance/durable_store_failure_domain_evidence_schema_v001.json docs/assurance/global_real_protocol_holdout_disclosure_ledger_v001.json docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json docs/assurance/h001_temporal_causality_amendment_draft_v001.json docs/assurance/replayable_review_evidence_packet_schema_v001.json docs/assurance/synthetic_artifact_canary_scaffold_v001.json docs/control/active_task.json docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v014.json quantbot/assurance/__init__.py quantbot/assurance/contracts.py quantbot/assurance/h001_null_calibration.py quantbot/continuity/context.py tests/assurance/test_contracts.py tests/assurance/test_h001_null_calibration.py tests/continuity/test_cross_agent_continuity.py | sort > $SCOPE_DIR/expected-scope.txt",
+    'git diff --name-only "$BASE...$HEAD" | sort > $SCOPE_DIR/observed-scope.txt',
+    "diff -u $SCOPE_DIR/expected-scope.txt $SCOPE_DIR/observed-scope.txt",
     "sha256sum docs/assurance/H001_PRE_DATA_ASSURANCE_SCAFFOLD.md docs/assurance/replayable_review_evidence_packet_schema_v001.json quantbot/assurance/contracts.py quantbot/continuity/context.py",
     "$PY -m pytest tests/assurance -q",
     "$PY -m pytest tests/continuity -q",
@@ -113,8 +118,12 @@ _REVIEW_COMMANDS = [
     "$PY -m quantbot.artifacts status",
     "git archive $HEAD | tar -x -C $EXPORT",
     "test ! -e $EXPORT/.git",
-    "$PY -m pytest tests/assurance tests/continuity -q",
-    "git diff --check",
+    "cd $EXPORT",
+    "PYTHONPATH=$EXPORT $PY -m pytest tests/assurance tests/continuity -q",
+    "PYTHONPATH=$EXPORT $PY -m quantbot.continuity verify",
+    "PYTHONPATH=$EXPORT $PY -m quantbot.continuity show",
+    "cd $REVIEW_DIR && git diff --check",
+    'test -z "$(git status --short)"',
     "gh run list --repo CipherCuttle/Qnty --commit $HEAD --json name,status,conclusion,headSha",
 ]
 
@@ -162,9 +171,15 @@ def validate_review_evidence_packet(value: object) -> dict:
         _fail("review packet commands must be non-empty and unique")
     if any(token in command for command in data["commands"] for token in ("--no-git-export", "remote CI checks", "token=", "password=", "credential=")):
         _fail("review packet contains a non-replayable or secret-bearing command")
-    required_markers = ("$HEAD", "$BASE", "git diff --name-only", "sha256sum", "git archive", "! -e $EXPORT/.git", "gh run list", "git status --short")
+    required_markers = (
+        "$HEAD", "$BASE", "BASE=28d6c70e9d7cb11c55d1afdf8b4e5ad9754f7aba", "git merge-base",
+        "worktree add --detach", "cd $REVIEW_DIR", "cd $EXPORT", "git diff --name-only", "diff -u",
+        "sha256sum", "git archive", "! -e $EXPORT/.git", "PYTHONPATH=$EXPORT", "gh run list", "git status --short",
+    )
     if any(not any(marker in command for command in data["commands"]) for marker in required_markers):
         _fail("review packet command coverage is incomplete")
+    if any(_REVIEW_PROTOCOL_EXPECTED["merged_main_commit_sha"] in command for command in data["commands"]):
+        _fail("review packet replay recipe must use the reviewed-PR base, not the merged-main commit")
     _validate_hash_records(data["reviewed_artifact_hashes"], _REVIEW_ARTIFACT_HASHES, "reviewed_artifact_hashes")
     _validate_hash_records(data["harness_source_hashes"], _REVIEW_HARNESS_HASHES, "harness_source_hashes")
     expected_protocol_hash = hashlib.sha256(canonical_json_bytes(_REVIEW_PROTOCOL_EXPECTED)).hexdigest()

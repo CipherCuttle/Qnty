@@ -189,8 +189,24 @@ def test_h001_review_packet_rejects_forbidden_fields(field):
 
 def test_h001_review_packet_commands_are_executable_replay_records():
     packet = json.loads((REVIEWS / "h001_pre_data_assurance_scaffold_rereview_packet_v001.json").read_bytes())
-    assert "--no-git-export" not in " ".join(packet["commands"])
-    assert "remote CI checks" not in " ".join(packet["commands"])
-    assert len(packet["commands"]) == len(set(packet["commands"]))
-    for marker in ("$HEAD", "$BASE", "git diff --name-only", "sha256sum", "git archive", "! -e $EXPORT/.git", "gh run list", "git status --short"):
-        assert any(marker in command for command in packet["commands"])
+    commands = packet["commands"]
+    joined = " ".join(commands)
+    assert "--no-git-export" not in joined
+    assert "remote CI checks" not in joined
+    assert len(commands) == len(set(commands))
+    # The recorded recipe is byte-identical to the independently pinned contract.
+    assert commands == contracts._REVIEW_COMMANDS
+    # MAJOR replayability fix: the recipe binds the actual PR #282 base, never the
+    # later merged-main commit (using merged-main breaks merge-base and 16-file scope).
+    assert any("BASE=28d6c70e9d7cb11c55d1afdf8b4e5ad9754f7aba" in command for command in commands)
+    assert all("ae61c6162f3164e0b24dd567a6ef73bdb5ecf8ea" not in command for command in commands)
+    # Detached-worktree setup and exported-tree cwd are recorded explicitly, and the
+    # scope check is an exact 16-file comparison rather than a count alone.
+    for marker in (
+        "$HEAD", "$BASE", "git merge-base", "worktree add --detach", "cd $REVIEW_DIR", "cd $EXPORT",
+        "git diff --name-only", "diff -u", "-eq 16", "sha256sum", "git archive", "! -e $EXPORT/.git",
+        "PYTHONPATH=$EXPORT", "gh run list", "git status --short",
+    ):
+        assert any(marker in command for command in commands)
+    # No command string is an absolute path, store URI, or network URL.
+    assert all(not command.startswith(("/", "http://", "https://", "qnty-artifact://")) for command in commands)
