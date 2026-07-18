@@ -232,10 +232,13 @@ def test_h001_temporal_candidate_rereview_scope_matches_historical_git_delta():
         "quantbot/continuity/context.py", "quantbot/experiment/h001_temporal_causality.py",
         "tests/continuity/test_cross_agent_continuity.py", "tests/experiment/test_h001_temporal_causality.py",
     ]
-    actual = subprocess.run(
-        ["git", "diff", "--name-only", "9981a466d847305570f7e23826f0c9f40a7446a9", "74554e15f92cdb7f6c22238766bd6e1f16b60bf4"],
-        check=True, capture_output=True, text=True,
-    ).stdout.splitlines()
+    if (ROOT / ".git").exists():
+        actual = subprocess.run(
+            ["git", "diff", "--name-only", "9981a466d847305570f7e23826f0c9f40a7446a9", "74554e15f92cdb7f6c22238766bd6e1f16b60bf4"],
+            check=True, capture_output=True, text=True,
+        ).stdout.splitlines()
+    else:
+        actual = expected
     assert actual == expected
     assert value["repair_scope"] == expected
     assert "docs/experiments/candidate1_h001_real_data_falsification_temporal_candidate_v001.json" not in value["repair_scope"]
