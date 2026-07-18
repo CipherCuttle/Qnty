@@ -39,6 +39,18 @@ AGENTS_TEXT = (
 START_HERE_TEXT = "# START_HERE\n\nControl state: docs/control/active_task.json\n"
 
 
+def copy_repo_without_runtime(source, destination):
+    shutil.copytree(
+        source,
+        destination,
+        ignore=shutil.ignore_patterns(
+            ".git", ".venv", ".pytest_cache", "__pycache__", "*.pyc", "tmp", "output", "data", "experiment_results"
+        ),
+    )
+    assert not (destination / ".git").exists()
+    assert not (destination / ".venv").exists()
+
+
 def base_receipt():
     return {
         "schema_version": "0.1.0",
@@ -205,16 +217,16 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION], [context._H001_ASSURANCE_REVIEW_NEXT_ACTION])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION], [context._H001_ASSURANCE_REVIEW_NEXT_ACTION], [context._H001_TEMPORAL_CANDIDATE_NEXT_ACTION])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
-    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE)
+    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE)
 
 
 def test_h001_completion_phase_verifies_and_renders_boundaries():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE):
         pytest.skip("production tree has advanced past synthetic completion")
     assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
     assert state["handoff_receipt"]["next_actions"] == [context._H001_COMPLETE_NEXT_ACTION]
@@ -294,7 +306,7 @@ def test_h001_preregistered_design_phase_renders_review_only_boundaries():
 
 def test_sandbox_ready_phase_still_requires_synthetic_batch_action(tmp_path):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     active_path = root / "docs/control/active_task.json"
     active = json.loads(active_path.read_bytes())
     receipt_path = root / TASK_DIR / "handoff_v008.json"
@@ -331,7 +343,7 @@ def test_sandbox_ready_phase_still_requires_synthetic_batch_action(tmp_path):
 ])
 def test_h001_completion_phase_drift_fails_closed(tmp_path, mutation):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     receipt_path = root / TASK_DIR / "handoff_v009.json"
     receipt = json.loads(receipt_path.read_bytes())
     mutation(receipt)
@@ -1011,6 +1023,11 @@ def test_valid_v003_amendment_chain_and_boundary_rendering():
         packet = render_context_packet(state)
         assert "H001_REAL_DATA_ACCESS=FORBIDDEN" in packet
         return
+    if state["active_task"]["phase"] == context._H001_TEMPORAL_CANDIDATE_PHASE:
+        packet = render_context_packet(state)
+        assert "H001_TEMPORAL_CAUSALITY_AMENDMENT_CANDIDATE=IMPLEMENTED_FOR_REVIEW" in packet
+        assert "H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=FALSE" in packet
+        return
     if state["active_task"]["phase"] in _design_family:
         assert state["h001_design_amendment"]["amendment_id"] == "candidate1-h001-real-falsification-design-v001"
     else:
@@ -1579,6 +1596,8 @@ def test_repaired_assurance_scaffold_hashes_are_independently_pinned():
 
 def test_h001_assurance_review_completion_transition_renders_and_binds():
     state = load_and_verify_continuity_state(ROOT)
+    if state["active_task"]["phase"] == context._H001_TEMPORAL_CANDIDATE_PHASE:
+        pytest.skip("production tree has advanced to the temporal candidate phase")
     assert state["active_task"]["phase"] == context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE
     assert state["handoff_receipt"]["receipt_index"] == 15
     assert state["handoff_receipt"]["review_binding"]["reviewed_pr_number"] == 282
@@ -1613,7 +1632,7 @@ def test_h001_assurance_review_completion_transition_renders_and_binds():
 ])
 def test_h001_assurance_review_binding_drift_fails_closed(tmp_path, mutation):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     receipt_path = root / TASK_DIR / "handoff_v015.json"
     receipt = json.loads(receipt_path.read_bytes())
     mutation(receipt["review_binding"])
@@ -1635,7 +1654,7 @@ def test_h001_assurance_review_binding_drift_fails_closed(tmp_path, mutation):
 ])
 def test_h001_assurance_exact_decision_contract_fails_closed(tmp_path, mutation):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     receipt_path = root / TASK_DIR / "handoff_v015.json"
     receipt = json.loads(receipt_path.read_bytes())
     mutation(receipt)
@@ -1656,7 +1675,7 @@ def test_h001_assurance_exact_decision_contract_fails_closed(tmp_path, mutation)
 ])
 def test_h001_assurance_v014_evidence_binding_fails_closed(tmp_path, mutation):
     root = tmp_path / "repo"
-    shutil.copytree(ROOT, root)
+    copy_repo_without_runtime(ROOT, root)
     receipt_path = root / TASK_DIR / "handoff_v015.json"
     receipt = json.loads(receipt_path.read_bytes())
     mutation(receipt)
@@ -1762,3 +1781,110 @@ def test_review_recipe_safe_subset_replays_in_synthetic_repo(tmp_path):
         assert marker == "synthetic-export-tree"
     finally:
         _git(["worktree", "remove", "--force", str(worktree)], repo)
+
+
+def _temporal_mutated_tree(tmp_path, mutate_receipt=None, mutate_amendment=None):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / TASK_DIR / "handoff_v016.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    amendment_path = root / context._H001_TEMPORAL_CANDIDATE_AMENDMENT_RELPATH
+    amendment = json.loads(amendment_path.read_bytes())
+    if mutate_receipt:
+        mutate_receipt(receipt)
+        receipt_path.write_bytes(canonical_json_bytes(receipt))
+    if mutate_amendment:
+        mutate_amendment(amendment)
+        amendment_path.write_bytes(canonical_json_bytes(amendment))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    return root
+
+
+@pytest.mark.parametrize("mutate_receipt", [
+    lambda r: r.update(receipt_index=15),
+    lambda r: r["predecessor"].update(sha256="0" * 64),
+    lambda r: r.update(source_head_commit="0" * 40),
+    lambda r: r.update(next_actions=["IMPLEMENT_H001_TEMPORAL_CAUSALITY_AMENDMENT_FOR_INDEPENDENT_REVIEW"]),
+    lambda r: r["changed_file_scope"].append("extra.txt"),
+    lambda r: r["decisions"].append("H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=TRUE"),
+    lambda r: r.update(blockers=[]),
+])
+def test_temporal_candidate_receipt_mutations_fail_closed(tmp_path, mutate_receipt):
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(_temporal_mutated_tree(tmp_path, mutate_receipt=mutate_receipt))
+
+
+@pytest.mark.parametrize("mutate_amendment", [
+    lambda a: a.update(effective=True),
+    lambda a: a.update(independent_review_completed=True),
+    lambda a: a.update(current_contract_unchanged=False),
+    lambda a: a["change"].update(after="latest funding_time_utc <= bar[t].open_time_utc"),
+    lambda a: a["non_effects"].append("EDGE_PROVEN"),
+    lambda a: a.update(unexpected_key=True),
+])
+def test_temporal_candidate_amendment_mutations_fail_closed(tmp_path, mutate_amendment):
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(_temporal_mutated_tree(tmp_path, mutate_amendment=mutate_amendment))
+
+
+def test_temporal_candidate_production_render_is_review_only():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == context._H001_TEMPORAL_CANDIDATE_PHASE
+    packet = render_context_packet(state)
+    for line in (
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT_CANDIDATE=IMPLEMENTED_FOR_REVIEW",
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT_CANDIDATE_REVIEW=REQUIRED_NOT_COMPLETED",
+        "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=UNCHANGED",
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT_EFFECTIVE=FALSE",
+        "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LTE_DECISION",
+        "H001_TEMPORAL_CAUSALITY_CANDIDATE_SIGNAL_RULE=FUNDING_TIME_LT_DECISION",
+        "H001_TEMPORAL_CAUSALITY_EQUALITY_SIGNAL_EVENT=EXCLUDED_IN_CANDIDATE",
+        "H001_TEMPORAL_CAUSALITY_HELD_FUNDING_RULE=UNCHANGED",
+        "H001_REAL_DATA_ACCESS=FORBIDDEN", "H001_EXECUTION=0/0",
+        "V0_AVAILABILITY=UNAVAILABLE", "H001_DURABLE_STORES_CONFIGURED=FALSE",
+        "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
+    ):
+        assert line in packet
+
+
+@pytest.mark.parametrize("mutate_receipt", [
+    lambda r: r["evidence"].append(dict(r["evidence"][0])),
+    lambda r: r["evidence"].append({"path": r["evidence"][0]["path"], "sha256": "0" * 64}),
+    lambda r: r["evidence"].append({"path": "extra.txt", "sha256": EVIDENCE_SHA}),
+    lambda r: r["evidence"].pop(),
+    lambda r: r["evidence"][0].update(sha256="0" * 64),
+    lambda r: r["evidence"][0].update(sha256="not-a-sha"),
+    lambda r: r["evidence"][0].update(path="/absolute.txt"),
+    lambda r: r["evidence"][0].update(path="../escape.txt"),
+    lambda r: r["evidence"][0].update(path=123),
+    lambda r: r["evidence"][0].update(unknown="key"),
+    lambda r: r["evidence"][0].pop("sha256"),
+])
+def test_temporal_candidate_evidence_integrity_mutations_fail_closed(tmp_path, mutate_receipt):
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(_temporal_mutated_tree(tmp_path, mutate_receipt=mutate_receipt))
+
+
+@pytest.mark.parametrize("relative_path", [
+    "quantbot/experiment/h001_temporal_causality.py",
+    "tests/experiment/test_h001_temporal_causality.py",
+])
+def test_temporal_candidate_literal_hash_bindings_reject_coordinated_evidence_mutation(tmp_path, relative_path):
+    root = _temporal_mutated_tree(tmp_path)
+    target = root / relative_path
+    target.write_bytes(target.read_bytes() + b"\n# independent mutation probe\n")
+    receipt_path = root / TASK_DIR / "handoff_v016.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    entry = next(item for item in receipt["evidence"] if item["path"] == relative_path)
+    entry["sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    receipt_bytes = canonical_json_bytes(receipt)
+    receipt_path.write_bytes(receipt_bytes)
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_bytes).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="independent literal hash"):
+        load_and_verify_continuity_state(root)
