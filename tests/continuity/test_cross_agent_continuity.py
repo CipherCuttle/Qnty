@@ -305,16 +305,16 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION], [context._H001_ASSURANCE_REVIEW_NEXT_ACTION], [context._H001_TEMPORAL_CANDIDATE_NEXT_ACTION], [context._H001_TEMPORAL_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_TEMPORAL_ACTIVE_NEXT_ACTION])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION], [context._H001_ASSURANCE_REVIEW_NEXT_ACTION], [context._H001_TEMPORAL_CANDIDATE_NEXT_ACTION], [context._H001_TEMPORAL_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_TEMPORAL_ACTIVE_NEXT_ACTION], [context._H001_CALIBRATION_GOVERNANCE_NEXT_ACTION])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
-    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE)
+    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE)
 
 
 def test_h001_completion_phase_verifies_and_renders_boundaries():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE):
         pytest.skip("production tree has advanced past synthetic completion")
     assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
     assert state["handoff_receipt"]["next_actions"] == [context._H001_COMPLETE_NEXT_ACTION]
@@ -1111,7 +1111,7 @@ def test_valid_v003_amendment_chain_and_boundary_rendering():
         packet = render_context_packet(state)
         assert "H001_REAL_DATA_ACCESS=FORBIDDEN" in packet
         return
-    if state["active_task"]["phase"] == context._H001_TEMPORAL_ACTIVE_PHASE:
+    if state["active_task"]["phase"] in (context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE):
         return
     if state["active_task"]["phase"] in (context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE):
         if state["active_task"]["phase"] == context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE:
@@ -1691,7 +1691,7 @@ def test_repaired_assurance_scaffold_hashes_are_independently_pinned():
 
 def test_h001_assurance_review_completion_transition_renders_and_binds():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE):
         pytest.skip("production tree has advanced to the temporal candidate phase")
     assert state["active_task"]["phase"] == context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE
     assert state["handoff_receipt"]["receipt_index"] == 15
@@ -1930,6 +1930,8 @@ def test_temporal_candidate_amendment_mutations_fail_closed(tmp_path, mutate_ame
 
 def test_temporal_candidate_production_render_is_review_only():
     state = load_and_verify_continuity_state(ROOT)
+    if state["active_task"]["phase"] == context._H001_CALIBRATION_GOVERNANCE_PHASE:
+        pytest.skip("production tree has advanced past temporal activation")
     if state["active_task"]["phase"] == context._H001_TEMPORAL_ACTIVE_PHASE:
         packet = render_context_packet(state)
         for marker in ("H001_TEMPORAL_CAUSALITY_AMENDMENT=EFFECTIVE", "H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=TRUE", "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=STRICT_LT_EFFECTIVE", "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LT_DECISION", "H001_TEMPORAL_CAUSALITY_EQUALITY_SIGNAL_EVENT=EXCLUDED", "H001_REAL_DATA_ACCESS=FORBIDDEN", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION"):
@@ -2062,9 +2064,12 @@ def test_temporal_review_completion_rejects_shortened_review_record_decision(tmp
 def _activation_mutated_tree(tmp_path, *, mutate_amendment=None, mutate_receipt=None, mutate_active=None):
     root = tmp_path / "repo"
     copy_repo_without_runtime(ROOT, root)
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active.update(phase=context._H001_TEMPORAL_ACTIVE_PHASE, handoff_receipt_path=context._H001_TEMPORAL_ACTIVE_HANDOFF_RELPATH, handoff_receipt_sha256="5c84a84e858d70467e5f09d579bc1ec8a88fe9bd9ec1e922eefae36569d78f68")
+    active_path.write_bytes(canonical_json_bytes(active))
     amendment_path = root / context._H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH
     receipt_path = root / context._H001_TEMPORAL_ACTIVE_HANDOFF_RELPATH
-    active_path = root / context.ACTIVE_TASK_RELPATH
     if mutate_amendment is not None:
         amendment = json.loads(amendment_path.read_bytes())
         mutate_amendment(amendment)
@@ -2077,6 +2082,9 @@ def _activation_mutated_tree(tmp_path, *, mutate_amendment=None, mutate_receipt=
     if mutate_receipt is not None:
         receipt = json.loads(receipt_path.read_bytes())
         mutate_receipt(receipt)
+        for item in receipt["evidence"]:
+            if item["path"] in ("quantbot/continuity/context.py", "tests/continuity/test_cross_agent_continuity.py"):
+                item["sha256"] = hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()
         receipt_path.write_bytes(canonical_json_bytes(receipt))
     active = json.loads(active_path.read_bytes())
     original_active_sha = active["handoff_receipt_sha256"]
@@ -2090,6 +2098,8 @@ def _activation_mutated_tree(tmp_path, *, mutate_amendment=None, mutate_receipt=
 
 def test_activation_production_state_renders_effective_strict_contract():
     state = load_and_verify_continuity_state(ROOT)
+    if state["active_task"]["phase"] == context._H001_CALIBRATION_GOVERNANCE_PHASE:
+        pytest.skip("production tree has advanced past temporal activation")
     assert state["active_task"]["phase"] == context._H001_TEMPORAL_ACTIVE_PHASE
     assert state["handoff_receipt"]["receipt_index"] == 18
     assert state["handoff_receipt"]["changed_file_scope"] == context._H001_TEMPORAL_ACTIVE_SCOPE
@@ -2114,6 +2124,8 @@ def test_activation_production_state_renders_effective_strict_contract():
 
 def test_activation_production_scope_is_exactly_nine_files_in_governance_order():
     state = load_and_verify_continuity_state(ROOT)
+    if state["active_task"]["phase"] == context._H001_CALIBRATION_GOVERNANCE_PHASE:
+        pytest.skip("production tree has advanced past temporal activation")
     assert state["handoff_receipt"]["changed_file_scope"] == [
         "docs/control/amendments/candidate1_h001_temporal_causality_activation_v001.json",
         "docs/experiments/candidate1_h001_real_data_falsification_v0.json",
@@ -2191,3 +2203,104 @@ def test_activation_handoff_mutations_fail_closed(tmp_path, mutate):
 def test_activation_active_task_mutations_fail_closed(tmp_path, mutate):
     with pytest.raises(ValueError):
         load_and_verify_continuity_state(_activation_mutated_tree(tmp_path, mutate_active=mutate))
+
+
+def _calibration_governance_mutated_tree(tmp_path, *, mutate_amendment=None, mutate_receipt=None, mutate_active=None, mutate_draft=None):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    amendment_path = root / context._H001_CALIBRATION_GOVERNANCE_AMENDMENT_RELPATH
+    amendment = json.loads(amendment_path.read_bytes())
+    if mutate_amendment:
+        mutate_amendment(amendment)
+    amendment_path.write_bytes(canonical_json_bytes(amendment))
+    if mutate_draft:
+        draft_path = root / "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json"
+        draft = json.loads(draft_path.read_bytes())
+        mutate_draft(draft)
+        draft_path.write_bytes(canonical_json_bytes(draft))
+    receipt_path = root / context._H001_CALIBRATION_GOVERNANCE_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    if mutate_receipt:
+        mutate_receipt(receipt)
+    for item in receipt["evidence"]:
+        if item["path"] == context._H001_CALIBRATION_GOVERNANCE_AMENDMENT_RELPATH:
+            item["sha256"] = hashlib.sha256(amendment_path.read_bytes()).hexdigest()
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    if mutate_active:
+        mutate_active(active)
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    return root
+
+
+def test_calibration_governance_production_state_renders_authorized_but_unfrozen():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == context._H001_CALIBRATION_GOVERNANCE_PHASE
+    assert state["handoff_receipt"]["receipt_index"] == 19
+    packet = render_context_packet(state)
+    for marker in (
+        "PHASE=candidate1_h001_synthetic_null_calibration_spec_freeze_governance",
+        "NEXT_ACTION=IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_FOR_INDEPENDENT_REVIEW",
+        "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_GOVERNANCE=AUTHORIZED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_EFFECTIVE",
+        "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_STATUS=HISTORICAL_DRAFT_UNFROZEN",
+        "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+        "H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=TRUE",
+        "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=STRICT_LT_EFFECTIVE",
+        "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LT_DECISION",
+        "H001_REAL_DATA_ACCESS=FORBIDDEN", "H001_EXECUTION=0/0", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
+    ):
+        assert marker in packet
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda a: a.update(freeze_effective=True),
+    lambda a: a.update(historical_draft_is_executable=True),
+    lambda a: a["transition_gates"].update(synthetic_null_calibration_spec_frozen=True),
+    lambda a: a["transition_gates"].update(calibration_execution_authorized=True),
+    lambda a: a.update(calibration_results="available"),
+    lambda a: a.update(real_data_access="authorized"),
+    lambda a: a["transition_gates"].update(h001_execution_budget=1),
+    lambda a: a["transition_gates"].update(h001_execution_count=1),
+    lambda a: a.update(scientific_authorization=True),
+    lambda a: a.update(paper_trade_authorization=True),
+    lambda a: a.update(live_authorization=True),
+    lambda a: a.update(edge_status="EDGE_PROVEN"),
+    lambda a: a.update(live_status="READY"),
+    lambda a: a["activated_design"].update(sha256="0" * 64),
+    lambda a: a["historical_draft"].update(current_design_sha256=context._H001_CALIBRATION_GOVERNANCE_DESIGN_SHA),
+    lambda a: a["activated_validator"].update(sha256="0" * 64),
+    lambda a: a["historical_draft"].update(current_validator_sha256=context._H001_CALIBRATION_GOVERNANCE_VALIDATOR_SHA),
+    lambda a: a["temporal_activation_amendment"].update(sha256="0" * 64),
+    lambda a: a.update(later_freeze_candidate_requires_independent_review=False),
+    lambda a: a["allowed_actions"].append("EXECUTE_SYNTHETIC_NULL_CALIBRATION"),
+    lambda a: a["prohibited_actions"].remove("TUNE_HAC_LAG_FROM_RESULTS"),
+    lambda a: a["transition_gates"].update(activated_design_binding_verified=False),
+])
+def test_calibration_governance_amendment_mutations_fail_closed(tmp_path, mutate):
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(_calibration_governance_mutated_tree(tmp_path, mutate_amendment=mutate))
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r.update(receipt_index=18),
+    lambda r: r["predecessor"].update(sha256="0" * 64),
+    lambda r: r["changed_file_scope"].reverse(),
+    lambda r: r["changed_file_scope"].pop(),
+    lambda r: r["changed_file_scope"].append("docs/extra.md"),
+    lambda r: r["evidence"].reverse(),
+    lambda r: r["evidence"].append(dict(r["evidence"][0])),
+    lambda r: r["decisions"].append("EDGE_PROVEN"),
+    lambda r: r["safety_state"].update(decomposition_execution_count=1),
+])
+def test_calibration_governance_receipt_mutations_fail_closed(tmp_path, mutate):
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(_calibration_governance_mutated_tree(tmp_path, mutate_receipt=mutate))
+
+
+def test_calibration_governance_historical_draft_mutation_fails_closed(tmp_path):
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(_calibration_governance_mutated_tree(tmp_path, mutate_draft=lambda d: d.update(status="FROZEN")))
