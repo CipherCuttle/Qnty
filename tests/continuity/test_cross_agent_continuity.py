@@ -3863,6 +3863,22 @@ def test_h001_calibration_implementation_blocked_recorded_protected_hash_fails_p
         load_and_verify_continuity_state(_calibration_implementation_blocked_mutated_tree(tmp_path, mutate_receipt=mutate))
 
 
+@pytest.mark.parametrize("field,message", [
+    ("evidence", "evidence must be a list"),
+    ("safety_state", "safety_state must be a JSON object"),
+    ("numerical_convention_gap_inventory", "H001 calibration implementation-block numerical gaps must be a list"),
+    ("current_transition_files", "H001 calibration implementation-block current-transition files must be a list"),
+])
+def test_h001_calibration_implementation_blocked_malformed_shapes_fail_closed(tmp_path, field, message):
+    with pytest.raises(ValueError, match=re.escape(message)):
+        load_and_verify_continuity_state(
+            _calibration_implementation_blocked_mutated_tree(
+                tmp_path / field,
+                mutate_receipt=lambda receipt: receipt.__setitem__(field, None),
+            )
+        )
+
+
 @pytest.mark.parametrize("mutate", [
     lambda r: r["current_transition_files"].pop(),
     lambda r: r["current_transition_files"].append({"path": "docs/control/active_task.json", "sha256": "0" * 64}),

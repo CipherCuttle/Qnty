@@ -2521,6 +2521,10 @@ def _validate_h001_calibration_execution_governance_handoff(receipt: dict, root:
 
 def _validate_h001_calibration_implementation_blocked_handoff(receipt: dict, root: Path) -> None:
     """Validate the append-only, pre-change blocked outcome of the engine action."""
+    if type(receipt["safety_state"]) is not dict:
+        _validate_safety_state(receipt["safety_state"])
+    if type(receipt["evidence"]) is not list or any(type(item) is not dict for item in receipt["evidence"]):
+        _validate_evidence(receipt["evidence"], root, verify_files=False)
     if receipt["receipt_index"] != 24 or receipt["phase"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE:
         _fail("H001 calibration implementation-block receipt identity is wrong")
     if receipt["source_branch"] != "chore/h001-calibration-engine-implementation-block-v3" or receipt["source_head_commit"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BASE_SHA:
@@ -2539,7 +2543,12 @@ def _validate_h001_calibration_implementation_blocked_handoff(receipt: dict, roo
         _fail("H001 calibration implementation-block blockers drifted")
     if receipt["prohibited_actions"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PROHIBITIONS:
         _fail("H001 calibration implementation-block prohibitions drifted")
-    if receipt["numerical_convention_gap_inventory"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_GAPS:
+    gaps = receipt["numerical_convention_gap_inventory"]
+    if type(gaps) is not list:
+        _fail("H001 calibration implementation-block numerical gaps must be a list")
+    for gap in gaps:
+        _require_str(gap, "H001 calibration implementation-block numerical gap")
+    if gaps != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_GAPS:
         _fail("H001 calibration implementation-block numerical gaps drifted")
     if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
         _fail("H001 calibration implementation-block changed persistent safety state")
@@ -2582,6 +2591,10 @@ def _validate_h001_calibration_implementation_blocked_handoff(receipt: dict, roo
     if receipt["evidence"] != expected_evidence:
         _fail("H001 calibration implementation-block protected evidence list must be exact, unique, and ordered")
     current_transition = receipt["current_transition_files"]
+    if type(current_transition) is not list:
+        _fail("H001 calibration implementation-block current-transition files must be a list")
+    for item in current_transition:
+        _require_exact_keys(item, {"path", "sha256"}, "H001 calibration implementation-block current-transition entry")
     expected_transition = []
     for path in _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CURRENT_TRANSITION_FILES:
         target = root / path
