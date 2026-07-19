@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -289,3 +290,51 @@ def test_execution_and_custody_mutations_fail(tmp_path, mutator):
 ])
 def test_named_adversarial_review_mutations_fail_closed(tmp_path, mutator):
     assert_rejected(tmp_path, mutator)
+
+
+TEMPORAL_CANDIDATE = ROOT / "docs/experiments/candidate1_h001_real_data_falsification_temporal_candidate_v001.json"
+HISTORICAL_DESIGN_SHA = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+HISTORICAL_VALIDATOR_SHA = "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"
+ACTIVATED_DESIGN_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
+
+
+def test_activation_design_is_exact_reviewed_candidate_and_strict_lt():
+    assert DESIGN.read_bytes() == TEMPORAL_CANDIDATE.read_bytes()
+    assert json.loads(DESIGN.read_bytes())["temporal_join_contract"]["prior_funding"] == "latest funding_time_utc < bar[t].open_time_utc"
+    assert hashlib.sha256(DESIGN.read_bytes()).hexdigest() == ACTIVATED_DESIGN_SHA
+    verify(DESIGN)
+
+
+def test_historical_design_reconstruction_changes_only_prior_funding():
+    activated = json.loads(DESIGN.read_bytes())
+    historical = copy.deepcopy(activated)
+    historical["temporal_join_contract"]["prior_funding"] = "latest funding_time_utc <= bar[t].open_time_utc"
+    assert hashlib.sha256(canonical_json_bytes(historical)).hexdigest() == HISTORICAL_DESIGN_SHA
+    differences = []
+    for key in activated:
+        if activated[key] != historical[key]:
+            differences.append(key)
+    assert differences == ["temporal_join_contract"]
+
+
+def test_activated_validator_has_exact_two_literal_delta_and_historical_reconstruction():
+    source = (ROOT / "quantbot/experiment/h001_real_falsification_preregistration.py").read_bytes()
+    new_hash = ACTIVATED_DESIGN_SHA.encode()
+    old_hash = HISTORICAL_DESIGN_SHA.encode()
+    new_rule = b"latest funding_time_utc < bar[t].open_time_utc"
+    old_rule = b"latest funding_time_utc <= bar[t].open_time_utc"
+    assert source.count(new_hash) == 1
+    assert source.count(new_rule) == 1
+    reconstructed = source.replace(new_hash, old_hash, 1).replace(new_rule, old_rule, 1)
+    assert hashlib.sha256(reconstructed).hexdigest() == HISTORICAL_VALIDATOR_SHA
+
+
+def test_activated_validator_rejects_historical_and_unrelated_design_drift(tmp_path):
+    historical = loaded()
+    historical["temporal_join_contract"]["prior_funding"] = "latest funding_time_utc <= bar[t].open_time_utc"
+    with pytest.raises(DesignValidationError):
+        verify(write_design(tmp_path, historical))
+    drifted = loaded()
+    drifted["temporal_join_contract"]["held_funding_rule"] = "drift"
+    with pytest.raises(DesignValidationError):
+        verify(write_design(tmp_path, drifted))

@@ -51,6 +51,94 @@ def copy_repo_without_runtime(source, destination):
     assert not (destination / ".venv").exists()
 
 
+def restore_historical_h001_inputs(destination):
+    destination = Path(destination)
+    design_path = destination / "docs/experiments/candidate1_h001_real_data_falsification_v0.json"
+    design = json.loads(design_path.read_bytes())
+    design["temporal_join_contract"]["prior_funding"] = "latest funding_time_utc <= bar[t].open_time_utc"
+    design_bytes = canonical_json_bytes(design)
+    assert hashlib.sha256(design_bytes).hexdigest() == "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+    design_path.write_bytes(design_bytes)
+
+    validator_path = destination / "quantbot/experiment/h001_real_falsification_preregistration.py"
+    validator = validator_path.read_bytes()
+    activated_design_sha = b"c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
+    historical_design_sha = b"055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+    strict_rule = b"latest funding_time_utc < bar[t].open_time_utc"
+    historical_rule = b"latest funding_time_utc <= bar[t].open_time_utc"
+    assert validator.count(activated_design_sha) == 1
+    assert validator.count(strict_rule) == 1
+    validator = validator.replace(activated_design_sha, historical_design_sha, 1).replace(strict_rule, historical_rule, 1)
+    assert hashlib.sha256(validator).hexdigest() == "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"
+    validator_path.write_bytes(validator)
+
+    preregistration_path = destination / "tests/experiment/test_h001_real_falsification_preregistration.py"
+    preregistration = preregistration_path.read_text(encoding="utf-8")
+    activation_marker = "\n\nTEMPORAL_CANDIDATE = ROOT / "
+    assert preregistration.count(activation_marker) == 1
+    preregistration = preregistration[:preregistration.index(activation_marker)]
+    assert preregistration.count("import hashlib\n") == 1
+    preregistration = preregistration.replace("import hashlib\n", "", 1)
+    historical_preregistration = preregistration.encode("utf-8")
+    assert hashlib.sha256(historical_preregistration).hexdigest() == "4cf6478701f70ab7ecee4f5d84b39b042344daeb928da38d59c0389a2a8ca7c6"
+    preregistration_path.write_bytes(historical_preregistration)
+
+    temporal_test_path = destination / "tests/experiment/test_h001_temporal_causality.py"
+    if not temporal_test_path.is_file():
+        temporal_test_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "tests/experiment/test_h001_temporal_causality.py", temporal_test_path)
+    temporal_test = temporal_test_path.read_text(encoding="utf-8")
+    inverse_replacements = [
+        (
+            'HISTORICAL_SHA = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"\nCURRENT_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"',
+            'CURRENT_SHA = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"',
+        ),
+        (
+            'VALIDATOR_SHA = "d9326c7b73c68f3958901899f46ef11a4f529ed1954f268de06ae6e8abdcede3"',
+            'VALIDATOR_SHA = "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"',
+        ),
+        ('    assert CURRENT.read_bytes() == CANDIDATE.read_bytes()\n', ''),
+        (
+            '    assert current["temporal_join_contract"]["prior_funding"] == "latest funding_time_utc < bar[t].open_time_utc"\n'
+            '    assert current["temporal_join_contract"]["funding_cashflow_events"] == "bar[t].open_time_utc < funding_time_utc <= bar[t].close_time_utc"\n'
+            '    historical = json.loads(CURRENT.read_bytes())\n'
+            '    historical["temporal_join_contract"]["prior_funding"] = "latest funding_time_utc <= bar[t].open_time_utc"\n'
+            '    historical_bytes = json.dumps(historical, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()\n'
+            '    assert hashlib.sha256(historical_bytes).hexdigest() == HISTORICAL_SHA\n',
+            '',
+        ),
+        ('    walk(historical, current)\n', '    walk(current, candidate)\n'),
+    ]
+    for old, new in inverse_replacements:
+        assert temporal_test.count(old) == 1
+        temporal_test = temporal_test.replace(old, new, 1)
+    historical_test = temporal_test.encode("utf-8")
+    assert hashlib.sha256(historical_test).hexdigest() == "0e1dea2e1ec06cea14f11455402282c56dd5ef598ed54b3ad401774d4d7ea628"
+    temporal_test_path.write_bytes(historical_test)
+
+
+def test_historical_restoration_is_deterministic_without_git(tmp_path, monkeypatch):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("historical restoration must not invoke Git")
+
+    monkeypatch.setattr(subprocess, "check_output", fail_if_called)
+    for relative_path in (
+        "docs/experiments/candidate1_h001_real_data_falsification_v0.json",
+        "quantbot/experiment/h001_real_falsification_preregistration.py",
+        "tests/experiment/test_h001_temporal_causality.py",
+        "tests/experiment/test_h001_real_falsification_preregistration.py",
+    ):
+        source = ROOT / relative_path
+        target = tmp_path / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    restore_historical_h001_inputs(tmp_path)
+    assert hashlib.sha256((tmp_path / "docs/experiments/candidate1_h001_real_data_falsification_v0.json").read_bytes()).hexdigest() == "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+    assert hashlib.sha256((tmp_path / "quantbot/experiment/h001_real_falsification_preregistration.py").read_bytes()).hexdigest() == "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"
+    assert hashlib.sha256((tmp_path / "tests/experiment/test_h001_temporal_causality.py").read_bytes()).hexdigest() == "0e1dea2e1ec06cea14f11455402282c56dd5ef598ed54b3ad401774d4d7ea628"
+    assert hashlib.sha256((tmp_path / "tests/experiment/test_h001_real_falsification_preregistration.py").read_bytes()).hexdigest() == "4cf6478701f70ab7ecee4f5d84b39b042344daeb928da38d59c0389a2a8ca7c6"
+
+
 def base_receipt():
     return {
         "schema_version": "0.1.0",
@@ -217,16 +305,16 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION], [context._H001_ASSURANCE_REVIEW_NEXT_ACTION], [context._H001_TEMPORAL_CANDIDATE_NEXT_ACTION], [context._H001_TEMPORAL_REVIEW_COMPLETE_NEXT_ACTION])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION], [context._H001_ASSURANCE_REVIEW_NEXT_ACTION], [context._H001_TEMPORAL_CANDIDATE_NEXT_ACTION], [context._H001_TEMPORAL_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_TEMPORAL_ACTIVE_NEXT_ACTION])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
-    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE)
+    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE)
 
 
 def test_h001_completion_phase_verifies_and_renders_boundaries():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE):
         pytest.skip("production tree has advanced past synthetic completion")
     assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
     assert state["handoff_receipt"]["next_actions"] == [context._H001_COMPLETE_NEXT_ACTION]
@@ -1023,6 +1111,8 @@ def test_valid_v003_amendment_chain_and_boundary_rendering():
         packet = render_context_packet(state)
         assert "H001_REAL_DATA_ACCESS=FORBIDDEN" in packet
         return
+    if state["active_task"]["phase"] == context._H001_TEMPORAL_ACTIVE_PHASE:
+        return
     if state["active_task"]["phase"] in (context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE):
         if state["active_task"]["phase"] == context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE:
             assert "H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEW=COMPLETED_PASSED" in render_context_packet(state)
@@ -1177,6 +1267,7 @@ def _review_complete_fixture(tmp_path):
             target.write_bytes(canonical_json_bytes(_REVIEW_COMPLETE_ACTIVE_TASK))
         else:
             shutil.copy2(ROOT / relpath, target)
+    restore_historical_h001_inputs(tmp_path)
     return tmp_path
 
 
@@ -1397,6 +1488,7 @@ def _pre_data_fixture(tmp_path):
         target = tmp_path / relpath
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relpath, target)
+    restore_historical_h001_inputs(tmp_path)
     active_path = tmp_path / "docs/control/active_task.json"
     active = json.loads(active_path.read_bytes())
     receipt_path = tmp_path / TASK_DIR / "handoff_v013.json"
@@ -1599,7 +1691,7 @@ def test_repaired_assurance_scaffold_hashes_are_independently_pinned():
 
 def test_h001_assurance_review_completion_transition_renders_and_binds():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE):
         pytest.skip("production tree has advanced to the temporal candidate phase")
     assert state["active_task"]["phase"] == context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE
     assert state["handoff_receipt"]["receipt_index"] == 15
@@ -1791,6 +1883,7 @@ def test_review_recipe_safe_subset_replays_in_synthetic_repo(tmp_path):
 def _temporal_mutated_tree(tmp_path, mutate_receipt=None, mutate_amendment=None):
     root = tmp_path / "repo"
     copy_repo_without_runtime(ROOT, root)
+    restore_historical_h001_inputs(root)
     receipt_path = root / TASK_DIR / "handoff_v016.json"
     receipt = json.loads(receipt_path.read_bytes())
     amendment_path = root / context._H001_TEMPORAL_CANDIDATE_AMENDMENT_RELPATH
@@ -1837,6 +1930,12 @@ def test_temporal_candidate_amendment_mutations_fail_closed(tmp_path, mutate_ame
 
 def test_temporal_candidate_production_render_is_review_only():
     state = load_and_verify_continuity_state(ROOT)
+    if state["active_task"]["phase"] == context._H001_TEMPORAL_ACTIVE_PHASE:
+        packet = render_context_packet(state)
+        for marker in ("H001_TEMPORAL_CAUSALITY_AMENDMENT=EFFECTIVE", "H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=TRUE", "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=STRICT_LT_EFFECTIVE", "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LT_DECISION", "H001_TEMPORAL_CAUSALITY_EQUALITY_SIGNAL_EVENT=EXCLUDED", "H001_REAL_DATA_ACCESS=FORBIDDEN", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION"):
+            assert marker in packet
+        assert "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LTE_DECISION" not in packet
+        return
     if state["active_task"]["phase"] == context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE:
         packet = render_context_packet(state)
         assert "H001_TEMPORAL_CAUSALITY_CANDIDATE_REVIEW=COMPLETED_PASSED" in packet
@@ -1927,6 +2026,7 @@ def test_production_temporal_candidate_rereview_completion_verifies_and_renders_
 def test_temporal_review_completion_rejects_reordered_evidence_with_updated_pointer(tmp_path):
     root = tmp_path / "repo"
     copy_repo_without_runtime(ROOT, root)
+    restore_historical_h001_inputs(root)
     receipt_path = root / TASK_DIR / "handoff_v017.json"
     receipt = json.loads(receipt_path.read_bytes())
     receipt["evidence"][0], receipt["evidence"][1] = receipt["evidence"][1], receipt["evidence"][0]
@@ -1934,6 +2034,8 @@ def test_temporal_review_completion_rejects_reordered_evidence_with_updated_poin
     receipt_path.write_bytes(receipt_bytes)
     active_path = root / context.ACTIVE_TASK_RELPATH
     active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_path"] = f"{TASK_DIR}/handoff_v017.json"
+    active["phase"] = context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE
     active["handoff_receipt_sha256"] = hashlib.sha256(receipt_bytes).hexdigest()
     active_path.write_bytes(canonical_json_bytes(active))
     with pytest.raises(ValueError, match="evidence list must be exact and ordered"):
@@ -1955,3 +2057,137 @@ def test_temporal_review_completion_rejects_shortened_review_record_decision(tmp
     active_path.write_bytes(canonical_json_bytes(active))
     with pytest.raises(ValueError):
         load_and_verify_continuity_state(root)
+
+
+def _activation_mutated_tree(tmp_path, *, mutate_amendment=None, mutate_receipt=None, mutate_active=None):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    amendment_path = root / context._H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH
+    receipt_path = root / context._H001_TEMPORAL_ACTIVE_HANDOFF_RELPATH
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    if mutate_amendment is not None:
+        amendment = json.loads(amendment_path.read_bytes())
+        mutate_amendment(amendment)
+        amendment_path.write_bytes(canonical_json_bytes(amendment))
+        receipt = json.loads(receipt_path.read_bytes())
+        for item in receipt["evidence"]:
+            if item["path"] == context._H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH:
+                item["sha256"] = hashlib.sha256(amendment_path.read_bytes()).hexdigest()
+        receipt_path.write_bytes(canonical_json_bytes(receipt))
+    if mutate_receipt is not None:
+        receipt = json.loads(receipt_path.read_bytes())
+        mutate_receipt(receipt)
+        receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active = json.loads(active_path.read_bytes())
+    original_active_sha = active["handoff_receipt_sha256"]
+    if mutate_active is not None:
+        mutate_active(active)
+    if active["handoff_receipt_sha256"] == original_active_sha:
+        active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    return root
+
+
+def test_activation_production_state_renders_effective_strict_contract():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == context._H001_TEMPORAL_ACTIVE_PHASE
+    assert state["handoff_receipt"]["receipt_index"] == 18
+    assert state["handoff_receipt"]["changed_file_scope"] == context._H001_TEMPORAL_ACTIVE_SCOPE
+    packet = render_context_packet(state)
+    for marker in (
+        "PHASE=candidate1_h001_temporal_causality_amendment_effective",
+        "H001_TEMPORAL_CAUSALITY_AMENDMENT=EFFECTIVE",
+        "H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=TRUE",
+        "H001_TEMPORAL_CAUSALITY_CURRENT_CONTRACT=STRICT_LT_EFFECTIVE",
+        "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LT_DECISION",
+        "H001_TEMPORAL_CAUSALITY_EQUALITY_SIGNAL_EVENT=EXCLUDED",
+        "H001_TEMPORAL_CAUSALITY_HELD_FUNDING_RULE=UNCHANGED",
+        "H001_REAL_DATA_ACCESS=FORBIDDEN", "H001_EXECUTION=0/0",
+        "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_AUTHORIZED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+        "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
+    ):
+        assert marker in packet
+    assert "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LTE_DECISION" not in packet
+    assert "reviewed H001 temporal causality amendment is not yet activated" not in packet
+
+
+def test_activation_production_scope_is_exactly_nine_files_in_governance_order():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["handoff_receipt"]["changed_file_scope"] == [
+        "docs/control/amendments/candidate1_h001_temporal_causality_activation_v001.json",
+        "docs/experiments/candidate1_h001_real_data_falsification_v0.json",
+        "quantbot/experiment/h001_real_falsification_preregistration.py",
+        "tests/experiment/test_h001_real_falsification_preregistration.py",
+        f"docs/control/tasks/{TASK_ID}/handoff_v018.json",
+        "docs/control/active_task.json",
+        "quantbot/continuity/context.py",
+        "tests/continuity/test_cross_agent_continuity.py",
+        "tests/experiment/test_h001_temporal_causality.py",
+    ]
+
+
+@pytest.mark.parametrize("mutate, expected_error", [
+    pytest.param(lambda r: r["changed_file_scope"].pop(), "H001 temporal activation changed_file_scope must be exact and ordered", id="eight-file-scope"),
+    pytest.param(lambda r: r["changed_file_scope"].remove("tests/experiment/test_h001_temporal_causality.py"), "H001 temporal activation changed_file_scope must be exact and ordered", id="missing-temporal-test"),
+    pytest.param(lambda r: r["changed_file_scope"].insert(0, r["changed_file_scope"].pop()), "H001 temporal activation changed_file_scope must be exact and ordered", id="temporal-test-wrong-position"),
+    pytest.param(lambda r: r["changed_file_scope"].reverse(), "H001 temporal activation changed_file_scope must be exact and ordered", id="reversed-scope"),
+    pytest.param(lambda r: r["changed_file_scope"].append("tests/experiment/test_h001_temporal_causality.py"), "H001 temporal activation changed_file_scope must be exact and ordered", id="duplicate-temporal-test"),
+    pytest.param(lambda r: r["changed_file_scope"].append("docs/extra.md"), "H001 temporal activation changed_file_scope must be exact and ordered", id="extra-path"),
+    pytest.param(lambda r: r["changed_file_scope"].__setitem__(-1, "docs/wrong.md"), "H001 temporal activation changed_file_scope must be exact and ordered", id="wrong-path"),
+    pytest.param(lambda r: r["changed_file_scope"].__setitem__(-1, 123), "changed_file_scope entry must be a non-empty string", id="non-string-path"),
+])
+def test_activation_exact_scope_mutations_fail_at_scope_validation(tmp_path, mutate, expected_error):
+    with pytest.raises(ValueError, match=expected_error):
+        load_and_verify_continuity_state(_activation_mutated_tree(tmp_path, mutate_receipt=mutate))
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda a: a.update(effective=False),
+    lambda a: a.update(current_contract_changed=False),
+    lambda a: a["hash_bindings"]["reviewed_candidate_design"].update(sha256="0" * 64),
+    lambda a: a["review_history"].update(pr_285_merge_commit="0" * 40),
+    lambda a: a["non_effects"].remove("REAL_DATA_ACCESS_FORBIDDEN"),
+    lambda a: a.update(extra_key=True),
+])
+def test_activation_amendment_mutations_fail_closed(tmp_path, mutate):
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(_activation_mutated_tree(tmp_path, mutate_amendment=mutate))
+
+
+def test_activation_amendment_duplicate_and_noncanonical_json_fail_closed(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    path = root / context._H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH
+    raw = path.read_bytes()
+    path.write_bytes(raw.replace(b'"effective":true,', b'"effective":true,"effective":true,', 1))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+    path.write_bytes(raw + b"\n")
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r.update(receipt_index=17),
+    lambda r: r.update(predecessor={"path": r["predecessor"]["path"], "sha256": "0" * 64}),
+    lambda r: r["changed_file_scope"].reverse(),
+    lambda r: r["evidence"].reverse(),
+    lambda r: r["evidence"].append(dict(r["evidence"][0])),
+    lambda r: r["evidence"].pop(),
+    lambda r: r["decisions"].append("H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=FALSE"),
+    lambda r: r["safety_state"].update(decomposition_execution_count=1),
+])
+def test_activation_handoff_mutations_fail_closed(tmp_path, mutate):
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(_activation_mutated_tree(tmp_path, mutate_receipt=mutate))
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda a: a.update(handoff_receipt_path=context._H001_TEMPORAL_ACTIVE_HANDOFF_RELPATH.replace("v018", "v017")),
+    lambda a: a.update(handoff_receipt_sha256="0" * 64),
+    lambda a: a.update(phase=context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE),
+])
+def test_activation_active_task_mutations_fail_closed(tmp_path, mutate):
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(_activation_mutated_tree(tmp_path, mutate_active=mutate))

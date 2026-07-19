@@ -16,9 +16,10 @@ from quantbot.experiment.h001_temporal_causality import (
 ROOT = Path(__file__).parents[2]
 CURRENT = ROOT / "docs/experiments/candidate1_h001_real_data_falsification_v0.json"
 CANDIDATE = ROOT / "docs/experiments/candidate1_h001_real_data_falsification_temporal_candidate_v001.json"
-CURRENT_SHA = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+HISTORICAL_SHA = "055ea162a11d4042320daeb74e153ebbd27969dd29a60c226cb84a8fc38b8900"
+CURRENT_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
 CANDIDATE_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
-VALIDATOR_SHA = "888bc4663e3d7fb9b398f944bf2b67553e8959e0173be77183ca8b288156172a"
+VALIDATOR_SHA = "d9326c7b73c68f3958901899f46ef11a4f529ed1954f268de06ae6e8abdcede3"
 DRAFT_SHA = "03c57d0c0935eb37d53ee68410935e258e3bde0f5b2c8d19048e4c1d979d5639"
 PRE_DATA_SHA = "a22d0cf260f31d7104fc4d4fe96030c8666179c20c7737dfe20a59f3c7200ddc"
 
@@ -69,10 +70,17 @@ def test_loader_rejects_noncanonical_candidate_bytes(raw, error):
 
 def test_current_bindings_and_one_leaf_difference():
     assert hashlib.sha256(CURRENT.read_bytes()).hexdigest() == CURRENT_SHA
+    assert CURRENT.read_bytes() == CANDIDATE.read_bytes()
     assert hashlib.sha256((ROOT / "quantbot/experiment/h001_real_falsification_preregistration.py").read_bytes()).hexdigest() == VALIDATOR_SHA
     assert hashlib.sha256((ROOT / "docs/assurance/h001_temporal_causality_amendment_draft_v001.json").read_bytes()).hexdigest() == DRAFT_SHA
     assert hashlib.sha256((ROOT / "docs/control/amendments/candidate1_h001_pre_data_assurance_v001.json").read_bytes()).hexdigest() == PRE_DATA_SHA
     current, candidate = json.loads(CURRENT.read_bytes()), json.loads(CANDIDATE.read_bytes())
+    assert current["temporal_join_contract"]["prior_funding"] == "latest funding_time_utc < bar[t].open_time_utc"
+    assert current["temporal_join_contract"]["funding_cashflow_events"] == "bar[t].open_time_utc < funding_time_utc <= bar[t].close_time_utc"
+    historical = json.loads(CURRENT.read_bytes())
+    historical["temporal_join_contract"]["prior_funding"] = "latest funding_time_utc <= bar[t].open_time_utc"
+    historical_bytes = json.dumps(historical, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    assert hashlib.sha256(historical_bytes).hexdigest() == HISTORICAL_SHA
     differences = []
     def walk(a, b, path=""):
         if isinstance(a, dict) and isinstance(b, dict):
@@ -81,7 +89,7 @@ def test_current_bindings_and_one_leaf_difference():
                 walk(a[key], b[key], f"{path}/{key}")
         elif a != b:
             differences.append((path, a, b))
-    walk(current, candidate)
+    walk(historical, current)
     assert differences == [("/temporal_join_contract/prior_funding", "latest funding_time_utc <= bar[t].open_time_utc", "latest funding_time_utc < bar[t].open_time_utc")]
 
 
