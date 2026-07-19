@@ -23,6 +23,7 @@ VALIDATORS = {
     "h001_synthetic_null_calibration_spec_freeze_candidate_v001.json": contracts.validate_calibration_spec_freeze_candidate,
 }
 FREEZE_CANDIDATE = DOCS / "h001_synthetic_null_calibration_spec_freeze_candidate_v001.json"
+CALIBRATION_ACTIVATION = ROOT / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_spec_freeze_activation_v001.json"
 
 def read(name):
     return (DOCS / name).read_bytes()
@@ -689,3 +690,57 @@ def test_freeze_candidate_validation_is_metadata_only():
             if isinstance(child, ast.Name):
                 assert child.id not in {"open", "eval", "exec", "__import__"}, f"{node.name} uses {child.id}"
     assert "import requests" not in source and "import socket" not in source and "import os" not in source
+
+
+def calibration_activation():
+    return json.loads(CALIBRATION_ACTIVATION.read_bytes())
+
+
+def test_h001_calibration_activation_is_canonical_and_exactly_effective_but_not_executable():
+    raw = CALIBRATION_ACTIVATION.read_bytes()
+    value = contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_activation(raw)
+    assert contracts.canonical_json_bytes(value) == raw and not raw.endswith(b"\n")
+    assert value["effective"] is True
+    assert value["authorization_state"]["specification_frozen_effective"] is True
+    assert value["authorization_state"]["execution_authorized"] is False
+    assert "SPECIFICATION_REMAINS_UNFROZEN" not in value["non_effects"]
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda v: v["hash_bindings"]["effective_specification"].update(sha256="0" * 64),
+    lambda v: v["hash_bindings"]["candidate_rereview_record"].update(sha256="0" * 64),
+    lambda v: v["hash_bindings"]["handoff_v021"].update(sha256="0" * 64),
+    lambda v: v["review_history"].update(candidate_final_reviewed_head="0" * 40),
+    lambda v: v["review_history"].update(review_record_merge_commit="0" * 40),
+    lambda v: v["frozen_values"].update(hac_lag=22),
+    lambda v: v.update(effective=False),
+    lambda v: v["authorization_state"].update(execution_authorized=True),
+    lambda v: v["authorization_state"].update(execution_implementation_authorized=True),
+    lambda v: v["authorization_state"].update(results_exposed=True),
+    lambda v: v["authorization_state"].update(real_data_access_authorized=True),
+    lambda v: v["authorization_state"].update(h001_validation_execution_authorized=True),
+    lambda v: v["authorization_state"].update(h001_holdout_execution_authorized=True),
+    lambda v: v["authorization_state"].update(scientific_authorization=True),
+    lambda v: v["authorization_state"].update(paper_trade_authorization=True),
+    lambda v: v["authorization_state"].update(live_authorization=True),
+    lambda v: v["non_effects"].remove("EDGE_UNPROVEN"),
+    lambda v: v["non_effects"].remove("BLOCK_LIVE_INTEGRATION"),
+])
+def test_h001_calibration_activation_mutations_fail_closed(mutation):
+    value = calibration_activation()
+    mutation(value)
+    with pytest.raises(ValueError):
+        contracts.validate_h001_synthetic_null_calibration_spec_freeze_activation(value)
+    with pytest.raises(ValueError):
+        contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_activation(contracts.canonical_json_bytes(value))
+
+
+def test_h001_calibration_activation_loader_rejects_duplicate_noncanonical_and_non_bytes():
+    raw = CALIBRATION_ACTIVATION.read_bytes()
+    duplicate = raw.replace(b'"effective":true,', b'"effective":true,"effective":true,', 1)
+    with pytest.raises(ValueError, match="duplicate"):
+        contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_activation(duplicate)
+    with pytest.raises(ValueError, match="non-canonical"):
+        contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_activation(json.dumps(json.loads(raw)).encode())
+    with pytest.raises(ValueError, match="exact bytes"):
+        contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_activation(bytearray(raw))
