@@ -443,6 +443,47 @@ _H001_CALIBRATION_EXECUTION_GOVERNANCE_BINDINGS = {
     "predecessor_handoff": (_H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH, _H001_CALIBRATION_EXECUTION_GOVERNANCE_V022_SHA),
     "temporal_activation_amendment": (_H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH, _H001_CALIBRATION_EFFECTIVE_TEMPORAL_SHA),
 }
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE = "candidate1_h001_synthetic_null_calibration_execution_engine_implementation_blocked"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_NEXT_ACTION = "AUTHORIZE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_GOVERNANCE"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH = f"docs/control/tasks/{TASK_ID}/handoff_v024.json"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BASE_SHA = "90460b3e13dbf665247d0ae85a19dac5f6c2293e"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA = "60853c3d43f52bc8fe782755a9512726cfb5ea93d570fa85a0ec919b7bbf931a"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_SCOPE = [
+    _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+]
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_GAPS = [
+    "HAC_AUTOCOVARIANCE_AND_STANDARD_ERROR_CONVENTION",
+    "BOOTSTRAP_NULL_CENTERING_TRANSFORM",
+    "BOOTSTRAP_STUDENTIZATION_CONVENTION",
+    "MAXIMUM_T_EXCEEDANCE_TIE_PVALUE_AND_REJECTION_RULES",
+    "STATIONARY_BOOTSTRAP_INITIAL_INDEX_AND_RNG_DRAW_ORDERING",
+]
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_DECISIONS = sorted([
+    *_H001_CALIBRATION_EXECUTION_GOVERNANCE_DECISIONS,
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_ATTEMPT=BLOCKED_BEFORE_CHANGE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_COMMIT=NONE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_PR=NONE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS=INCOMPLETE_RESULT_DETERMINATIVE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION_BLOCKER=PENDING_REVIEWED_NUMERICAL_CONVENTIONS_AMENDMENT",
+    "H001_SYNTHETIC_NULL_CALIBRATION_RESULT_EXPOSURE=NONE",
+])
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BLOCKERS = {
+    *_H001_CALIBRATION_EXECUTION_GOVERNANCE_BLOCKERS,
+    "H001 synthetic calibration engine implementation is blocked by incomplete result-determinative numerical conventions",
+}
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PROHIBITIONS = sorted([
+    *_H001_CALIBRATION_REREVIEW_PROHIBITIONS,
+    "CHOOSE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS",
+    "CREATE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE_BEFORE_GOVERNANCE_AUTHORIZATION",
+    "IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_ENGINE",
+])
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_EVIDENCE = [
+    _H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH,
+    *_H001_CALIBRATION_EXECUTION_GOVERNANCE_EVIDENCE,
+]
 _H001_TEMPORAL_ACTIVE_BASE_SHA = "eb953e04685b57e22d1b27d043618da4b44d549b"
 _H001_TEMPORAL_ACTIVE_V017_SHA = "687c8192403cc5c4ff62bbe2ed43e5a4c080868c0b4760386a0d7429798c8d32"
 _H001_TEMPORAL_ACTIVE_DESIGN_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
@@ -1580,8 +1621,10 @@ def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evide
     receipt_keys = set(_RECEIPT_KEYS)
     if parsed.get("receipt_index") == 15:
         receipt_keys.add("review_binding")
-    if parsed.get("receipt_index") == 22:
+    if parsed.get("receipt_index") in (22, 24):
         receipt_keys.add("phase")
+    if parsed.get("receipt_index") == 24:
+        receipt_keys.add("numerical_convention_gap_inventory")
     _require_exact_keys(parsed, receipt_keys, label)
     if parsed["schema_version"] != "0.1.0":
         _fail(f"{label} schema_version is not 0.1.0")
@@ -1685,6 +1728,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE:
         _cross_check_artifact_records(parsed, root)
         amendment = _validate_h001_calibration_execution_governance_handoff(parsed, root)
+    elif active["phase"] == _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        _validate_h001_calibration_implementation_blocked_handoff(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -2423,6 +2469,46 @@ def _validate_h001_calibration_execution_governance_handoff(receipt: dict, root:
     return amendment
 
 
+def _validate_h001_calibration_implementation_blocked_handoff(receipt: dict, root: Path) -> None:
+    """Validate the append-only, pre-change blocked outcome of the engine action."""
+    if receipt["receipt_index"] != 24 or receipt["phase"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE:
+        _fail("H001 calibration implementation-block receipt identity is wrong")
+    if receipt["source_branch"] != "chore/h001-calibration-engine-implementation-block" or receipt["source_head_commit"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BASE_SHA:
+        _fail("H001 calibration implementation-block source binding is wrong")
+    if receipt["predecessor"] != {"path": _H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH, "sha256": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA}:
+        _fail("H001 calibration implementation-block predecessor is wrong")
+    if receipt["changed_file_scope"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_SCOPE:
+        _fail("H001 calibration implementation-block scope is wrong")
+    if receipt["next_actions"] != [_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_NEXT_ACTION]:
+        _fail("H001 calibration implementation-block next action is wrong")
+    if receipt["decisions"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_DECISIONS:
+        _fail("H001 calibration implementation-block decisions drifted")
+    if set(receipt["blockers"]) != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BLOCKERS:
+        _fail("H001 calibration implementation-block blockers drifted")
+    if receipt["prohibited_actions"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PROHIBITIONS:
+        _fail("H001 calibration implementation-block prohibitions drifted")
+    if receipt["numerical_convention_gap_inventory"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_GAPS:
+        _fail("H001 calibration implementation-block numerical gaps drifted")
+    if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 calibration implementation-block changed persistent safety state")
+    expected_static = {
+        _H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH: _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA,
+        _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_SHA,
+        _H001_CALIBRATION_CANDIDATE_RELPATH: _H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA,
+    }
+    expected_evidence = []
+    for path in _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_EVIDENCE:
+        target = root / path
+        if not target.is_file():
+            _fail(f"H001 calibration implementation-block evidence file {path!r} is missing")
+        digest = expected_static.get(path, hashlib.sha256(target.read_bytes()).hexdigest())
+        if path in expected_static and hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+            _fail(f"H001 calibration implementation-block immutable evidence drifted for {path}")
+        expected_evidence.append({"path": path, "sha256": digest})
+    if receipt["evidence"] != expected_evidence or len(receipt["evidence"]) != len(set(item["path"] for item in receipt["evidence"])):
+        _fail("H001 calibration implementation-block evidence must be exact, unique, and ordered")
+
+
 def _validate_entrypoints(root: Path) -> None:
     start_here = root / START_HERE_RELPATH
     if not start_here.is_file():
@@ -2868,6 +2954,35 @@ def render_context_packet(state: dict) -> str:
             "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_IMPLEMENTED",
             "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
             "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_EXECUTION=0/0",
+            "H001_CURRENT_EXECUTION_BUDGET=0",
+            "H001_CURRENT_EXECUTION_COUNT=0",
+            "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+            "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+            "H001_LIVE_AUTHORIZATION=FALSE",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "EDGE_UNPROVEN",
+            "BLOCK_LIVE_INTEGRATION",
+        ])
+    elif active["phase"] == _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE:
+        lines.extend([
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW=PASSED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW_RECORD=RECORDED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=EFFECTIVE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FROZEN=TRUE",
+            f"H001_SYNTHETIC_NULL_CALIBRATION_EFFECTIVE_SPEC_SHA256={_H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA}",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_GOVERNANCE=AUTHORIZED_IMPLEMENTATION_FOR_INDEPENDENT_REVIEW_ONLY",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_ATTEMPT=BLOCKED_BEFORE_CHANGE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_COMMIT=NONE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_PR=NONE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS=INCOMPLETE_RESULT_DETERMINATIVE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION_BLOCKER=PENDING_REVIEWED_NUMERICAL_CONVENTIONS_AMENDMENT",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_IMPLEMENTED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_RESULT_EXPOSURE=NONE",
             "H001_REAL_DATA_ACCESS=FORBIDDEN",
             "H001_EXECUTION=0/0",
             "H001_CURRENT_EXECUTION_BUDGET=0",
