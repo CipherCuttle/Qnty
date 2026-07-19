@@ -204,6 +204,7 @@ _H001_CALIBRATION_CANDIDATE_HANDOFF_RELPATH = f"docs/control/tasks/{TASK_ID}/han
 _H001_CALIBRATION_CANDIDATE_BRANCH = "feat/h001-calibration-spec-freeze-candidate"
 _H001_CALIBRATION_CANDIDATE_BASE_SHA = "6465d036af6b66ae6d845511c652d5857651bc49"
 _H001_CALIBRATION_CANDIDATE_V019_SHA = "5f210c26c6c7f0b16f1df49173cae22e878071fe46d9933941d639aa37f6d59e"
+_H001_CALIBRATION_CANDIDATE_DOCUMENT_SHA = "04b6ea5b7453fccf4787abb26c230e2a02a77545c741c19f6686df16fc2cb7a2"
 _H001_CALIBRATION_CANDIDATE_SCOPE = [
     _H001_CALIBRATION_CANDIDATE_RELPATH,
     "quantbot/assurance/contracts.py",
@@ -1973,6 +1974,8 @@ def _validate_h001_calibration_candidate_handoff(receipt: dict, root: Path) -> N
         _fail("H001 calibration candidate evidence must be exact, unique, and ordered")
 
     candidate_bytes = (root / _H001_CALIBRATION_CANDIDATE_RELPATH).read_bytes()
+    if hashlib.sha256(candidate_bytes).hexdigest() != _H001_CALIBRATION_CANDIDATE_DOCUMENT_SHA:
+        _fail("H001 calibration freeze candidate bytes do not match the independent literal hash")
     try:
         candidate = contracts.load_and_validate_calibration_spec_freeze_candidate(candidate_bytes)
     except contracts.AssuranceValidationError as error:

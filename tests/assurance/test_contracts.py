@@ -345,6 +345,71 @@ def test_freeze_candidate_preserves_the_registered_statistical_target():
     assert criterion["diagnostic_cases_participate"] is False
 
 
+def test_freeze_candidate_pins_exact_sample_boundary_and_shape():
+    sample = freeze_candidate()["synthetic_sample_contract"]
+    assert sample == {
+        "cadence": "8h",
+        "exclusive_region_end_utc": "2025-01-01T00:00:00Z",
+        "finite_value_requirement": "every generated value must be finite; any non-finite value invalidates the replication",
+        "first_interval_open_utc": "2023-01-01T00:00:00Z",
+        "inclusive_display_end_utc": "2024-12-31T23:59:59Z",
+        "interval_duration_seconds": 28800,
+        "interval_extent_rule": "each synthetic observation represents the 8-hour interval beginning at open_time(t); the final interval begins 2024-12-31T16:00:00Z and reaches the exclusive boundary 2025-01-01T00:00:00Z",
+        "interval_index_rule": "for zero-based t in 0..2192, open_time(t) = first_interval_open_utc + t * 28800 seconds",
+        "last_interval_open_utc": "2024-12-31T16:00:00Z",
+        "output_shape_and_ordering": "[9, 2193]; axis 0 is series index 0..8; axis 1 is interval index 0..2192 in increasing time order",
+        "real_data_used": False,
+        "registered_validation_end_utc": "2024-12-31T23:59:59Z",
+        "registered_validation_start_utc": "2023-01-01T00:00:00Z",
+        "sample_length_formula": "(2025-01-01T00:00:00Z - 2023-01-01T00:00:00Z) / 28800 = 2193",
+        "sample_length_derivation": "2024-12-31T23:59:59Z is an inclusive human-readable region endpoint; 2025-01-01T00:00:00Z is the exact exclusive arithmetic boundary; (2025-01-01T00:00:00Z - 2023-01-01T00:00:00Z) / 28800 = 2193",
+        "sample_length_intervals": 2193,
+        "series_count": 9,
+        "synthetic_only": True,
+        "theoretical_mean_zero_required": True,
+    }
+
+
+def test_freeze_candidate_pins_garch_burn_in_and_component_stream_contract():
+    value = freeze_candidate()
+    garch = _dgp(value, "stationary_garch11_like")
+    assert garch["burn_in_intervals"] == 10000
+    assert garch["discarded_observations"] == 10000
+    assert garch["parameters"]["generated_observations_per_series"] == 12193
+    assert garch["parameters"]["retained_index_range"] == "10000..12192"
+    assert garch["parameters"]["retained_observations"] == 2193
+    assert "not an exact invariant draw" in garch["initial_state_distribution"]
+    assert value["seed_contract"]["rng_algorithm"] == "numpy.random.Philox"
+    assert value["seed_contract"]["component_streams"]["stationary_garch11_like"] == [f"series-{i}-innovations" for i in range(9)]
+    assert "unordered traversal" in value["seed_contract"]["forbidden_randomness"]
+
+
+FREEZE_CANDIDATE_SEMANTIC_MUTATIONS = {
+    "dgp_definition": lambda c: c["required_stationary_dgps"][3].update(definition="a different AR process"),
+    "ar_initial_state": lambda c: c["required_stationary_dgps"][3].update(initial_state_distribution="deterministic zero"),
+    "ar_innovation_distribution": lambda c: c["required_stationary_dgps"][3].update(innovation_distribution="serially dependent innovations"),
+    "ar_cross_series_dependence": lambda c: c["required_stationary_dgps"][3].update(cross_series_dependence="shared innovations"),
+    "ar_output_shape": lambda c: c["required_stationary_dgps"][3].update(output_shape_and_ordering="[1, 1]"),
+    "garch_initialization": lambda c: c["required_stationary_dgps"][5].update(initial_state_distribution="exact invariant draw"),
+    "garch_innovation_distribution": lambda c: c["required_stationary_dgps"][5].update(innovation_distribution="serially dependent normal innovations"),
+    "garch_finite_value_requirement": lambda c: c["required_stationary_dgps"][5].update(finite_value_requirement="non-finite values permitted"),
+    "sample_output_shape": lambda c: c["synthetic_sample_contract"].update(output_shape_and_ordering="[9, 2192]"),
+    "diagnostic_definition": lambda c: c["diagnostic_stress_cases"][0].update(definition="different structural break"),
+    "diagnostic_initialization": lambda c: c["diagnostic_stress_cases"][0].update(initial_state_distribution="deterministic zero"),
+    "diagnostic_seed_use": lambda c: c["diagnostic_stress_cases"][0].update(seed_use="use wall-clock time"),
+    "diagnostic_output_shape": lambda c: c["diagnostic_stress_cases"][0].update(output_shape_and_ordering="[1, 1]"),
+    "diagnostic_dependence": lambda c: c["diagnostic_stress_cases"][0].update(nine_series_construction="shared stream"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(FREEZE_CANDIDATE_SEMANTIC_MUTATIONS))
+def test_freeze_candidate_semantic_mutations_fail_closed(name):
+    value = freeze_candidate()
+    FREEZE_CANDIDATE_SEMANTIC_MUTATIONS[name](value)
+    with pytest.raises(contracts.AssuranceValidationError):
+        contracts.validate_calibration_spec_freeze_candidate(value)
+
+
 def test_freeze_candidate_binds_activated_not_historical_hashes():
     bindings = freeze_candidate()["bindings"]
     assert bindings["source_main_commit"] == "6465d036af6b66ae6d845511c652d5857651bc49"

@@ -583,6 +583,13 @@ _FREEZE_CANDIDATE_NONDETERMINISM_FLAGS = (
     "environment_dependent_seeds_allowed", "os_entropy_allowed", "random_fallback_allowed",
     "result_dependent_reseeding_allowed", "retry_dependent_seeds_allowed", "wall_clock_seeds_allowed",
 )
+_FREEZE_CANDIDATE_EXPECTED_SECTION_SHA256 = {
+    "synthetic_sample_contract": "16ff3a433e14fdb9385621f6b8427f2e660b91ba92c712de5b99a798f48c965b",
+    "seed_contract": "39c4d3126e711e0b8e5e92e8763f9e6bbbf5c1fabcdd90454ba65a59e0bcb7e2",
+    "required_stationary_dgps": "cc56a8cffa3803fbfba132bc04aa391276e248b01f7633b3e02d62bb4be1b0b4",
+    "diagnostic_stress_cases": "297ea1fcd79c70ee4074923bf25817138b3b4ae25a8fa195446c7c95d378c642",
+    "diagnostic_case_policy": "aaa2815590d27e870f17de0176e550e3e1d795eafdc18ec32ec645d010d67f42",
+}
 _FREEZE_CANDIDATE_SAMPLE_CONTRACT = {
     "sample_length_intervals": 2193,
     "series_count": 9,
@@ -684,73 +691,21 @@ def _validate_freeze_candidate_historical_draft(value: object) -> None:
 
 
 def _validate_freeze_candidate_seed_contract(value: object) -> None:
-    seed = _keys(value, set(_FREEZE_CANDIDATE_SEED_CONTRACT), "freeze candidate seed contract")
-    if seed["seed_domain"] != H001_FREEZE_CANDIDATE_SEED_DOMAIN:
-        _fail("freeze candidate seed domain is wrong")
-    for flag in _FREEZE_CANDIDATE_NONDETERMINISM_FLAGS:
-        _require_exact_bool(seed[flag], False, f"seed contract {flag}")
-    _require_exact_bool(seed["new_or_updated_dependencies"], False, "seed contract new_or_updated_dependencies")
-    _require_exact_bool(seed["rng_dependency_already_available"], True, "seed contract rng_dependency_already_available")
-    if seed != _FREEZE_CANDIDATE_SEED_CONTRACT:
-        _fail("freeze candidate seed derivation contract is ambiguous or drifted")
-    for key in ("outer_payload_rule", "bootstrap_payload_rule", "seed_integer_rule", "digest_algorithm"):
-        lowered = seed[key].lower()
-        if any(token in lowered for token in _FREEZE_CANDIDATE_FORBIDDEN_SEED_TOKENS):
-            _fail(f"seed contract {key}: nondeterministic seed source referenced")
+    if hashlib.sha256(canonical_json_bytes(value)).hexdigest() != _FREEZE_CANDIDATE_EXPECTED_SECTION_SHA256["seed_contract"]:
+        _fail("freeze candidate seed derivation contract is not the exact frozen structure")
 
 
 def _validate_freeze_candidate_dgps(value: object) -> list[str]:
-    entries = _list(value, "required_stationary_dgps")
-    ids = [entry["dgp_id"] if isinstance(entry, dict) and "dgp_id" in entry else None for entry in entries]
-    if len(ids) != len(set(ids)):
-        _fail("required_stationary_dgps: duplicate DGP")
-    if ids != sorted(_FREEZE_CANDIDATE_DGP_PARAMETERS):
-        _fail("required_stationary_dgps: exact sorted required DGP set required")
-    for entry in entries:
-        item = _keys(entry, _FREEZE_CANDIDATE_DGP_KEYS, "required DGP")
-        dgp_id = _identifier(item["dgp_id"], "dgp_id")
-        if len(_str(item["definition"], f"{dgp_id} definition")) < _FREEZE_CANDIDATE_MIN_DEFINITION_CHARS or "x[i," not in item["definition"]:
-            _fail(f"{dgp_id}: label-only or incomplete DGP definition")
-        for key in ("cross_series_dependence", "factor_loading", "finite_value_requirement", "initial_state_distribution", "innovation_distribution", "output_shape_and_ordering", "variance_normalization"):
-            _str(item[key], f"{dgp_id} {key}")
-        if item["theoretical_mean"] != 0:
-            _fail(f"{dgp_id}: non-zero-mean DGP definition")
-        _require_exact_bool(item["theoretical_mean_zero"], True, f"{dgp_id} theoretical_mean_zero")
-        if item["role"] != "REQUIRED_STATIONARY_DGP_IN_FORMAL_PASS_FAIL":
-            _fail(f"{dgp_id}: required DGP role drifted")
-        for key in ("burn_in_intervals", "discarded_observations"):
-            if type(item[key]) is not int or item[key] < 0:
-                _fail(f"{dgp_id} {key}: non-negative integer required")
-        if _keys(item["parameters"], set(_FREEZE_CANDIDATE_DGP_PARAMETERS[dgp_id]), f"{dgp_id} parameters") != _FREEZE_CANDIDATE_DGP_PARAMETERS[dgp_id]:
-            _fail(f"{dgp_id}: exact DGP parameters required")
-    return ids
+    if hashlib.sha256(canonical_json_bytes(value)).hexdigest() != _FREEZE_CANDIDATE_EXPECTED_SECTION_SHA256["required_stationary_dgps"]:
+        _fail("required_stationary_dgps is not the exact frozen structure")
+    return [entry["dgp_id"] for entry in value]
 
 
 def _validate_freeze_candidate_stress_cases(value: object, dgp_ids: list[str]) -> None:
-    entries = _list(value, "diagnostic_stress_cases")
-    ids = [entry["case_id"] if isinstance(entry, dict) and "case_id" in entry else None for entry in entries]
-    if len(ids) != len(set(ids)):
-        _fail("diagnostic_stress_cases: duplicate stress case")
-    if ids != sorted(_FREEZE_CANDIDATE_STRESS_PARAMETERS):
-        _fail("diagnostic_stress_cases: exact sorted diagnostic case set required")
-    if set(ids) & set(dgp_ids):
+    if hashlib.sha256(canonical_json_bytes(value)).hexdigest() != _FREEZE_CANDIDATE_EXPECTED_SECTION_SHA256["diagnostic_stress_cases"]:
+        _fail("diagnostic_stress_cases is not the exact frozen structure")
+    if any(entry["case_id"] in dgp_ids for entry in value):
         _fail("diagnostic stress case included in the formal pass/fail DGP suite")
-    for entry in entries:
-        item = _keys(entry, _FREEZE_CANDIDATE_STRESS_KEYS, "diagnostic stress case")
-        case_id = _identifier(item["case_id"], "case_id")
-        if len(_str(item["definition"], f"{case_id} definition")) < _FREEZE_CANDIDATE_MIN_DEFINITION_CHARS:
-            _fail(f"{case_id}: label-only or incomplete stress case definition")
-        for key in ("finite_value_requirement", "initial_state_distribution", "nine_series_construction", "output_shape_and_ordering", "seed_use"):
-            _str(item[key], f"{case_id} {key}")
-        if item["role"] != "DIAGNOSTIC_ONLY":
-            _fail(f"{case_id}: diagnostic stress case role drifted")
-        _require_exact_bool(item["part_of_formal_pass_fail"], False, f"{case_id} part_of_formal_pass_fail")
-        _require_exact_bool(item["authorized_for_tuning"], False, f"{case_id} authorized_for_tuning")
-        if item["theoretical_mean"] != 0:
-            _fail(f"{case_id}: non-zero-mean stress case definition")
-        _require_exact_bool(item["theoretical_mean_zero"], True, f"{case_id} theoretical_mean_zero")
-        if _keys(item["parameters"], set(_FREEZE_CANDIDATE_STRESS_PARAMETERS[case_id]), f"{case_id} parameters") != _FREEZE_CANDIDATE_STRESS_PARAMETERS[case_id]:
-            _fail(f"{case_id}: exact stress case parameters required")
 
 
 def validate_calibration_spec_freeze_candidate(value: object) -> dict:
@@ -800,22 +755,13 @@ def validate_calibration_spec_freeze_candidate(value: object) -> dict:
             _fail(f"pass_criterion {key} is wrong or the interval method is ambiguous")
 
     _validate_freeze_candidate_seed_contract(data["seed_contract"])
-    sample = _keys(data["synthetic_sample_contract"], set(_FREEZE_CANDIDATE_SAMPLE_CONTRACT) | {"sample_length_derivation", "output_shape_and_ordering", "finite_value_requirement"}, "freeze candidate synthetic_sample_contract")
-    for key, expected in _FREEZE_CANDIDATE_SAMPLE_CONTRACT.items():
-        if sample[key] != expected or type(sample[key]) is not type(expected):
-            _fail(f"synthetic_sample_contract {key} is wrong")
-    for key in ("sample_length_derivation", "output_shape_and_ordering", "finite_value_requirement"):
-        _str(sample[key], f"synthetic_sample_contract {key}")
+    if hashlib.sha256(canonical_json_bytes(data["synthetic_sample_contract"])).hexdigest() != _FREEZE_CANDIDATE_EXPECTED_SECTION_SHA256["synthetic_sample_contract"]:
+        _fail("synthetic_sample_contract is not the exact frozen structure")
 
     dgp_ids = _validate_freeze_candidate_dgps(data["required_stationary_dgps"])
     _validate_freeze_candidate_stress_cases(data["diagnostic_stress_cases"], dgp_ids)
-    policy = _keys(data["diagnostic_case_policy"], {"authorized_for_tuning", "may_not_alter", "part_of_formal_pass_fail", "role"}, "freeze candidate diagnostic_case_policy")
-    if policy["role"] != "DIAGNOSTIC_ONLY":
-        _fail("diagnostic_case_policy role drifted")
-    _require_exact_bool(policy["part_of_formal_pass_fail"], False, "diagnostic_case_policy part_of_formal_pass_fail")
-    _require_exact_bool(policy["authorized_for_tuning"], False, "diagnostic_case_policy authorized_for_tuning")
-    if policy["may_not_alter"] != _FREEZE_CANDIDATE_TUNING_LOCKS:
-        _fail("diagnostic_case_policy tuning locks drifted")
+    if hashlib.sha256(canonical_json_bytes(data["diagnostic_case_policy"])).hexdigest() != _FREEZE_CANDIDATE_EXPECTED_SECTION_SHA256["diagnostic_case_policy"]:
+        _fail("diagnostic_case_policy is not the exact frozen structure")
     if _list(data["non_effects"], "non_effects", sorted_unique=True) != _FREEZE_CANDIDATE_NON_EFFECTS:
         _fail("freeze candidate non-effects drifted")
     return data
