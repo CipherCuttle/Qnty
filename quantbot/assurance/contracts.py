@@ -490,3 +490,346 @@ def _require_repo_relative_review_path(path: object) -> str:
     if type(path) is not str or not re.fullmatch(r"[A-Za-z0-9._/-]+", path) or path.startswith("/") or ".." in path.split("/"):
         _fail("unsafe repository-relative review path")
     return path
+
+
+# --- H001 synthetic-null calibration specification freeze candidate ----------
+#
+# The freeze candidate is a review artifact only. Validation here is strictly
+# metadata-only: it inspects the supplied document and nothing else. It performs
+# no filesystem discovery, no networking, no artifact-store or quarantine
+# access, no environment reads, no simulation, no bootstrap, and it never
+# produces a calibration result. `H001_DESIGN_SHA256` / `H001_VALIDATOR_SHA256`
+# above are the *historical* pre-activation hashes carried by the historical
+# draft; the freeze candidate must bind the activated hashes below instead, and
+# presenting either historical hash as a current binding is rejected.
+H001_ACTIVATED_DESIGN_SHA256 = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
+H001_ACTIVATED_VALIDATOR_SHA256 = "d9326c7b73c68f3958901899f46ef11a4f529ed1954f268de06ae6e8abdcede3"
+H001_FREEZE_GOVERNANCE_AMENDMENT_SHA256 = "9e633c6bfc551bfc4efd9b8da2d986d018dac1d1c6a70cf96fc39b97adfb72b3"
+H001_FREEZE_CANDIDATE_SOURCE_MAIN = "6465d036af6b66ae6d845511c652d5857651bc49"
+H001_FREEZE_CANDIDATE_PREDECESSOR_SHA256 = "5f210c26c6c7f0b16f1df49173cae22e878071fe46d9933941d639aa37f6d59e"
+H001_HISTORICAL_CALIBRATION_DRAFT_SHA256 = "7e05a0b2b44dd4e3fbadf3e121791eb2ee76385a6b2ec6b872984cbb3510ecf6"
+H001_FREEZE_CANDIDATE_DOCUMENT_ID = "h001-synthetic-null-calibration-spec-freeze-candidate-v001"
+H001_FREEZE_CANDIDATE_DOCUMENT_KIND = "qnty_h001_synthetic_null_calibration_spec_freeze_candidate"
+H001_FREEZE_CANDIDATE_STATUS = "FREEZE_CANDIDATE_FOR_INDEPENDENT_REVIEW_NOT_EFFECTIVE_NOT_EXECUTABLE"
+H001_FREEZE_CANDIDATE_SEED_DOMAIN = "h001-null-calibration/h001-synthetic-null-calibration-spec-freeze-candidate-v001/synthetic-only"
+
+_FREEZE_CANDIDATE_KEYS = {
+    "authorization_state", "bindings", "diagnostic_case_policy", "diagnostic_stress_cases", "document_id",
+    "document_kind", "edge_status", "governed_h001_protocol_id", "historical_draft", "live_status",
+    "locked_for_review_meaning", "non_effects", "pass_criterion", "registered_test_target",
+    "required_stationary_dgps", "schema_version", "seed_contract", "status", "synthetic_sample_contract",
+}
+# Exactly the two claims a review candidate may assert, and every authority it
+# must continue to deny. Anything true in the second group is a fail-closed
+# authorization drift, not a reviewable difference of opinion.
+_FREEZE_CANDIDATE_AUTHORIZED_TRUE = ("candidate_values_locked_for_review", "independent_review_required")
+_FREEZE_CANDIDATE_AUTHORIZED_FALSE = (
+    "execution_authorized", "h001_holdout_execution_authorized", "h001_validation_execution_authorized",
+    "live_authorization", "paper_trade_authorization", "real_data_access_authorized", "results_exposed",
+    "scientific_authorization", "specification_effective", "specification_frozen_effective",
+)
+_FREEZE_CANDIDATE_BINDINGS = {
+    "governance_amendment": ("docs/control/amendments/candidate1_h001_synthetic_null_calibration_spec_freeze_governance_v001.json", H001_FREEZE_GOVERNANCE_AMENDMENT_SHA256),
+    "source_handoff": ("docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v019.json", H001_FREEZE_CANDIDATE_PREDECESSOR_SHA256),
+    "activated_design": ("docs/experiments/candidate1_h001_real_data_falsification_v0.json", H001_ACTIVATED_DESIGN_SHA256),
+    "activated_validator": ("quantbot/experiment/h001_real_falsification_preregistration.py", H001_ACTIVATED_VALIDATOR_SHA256),
+    "temporal_activation_amendment": ("docs/control/amendments/candidate1_h001_temporal_causality_activation_v001.json", "b60f322650c5b83500b89ad9914b50cd2eb200cbae573670d307b5a72190ee1b"),
+}
+_FREEZE_CANDIDATE_TEST_TARGET = {
+    "registered_variant_series": 9,
+    "test_target": "exact registered synchronous stationary-bootstrap maximum-t procedure",
+    "inner_procedure": "synchronous stationary-bootstrap maximum-t",
+    "bootstrap_repetitions": 10000,
+    "outer_synthetic_replications": 2000,
+    "stationary_block_length": 63,
+    "hac_lag": 21,
+    "familywise_alpha": 0.05,
+    "variant_family_unchanged": True,
+    "selection_rule_unchanged": True,
+}
+_FREEZE_CANDIDATE_PASS_CRITERION = {
+    "statement": "for every required stationary DGP, the one-sided 95% exact binomial upper confidence bound for empirical FWER is <= 0.075",
+    "binomial_interval_method": "one-sided exact Clopper-Pearson upper bound",
+    "binomial_interval_is_exact": True,
+    "binomial_confidence_level": 0.95,
+    "fwer_upper_bound_threshold": 0.075,
+    "fwer_event_definition": "at least one of the nine null series is rejected by the exact registered familywise validation test at alpha 0.05",
+    "empirical_fwer_definition": "the number of outer replications containing an FWER event divided by 2000",
+    "applies_to": "every required stationary DGP",
+    "diagnostic_cases_participate": False,
+}
+_FREEZE_CANDIDATE_SEED_CONTRACT = {
+    "seed_domain": H001_FREEZE_CANDIDATE_SEED_DOMAIN,
+    "payload_encoding": "UTF-8",
+    "outer_index_base": 0,
+    "outer_payload_rule": 'seed_domain + ":" + dgp_id + ":outer:" + zero-based outer replication index',
+    "bootstrap_payload_rule": 'seed_domain + ":" + dgp_id + ":outer:" + zero-based outer replication index + ":bootstrap"',
+    "digest_algorithm": "SHA-256",
+    "seed_integer_rule": "the integer represented by the first 16 lowercase hexadecimal characters of the SHA-256 digest",
+    "seed_integer_bits": 64,
+    "rng_algorithm": "numpy.random.Philox",
+    "rng_wrapper": "numpy.random.Generator",
+    "rng_dependency": "numpy",
+    "rng_dependency_already_available": True,
+    "new_or_updated_dependencies": False,
+    "wall_clock_seeds_allowed": False,
+    "os_entropy_allowed": False,
+    "random_fallback_allowed": False,
+    "retry_dependent_seeds_allowed": False,
+    "environment_dependent_seeds_allowed": False,
+    "result_dependent_reseeding_allowed": False,
+}
+_FREEZE_CANDIDATE_NONDETERMINISM_FLAGS = (
+    "environment_dependent_seeds_allowed", "os_entropy_allowed", "random_fallback_allowed",
+    "result_dependent_reseeding_allowed", "retry_dependent_seeds_allowed", "wall_clock_seeds_allowed",
+)
+_FREEZE_CANDIDATE_SAMPLE_CONTRACT = {
+    "sample_length_intervals": 2193,
+    "series_count": 9,
+    "cadence": "8h",
+    "registered_validation_start_utc": "2023-01-01T00:00:00Z",
+    "registered_validation_end_utc": "2024-12-31T23:59:59Z",
+    "theoretical_mean_zero_required": True,
+    "synthetic_only": True,
+    "real_data_used": False,
+}
+_FREEZE_CANDIDATE_DGP_KEYS = {
+    "burn_in_intervals", "cross_series_dependence", "definition", "dgp_id", "discarded_observations",
+    "factor_loading", "finite_value_requirement", "initial_state_distribution", "innovation_distribution",
+    "output_shape_and_ordering", "parameters", "role", "theoretical_mean", "theoretical_mean_zero",
+    "variance_normalization",
+}
+# Exact, executable-later parameters. Every value is fixed by this contract, so
+# no discretionary parameter survives into a later execution authorization.
+_FREEZE_CANDIDATE_DGP_PARAMETERS = {
+    "iid_gaussian": {"mean": 0.0, "variance": 1.0},
+    "iid_student_t_df5_standardized": {"degrees_of_freedom": 5, "scale_factor": "sqrt(3/5)", "standardized_variance": 1.0},
+    "nine_series_common_factor_dependence": {"common_factor_loading": "sqrt(0.5)", "idiosyncratic_loading": "sqrt(0.5)", "implied_pairwise_correlation": 0.5},
+    "stationary_ar1_phi_0p3": {"phi": 0.3, "innovation_variance": 0.91, "stationary_variance": 1.0},
+    "stationary_ar1_phi_0p7": {"phi": 0.7, "innovation_variance": 0.51, "stationary_variance": 1.0},
+    "stationary_garch11_like": {"omega": 0.05, "alpha": 0.05, "beta": 0.9, "initial_conditional_variance": 1.0, "unconditional_variance": 1.0, "persistence": 0.95},
+}
+_FREEZE_CANDIDATE_STRESS_KEYS = {
+    "authorized_for_tuning", "case_id", "definition", "finite_value_requirement", "initial_state_distribution",
+    "nine_series_construction", "output_shape_and_ordering", "parameters", "part_of_formal_pass_fail", "role",
+    "seed_use", "theoretical_mean", "theoretical_mean_zero",
+}
+_FREEZE_CANDIDATE_STRESS_PARAMETERS = {
+    "autocorrelation_structural_break": {"phi_before_transition": 0.0, "phi_after_transition": 0.8, "transition_interval_index": 1097, "innovation_variance_before_transition": 1.0, "innovation_variance_after_transition": 0.36},
+    "mean_zero_regime_switching": {"low_state_variance": 0.25, "high_state_variance": 4.0, "transition_probability_low_to_high": 0.02, "transition_probability_high_to_low": 0.02, "initial_state_probability_low": 0.5, "initial_state_probability_high": 0.5},
+    "sparse_extreme_outliers": {"outlier_probability": 0.002, "outlier_magnitude": 10.0, "outlier_sign_rule": "+1 with probability 0.5 and -1 with probability 0.5, independently of the base series", "base_distribution": "N(0,1)", "contamination_replaces_base_value": True},
+    "variance_structural_break": {"variance_before_transition": 1.0, "variance_after_transition": 9.0, "transition_interval_index": 1097},
+}
+_FREEZE_CANDIDATE_TUNING_LOCKS = [
+    "DGP_PARAMETERS", "FAMILYWISE_ALPHA", "HAC_LAG", "PASS_THRESHOLD", "SELECTION_RULE",
+    "STATIONARY_BLOCK_LENGTH", "TEST_STATISTIC", "VARIANT_FAMILY",
+]
+_FREEZE_CANDIDATE_NON_EFFECTS = [
+    "BLOCK_LIVE_INTEGRATION", "CALIBRATION_NOT_EXECUTED", "CANDIDATE_NOT_EFFECTIVE",
+    "DIAGNOSTIC_CASES_EXCLUDED_FROM_PASS_FAIL", "EDGE_UNPROVEN",
+    "HISTORICAL_DRAFT_REMAINS_HISTORICAL_AND_UNFROZEN", "INDEPENDENT_REVIEW_REQUIRED",
+    "NO_CALIBRATION_RESULTS_GENERATED", "NO_EXECUTION_COUNT_CONSUMED", "NO_LIVE_AUTHORITY",
+    "NO_MARKET_EDGE_CLAIM", "NO_PAPER_TRADING_AUTHORITY", "NO_REAL_DATA_ACCESS",
+    "NO_SCIENTIFIC_AUTHORITY", "NO_STORE_OR_QUARANTINE_ACCESS", "REGISTERED_H001_DESIGN_UNCHANGED",
+    "REGISTERED_VARIANT_FAMILY_UNCHANGED",
+]
+# A definition short enough to be a bare label is rejected outright; the freeze
+# candidate may not carry label-only DGPs the way the historical draft does.
+_FREEZE_CANDIDATE_MIN_DEFINITION_CHARS = 120
+_FREEZE_CANDIDATE_FORBIDDEN_SEED_TOKENS = (
+    "wall clock", "wall-clock", "time.time", "datetime.now", "os.urandom", "entropy", "getrandbits",
+    "secrets.", "unseeded", "system time", "nondeterministic", "retry", "reseed",
+)
+
+
+def _require_exact_bool(value: object, expected: bool, label: str) -> None:
+    if value is not True and value is not False:
+        _fail(f"{label}: explicit boolean required")
+    if value is not expected:
+        _fail(f"{label}: must be {str(expected).lower()}")
+
+
+def _freeze_candidate_binding(value: object, key: str) -> None:
+    binding = _keys(value, {"path", "sha256"}, f"freeze candidate {key} binding")
+    _require_repo_relative_review_path(binding["path"])
+    _sha(binding["sha256"], f"freeze candidate {key} sha256")
+    if key in ("activated_design", "activated_validator") and binding["sha256"] in (H001_DESIGN_SHA256, H001_VALIDATOR_SHA256):
+        _fail(f"freeze candidate {key}: historical pre-activation hash presented as the current activated hash")
+    if (binding["path"], binding["sha256"]) != _FREEZE_CANDIDATE_BINDINGS[key]:
+        _fail(f"freeze candidate {key} binding is wrong")
+
+
+def _validate_freeze_candidate_historical_draft(value: object) -> None:
+    keys = {
+        "is_current", "is_effective", "is_executable", "is_frozen", "observation",
+        "obsolete_pre_activation_design_sha256", "obsolete_pre_activation_validator_sha256", "path",
+        "preserved_unmodified", "remains_historical", "sha256", "status",
+    }
+    draft = _keys(value, keys, "freeze candidate historical draft")
+    if draft["path"] != "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json" or draft["sha256"] != H001_HISTORICAL_CALIBRATION_DRAFT_SHA256:
+        _fail("freeze candidate historical draft binding is wrong")
+    if draft["status"] != "DRAFT_ONLY_UNFROZEN_NOT_EXECUTABLE":
+        _fail("freeze candidate historical draft status drifted")
+    for key in ("is_current", "is_effective", "is_executable", "is_frozen"):
+        _require_exact_bool(draft[key], False, f"historical draft {key}")
+    for key in ("preserved_unmodified", "remains_historical"):
+        _require_exact_bool(draft[key], True, f"historical draft {key}")
+    if draft["obsolete_pre_activation_design_sha256"] != H001_DESIGN_SHA256 or draft["obsolete_pre_activation_validator_sha256"] != H001_VALIDATOR_SHA256:
+        _fail("freeze candidate historical draft obsolete hashes drifted")
+    if draft["obsolete_pre_activation_design_sha256"] == H001_ACTIVATED_DESIGN_SHA256 or draft["obsolete_pre_activation_validator_sha256"] == H001_ACTIVATED_VALIDATOR_SHA256:
+        _fail("freeze candidate historical draft claims the activated hashes as its own bindings")
+    for marker in ("historical", "unfrozen", "ineffective", "non-executable", "obsolete"):
+        if marker not in _str(draft["observation"], "historical draft observation"):
+            _fail("freeze candidate historical draft observation is incomplete")
+
+
+def _validate_freeze_candidate_seed_contract(value: object) -> None:
+    seed = _keys(value, set(_FREEZE_CANDIDATE_SEED_CONTRACT), "freeze candidate seed contract")
+    if seed["seed_domain"] != H001_FREEZE_CANDIDATE_SEED_DOMAIN:
+        _fail("freeze candidate seed domain is wrong")
+    for flag in _FREEZE_CANDIDATE_NONDETERMINISM_FLAGS:
+        _require_exact_bool(seed[flag], False, f"seed contract {flag}")
+    _require_exact_bool(seed["new_or_updated_dependencies"], False, "seed contract new_or_updated_dependencies")
+    _require_exact_bool(seed["rng_dependency_already_available"], True, "seed contract rng_dependency_already_available")
+    if seed != _FREEZE_CANDIDATE_SEED_CONTRACT:
+        _fail("freeze candidate seed derivation contract is ambiguous or drifted")
+    for key in ("outer_payload_rule", "bootstrap_payload_rule", "seed_integer_rule", "digest_algorithm"):
+        lowered = seed[key].lower()
+        if any(token in lowered for token in _FREEZE_CANDIDATE_FORBIDDEN_SEED_TOKENS):
+            _fail(f"seed contract {key}: nondeterministic seed source referenced")
+
+
+def _validate_freeze_candidate_dgps(value: object) -> list[str]:
+    entries = _list(value, "required_stationary_dgps")
+    ids = [entry["dgp_id"] if isinstance(entry, dict) and "dgp_id" in entry else None for entry in entries]
+    if len(ids) != len(set(ids)):
+        _fail("required_stationary_dgps: duplicate DGP")
+    if ids != sorted(_FREEZE_CANDIDATE_DGP_PARAMETERS):
+        _fail("required_stationary_dgps: exact sorted required DGP set required")
+    for entry in entries:
+        item = _keys(entry, _FREEZE_CANDIDATE_DGP_KEYS, "required DGP")
+        dgp_id = _identifier(item["dgp_id"], "dgp_id")
+        if len(_str(item["definition"], f"{dgp_id} definition")) < _FREEZE_CANDIDATE_MIN_DEFINITION_CHARS or "x[i," not in item["definition"]:
+            _fail(f"{dgp_id}: label-only or incomplete DGP definition")
+        for key in ("cross_series_dependence", "factor_loading", "finite_value_requirement", "initial_state_distribution", "innovation_distribution", "output_shape_and_ordering", "variance_normalization"):
+            _str(item[key], f"{dgp_id} {key}")
+        if item["theoretical_mean"] != 0:
+            _fail(f"{dgp_id}: non-zero-mean DGP definition")
+        _require_exact_bool(item["theoretical_mean_zero"], True, f"{dgp_id} theoretical_mean_zero")
+        if item["role"] != "REQUIRED_STATIONARY_DGP_IN_FORMAL_PASS_FAIL":
+            _fail(f"{dgp_id}: required DGP role drifted")
+        for key in ("burn_in_intervals", "discarded_observations"):
+            if type(item[key]) is not int or item[key] < 0:
+                _fail(f"{dgp_id} {key}: non-negative integer required")
+        if _keys(item["parameters"], set(_FREEZE_CANDIDATE_DGP_PARAMETERS[dgp_id]), f"{dgp_id} parameters") != _FREEZE_CANDIDATE_DGP_PARAMETERS[dgp_id]:
+            _fail(f"{dgp_id}: exact DGP parameters required")
+    return ids
+
+
+def _validate_freeze_candidate_stress_cases(value: object, dgp_ids: list[str]) -> None:
+    entries = _list(value, "diagnostic_stress_cases")
+    ids = [entry["case_id"] if isinstance(entry, dict) and "case_id" in entry else None for entry in entries]
+    if len(ids) != len(set(ids)):
+        _fail("diagnostic_stress_cases: duplicate stress case")
+    if ids != sorted(_FREEZE_CANDIDATE_STRESS_PARAMETERS):
+        _fail("diagnostic_stress_cases: exact sorted diagnostic case set required")
+    if set(ids) & set(dgp_ids):
+        _fail("diagnostic stress case included in the formal pass/fail DGP suite")
+    for entry in entries:
+        item = _keys(entry, _FREEZE_CANDIDATE_STRESS_KEYS, "diagnostic stress case")
+        case_id = _identifier(item["case_id"], "case_id")
+        if len(_str(item["definition"], f"{case_id} definition")) < _FREEZE_CANDIDATE_MIN_DEFINITION_CHARS:
+            _fail(f"{case_id}: label-only or incomplete stress case definition")
+        for key in ("finite_value_requirement", "initial_state_distribution", "nine_series_construction", "output_shape_and_ordering", "seed_use"):
+            _str(item[key], f"{case_id} {key}")
+        if item["role"] != "DIAGNOSTIC_ONLY":
+            _fail(f"{case_id}: diagnostic stress case role drifted")
+        _require_exact_bool(item["part_of_formal_pass_fail"], False, f"{case_id} part_of_formal_pass_fail")
+        _require_exact_bool(item["authorized_for_tuning"], False, f"{case_id} authorized_for_tuning")
+        if item["theoretical_mean"] != 0:
+            _fail(f"{case_id}: non-zero-mean stress case definition")
+        _require_exact_bool(item["theoretical_mean_zero"], True, f"{case_id} theoretical_mean_zero")
+        if _keys(item["parameters"], set(_FREEZE_CANDIDATE_STRESS_PARAMETERS[case_id]), f"{case_id} parameters") != _FREEZE_CANDIDATE_STRESS_PARAMETERS[case_id]:
+            _fail(f"{case_id}: exact stress case parameters required")
+
+
+def validate_calibration_spec_freeze_candidate(value: object) -> dict:
+    """Validate the H001 null-calibration freeze candidate, metadata only.
+
+    Accepts a parsed document. `load_and_validate_calibration_spec_freeze_candidate`
+    is the byte-level entry point that additionally rejects duplicate JSON keys
+    and non-canonical bytes. Nothing here reads the filesystem, the network, any
+    artifact store, or any environment value, and nothing here executes, tunes,
+    or reports a calibration.
+    """
+    data = _base(value, H001_FREEZE_CANDIDATE_DOCUMENT_KIND, H001_FREEZE_CANDIDATE_DOCUMENT_ID, H001_FREEZE_CANDIDATE_STATUS, _FREEZE_CANDIDATE_KEYS)
+    if data["governed_h001_protocol_id"] != H001_PROTOCOL_ID:
+        _fail("freeze candidate governed protocol drifted")
+    if data["edge_status"] != "EDGE_UNPROVEN" or data["live_status"] != "BLOCK_LIVE_INTEGRATION":
+        _fail("freeze candidate safety status drifted")
+    if "EDGE_PROVEN" in canonical_json_bytes(data).decode("ascii"):
+        _fail("freeze candidate asserts EDGE_PROVEN")
+
+    auth = _keys(data["authorization_state"], set(_FREEZE_CANDIDATE_AUTHORIZED_TRUE) | set(_FREEZE_CANDIDATE_AUTHORIZED_FALSE), "freeze candidate authorization_state")
+    for key in _FREEZE_CANDIDATE_AUTHORIZED_TRUE:
+        _require_exact_bool(auth[key], True, f"authorization_state {key}")
+    for key in _FREEZE_CANDIDATE_AUTHORIZED_FALSE:
+        _require_exact_bool(auth[key], False, f"authorization_state {key}")
+    meaning = _str(data["locked_for_review_meaning"], "locked_for_review_meaning")
+    if "does not mean" not in meaning or "effective" not in meaning:
+        _fail("freeze candidate must state that locking values for review does not make the specification effective")
+
+    bindings = _keys(data["bindings"], set(_FREEZE_CANDIDATE_BINDINGS) | {"source_main_commit"}, "freeze candidate bindings")
+    if type(bindings["source_main_commit"]) is not str or not re.fullmatch(r"[0-9a-f]{40}", bindings["source_main_commit"]):
+        _fail("freeze candidate source_main_commit: lowercase commit sha required")
+    if bindings["source_main_commit"] != H001_FREEZE_CANDIDATE_SOURCE_MAIN:
+        _fail("freeze candidate source main commit is wrong")
+    for key in _FREEZE_CANDIDATE_BINDINGS:
+        _freeze_candidate_binding(bindings[key], key)
+    _validate_freeze_candidate_historical_draft(data["historical_draft"])
+
+    target = _keys(data["registered_test_target"], set(_FREEZE_CANDIDATE_TEST_TARGET), "freeze candidate registered_test_target")
+    for key, expected in _FREEZE_CANDIDATE_TEST_TARGET.items():
+        if target[key] != expected or type(target[key]) is not type(expected):
+            _fail(f"registered_test_target {key} is wrong")
+    criterion = _keys(data["pass_criterion"], set(_FREEZE_CANDIDATE_PASS_CRITERION), "freeze candidate pass_criterion")
+    _require_exact_bool(criterion["binomial_interval_is_exact"], True, "pass_criterion binomial_interval_is_exact")
+    _require_exact_bool(criterion["diagnostic_cases_participate"], False, "pass_criterion diagnostic_cases_participate")
+    for key, expected in _FREEZE_CANDIDATE_PASS_CRITERION.items():
+        if criterion[key] != expected or type(criterion[key]) is not type(expected):
+            _fail(f"pass_criterion {key} is wrong or the interval method is ambiguous")
+
+    _validate_freeze_candidate_seed_contract(data["seed_contract"])
+    sample = _keys(data["synthetic_sample_contract"], set(_FREEZE_CANDIDATE_SAMPLE_CONTRACT) | {"sample_length_derivation", "output_shape_and_ordering", "finite_value_requirement"}, "freeze candidate synthetic_sample_contract")
+    for key, expected in _FREEZE_CANDIDATE_SAMPLE_CONTRACT.items():
+        if sample[key] != expected or type(sample[key]) is not type(expected):
+            _fail(f"synthetic_sample_contract {key} is wrong")
+    for key in ("sample_length_derivation", "output_shape_and_ordering", "finite_value_requirement"):
+        _str(sample[key], f"synthetic_sample_contract {key}")
+
+    dgp_ids = _validate_freeze_candidate_dgps(data["required_stationary_dgps"])
+    _validate_freeze_candidate_stress_cases(data["diagnostic_stress_cases"], dgp_ids)
+    policy = _keys(data["diagnostic_case_policy"], {"authorized_for_tuning", "may_not_alter", "part_of_formal_pass_fail", "role"}, "freeze candidate diagnostic_case_policy")
+    if policy["role"] != "DIAGNOSTIC_ONLY":
+        _fail("diagnostic_case_policy role drifted")
+    _require_exact_bool(policy["part_of_formal_pass_fail"], False, "diagnostic_case_policy part_of_formal_pass_fail")
+    _require_exact_bool(policy["authorized_for_tuning"], False, "diagnostic_case_policy authorized_for_tuning")
+    if policy["may_not_alter"] != _FREEZE_CANDIDATE_TUNING_LOCKS:
+        _fail("diagnostic_case_policy tuning locks drifted")
+    if _list(data["non_effects"], "non_effects", sorted_unique=True) != _FREEZE_CANDIDATE_NON_EFFECTS:
+        _fail("freeze candidate non-effects drifted")
+    return data
+
+
+def load_and_validate_calibration_spec_freeze_candidate(raw: bytes) -> dict:
+    """Byte-level freeze-candidate entry point: strict UTF-8, no duplicate JSON
+    keys, canonical bytes, then the full metadata-only validation above."""
+    if type(raw) is not bytes:
+        _fail("exact bytes input required")
+    try:
+        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, AssuranceValidationError) as error:
+        raise AssuranceValidationError("strict UTF-8 JSON without duplicate keys required") from error
+    if canonical_json_bytes(parsed) != raw:
+        _fail("non-canonical JSON bytes")
+    return validate_calibration_spec_freeze_candidate(parsed)

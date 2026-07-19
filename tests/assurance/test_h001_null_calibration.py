@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 
@@ -30,3 +31,84 @@ def test_canary_payloads_are_in_memory_and_exact():
     assert payloads == {"alpha/payload.txt": b"QNTY_SYNTHETIC_CANARY_ALPHA_V1", "beta/payload.bin": bytes.fromhex("00514e5459ff")}
     assert not (ROOT / "alpha").exists()
     with pytest.raises(ValueError): validate_synthetic_canary_scaffold(dict(descriptor, status="EXECUTED"))
+
+
+FREEZE_CANDIDATE = ROOT / "docs/assurance/h001_synthetic_null_calibration_spec_freeze_candidate_v001.json"
+
+
+def freeze_candidate():
+    return json.loads(FREEZE_CANDIDATE.read_bytes())
+
+
+def test_freeze_candidate_cannot_build_an_execution_plan():
+    """The candidate is recognized and fully validated, then refused: recognized
+    is not the same as effective."""
+    with pytest.raises(AssuranceValidationError, match="CALIBRATION_SPEC_NOT_EFFECTIVE"):
+        build_calibration_execution_plan(freeze_candidate())
+
+
+def test_historical_draft_and_candidate_fail_closed_with_distinct_reasons():
+    draft = json.loads((ROOT / "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json").read_bytes())
+    with pytest.raises(AssuranceValidationError, match="CALIBRATION_SPEC_NOT_FROZEN"):
+        build_calibration_execution_plan(draft)
+    with pytest.raises(AssuranceValidationError, match="CALIBRATION_SPEC_NOT_EFFECTIVE"):
+        build_calibration_execution_plan(freeze_candidate())
+
+
+@pytest.mark.parametrize("argument", [
+    None, {}, [], "spec", 0,
+    pytest.param("candidate", id="candidate"),
+    pytest.param("draft", id="draft"),
+])
+def test_execute_calibration_is_never_authorized(argument):
+    if argument == "candidate":
+        argument = freeze_candidate()
+    elif argument == "draft":
+        argument = json.loads((ROOT / "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json").read_bytes())
+    with pytest.raises(AssuranceValidationError, match="CALIBRATION_EXECUTION_NOT_AUTHORIZED"):
+        execute_calibration(argument)
+    with pytest.raises(AssuranceValidationError, match="CALIBRATION_EXECUTION_NOT_AUTHORIZED"):
+        execute_calibration(spec=argument)
+
+
+def test_invalid_freeze_candidate_is_rejected_before_the_boundary_message():
+    """A candidate that overstates its authority must fail contract validation
+    rather than reaching the (weaker-sounding) not-effective refusal."""
+    spec = freeze_candidate()
+    spec["authorization_state"]["execution_authorized"] = True
+    with pytest.raises(AssuranceValidationError) as error:
+        build_calibration_execution_plan(spec)
+    assert "CALIBRATION_SPEC_NOT_EFFECTIVE" not in str(error.value)
+    spec = freeze_candidate()
+    spec["registered_test_target"]["hac_lag"] = 22
+    with pytest.raises(AssuranceValidationError, match="hac_lag"):
+        build_calibration_execution_plan(spec)
+
+
+def test_harness_implements_no_calibration_machinery():
+    source = (ROOT / "quantbot/assurance/h001_null_calibration.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    assert {node.name for node in tree.body if isinstance(node, ast.FunctionDef)} == {
+        "deterministic_seed_domain", "build_calibration_execution_plan", "execute_calibration",
+    }
+    assert not [node for node in tree.body if isinstance(node, ast.ClassDef)]
+    # Scan imports and executable references, not prose: the module docstring
+    # legitimately names the machinery it refuses to implement.
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported.add(node.module or "")
+    assert imported <= {"__future__", "typing", "contracts"}, f"unexpected import: {imported}"
+    for banned in ("numpy", "multiprocessing", "concurrent", "random", "pandas", "os", "pathlib", "csv"):
+        assert banned not in imported, f"calibration harness must not import {banned}"
+    referenced = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    referenced |= {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    for banned in ("open", "Pool", "to_csv", "dump", "dumps", "write_bytes", "write_text", "mkdir", "normal", "standard_normal", "default_rng", "Philox", "Generator"):
+        assert banned not in referenced, f"calibration harness must not call {banned}"
+
+
+def test_seed_domain_helper_matches_the_candidate_seed_contract():
+    candidate = freeze_candidate()
+    assert calibration.deterministic_seed_domain(candidate["document_id"]) == candidate["seed_contract"]["seed_domain"]

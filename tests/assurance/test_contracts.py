@@ -19,7 +19,9 @@ VALIDATORS = {
     "durable_store_failure_domain_evidence_schema_v001.json": contracts.validate_failure_domain_evidence_schema,
     "replayable_review_evidence_packet_schema_v001.json": contracts.validate_review_packet_schema,
     "synthetic_artifact_canary_scaffold_v001.json": contracts.validate_synthetic_canary_scaffold,
+    "h001_synthetic_null_calibration_spec_freeze_candidate_v001.json": contracts.validate_calibration_spec_freeze_candidate,
 }
+FREEZE_CANDIDATE = DOCS / "h001_synthetic_null_calibration_spec_freeze_candidate_v001.json"
 
 def read(name):
     return (DOCS / name).read_bytes()
@@ -295,3 +297,250 @@ def test_h001_temporal_candidate_rereview_record_rejects_duplicate_or_noncanonic
         contracts.validate_h001_temporal_candidate_rereview_record(duplicate)
     with pytest.raises(ValueError):
         contracts.validate_h001_temporal_candidate_rereview_record(json.dumps(json.loads(raw)).encode())
+
+
+# --- H001 synthetic-null calibration spec freeze candidate -------------------
+
+def freeze_candidate():
+    return json.loads(FREEZE_CANDIDATE.read_bytes())
+
+
+def _dgp(value, dgp_id):
+    return next(item for item in value["required_stationary_dgps"] if item["dgp_id"] == dgp_id)
+
+
+def _stress(value, case_id):
+    return next(item for item in value["diagnostic_stress_cases"] if item["case_id"] == case_id)
+
+
+def test_freeze_candidate_is_canonical_locked_for_review_and_not_effective():
+    raw = FREEZE_CANDIDATE.read_bytes()
+    value = contracts.load_and_validate_calibration_spec_freeze_candidate(raw)
+    assert contracts.canonical_json_bytes(value) == raw and not raw.endswith(b"\n")
+    assert value["status"] == "FREEZE_CANDIDATE_FOR_INDEPENDENT_REVIEW_NOT_EFFECTIVE_NOT_EXECUTABLE"
+    auth = value["authorization_state"]
+    assert auth["candidate_values_locked_for_review"] is True and auth["independent_review_required"] is True
+    for key in (
+        "specification_frozen_effective", "specification_effective", "execution_authorized", "results_exposed",
+        "real_data_access_authorized", "h001_validation_execution_authorized", "h001_holdout_execution_authorized",
+        "scientific_authorization", "paper_trade_authorization", "live_authorization",
+    ):
+        assert auth[key] is False
+    assert value["edge_status"] == "EDGE_UNPROVEN" and value["live_status"] == "BLOCK_LIVE_INTEGRATION"
+
+
+def test_freeze_candidate_preserves_the_registered_statistical_target():
+    target = freeze_candidate()["registered_test_target"]
+    assert target["registered_variant_series"] == 9
+    assert target["test_target"] == "exact registered synchronous stationary-bootstrap maximum-t procedure"
+    assert target["inner_procedure"] == "synchronous stationary-bootstrap maximum-t"
+    assert target["bootstrap_repetitions"] == 10000
+    assert target["outer_synthetic_replications"] == 2000
+    assert target["stationary_block_length"] == 63
+    assert target["hac_lag"] == 21
+    assert target["familywise_alpha"] == 0.05
+    criterion = freeze_candidate()["pass_criterion"]
+    assert criterion["binomial_interval_method"] == "one-sided exact Clopper-Pearson upper bound"
+    assert criterion["binomial_confidence_level"] == 0.95 and criterion["fwer_upper_bound_threshold"] == 0.075
+    assert criterion["diagnostic_cases_participate"] is False
+
+
+def test_freeze_candidate_binds_activated_not_historical_hashes():
+    bindings = freeze_candidate()["bindings"]
+    assert bindings["source_main_commit"] == "6465d036af6b66ae6d845511c652d5857651bc49"
+    assert bindings["activated_design"]["sha256"] == contracts.H001_ACTIVATED_DESIGN_SHA256
+    assert bindings["activated_validator"]["sha256"] == contracts.H001_ACTIVATED_VALIDATOR_SHA256
+    assert bindings["governance_amendment"]["sha256"] == contracts.H001_FREEZE_GOVERNANCE_AMENDMENT_SHA256
+    assert bindings["source_handoff"]["sha256"] == contracts.H001_FREEZE_CANDIDATE_PREDECESSOR_SHA256
+    assert contracts.H001_DESIGN_SHA256 not in (bindings["activated_design"]["sha256"], bindings["activated_validator"]["sha256"])
+    draft = freeze_candidate()["historical_draft"]
+    assert draft["sha256"] == contracts.H001_HISTORICAL_CALIBRATION_DRAFT_SHA256
+    assert draft["obsolete_pre_activation_design_sha256"] == contracts.H001_DESIGN_SHA256
+    assert draft["obsolete_pre_activation_validator_sha256"] == contracts.H001_VALIDATOR_SHA256
+    assert (draft["is_current"], draft["is_frozen"], draft["is_effective"], draft["is_executable"]) == (False, False, False, False)
+
+
+def test_freeze_candidate_historical_draft_bytes_are_untouched():
+    raw = (DOCS / "h001_synthetic_null_calibration_spec_draft_v001.json").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == contracts.H001_HISTORICAL_CALIBRATION_DRAFT_SHA256
+    assert json.loads(raw)["status"] == "DRAFT_ONLY_UNFROZEN_NOT_EXECUTABLE"
+
+
+def test_freeze_candidate_seed_derivation_is_exact_and_reproducible():
+    """Derive seeds from the documented rule only. No series, no bootstrap, no
+    RNG draw: this exercises the seed contract as arithmetic over metadata."""
+    seed = freeze_candidate()["seed_contract"]
+    domain = seed["seed_domain"]
+    assert domain == "h001-null-calibration/h001-synthetic-null-calibration-spec-freeze-candidate-v001/synthetic-only"
+    payload = f"{domain}:iid_gaussian:outer:0".encode("utf-8")
+    digest = hashlib.sha256(payload).hexdigest()
+    assert int(digest[:16], 16) == int(hashlib.sha256(payload).hexdigest()[:16], 16)
+    bootstrap = hashlib.sha256(f"{domain}:iid_gaussian:outer:0:bootstrap".encode("utf-8")).hexdigest()
+    assert bootstrap != digest and int(bootstrap[:16], 16) < 2 ** 64
+    assert seed["rng_algorithm"] == "numpy.random.Philox" and seed["new_or_updated_dependencies"] is False
+    for flag in ("wall_clock_seeds_allowed", "os_entropy_allowed", "random_fallback_allowed", "retry_dependent_seeds_allowed", "environment_dependent_seeds_allowed", "result_dependent_reseeding_allowed"):
+        assert seed[flag] is False
+
+
+def test_freeze_candidate_dgps_are_exact_zero_mean_and_not_label_only():
+    value = freeze_candidate()
+    assert [item["dgp_id"] for item in value["required_stationary_dgps"]] == [
+        "iid_gaussian", "iid_student_t_df5_standardized", "nine_series_common_factor_dependence",
+        "stationary_ar1_phi_0p3", "stationary_ar1_phi_0p7", "stationary_garch11_like",
+    ]
+    for item in value["required_stationary_dgps"]:
+        assert item["theoretical_mean"] == 0 and item["theoretical_mean_zero"] is True
+        assert len(item["definition"]) >= 120 and "x[i," in item["definition"]
+    assert _dgp(value, "stationary_ar1_phi_0p3")["parameters"] == {"phi": 0.3, "innovation_variance": 0.91, "stationary_variance": 1.0}
+    assert _dgp(value, "stationary_ar1_phi_0p7")["parameters"]["phi"] == 0.7
+    assert _dgp(value, "iid_student_t_df5_standardized")["parameters"] == {"degrees_of_freedom": 5, "scale_factor": "sqrt(3/5)", "standardized_variance": 1.0}
+    assert _dgp(value, "nine_series_common_factor_dependence")["parameters"]["implied_pairwise_correlation"] == 0.5
+    garch = _dgp(value, "stationary_garch11_like")["parameters"]
+    assert (garch["omega"], garch["alpha"], garch["beta"]) == (0.05, 0.05, 0.9)
+    assert garch["alpha"] + garch["beta"] < 1
+    sample = value["synthetic_sample_contract"]
+    assert sample["sample_length_intervals"] == 2193 and sample["series_count"] == 9 and sample["real_data_used"] is False
+
+
+def test_freeze_candidate_diagnostics_are_defined_but_excluded_from_pass_fail():
+    value = freeze_candidate()
+    assert [item["case_id"] for item in value["diagnostic_stress_cases"]] == [
+        "autocorrelation_structural_break", "mean_zero_regime_switching",
+        "sparse_extreme_outliers", "variance_structural_break",
+    ]
+    for item in value["diagnostic_stress_cases"]:
+        assert item["role"] == "DIAGNOSTIC_ONLY"
+        assert item["part_of_formal_pass_fail"] is False and item["authorized_for_tuning"] is False
+        assert item["theoretical_mean"] == 0 and item["parameters"]
+    policy = value["diagnostic_case_policy"]
+    assert policy["authorized_for_tuning"] is False
+    assert policy["may_not_alter"] == ["DGP_PARAMETERS", "FAMILYWISE_ALPHA", "HAC_LAG", "PASS_THRESHOLD", "SELECTION_RULE", "STATIONARY_BLOCK_LENGTH", "TEST_STATISTIC", "VARIANT_FAMILY"]
+
+
+# Adversarial coordinated mutations. Each entry is a distinct way the candidate
+# could overstate its own authority, drift from an activated binding, or soften
+# a registered statistical value; every one must fail closed.
+FREEZE_CANDIDATE_MUTATIONS = {
+    "marked_effective": lambda v: v["authorization_state"].update(specification_effective=True),
+    "marked_frozen_effective": lambda v: v["authorization_state"].update(specification_frozen_effective=True),
+    "marked_executable": lambda v: v["authorization_state"].update(execution_authorized=True),
+    "review_removed": lambda v: v["authorization_state"].update(independent_review_required=False),
+    "values_not_locked": lambda v: v["authorization_state"].update(candidate_values_locked_for_review=False),
+    "results_present": lambda v: v["authorization_state"].update(results_exposed=True),
+    "wrong_activated_design": lambda v: v["bindings"]["activated_design"].update(sha256="0" * 64),
+    "historical_design_as_current": lambda v: v["bindings"]["activated_design"].update(sha256=contracts.H001_DESIGN_SHA256),
+    "wrong_activated_validator": lambda v: v["bindings"]["activated_validator"].update(sha256="0" * 64),
+    "historical_validator_as_current": lambda v: v["bindings"]["activated_validator"].update(sha256=contracts.H001_VALIDATOR_SHA256),
+    "wrong_governance_amendment": lambda v: v["bindings"]["governance_amendment"].update(sha256="0" * 64),
+    "wrong_v019_predecessor": lambda v: v["bindings"]["source_handoff"].update(sha256="0" * 64),
+    "wrong_v019_path": lambda v: v["bindings"]["source_handoff"].update(path="docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v018.json"),
+    "wrong_source_main": lambda v: v["bindings"].update(source_main_commit="0" * 40),
+    "wrong_temporal_activation": lambda v: v["bindings"]["temporal_activation_amendment"].update(sha256="0" * 64),
+    "historical_draft_claimed_current": lambda v: v["historical_draft"].update(is_current=True),
+    "historical_draft_promoted": lambda v: v["historical_draft"].update(is_frozen=True),
+    "historical_draft_effective": lambda v: v["historical_draft"].update(is_effective=True),
+    "historical_draft_executable": lambda v: v["historical_draft"].update(is_executable=True),
+    "historical_draft_modified": lambda v: v["historical_draft"].update(sha256="0" * 64),
+    "historical_draft_rebound_to_activated": lambda v: v["historical_draft"].update(obsolete_pre_activation_design_sha256=contracts.H001_ACTIVATED_DESIGN_SHA256),
+    "wrong_seed_domain": lambda v: v["seed_contract"].update(seed_domain="h001-null-calibration/other/synthetic-only"),
+    "wall_clock_seed": lambda v: v["seed_contract"].update(wall_clock_seeds_allowed=True),
+    "os_entropy_seed": lambda v: v["seed_contract"].update(os_entropy_allowed=True),
+    "random_fallback_seed": lambda v: v["seed_contract"].update(random_fallback_allowed=True),
+    "retry_dependent_seed": lambda v: v["seed_contract"].update(retry_dependent_seeds_allowed=True),
+    "environment_dependent_seed": lambda v: v["seed_contract"].update(environment_dependent_seeds_allowed=True),
+    "result_dependent_reseeding": lambda v: v["seed_contract"].update(result_dependent_reseeding_allowed=True),
+    "ambiguous_seed_derivation": lambda v: v["seed_contract"].update(seed_integer_rule="an implementation-defined integer derived from the digest"),
+    "wall_clock_in_payload_rule": lambda v: v["seed_contract"].update(outer_payload_rule="seed_domain + wall clock timestamp"),
+    "new_dependency_declared": lambda v: v["seed_contract"].update(new_or_updated_dependencies=True),
+    "wrong_outer_replications": lambda v: v["registered_test_target"].update(outer_synthetic_replications=1000),
+    "wrong_bootstrap_repetitions": lambda v: v["registered_test_target"].update(bootstrap_repetitions=5000),
+    "wrong_block_length": lambda v: v["registered_test_target"].update(stationary_block_length=64),
+    "wrong_hac_lag": lambda v: v["registered_test_target"].update(hac_lag=22),
+    "wrong_familywise_alpha": lambda v: v["registered_test_target"].update(familywise_alpha=0.1),
+    "wrong_variant_series": lambda v: v["registered_test_target"].update(registered_variant_series=8),
+    "wrong_fwer_threshold": lambda v: v["pass_criterion"].update(fwer_upper_bound_threshold=0.1),
+    "inexact_interval_method": lambda v: v["pass_criterion"].update(binomial_interval_method="normal approximation upper bound"),
+    "interval_not_exact": lambda v: v["pass_criterion"].update(binomial_interval_is_exact=False),
+    "unspecified_interval_confidence": lambda v: v["pass_criterion"].update(binomial_confidence_level=0.9),
+    "missing_dgp": lambda v: v["required_stationary_dgps"].pop(),
+    "extra_dgp": lambda v: v["required_stationary_dgps"].append(dict(v["required_stationary_dgps"][0], dgp_id="iid_uniform")),
+    "duplicate_dgp": lambda v: v["required_stationary_dgps"].append(dict(v["required_stationary_dgps"][0])),
+    "label_only_dgp": lambda v: _dgp(v, "iid_gaussian").update(definition="IID Gaussian"),
+    "non_zero_mean_dgp": lambda v: _dgp(v, "iid_gaussian").update(theoretical_mean=1),
+    "non_zero_mean_flag": lambda v: _dgp(v, "iid_gaussian").update(theoretical_mean_zero=False),
+    "wrong_ar_coefficient": lambda v: _dgp(v, "stationary_ar1_phi_0p3")["parameters"].update(phi=0.4),
+    "unstandardized_student_t": lambda v: _dgp(v, "iid_student_t_df5_standardized")["parameters"].update(scale_factor="1"),
+    "wrong_common_factor_correlation": lambda v: _dgp(v, "nine_series_common_factor_dependence")["parameters"].update(implied_pairwise_correlation=0.9),
+    "nonstationary_garch": lambda v: _dgp(v, "stationary_garch11_like")["parameters"].update(alpha=0.2, beta=0.9),
+    "wrong_sample_length": lambda v: v["synthetic_sample_contract"].update(sample_length_intervals=2192),
+    "wrong_series_count": lambda v: v["synthetic_sample_contract"].update(series_count=8),
+    "diagnostic_in_pass_fail": lambda v: _stress(v, "sparse_extreme_outliers").update(part_of_formal_pass_fail=True),
+    "diagnostic_participates": lambda v: v["pass_criterion"].update(diagnostic_cases_participate=True),
+    "diagnostic_promoted_to_required": lambda v: v["diagnostic_stress_cases"][0].update(role="REQUIRED_STATIONARY_DGP_IN_FORMAL_PASS_FAIL"),
+    "tuning_from_diagnostics": lambda v: v["diagnostic_case_policy"].update(authorized_for_tuning=True),
+    "tuning_lock_removed": lambda v: v["diagnostic_case_policy"]["may_not_alter"].remove("HAC_LAG"),
+    "stress_case_tunable": lambda v: _stress(v, "variance_structural_break").update(authorized_for_tuning=True),
+    "missing_stress_case": lambda v: v["diagnostic_stress_cases"].pop(),
+    "label_only_stress_case": lambda v: _stress(v, "variance_structural_break").update(definition="variance break"),
+    "real_data_access": lambda v: v["authorization_state"].update(real_data_access_authorized=True),
+    "h001_validation_execution": lambda v: v["authorization_state"].update(h001_validation_execution_authorized=True),
+    "h001_holdout_execution": lambda v: v["authorization_state"].update(h001_holdout_execution_authorized=True),
+    "scientific_authority": lambda v: v["authorization_state"].update(scientific_authorization=True),
+    "paper_authority": lambda v: v["authorization_state"].update(paper_trade_authorization=True),
+    "live_authority": lambda v: v["authorization_state"].update(live_authorization=True),
+    "edge_proven": lambda v: v.update(edge_status="EDGE_PROVEN"),
+    "live_unblocked": lambda v: v.update(live_status="READY"),
+    "edge_proven_in_non_effects": lambda v: v["non_effects"].append("EDGE_PROVEN"),
+    "wrong_status": lambda v: v.update(status="FROZEN_EFFECTIVE"),
+    "wrong_document_id": lambda v: v.update(document_id="h001-synthetic-null-calibration-spec-freeze-candidate-v002"),
+    "wrong_document_kind": lambda v: v.update(document_kind="qnty_h001_synthetic_null_calibration_spec_draft"),
+    "wrong_protocol": lambda v: v.update(governed_h001_protocol_id="other_protocol"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(FREEZE_CANDIDATE_MUTATIONS))
+def test_freeze_candidate_mutations_fail_closed(name):
+    value = freeze_candidate()
+    FREEZE_CANDIDATE_MUTATIONS[name](value)
+    with pytest.raises(ValueError):
+        contracts.validate_calibration_spec_freeze_candidate(value)
+    with pytest.raises(ValueError):
+        contracts.load_and_validate_calibration_spec_freeze_candidate(contracts.canonical_json_bytes(value))
+
+
+def test_freeze_candidate_rejects_missing_extra_duplicate_and_noncanonical_bytes():
+    raw = FREEZE_CANDIDATE.read_bytes()
+    with pytest.raises(ValueError):
+        contracts.load_and_validate_calibration_spec_freeze_candidate(raw[:-1] + b',"extra":1}')
+    duplicate = raw[:-1] + b',"status":"FREEZE_CANDIDATE_FOR_INDEPENDENT_REVIEW_NOT_EFFECTIVE_NOT_EXECUTABLE"}'
+    with pytest.raises(ValueError, match="duplicate"):
+        contracts.load_and_validate_calibration_spec_freeze_candidate(duplicate)
+    with pytest.raises(ValueError):
+        contracts.load_and_validate_calibration_spec_freeze_candidate(json.dumps(json.loads(raw)).encode())
+    with pytest.raises(ValueError, match="exact bytes input"):
+        contracts.load_and_validate_calibration_spec_freeze_candidate(bytearray(raw))
+    value = freeze_candidate()
+    value.pop("seed_contract")
+    with pytest.raises(ValueError):
+        contracts.validate_calibration_spec_freeze_candidate(value)
+
+
+def test_freeze_candidate_validation_is_metadata_only():
+    """The freeze-candidate validators must not reach outside the document."""
+    source = (ROOT / "quantbot/assurance/contracts.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    names = {
+        "validate_calibration_spec_freeze_candidate", "load_and_validate_calibration_spec_freeze_candidate",
+        "_validate_freeze_candidate_historical_draft", "_validate_freeze_candidate_seed_contract",
+        "_validate_freeze_candidate_dgps", "_validate_freeze_candidate_stress_cases", "_freeze_candidate_binding",
+    }
+    forbidden = {"open", "read_bytes", "read_text", "urlopen", "request", "get", "post", "connect", "system", "run", "Popen", "getenv", "listdir", "glob", "iterdir", "exists"}
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or node.name not in names:
+            continue
+        for child in ast.walk(node):
+            if isinstance(child, ast.Attribute):
+                assert child.attr not in forbidden, f"{node.name} reaches outside the document via {child.attr}"
+            if isinstance(child, ast.Name):
+                assert child.id not in {"open", "eval", "exec", "__import__"}, f"{node.name} uses {child.id}"
+    assert "import requests" not in source and "import socket" not in source and "import os" not in source
