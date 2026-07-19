@@ -8,6 +8,7 @@ import ast
 import copy
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -305,16 +306,16 @@ def test_production_control_state_verifies():
     state = load_and_verify_continuity_state(ROOT)
     receipt = state["handoff_receipt"]
     assert receipt["safety_state"]["decomposition_execution_count"] == 0
-    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION], [context._H001_ASSURANCE_REVIEW_NEXT_ACTION], [context._H001_TEMPORAL_CANDIDATE_NEXT_ACTION], [context._H001_TEMPORAL_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_TEMPORAL_ACTIVE_NEXT_ACTION], [context._H001_CALIBRATION_GOVERNANCE_NEXT_ACTION], [context._H001_CALIBRATION_CANDIDATE_NEXT_ACTION], [context._H001_CALIBRATION_REREVIEW_NEXT_ACTION], [context._H001_CALIBRATION_EFFECTIVE_NEXT_ACTION], [context._H001_CALIBRATION_EXECUTION_GOVERNANCE_NEXT_ACTION])
+    assert receipt["next_actions"] in (["IMPLEMENT_DURABLE_ARTIFACT_PLANE"], ["CONFIGURE_TWO_DURABLE_ARTIFACT_STORES"], ["IMPLEMENT_CANDIDATE1_V1_SYNTHETIC_SANDBOX_SCAFFOLD"], ["RUN_CANDIDATE1_V1_SYNTHETIC_STRATEGY_BATCH"], [context._H001_COMPLETE_NEXT_ACTION], [context._H001_DESIGN_NEXT_ACTION], [context._H001_PREREGISTERED_NEXT_ACTION], [context._H001_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_PRE_DATA_NEXT_ACTION], [context._H001_SCAFFOLD_NEXT_ACTION], [context._H001_ASSURANCE_REVIEW_NEXT_ACTION], [context._H001_TEMPORAL_CANDIDATE_NEXT_ACTION], [context._H001_TEMPORAL_REVIEW_COMPLETE_NEXT_ACTION], [context._H001_TEMPORAL_ACTIVE_NEXT_ACTION], [context._H001_CALIBRATION_GOVERNANCE_NEXT_ACTION], [context._H001_CALIBRATION_CANDIDATE_NEXT_ACTION], [context._H001_CALIBRATION_REREVIEW_NEXT_ACTION], [context._H001_CALIBRATION_EFFECTIVE_NEXT_ACTION], [context._H001_CALIBRATION_EXECUTION_GOVERNANCE_NEXT_ACTION], [context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_NEXT_ACTION])
     packet = render_context_packet(state)
     assert "PROTOCOL_EXECUTION=BLOCKED" in packet
     assert "availability=UNAVAILABLE" in packet
-    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE)
+    assert state["active_task"]["phase"] in (context._H001_COMPLETE_PHASE, context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE)
 
 
 def test_h001_completion_phase_verifies_and_renders_boundaries():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_DESIGN_PHASE, context._H001_PREREGISTERED_PHASE, context._H001_REVIEW_COMPLETE_PHASE, context._H001_PRE_DATA_PHASE, context._H001_SCAFFOLD_PHASE, context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced past synthetic completion")
     assert state["active_task"]["phase"] == context._H001_COMPLETE_PHASE
     assert state["handoff_receipt"]["next_actions"] == [context._H001_COMPLETE_NEXT_ACTION]
@@ -1111,7 +1112,7 @@ def test_valid_v003_amendment_chain_and_boundary_rendering():
         packet = render_context_packet(state)
         assert "H001_REAL_DATA_ACCESS=FORBIDDEN" in packet
         return
-    if state["active_task"]["phase"] in (context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         return
     if state["active_task"]["phase"] in (context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE):
         if state["active_task"]["phase"] == context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE:
@@ -1175,7 +1176,7 @@ def _mutate_rereview_record(root, mutate):
 
 def test_h001_calibration_rereview_phase_passes_and_renders_non_activation_boundary():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced to the effective freeze phase")
     assert state["active_task"]["phase"] == context._H001_CALIBRATION_REREVIEW_PHASE
     packet = render_context_packet(state)
@@ -1800,7 +1801,7 @@ def test_repaired_assurance_scaffold_hashes_are_independently_pinned():
 
 def test_h001_assurance_review_completion_transition_renders_and_binds():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_TEMPORAL_CANDIDATE_PHASE, context._H001_TEMPORAL_REVIEW_COMPLETE_PHASE, context._H001_TEMPORAL_ACTIVE_PHASE, context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced to the temporal candidate phase")
     assert state["active_task"]["phase"] == context._H001_ASSURANCE_REVIEW_COMPLETE_PHASE
     assert state["handoff_receipt"]["receipt_index"] == 15
@@ -2039,7 +2040,7 @@ def test_temporal_candidate_amendment_mutations_fail_closed(tmp_path, mutate_ame
 
 def test_temporal_candidate_production_render_is_review_only():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced past temporal activation")
     if state["active_task"]["phase"] == context._H001_TEMPORAL_ACTIVE_PHASE:
         packet = render_context_packet(state)
@@ -2207,7 +2208,7 @@ def _activation_mutated_tree(tmp_path, *, mutate_amendment=None, mutate_receipt=
 
 def test_activation_production_state_renders_effective_strict_contract():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced past temporal activation")
     assert state["active_task"]["phase"] == context._H001_TEMPORAL_ACTIVE_PHASE
     assert state["handoff_receipt"]["receipt_index"] == 18
@@ -2233,7 +2234,7 @@ def test_activation_production_state_renders_effective_strict_contract():
 
 def test_activation_production_scope_is_exactly_nine_files_in_governance_order():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_CALIBRATION_GOVERNANCE_PHASE, context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced past temporal activation")
     assert state["handoff_receipt"]["changed_file_scope"] == [
         "docs/control/amendments/candidate1_h001_temporal_causality_activation_v001.json",
@@ -2350,7 +2351,7 @@ def _calibration_governance_mutated_tree(tmp_path, *, mutate_amendment=None, mut
 
 def test_calibration_governance_production_state_renders_authorized_but_unfrozen():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_CALIBRATION_CANDIDATE_PHASE, context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced to the freeze-candidate review phase")
     assert state["active_task"]["phase"] == context._H001_CALIBRATION_GOVERNANCE_PHASE
     assert state["handoff_receipt"]["receipt_index"] == 19
@@ -2478,7 +2479,7 @@ def _calibration_candidate_mutated_tree(
 
 def test_calibration_candidate_production_state_renders_review_required():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced to the rereview-recorded phase")
     assert state["active_task"]["phase"] == context._H001_CALIBRATION_CANDIDATE_PHASE
     assert state["handoff_receipt"]["receipt_index"] == 20
@@ -2518,7 +2519,7 @@ def test_calibration_candidate_production_state_renders_review_required():
 
 def test_calibration_candidate_blockers_are_carried_forward_unweakened():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced to the rereview-recorded phase")
     assert set(state["handoff_receipt"]["blockers"]) == {
         "V0 remains unavailable",
@@ -2533,7 +2534,7 @@ def test_calibration_candidate_blockers_are_carried_forward_unweakened():
 
 def test_calibration_candidate_production_scope_is_exactly_nine_files_in_order():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced to the rereview-recorded phase")
     assert state["handoff_receipt"]["changed_file_scope"] == [
         "docs/assurance/h001_synthetic_null_calibration_spec_freeze_candidate_v001.json",
@@ -2551,7 +2552,7 @@ def test_calibration_candidate_production_scope_is_exactly_nine_files_in_order()
 
 def test_calibration_candidate_evidence_is_exact_unique_and_hash_bound():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced to the rereview-recorded phase")
     evidence = state["handoff_receipt"]["evidence"]
     paths = [item["path"] for item in evidence]
@@ -2581,7 +2582,7 @@ def test_calibration_candidate_evidence_is_exact_unique_and_hash_bound():
 
 def test_calibration_candidate_predecessor_binds_v019_exactly():
     state = load_and_verify_continuity_state(ROOT)
-    if state["active_task"]["phase"] in (context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE):
+    if state["active_task"]["phase"] in (context._H001_CALIBRATION_REREVIEW_PHASE, context._H001_CALIBRATION_EFFECTIVE_PHASE, context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE, context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE):
         pytest.skip("production tree has advanced to the rereview-recorded phase")
     assert state["handoff_receipt"]["predecessor"] == {
         "path": f"docs/control/tasks/{TASK_ID}/handoff_v019.json",
@@ -2900,6 +2901,11 @@ def _calibration_execution_governance_mutated_tree(
     receipt_path.write_bytes(canonical_json_bytes(receipt))
     active_path = root / context.ACTIVE_TASK_RELPATH
     active = json.loads(active_path.read_bytes())
+    active.update({
+        "handoff_receipt_path": context._H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH,
+        "handoff_receipt_sha256": context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA,
+        "phase": context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE,
+    })
     original_sha = active["handoff_receipt_sha256"]
     if mutate_active:
         mutate_active(active)
@@ -2909,8 +2915,8 @@ def _calibration_execution_governance_mutated_tree(
     return root
 
 
-def test_h001_calibration_execution_governance_production_state_is_implementation_only():
-    state = load_and_verify_continuity_state(ROOT)
+def test_h001_calibration_execution_governance_historical_fixture_is_implementation_only(tmp_path):
+    state = load_and_verify_continuity_state(_calibration_execution_governance_mutated_tree(tmp_path))
     assert state["active_task"]["phase"] == context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE
     assert state["handoff_receipt"]["receipt_index"] == 23
     packet = render_context_packet(state)
@@ -2977,3 +2983,171 @@ def test_h001_calibration_execution_governance_active_pointer_and_no_git_fail_cl
     clean = _calibration_execution_governance_mutated_tree(tmp_path / "clean")
     assert not (clean / ".git").exists()
     assert load_and_verify_continuity_state(clean)["active_task"]["phase"] == context._H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE
+
+
+# --- H001 calibration engine implementation blocked before change ----------
+
+def _rewrite_v024(root, receipt, *, mutate_active=None):
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    if mutate_active:
+        mutate_active(active)
+    else:
+        active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    return root
+
+
+def _calibration_implementation_blocked_mutated_tree(tmp_path, *, mutate_receipt=None, mutate_active=None):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    if mutate_receipt:
+        mutate_receipt(receipt)
+    return _rewrite_v024(root, receipt, mutate_active=mutate_active)
+
+
+def test_h001_calibration_implementation_blocked_production_state_is_exact():
+    state = load_and_verify_continuity_state(ROOT)
+    receipt = state["handoff_receipt"]
+    assert state["active_task"]["phase"] == context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE
+    assert receipt["receipt_index"] == 24
+    assert receipt["numerical_convention_gap_inventory"] == context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_GAPS
+    assert [item["path"] for item in receipt["evidence"]] == context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_EVIDENCE
+    assert [item["path"] for item in receipt["current_transition_files"]] == context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CURRENT_TRANSITION_FILES
+    packet = render_context_packet(state)
+    for marker in (
+        "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_ATTEMPT=BLOCKED_BEFORE_CHANGE",
+        "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_COMMIT=NONE",
+        "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_PR=NONE",
+        "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS=INCOMPLETE_RESULT_DETERMINATIVE",
+        "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_IMPLEMENTED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+        "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+        "H001_SYNTHETIC_NULL_CALIBRATION_RESULT_EXPOSURE=NONE",
+        "H001_EXECUTION=0/0", "H001_REAL_DATA_ACCESS=FORBIDDEN",
+        "H001_SCIENTIFIC_AUTHORIZATION=FALSE", "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+        "H001_LIVE_AUTHORIZATION=FALSE", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
+    ):
+        assert marker in packet
+    assert "H001 calibration specification remains unfrozen" not in packet
+
+
+@pytest.mark.parametrize("mutate,message", [
+    (lambda r: r["numerical_convention_gap_inventory"].pop(), "H001 calibration implementation-block numerical gaps drifted"),
+    (lambda r: r["numerical_convention_gap_inventory"].append("EXTRA_GAP"), "H001 calibration implementation-block numerical gaps drifted"),
+    (lambda r: r["numerical_convention_gap_inventory"].reverse(), "H001 calibration implementation-block numerical gaps drifted"),
+    (lambda r: r["numerical_convention_gap_inventory"].append(r["numerical_convention_gap_inventory"][0]), "H001 calibration implementation-block numerical gaps drifted"),
+    (lambda r: r["decisions"].append("HAC_AUTOCOVARIANCE_FORMULA=SELECTED"), "H001 calibration implementation-block decisions drifted"),
+    (lambda r: r["decisions"].__setitem__(r["decisions"].index("H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_IMPLEMENTED"), "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=PARTIALLY_IMPLEMENTED"), "H001 calibration implementation-block decisions drifted"),
+    (lambda r: r["decisions"].__setitem__(r["decisions"].index("H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_COMMIT=NONE"), "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_COMMIT=abc"), "H001 calibration implementation-block decisions drifted"),
+    (lambda r: r["decisions"].__setitem__(r["decisions"].index("H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_PR=NONE"), "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_PR=123"), "H001 calibration implementation-block decisions drifted"),
+    (lambda r: r["decisions"].__setitem__(r["decisions"].index("H001_EXECUTION=0/0"), "H001_EXECUTION=1/1"), "H001 calibration implementation-block decisions drifted"),
+    (lambda r: r["decisions"].__setitem__(r["decisions"].index("H001_REAL_DATA_ACCESS=FORBIDDEN"), "H001_REAL_DATA_ACCESS=AUTHORIZED"), "H001 calibration implementation-block decisions drifted"),
+    (lambda r: r["next_actions"].__setitem__(0, "CREATE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT"), "H001 calibration implementation-block next action is wrong"),
+    (lambda r: r["safety_state"].update(scientific_use_authorized=True), "H001 calibration implementation-block changed persistent safety state"),
+    (lambda r: r["safety_state"].update(paper_trade_authorized=True), "H001 calibration implementation-block changed persistent safety state"),
+    (lambda r: r["safety_state"].update(live_integration_authorized=True), "H001 calibration implementation-block changed persistent safety state"),
+])
+def test_h001_calibration_implementation_blocked_semantic_mutations_fail_closed(tmp_path, mutate, message):
+    with pytest.raises(ValueError, match=re.escape(message)):
+        load_and_verify_continuity_state(_calibration_implementation_blocked_mutated_tree(tmp_path, mutate_receipt=mutate))
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r["blockers"].pop(),
+    lambda r: r["blockers"].append("EXTRA_BLOCKER"),
+    lambda r: r["blockers"].reverse(),
+])
+def test_h001_calibration_implementation_blocked_blocker_drift_fails_precisely(tmp_path, mutate):
+    with pytest.raises(ValueError, match=re.escape("H001 calibration implementation-block blockers drifted")):
+        load_and_verify_continuity_state(_calibration_implementation_blocked_mutated_tree(tmp_path, mutate_receipt=mutate))
+
+
+def test_h001_calibration_implementation_blocked_each_duplicate_blocker_fails_precisely(tmp_path):
+    for blocker in context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BLOCKERS:
+        with pytest.raises(ValueError, match=re.escape("H001 calibration implementation-block blockers contain duplicates")):
+            load_and_verify_continuity_state(
+                _calibration_implementation_blocked_mutated_tree(
+                    tmp_path / blocker.replace(" ", "_"),
+                    mutate_receipt=lambda r, blocker=blocker: r["blockers"].append(blocker),
+                )
+            )
+
+
+def _protected_evidence_mutated_tree(tmp_path, *, evidence_path, mutate_file):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    mutate_file(root / evidence_path)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    for item in receipt["evidence"]:
+        target = root / item["path"]
+        item["sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    return _rewrite_v024(root, receipt)
+
+
+@pytest.mark.parametrize("evidence_path,mutate_file", [
+    ("quantbot/assurance/contracts.py", lambda p: p.write_text(p.read_text() + "\n# attack\n", encoding="utf-8")),
+    ("quantbot/assurance/h001_null_calibration.py", lambda p: p.write_text(p.read_text() + "\n# attack\n", encoding="utf-8")),
+    ("docs/assurance/h001_synthetic_null_calibration_spec_freeze_candidate_v001.json", lambda p: p.write_text(p.read_text().replace("freeze", "thaw", 1), encoding="utf-8")),
+    ("docs/experiments/candidate1_h001_real_data_falsification_v0.json", lambda p: p.write_text(p.read_text().replace("NOT_", "NOTX_", 1), encoding="utf-8")),
+    ("quantbot/experiment/h001_real_falsification_preregistration.py", lambda p: p.write_text(p.read_text() + "\n# attack\n", encoding="utf-8")),
+    ("docs/artifacts/candidate1-real-input-v0.json", lambda p: p.write_text(p.read_text() + "\n", encoding="utf-8")),
+    ("docs/artifacts/stores.json", lambda p: p.write_text(p.read_text().replace('"stores":[]', '"stores":[{"id":"fake"}]'), encoding="utf-8")),
+])
+def test_h001_calibration_implementation_blocked_protected_evidence_attacks_fail_precisely(tmp_path, evidence_path, mutate_file):
+    message = f"H001 calibration implementation-block protected evidence {evidence_path!r} hash mismatch"
+    with pytest.raises(ValueError, match=re.escape(message)):
+        load_and_verify_continuity_state(_protected_evidence_mutated_tree(tmp_path, evidence_path=evidence_path, mutate_file=mutate_file))
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r["evidence"].pop(),
+    lambda r: r["evidence"].append({"path": "docs/control/active_task.json", "sha256": "0" * 64}),
+    lambda r: r["evidence"].reverse(),
+    lambda r: r["evidence"].append(dict(r["evidence"][0])),
+])
+def test_h001_calibration_implementation_blocked_protected_evidence_list_attacks_fail_precisely(tmp_path, mutate):
+    with pytest.raises(ValueError, match=re.escape("H001 calibration implementation-block protected evidence list must be exact, unique, and ordered")):
+        load_and_verify_continuity_state(_calibration_implementation_blocked_mutated_tree(tmp_path, mutate_receipt=mutate))
+
+
+def test_h001_calibration_implementation_blocked_recorded_protected_hash_fails_precisely(tmp_path):
+    def mutate(receipt):
+        receipt["evidence"][0]["sha256"] = "0" * 64
+    message = f"H001 calibration implementation-block protected evidence {context._H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH!r} hash mismatch"
+    with pytest.raises(ValueError, match=re.escape(message)):
+        load_and_verify_continuity_state(_calibration_implementation_blocked_mutated_tree(tmp_path, mutate_receipt=mutate))
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r["current_transition_files"].pop(),
+    lambda r: r["current_transition_files"].append({"path": "docs/control/active_task.json", "sha256": "0" * 64}),
+    lambda r: r["current_transition_files"].reverse(),
+    lambda r: r["current_transition_files"].append(dict(r["current_transition_files"][0])),
+    lambda r: r["current_transition_files"][0].update(sha256="0" * 64),
+])
+def test_h001_calibration_implementation_blocked_current_transition_attacks_fail_precisely(tmp_path, mutate):
+    with pytest.raises(ValueError, match=re.escape("H001 calibration implementation-block current-transition files must be exact, unique, and hash-bound")):
+        load_and_verify_continuity_state(_calibration_implementation_blocked_mutated_tree(tmp_path, mutate_receipt=mutate))
+
+
+def test_h001_calibration_implementation_blocked_predecessor_and_active_pointer_fail_closed(tmp_path):
+    with pytest.raises(ValueError, match=re.escape("H001 calibration implementation-block predecessor is wrong")):
+        load_and_verify_continuity_state(_calibration_implementation_blocked_mutated_tree(
+            tmp_path / "chain", mutate_receipt=lambda r: r["predecessor"].update(sha256="0" * 64),
+        ))
+    with pytest.raises(ValueError, match=re.escape("active_task pointer is stale: handoff receipt bytes do not match handoff_receipt_sha256")):
+        load_and_verify_continuity_state(_calibration_implementation_blocked_mutated_tree(
+            tmp_path / "pointer", mutate_active=lambda a: a.update(handoff_receipt_sha256="0" * 64),
+        ))
+
+
+def test_h001_calibration_implementation_blocked_no_git_tree_verifies(tmp_path):
+    clean = _calibration_implementation_blocked_mutated_tree(tmp_path)
+    assert not (clean / ".git").exists()
+    assert load_and_verify_continuity_state(clean)["active_task"]["phase"] == context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE
