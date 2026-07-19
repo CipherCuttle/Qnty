@@ -443,6 +443,79 @@ _H001_CALIBRATION_EXECUTION_GOVERNANCE_BINDINGS = {
     "predecessor_handoff": (_H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH, _H001_CALIBRATION_EXECUTION_GOVERNANCE_V022_SHA),
     "temporal_activation_amendment": (_H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH, _H001_CALIBRATION_EFFECTIVE_TEMPORAL_SHA),
 }
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE = "candidate1_h001_synthetic_null_calibration_execution_engine_implementation_blocked"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_NEXT_ACTION = "AUTHORIZE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_GOVERNANCE"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH = f"docs/control/tasks/{TASK_ID}/handoff_v024.json"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BASE_SHA = "90460b3e13dbf665247d0ae85a19dac5f6c2293e"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA = "60853c3d43f52bc8fe782755a9512726cfb5ea93d570fa85a0ec919b7bbf931a"
+# Independently pinned protected evidence SHA-256 values from base commit 90460b3
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CONTRACTS_SHA = "a0f32bc7cdb3d706fb3c793ec2de8e3a398c5343aacdd04b73467544c59bb56e"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CALIBRATION_HARNESS_SHA = "d0c738c424d1c3ede7cdd945f910db70d00a219bffc188c22fb12cef83eed92a"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CONTRACTS_SHA = "4acff3630c5a0ab2feb0d7d4a312d36b3aaed51954fd9593a97aafe6c50b99a8"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CALIBRATION_SHA = "f166e05b6b34f3410b5c84f70bce7835fbc72fb7f405f6986ce22e243deb0caf"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_ARTIFACT_SHA = "9c53466fe87ecc58c46ec63dd5fdde1e947318036a6c071e837e01ebb74a1324"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_STORES_SHA = "ac53bea147d2e6bb91e779f64e43edb7b8eb6e5531a36884bea2499e7e111148"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_SCOPE = [
+    _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+]
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_GAPS = [
+    "HAC_AUTOCOVARIANCE_AND_STANDARD_ERROR_CONVENTION",
+    "BOOTSTRAP_NULL_CENTERING_TRANSFORM",
+    "BOOTSTRAP_STUDENTIZATION_CONVENTION",
+    "MAXIMUM_T_EXCEEDANCE_TIE_PVALUE_AND_REJECTION_RULES",
+    "STATIONARY_BOOTSTRAP_INITIAL_INDEX_AND_RNG_DRAW_ORDERING",
+]
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_DECISIONS = sorted([
+    *_H001_CALIBRATION_EXECUTION_GOVERNANCE_DECISIONS,
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_ATTEMPT=BLOCKED_BEFORE_CHANGE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_COMMIT=NONE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_PR=NONE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS=INCOMPLETE_RESULT_DETERMINATIVE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION_BLOCKER=PENDING_REVIEWED_NUMERICAL_CONVENTIONS_AMENDMENT",
+    "H001_SYNTHETIC_NULL_CALIBRATION_RESULT_EXPOSURE=NONE",
+])
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BLOCKERS = [
+    "BLOCK_LIVE_INTEGRATION",
+    "EDGE_UNPROVEN",
+    "H001 synthetic calibration engine implementation is blocked by incomplete result-determinative numerical conventions",
+    "H001 synthetic calibration execution remains unauthorized",
+    "V0 remains unavailable",
+    "durable stores remain unconfigured",
+    "real data access remains forbidden",
+]
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PROHIBITIONS = sorted([
+    *_H001_CALIBRATION_REREVIEW_PROHIBITIONS,
+    "CHOOSE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS",
+    "CREATE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE_BEFORE_GOVERNANCE_AUTHORIZATION",
+    "IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_ENGINE",
+])
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_EVIDENCE = [
+    _H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH,
+    _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH,
+    _H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH,
+    _H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH,
+    _H001_CALIBRATION_CANDIDATE_RELPATH,
+    _H001_CALIBRATION_REREVIEW_RECORD_RELPATH,
+    f"docs/control/tasks/{TASK_ID}/handoff_v021.json",
+    _H001_CALIBRATION_GOVERNANCE_AMENDMENT_RELPATH,
+    "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json",
+    H001_DESIGN_JSON_RELPATH,
+    "quantbot/experiment/h001_real_falsification_preregistration.py",
+    _H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH,
+    "quantbot/assurance/contracts.py",
+    "quantbot/assurance/h001_null_calibration.py",
+    "tests/assurance/test_contracts.py",
+    "tests/assurance/test_h001_null_calibration.py",
+    "docs/artifacts/candidate1-real-input-v0.json",
+    STORE_REGISTRY_RELPATH,
+]
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CURRENT_TRANSITION_FILES = [
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+]
 _H001_TEMPORAL_ACTIVE_BASE_SHA = "eb953e04685b57e22d1b27d043618da4b44d549b"
 _H001_TEMPORAL_ACTIVE_V017_SHA = "687c8192403cc5c4ff62bbe2ed43e5a4c080868c0b4760386a0d7429798c8d32"
 _H001_TEMPORAL_ACTIVE_DESIGN_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
@@ -1573,15 +1646,25 @@ def _validate_h001_assurance_review_complete_handoff(receipt: dict, root: Path) 
     contracts.load_and_validate_assurance_scaffold((root / _H001_ASSURANCE_PACKET_RELPATH).read_bytes(), contracts.validate_review_evidence_packet)
 
 
-def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evidence_files: bool) -> int:
+def _validate_receipt_body(
+    parsed: dict,
+    label: str,
+    root: Path,
+    *,
+    verify_evidence_files: bool,
+    validate_evidence: bool = True,
+    validate_safety: bool = True,
+) -> int:
     """Structural fail-closed validation shared by the active receipt and every
     historical receipt in the predecessor chain. Does not validate the
     ``predecessor`` link itself; the chain walk owns that."""
     receipt_keys = set(_RECEIPT_KEYS)
     if parsed.get("receipt_index") == 15:
         receipt_keys.add("review_binding")
-    if parsed.get("receipt_index") == 22:
+    if parsed.get("receipt_index") in (22, 24):
         receipt_keys.add("phase")
+    if parsed.get("receipt_index") == 24:
+        receipt_keys.update({"current_transition_files", "numerical_convention_gap_inventory"})
     _require_exact_keys(parsed, receipt_keys, label)
     if parsed["schema_version"] != "0.1.0":
         _fail(f"{label} schema_version is not 0.1.0")
@@ -1595,11 +1678,13 @@ def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evide
     if type(head) is not str or not _COMMIT_RE.fullmatch(head):
         _fail(f"{label} source_head_commit must be a lowercase 40-hex commit")
     _require_str_list(parsed["decisions"], f"{label} decisions", minimum=1)
-    _validate_safety_state(parsed["safety_state"])
+    if validate_safety:
+        _validate_safety_state(parsed["safety_state"])
     scope = _require_str_list(parsed["changed_file_scope"], f"{label} changed_file_scope", minimum=1)
     for path in scope:
         _require_repo_relative(path, f"{label} changed_file_scope entry")
-    _validate_evidence(parsed["evidence"], root, verify_files=verify_evidence_files)
+    if validate_evidence:
+        _validate_evidence(parsed["evidence"], root, verify_files=verify_evidence_files)
     artifacts = _validate_required_artifacts(parsed["required_artifacts"])
     _require_str_list(parsed["blockers"], f"{label} blockers")
     _require_str_list(parsed["verified_commands"], f"{label} verified_commands", minimum=1)
@@ -1608,7 +1693,7 @@ def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evide
         _fail(f"{label} next_actions must contain exactly one action")
     _require_str(next_actions[0], f"{label} next_actions entry")
     _require_str_list(parsed["prohibited_actions"], f"{label} prohibited_actions", minimum=1)
-    if parsed["safety_state"]["real_data_execution_requested"]:
+    if validate_safety and parsed["safety_state"]["real_data_execution_requested"]:
         for artifact in artifacts:
             if artifact["availability"] != "VERIFIED_AVAILABLE":
                 _fail(f"{label}: real-data execution requested while a required artifact is not VERIFIED_AVAILABLE")
@@ -1616,7 +1701,15 @@ def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evide
 
 
 def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
-    _validate_receipt_body(parsed, "handoff_receipt", root, verify_evidence_files=True)
+    is_implementation_block = active["phase"] == _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE
+    _validate_receipt_body(
+        parsed,
+        "handoff_receipt",
+        root,
+        verify_evidence_files=not is_implementation_block,
+        validate_evidence=not is_implementation_block,
+        validate_safety=not is_implementation_block,
+    )
     if parsed["task_id"] != active["task_id"]:
         _fail("handoff_receipt task_id does not match active_task")
     if parsed["protocol_id"] != active["protocol_id"]:
@@ -1685,6 +1778,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE:
         _cross_check_artifact_records(parsed, root)
         amendment = _validate_h001_calibration_execution_governance_handoff(parsed, root)
+    elif active["phase"] == _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE:
+        _validate_h001_calibration_implementation_blocked_handoff(parsed, root)
+        _cross_check_artifact_records(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -2423,6 +2519,79 @@ def _validate_h001_calibration_execution_governance_handoff(receipt: dict, root:
     return amendment
 
 
+def _validate_h001_calibration_implementation_blocked_handoff(receipt: dict, root: Path) -> None:
+    """Validate the append-only, pre-change blocked outcome of the engine action."""
+    if receipt["receipt_index"] != 24 or receipt["phase"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE:
+        _fail("H001 calibration implementation-block receipt identity is wrong")
+    if receipt["source_branch"] != "chore/h001-calibration-engine-implementation-block-v3" or receipt["source_head_commit"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BASE_SHA:
+        _fail("H001 calibration implementation-block source binding is wrong")
+    if receipt["predecessor"] != {"path": _H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH, "sha256": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA}:
+        _fail("H001 calibration implementation-block predecessor is wrong")
+    if receipt["changed_file_scope"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_SCOPE:
+        _fail("H001 calibration implementation-block scope is wrong")
+    if receipt["next_actions"] != [_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_NEXT_ACTION]:
+        _fail("H001 calibration implementation-block next action is wrong")
+    if receipt["decisions"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_DECISIONS:
+        _fail("H001 calibration implementation-block decisions drifted")
+    if len(receipt["blockers"]) != len(set(receipt["blockers"])):
+        _fail("H001 calibration implementation-block blockers contain duplicates")
+    if receipt["blockers"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BLOCKERS:
+        _fail("H001 calibration implementation-block blockers drifted")
+    if receipt["prohibited_actions"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PROHIBITIONS:
+        _fail("H001 calibration implementation-block prohibitions drifted")
+    if receipt["numerical_convention_gap_inventory"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_GAPS:
+        _fail("H001 calibration implementation-block numerical gaps drifted")
+    if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 calibration implementation-block changed persistent safety state")
+    # Every protected path is pinned from clean main. Current-transition hashes
+    # live in their own receipt field and are never a protected-evidence fallback.
+    _PROTECTED = {
+        _H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH: _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA,
+        _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_SHA,
+        _H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_V022_SHA,
+        _H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_AMENDMENT_SHA,
+        _H001_CALIBRATION_CANDIDATE_RELPATH: _H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA,
+        _H001_CALIBRATION_REREVIEW_RECORD_RELPATH: _H001_CALIBRATION_EFFECTIVE_REREVIEW_SHA,
+        f"docs/control/tasks/{TASK_ID}/handoff_v021.json": _H001_CALIBRATION_EFFECTIVE_V021_SHA,
+        _H001_CALIBRATION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_GOVERNANCE_SHA,
+        "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json": _H001_CALIBRATION_EFFECTIVE_DRAFT_SHA,
+        H001_DESIGN_JSON_RELPATH: _H001_CALIBRATION_EFFECTIVE_DESIGN_SHA,
+        "quantbot/experiment/h001_real_falsification_preregistration.py": _H001_CALIBRATION_EFFECTIVE_VALIDATOR_SHA,
+        _H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_TEMPORAL_SHA,
+        "quantbot/assurance/contracts.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CONTRACTS_SHA,
+        "quantbot/assurance/h001_null_calibration.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CALIBRATION_HARNESS_SHA,
+        "tests/assurance/test_contracts.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CONTRACTS_SHA,
+        "tests/assurance/test_h001_null_calibration.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CALIBRATION_SHA,
+        "docs/artifacts/candidate1-real-input-v0.json": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_ARTIFACT_SHA,
+        STORE_REGISTRY_RELPATH: _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_STORES_SHA,
+    }
+    evidence_paths = [item.get("path") for item in receipt["evidence"] if type(item) is dict]
+    if evidence_paths != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_EVIDENCE or len(evidence_paths) != len(set(evidence_paths)):
+        _fail("H001 calibration implementation-block protected evidence list must be exact, unique, and ordered")
+    expected_evidence = []
+    for path in _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_EVIDENCE:
+        target = root / path
+        if not target.is_file():
+            _fail(f"H001 calibration implementation-block evidence file {path!r} is missing")
+        expected_digest = _PROTECTED[path]
+        actual_digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        recorded_digest = receipt["evidence"][len(expected_evidence)].get("sha256")
+        if recorded_digest != expected_digest or actual_digest != expected_digest:
+            _fail(f"H001 calibration implementation-block protected evidence {path!r} hash mismatch")
+        expected_evidence.append({"path": path, "sha256": expected_digest})
+    if receipt["evidence"] != expected_evidence:
+        _fail("H001 calibration implementation-block protected evidence list must be exact, unique, and ordered")
+    current_transition = receipt["current_transition_files"]
+    expected_transition = []
+    for path in _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CURRENT_TRANSITION_FILES:
+        target = root / path
+        if not target.is_file():
+            _fail(f"H001 calibration implementation-block current-transition file {path!r} is missing")
+        expected_transition.append({"path": path, "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+    if current_transition != expected_transition or len(current_transition) != len({item["path"] for item in current_transition}):
+        _fail("H001 calibration implementation-block current-transition files must be exact, unique, and hash-bound")
+
+
 def _validate_entrypoints(root: Path) -> None:
     start_here = root / START_HERE_RELPATH
     if not start_here.is_file():
@@ -2868,6 +3037,35 @@ def render_context_packet(state: dict) -> str:
             "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_IMPLEMENTED",
             "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
             "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_EXECUTION=0/0",
+            "H001_CURRENT_EXECUTION_BUDGET=0",
+            "H001_CURRENT_EXECUTION_COUNT=0",
+            "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+            "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+            "H001_LIVE_AUTHORIZATION=FALSE",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "EDGE_UNPROVEN",
+            "BLOCK_LIVE_INTEGRATION",
+        ])
+    elif active["phase"] == _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE:
+        lines.extend([
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW=PASSED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW_RECORD=RECORDED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=EFFECTIVE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FROZEN=TRUE",
+            f"H001_SYNTHETIC_NULL_CALIBRATION_EFFECTIVE_SPEC_SHA256={_H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA}",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_GOVERNANCE=AUTHORIZED_IMPLEMENTATION_FOR_INDEPENDENT_REVIEW_ONLY",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_ATTEMPT=BLOCKED_BEFORE_CHANGE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_COMMIT=NONE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_PR=NONE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS=INCOMPLETE_RESULT_DETERMINATIVE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION_BLOCKER=PENDING_REVIEWED_NUMERICAL_CONVENTIONS_AMENDMENT",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_IMPLEMENTED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_RESULT_EXPOSURE=NONE",
             "H001_REAL_DATA_ACCESS=FORBIDDEN",
             "H001_EXECUTION=0/0",
             "H001_CURRENT_EXECUTION_BUDGET=0",
