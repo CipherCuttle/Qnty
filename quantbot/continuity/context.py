@@ -448,6 +448,13 @@ _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_NEXT_ACTION = "AUTHORIZE_H001_SYNTHETIC
 _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH = f"docs/control/tasks/{TASK_ID}/handoff_v024.json"
 _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BASE_SHA = "90460b3e13dbf665247d0ae85a19dac5f6c2293e"
 _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA = "60853c3d43f52bc8fe782755a9512726cfb5ea93d570fa85a0ec919b7bbf931a"
+# Independently pinned protected evidence SHA-256 values from base commit 90460b3
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CONTRACTS_SHA = "a0f32bc7cdb3d706fb3c793ec2de8e3a398c5343aacdd04b73467544c59bb56e"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CALIBRATION_HARNESS_SHA = "d0c738c424d1c3ede7cdd945f910db70d00a219bffc188c22fb12cef83eed92a"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CONTRACTS_SHA = "4acff3630c5a0ab2feb0d7d4a312d36b3aaed51954fd9593a97aafe6c50b99a8"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CALIBRATION_SHA = "f166e05b6b34f3410b5c84f70bce7835fbc72fb7f405f6986ce22e243deb0caf"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_ARTIFACT_SHA = "9c53466fe87ecc58c46ec63dd5fdde1e947318036a6c071e837e01ebb74a1324"
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_STORES_SHA = "ac53bea147d2e6bb91e779f64e43edb7b8eb6e5531a36884bea2499e7e111148"
 _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_SCOPE = [
     _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH,
     ACTIVE_TASK_RELPATH,
@@ -470,10 +477,15 @@ _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_DECISIONS = sorted([
     "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION_BLOCKER=PENDING_REVIEWED_NUMERICAL_CONVENTIONS_AMENDMENT",
     "H001_SYNTHETIC_NULL_CALIBRATION_RESULT_EXPOSURE=NONE",
 ])
-_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BLOCKERS = {
-    *_H001_CALIBRATION_EXECUTION_GOVERNANCE_BLOCKERS,
+_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BLOCKERS = [
+    "BLOCK_LIVE_INTEGRATION",
+    "EDGE_UNPROVEN",
     "H001 synthetic calibration engine implementation is blocked by incomplete result-determinative numerical conventions",
-}
+    "H001 synthetic calibration execution remains unauthorized",
+    "V0 remains unavailable",
+    "durable stores remain unconfigured",
+    "real data access remains forbidden",
+]
 _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PROHIBITIONS = sorted([
     *_H001_CALIBRATION_REREVIEW_PROHIBITIONS,
     "CHOOSE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS",
@@ -2483,29 +2495,68 @@ def _validate_h001_calibration_implementation_blocked_handoff(receipt: dict, roo
         _fail("H001 calibration implementation-block next action is wrong")
     if receipt["decisions"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_DECISIONS:
         _fail("H001 calibration implementation-block decisions drifted")
-    if set(receipt["blockers"]) != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BLOCKERS:
+    if receipt["blockers"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_BLOCKERS:
         _fail("H001 calibration implementation-block blockers drifted")
+    if len(receipt["blockers"]) != len(set(receipt["blockers"])):
+        _fail("H001 calibration implementation-block blockers contain duplicates")
     if receipt["prohibited_actions"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PROHIBITIONS:
         _fail("H001 calibration implementation-block prohibitions drifted")
     if receipt["numerical_convention_gap_inventory"] != _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_GAPS:
         _fail("H001 calibration implementation-block numerical gaps drifted")
     if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
         _fail("H001 calibration implementation-block changed persistent safety state")
-    expected_static = {
+    # Independently pinned protected evidence: every unchanged file's expected
+    # SHA-256 is frozen from the base commit, NOT computed from current bytes.
+    # This prevents the self-consistent rehash attack.
+    _PROTECTED = {
         _H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH: _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA,
         _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_SHA,
+        _H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_V022_SHA,
+        _H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_AMENDMENT_SHA,
         _H001_CALIBRATION_CANDIDATE_RELPATH: _H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA,
+        _H001_CALIBRATION_REREVIEW_RECORD_RELPATH: _H001_CALIBRATION_EFFECTIVE_REREVIEW_SHA,
+        f"docs/control/tasks/{TASK_ID}/handoff_v021.json": _H001_CALIBRATION_EFFECTIVE_V021_SHA,
+        _H001_CALIBRATION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_GOVERNANCE_SHA,
+        "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json": _H001_CALIBRATION_EFFECTIVE_DRAFT_SHA,
+        H001_DESIGN_JSON_RELPATH: _H001_CALIBRATION_EFFECTIVE_DESIGN_SHA,
+        "quantbot/experiment/h001_real_falsification_preregistration.py": _H001_CALIBRATION_EFFECTIVE_VALIDATOR_SHA,
+        _H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_TEMPORAL_SHA,
+        "quantbot/assurance/contracts.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CONTRACTS_SHA,
+        "quantbot/assurance/h001_null_calibration.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CALIBRATION_HARNESS_SHA,
+        "tests/assurance/test_contracts.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CONTRACTS_SHA,
+        "tests/assurance/test_h001_null_calibration.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CALIBRATION_SHA,
+        "docs/artifacts/candidate1-real-input-v0.json": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_ARTIFACT_SHA,
+        STORE_REGISTRY_RELPATH: _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_STORES_SHA,
+    }
+    # Current-transition outputs: these files change in this PR and cannot be
+    # independently pinned from the base commit.  They are validated explicitly
+    # by path, order, uniqueness, and current-byte hash — NOT via a broad
+    # dynamic fallback shared with protected evidence.
+    _CURRENT_TRANSITION = {
+        "quantbot/continuity/context.py",
+        "tests/continuity/test_cross_agent_continuity.py",
     }
     expected_evidence = []
+    seen_paths = set()
     for path in _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_EVIDENCE:
         target = root / path
         if not target.is_file():
             _fail(f"H001 calibration implementation-block evidence file {path!r} is missing")
-        digest = expected_static.get(path, hashlib.sha256(target.read_bytes()).hexdigest())
-        if path in expected_static and hashlib.sha256(target.read_bytes()).hexdigest() != digest:
-            _fail(f"H001 calibration implementation-block immutable evidence drifted for {path}")
+        if path in _PROTECTED:
+            expected_digest = _PROTECTED[path]
+            actual_digest = hashlib.sha256(target.read_bytes()).hexdigest()
+            if actual_digest != expected_digest:
+                _fail(f"H001 calibration implementation-block protected evidence {path!r} hash mismatch: expected {expected_digest}, got {actual_digest}")
+            digest = expected_digest
+        elif path in _CURRENT_TRANSITION:
+            digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        else:
+            _fail(f"H001 calibration implementation-block unknown evidence path {path!r}")
+        if path in seen_paths:
+            _fail(f"H001 calibration implementation-block duplicate evidence path {path!r}")
+        seen_paths.add(path)
         expected_evidence.append({"path": path, "sha256": digest})
-    if receipt["evidence"] != expected_evidence or len(receipt["evidence"]) != len(set(item["path"] for item in receipt["evidence"])):
+    if receipt["evidence"] != expected_evidence:
         _fail("H001 calibration implementation-block evidence must be exact, unique, and ordered")
 
 

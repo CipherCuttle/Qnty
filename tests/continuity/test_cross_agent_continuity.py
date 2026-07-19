@@ -3074,3 +3074,265 @@ def test_h001_calibration_implementation_blocked_active_pointer_and_no_git_fail_
     clean = _calibration_implementation_blocked_mutated_tree(tmp_path / "clean")
     assert not (clean / ".git").exists()
     assert load_and_verify_continuity_state(clean)["active_task"]["phase"] == context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE
+
+
+# ── Protected evidence attack regression tests ──────────────────────────
+
+def _protected_evidence_mutated_tree(tmp_path, *, evidence_path, mutate_file):
+    """Create a copied tree where a protected evidence file is mutated and
+    ALL dependent receipt hashes are refreshed (simulating the attacker)."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    # Mutate the protected file
+    target = root / evidence_path
+    mutate_file(target)
+    # Refresh v024 evidence hashes from current (mutated) bytes
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    for item in receipt["evidence"]:
+        t = root / item["path"]
+        if t.is_file():
+            item["sha256"] = hashlib.sha256(t.read_bytes()).hexdigest()
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    # Refresh active_task pointer
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    return root
+
+
+@pytest.mark.parametrize("evidence_path,mutate_file,label", [
+    (
+        "quantbot/assurance/contracts.py",
+        lambda p: p.write_text(p.read_text().replace('"returns"', '"returnz"'), encoding="utf-8"),
+        "contracts.py remove returns from forbidden keys",
+    ),
+    (
+        "quantbot/assurance/h001_null_calibration.py",
+        lambda p: p.write_text(p.read_text() + "\n# attacker comment\n", encoding="utf-8"),
+        "calibration harness add comment",
+    ),
+    (
+        "docs/assurance/h001_synthetic_null_calibration_spec_freeze_candidate_v001.json",
+        lambda p: p.write_text(p.read_text().replace("freeze", "thaw"), encoding="utf-8"),
+        "frozen spec alter freeze to thaw",
+    ),
+    (
+        "docs/experiments/candidate1_h001_real_data_falsification_v0.json",
+        lambda p: p.write_text(p.read_text().replace("NOT_", "NOTX_"), encoding="utf-8"),
+        "activated design change NOT_ -> NOTX_",
+    ),
+    (
+        "quantbot/experiment/h001_real_falsification_preregistration.py",
+        lambda p: p.write_text(p.read_text() + "\n# attacker injection\n", encoding="utf-8"),
+        "activated validator add comment",
+    ),
+    (
+        "docs/artifacts/candidate1-real-input-v0.json",
+        lambda p: p.write_text(p.read_text() + "\n", encoding="utf-8"),
+        "artifact record append newline",
+    ),
+    (
+        "docs/artifacts/stores.json",
+        lambda p: p.write_text(p.read_text().replace('"stores":[]', '"stores":[{"id":"fake"}]'), encoding="utf-8"),
+        "stores registry add fake store",
+    ),
+])
+def test_h001_calibration_implementation_blocked_protected_evidence_mutation_fails(tmp_path, evidence_path, mutate_file, label):
+    """Reproduce the PROTECTED_SEMANTIC_EVIDENCE_CAN_BE_ALTERED_AND_REHASHED attack.
+
+    Mutate a protected evidence file, refresh ALL dependent receipt hashes,
+    and verify continuity validation fails due to independently pinned
+    protected-evidence mismatch — not merely stale JSON or stale active-task hash.
+    """
+    root = _protected_evidence_mutated_tree(tmp_path, evidence_path=evidence_path, mutate_file=mutate_file)
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_calibration_implementation_blocked_unknown_evidence_path_fails(tmp_path):
+    """Unknown evidence path must be rejected."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    # Create the file so it exists but is not in _PROTECTED or _CURRENT_TRANSITION
+    unknown = root / "docs/unknown.txt"
+    unknown.parent.mkdir(parents=True, exist_ok=True)
+    unknown.write_bytes(b"attacker content\n")
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["evidence"].append({"path": "docs/unknown.txt", "sha256": hashlib.sha256(b"attacker content\n").hexdigest()})
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_calibration_implementation_blocked_missing_evidence_path_fails(tmp_path):
+    """Missing evidence path must be rejected."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["evidence"].pop(0)
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_calibration_implementation_blocked_extra_evidence_path_fails(tmp_path):
+    """Extra evidence path must be rejected."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["evidence"].append({"path": "docs/control/active_task.json", "sha256": "0" * 64})
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_calibration_implementation_blocked_reordered_evidence_fails(tmp_path):
+    """Reordered evidence must be rejected."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["evidence"].reverse()
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_calibration_implementation_blocked_duplicate_evidence_path_fails(tmp_path):
+    """Duplicate evidence path must be rejected."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    dup = dict(receipt["evidence"][0])
+    receipt["evidence"].insert(0, dup)
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_calibration_implementation_blocked_incorrect_protected_hash_fails(tmp_path):
+    """Incorrect recorded hash for protected evidence must be rejected."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["evidence"][0]["sha256"] = "0" * 64
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+# ── Duplicate blocker attack regression tests ───────────────────────────
+
+def test_h001_calibration_implementation_blocked_duplicate_blocker_fails(tmp_path):
+    """Reproduce the DUPLICATE_BLOCKERS_ACCEPTED attack.
+
+    Append a duplicate EDGE_UNPROVEN, recompute v024 and active-task hashes,
+    and verify continuity validation fails.
+    """
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["blockers"].append("EDGE_UNPROVEN")
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_calibration_implementation_blocked_duplicate_implementation_blocker_fails(tmp_path):
+    """Duplicate new implementation blocker must be rejected."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["blockers"].append("H001 synthetic calibration engine implementation is blocked by incomplete result-determinative numerical conventions")
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_calibration_implementation_blocked_reordered_blockers_fails(tmp_path):
+    """Reordered blocker list must be rejected."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["blockers"].reverse()
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_calibration_implementation_blocked_removed_blocker_fails(tmp_path):
+    """Removed blocker must be rejected."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["blockers"].pop()
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_calibration_implementation_blocked_extra_blocker_fails(tmp_path):
+    """Extra blocker must be rejected."""
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["blockers"].append("EXTRA_BLOCKER")
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError):
+        load_and_verify_continuity_state(root)
