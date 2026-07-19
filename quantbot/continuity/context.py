@@ -398,6 +398,51 @@ _H001_CALIBRATION_EFFECTIVE_BLOCKERS = {
     "V0 remains unavailable", "durable stores remain unconfigured", "real data access remains forbidden",
     "H001 synthetic calibration execution remains unauthorized", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
 }
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE = "candidate1_h001_synthetic_null_calibration_execution_governance"
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_NEXT_ACTION = "IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_FOR_INDEPENDENT_REVIEW"
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH = "docs/control/amendments/candidate1_h001_synthetic_null_calibration_execution_governance_v001.json"
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH = f"docs/control/tasks/{TASK_ID}/handoff_v023.json"
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_BASE_SHA = "ab6447a0305e90a90a54279a97739e215087c975"
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_SHA = "23b98106326b655ec334e54eaf1757d24f77ab643a64efeddad7226801ad16a5"
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_V022_SHA = "a66176d6d21ff48eab88c9c291bee33da918a20f54e564e5545965263919ae7d"
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_SCOPE = [
+    _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH,
+    _H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+]
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_EVIDENCE = [
+    _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH,
+    _H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH,
+    *_H001_CALIBRATION_EFFECTIVE_EVIDENCE,
+]
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_DECISIONS = sorted([
+    "BLOCK_LIVE_INTEGRATION", "DURABLE_STORES=UNCONFIGURED", "EDGE_UNPROVEN",
+    "H001_CURRENT_EXECUTION_BUDGET=0", "H001_CURRENT_EXECUTION_COUNT=0", "H001_DURABLE_STORES_CONFIGURED=FALSE",
+    "H001_EXECUTION=0/0", "H001_LIVE_AUTHORIZATION=FALSE", "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+    "H001_REAL_DATA_ACCESS=FORBIDDEN", "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+    f"H001_SYNTHETIC_NULL_CALIBRATION_EFFECTIVE_SPEC_SHA256={_H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA}",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_GOVERNANCE=AUTHORIZED_IMPLEMENTATION_FOR_INDEPENDENT_REVIEW_ONLY",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_IMPLEMENTED",
+    "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE", "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=EFFECTIVE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FROZEN=TRUE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW=PASSED",
+    "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW_RECORD=RECORDED",
+    "H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=TRUE", "V0_AVAILABILITY=UNAVAILABLE", "V0_VERIFIED_COPY_COUNT=0",
+])
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_BLOCKERS = set(_H001_CALIBRATION_EFFECTIVE_BLOCKERS)
+_H001_CALIBRATION_EXECUTION_GOVERNANCE_BINDINGS = {
+    "activated_h001_design": (H001_DESIGN_JSON_RELPATH, _H001_CALIBRATION_EFFECTIVE_DESIGN_SHA),
+    "activated_h001_validator": ("quantbot/experiment/h001_real_falsification_preregistration.py", _H001_CALIBRATION_EFFECTIVE_VALIDATOR_SHA),
+    "candidate_rereview_record": (_H001_CALIBRATION_REREVIEW_RECORD_RELPATH, _H001_CALIBRATION_EFFECTIVE_REREVIEW_SHA),
+    "effective_frozen_candidate": (_H001_CALIBRATION_CANDIDATE_RELPATH, _H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA),
+    "freeze_activation_amendment": (_H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH, _H001_CALIBRATION_EFFECTIVE_AMENDMENT_SHA),
+    "freeze_governance_amendment": (_H001_CALIBRATION_GOVERNANCE_AMENDMENT_RELPATH, _H001_CALIBRATION_EFFECTIVE_GOVERNANCE_SHA),
+    "predecessor_handoff": (_H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH, _H001_CALIBRATION_EXECUTION_GOVERNANCE_V022_SHA),
+    "temporal_activation_amendment": (_H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH, _H001_CALIBRATION_EFFECTIVE_TEMPORAL_SHA),
+}
 _H001_TEMPORAL_ACTIVE_BASE_SHA = "eb953e04685b57e22d1b27d043618da4b44d549b"
 _H001_TEMPORAL_ACTIVE_V017_SHA = "687c8192403cc5c4ff62bbe2ed43e5a4c080868c0b4760386a0d7429798c8d32"
 _H001_TEMPORAL_ACTIVE_DESIGN_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
@@ -1637,6 +1682,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_CALIBRATION_EFFECTIVE_PHASE:
         _cross_check_artifact_records(parsed, root)
         amendment = _validate_h001_calibration_effective_handoff(parsed, root)
+    elif active["phase"] == _H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        amendment = _validate_h001_calibration_execution_governance_handoff(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -2297,6 +2345,84 @@ def _validate_h001_calibration_effective_handoff(receipt: dict, root: Path) -> d
     return amendment
 
 
+def _validate_h001_calibration_execution_governance_handoff(receipt: dict, root: Path) -> dict:
+    """Validate implementation-only authorization for the frozen synthetic spec."""
+    if receipt["receipt_index"] != 23:
+        _fail("H001 calibration execution governance receipt identity is wrong")
+    if receipt["source_branch"] != "chore/h001-synthetic-null-calibration-execution-governance" or receipt["source_head_commit"] != _H001_CALIBRATION_EXECUTION_GOVERNANCE_BASE_SHA:
+        _fail("H001 calibration execution governance source binding is wrong")
+    if receipt["predecessor"] != {"path": _H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH, "sha256": _H001_CALIBRATION_EXECUTION_GOVERNANCE_V022_SHA}:
+        _fail("H001 calibration execution governance predecessor is wrong")
+    if receipt["changed_file_scope"] != _H001_CALIBRATION_EXECUTION_GOVERNANCE_SCOPE or len(receipt["changed_file_scope"]) != len(set(receipt["changed_file_scope"])):
+        _fail("H001 calibration execution governance changed_file_scope must be exact, ordered, and unique")
+    if receipt["next_actions"] != [_H001_CALIBRATION_EXECUTION_GOVERNANCE_NEXT_ACTION]:
+        _fail("H001 calibration execution governance next action is wrong")
+    if receipt["decisions"] != _H001_CALIBRATION_EXECUTION_GOVERNANCE_DECISIONS or len(receipt["decisions"]) != len(set(receipt["decisions"])):
+        _fail("H001 calibration execution governance decisions drifted")
+    if set(receipt["blockers"]) != _H001_CALIBRATION_EXECUTION_GOVERNANCE_BLOCKERS:
+        _fail("H001 calibration execution governance blockers drifted")
+    if receipt["prohibited_actions"] != _H001_CALIBRATION_REREVIEW_PROHIBITIONS:
+        _fail("H001 calibration execution governance prohibitions drifted")
+    if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 calibration execution governance changed persistent safety state")
+    expected_static = {
+        _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_SHA,
+        _H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_V022_SHA,
+        **{path: digest for path, digest in _H001_CALIBRATION_EXECUTION_GOVERNANCE_BINDINGS.values()},
+    }
+    expected_evidence = []
+    for path in _H001_CALIBRATION_EXECUTION_GOVERNANCE_EVIDENCE:
+        target = root / path
+        if not target.is_file():
+            _fail(f"H001 calibration execution governance evidence file {path!r} is missing")
+        digest = expected_static.get(path, hashlib.sha256(target.read_bytes()).hexdigest())
+        if path in expected_static and hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+            _fail(f"H001 calibration execution governance immutable evidence drifted for {path}")
+        expected_evidence.append({"path": path, "sha256": digest})
+    if receipt["evidence"] != expected_evidence or len(receipt["evidence"]) != len(set(item["path"] for item in receipt["evidence"])):
+        _fail("H001 calibration execution governance evidence must be exact, unique, and ordered")
+    amendment_bytes = (root / _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH).read_bytes()
+    if hashlib.sha256(amendment_bytes).hexdigest() != _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_SHA:
+        _fail("H001 calibration execution governance amendment hash is wrong")
+    amendment = _load_canonical_document(amendment_bytes, "H001 calibration execution governance amendment")
+    required = {"allowed_actions", "amendment_id", "amendment_kind", "authorization_status", "base_main_commit", "current_phase", "effective", "execution_authorized", "execution_implementation_authorized", "governed_h001_protocol_id", "hash_bindings", "non_effects", "prohibited_actions", "results", "schema_version", "status", "transition_gates"}
+    _require_exact_keys(amendment, required, "H001 calibration execution governance amendment")
+    expected_identity = {
+        "amendment_id": "candidate1-h001-synthetic-null-calibration-execution-governance-v001",
+        "amendment_kind": "qnty_h001_synthetic_null_calibration_execution_governance_amendment",
+        "authorization_status": "AUTHORIZED_H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION_FOR_INDEPENDENT_REVIEW_ONLY",
+        "base_main_commit": _H001_CALIBRATION_EXECUTION_GOVERNANCE_BASE_SHA,
+        "current_phase": _H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE,
+        "effective": True,
+        "execution_authorized": False,
+        "execution_implementation_authorized": True,
+        "governed_h001_protocol_id": "real_btc_h001_funding_crowding_reversal_falsification_v0",
+        "results": "NONE", "schema_version": "0.1.0", "status": "EFFECTIVE_IMPLEMENTATION_AUTHORIZATION_ONLY",
+    }
+    for key, expected in expected_identity.items():
+        if amendment[key] != expected:
+            _fail(f"H001 calibration execution governance amendment {key} is wrong")
+    if amendment["allowed_actions"] != ["IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_FOR_INDEPENDENT_REVIEW", "ADD_SYNTHETIC_ONLY_DETERMINISTIC_FIXTURES_AND_FAIL_CLOSED_TESTS", "BIND_IMPLEMENTATION_TO_EFFECTIVE_FROZEN_SPECIFICATION", "PREPARE_IMPLEMENTATION_FOR_INDEPENDENT_REVIEW"]:
+        _fail("H001 calibration execution governance allowed actions drifted")
+    if amendment["non_effects"] != ["CALIBRATION_ENGINE_NOT_IMPLEMENTED", "CALIBRATION_EXECUTION_NOT_AUTHORIZED", "CALIBRATION_RESULTS_NONE", "NO_REAL_DATA_ACCESS", "NO_ARTIFACT_OR_STORE_ACCESS", "NO_EXECUTION_COUNT_CONSUMED", "NO_H001_VALIDATION_OR_HOLDOUT_EXECUTION", "NO_SCIENTIFIC_AUTHORITY", "NO_PAPER_TRADING_AUTHORITY", "NO_LIVE_AUTHORITY", "IMPLEMENTATION_REVIEW_NOT_SCIENTIFIC_OR_MARKET_EVIDENCE", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION"]:
+        _fail("H001 calibration execution governance non-effects drifted")
+    if amendment["prohibited_actions"] != ["RUN_REGISTERED_CALIBRATION_REPLICATION", "RUN_FORMAL_BOOTSTRAP_CALIBRATION", "CREATE_FORMAL_CALIBRATION_RECEIPT", "EXPOSE_FORMAL_CALIBRATION_RESULTS", "TUNE_CALIBRATION_CONTRACT_FROM_OBSERVED_RESULTS", "CHANGE_EFFECTIVE_FROZEN_CANDIDATE", "PAIR_AUTHORIZATION_WITH_ANOTHER_CANDIDATE", "ACCESS_REAL_BARS_OR_FUNDING", "ACCESS_CANDIDATE1_V0_OR_HOLDOUT", "ACCESS_ARTIFACT_STORES_OR_SECRETS", "CONFIGURE_DURABLE_STORES", "AUTHORIZE_REAL_DATA_INFRASTRUCTURE", "CONSUME_H001_EXECUTION_BUDGET", "AUTHORIZE_H001_VALIDATION_OR_HOLDOUT_EXECUTION", "AUTHORIZE_SCIENTIFIC_USE", "AUTHORIZE_PAPER_TRADING", "AUTHORIZE_LIVE_INTEGRATION", "CLAIM_MARKET_EVIDENCE_OR_EDGE"]:
+        _fail("H001 calibration execution governance amendment prohibitions drifted")
+    if set(amendment["hash_bindings"]) != set(_H001_CALIBRATION_EXECUTION_GOVERNANCE_BINDINGS):
+        _fail("H001 calibration execution governance amendment binding keys drifted")
+    for key, expected in _H001_CALIBRATION_EXECUTION_GOVERNANCE_BINDINGS.items():
+        binding = amendment["hash_bindings"][key]
+        _require_exact_keys(binding, {"path", "sha256"}, f"H001 calibration execution governance {key} binding")
+        if (binding["path"], binding["sha256"]) != expected:
+            _fail(f"H001 calibration execution governance {key} binding is wrong")
+        if hashlib.sha256((root / binding["path"]).read_bytes()).hexdigest() != binding["sha256"]:
+            _fail(f"H001 calibration execution governance {key} bytes drifted")
+    expected_gates = {"effective_frozen_specification_verified": True, "execution_authorized": False, "execution_implementation_authorized": True, "execution_results": "NONE", "h001_execution_budget": 0, "h001_execution_count": 0, "h001_holdout_execution_authorized": False, "h001_validation_execution_authorized": False, "live_authorization": False, "paper_trade_authorization": False, "real_data_access_authorized": False, "scientific_authorization": False, "synthetic_null_calibration_specification_frozen": True, "synthetic_null_calibration_specification_sha256": _H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA}
+    if amendment["transition_gates"] != expected_gates:
+        _fail("H001 calibration execution governance transition gates drifted")
+    return amendment
+
+
 def _validate_entrypoints(root: Path) -> None:
     start_here = root / START_HERE_RELPATH
     if not start_here.is_file():
@@ -2717,6 +2843,29 @@ def render_context_packet(state: dict) -> str:
             f"H001_SYNTHETIC_NULL_CALIBRATION_EFFECTIVE_SPEC_SHA256={_H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA}",
             "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_GOVERNANCE=NOT_AUTHORIZED",
             "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_EXECUTION=0/0",
+            "H001_CURRENT_EXECUTION_BUDGET=0",
+            "H001_CURRENT_EXECUTION_COUNT=0",
+            "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+            "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+            "H001_LIVE_AUTHORIZATION=FALSE",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
+            "EDGE_UNPROVEN",
+            "BLOCK_LIVE_INTEGRATION",
+        ])
+    elif active["phase"] == _H001_CALIBRATION_EXECUTION_GOVERNANCE_PHASE:
+        lines.extend([
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW=PASSED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW_RECORD=RECORDED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=EFFECTIVE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FROZEN=TRUE",
+            f"H001_SYNTHETIC_NULL_CALIBRATION_EFFECTIVE_SPEC_SHA256={_H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA}",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_GOVERNANCE=AUTHORIZED_IMPLEMENTATION_FOR_INDEPENDENT_REVIEW_ONLY",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_IMPLEMENTED",
             "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
             "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
             "H001_REAL_DATA_ACCESS=FORBIDDEN",
