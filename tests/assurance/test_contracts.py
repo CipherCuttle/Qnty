@@ -310,6 +310,13 @@ def test_h001_calibration_rereview_record_is_canonical_and_strict():
     assert contracts.validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(value)
     assert value["final_verdict"] == "QNTY_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REPAIRED_REREVIEW_PASSED"
     assert value["review_history"][0]["verdict"] == "QNTY_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REREVIEW_FAILED"
+    assert value["review_history"][0]["finding_counts"] == {"blocker": 1, "major": 3, "minor": 0}
+    assert value["review_history"][0]["findings"] == [
+        {"finding_id": "DGP_STRESS_AND_SAMPLE_SEMANTICS_NOT_VALIDATED_EXACTLY", "severity": "BLOCKER"},
+        {"finding_id": "GARCH_INITIALIZATION_NOT_FULLY_PINNED", "severity": "MAJOR"},
+        {"finding_id": "SAMPLE_LENGTH_ENDPOINT_CONVENTION_AMBIGUOUS", "severity": "MAJOR"},
+        {"finding_id": "RNG_COMPONENT_SUBSTREAMS_AND_DRAW_ORDER_UNDER_SPECIFIED", "severity": "MAJOR"},
+    ]
     assert value["review_history"][1]["reviewed_head"] == "d79f8908d55e8dd9d5f33b9f174e01d8796e02fe"
     assert not raw.endswith(b"\n")
 
@@ -331,8 +338,20 @@ def test_h001_calibration_rereview_rejects_duplicate_or_noncanonical_bytes():
 
 @pytest.mark.parametrize("mutation", [
     lambda v: v["review_history"].pop(0),
+    lambda v: v["review_history"][0].update(finding_counts={"blocker": 4, "major": 0, "minor": 0}),
+    lambda v: v["review_history"][0].update(finding_counts={"blocker": 0, "major": 4, "minor": 0}),
+    lambda v: v["review_history"][0].update(finding_counts={"blocker": 0, "major": 3, "minor": 1}),
+    lambda v: v["review_history"][0]["findings"][0].update(severity="MAJOR"),
+    lambda v: v["review_history"][0]["findings"][1].update(severity="BLOCKER"),
+    lambda v: v["review_history"][0]["findings"].pop(),
+    lambda v: v["review_history"][0]["findings"].append(dict(v["review_history"][0]["findings"][0])),
+    lambda v: v["review_history"][0]["findings"].reverse(),
+    lambda v: v["review_history"][0]["findings"][0].update(finding_id="GARCH_INITIALIZATION_NOT_FULLY_PINNED"),
+    lambda v: v["review_history"][0].update(findings=[]),
     lambda v: v["review_history"][0].update(verdict=v["review_history"][1]["verdict"]),
+    lambda v: v["review_history"][0].update(historical=False),
     lambda v: v["review_history"][1].update(reviewed_head=v["review_history"][0]["reviewed_head"]),
+    lambda v: v["review_history"][1].update(findings=[dict(v["review_history"][0]["findings"][0])]),
     lambda v: v["review_bindings"].update(repair_commit="0" * 40),
     lambda v: v["review_bindings"].update(candidate_merge_commit="0" * 40),
     lambda v: v["artifact_bindings"][0].update(sha256="0" * 64),

@@ -545,12 +545,18 @@ _H001_CALIBRATION_REREVIEW_CLOSED_FINDINGS = [
     "SAMPLE_LENGTH_ENDPOINT_CONVENTION_AMBIGUOUS",
     "RNG_COMPONENT_SUBSTREAMS_AND_DRAW_ORDER_UNDER_SPECIFIED",
 ]
+_H001_CALIBRATION_REREVIEW_HISTORICAL_FINDINGS = [
+    {"finding_id": "DGP_STRESS_AND_SAMPLE_SEMANTICS_NOT_VALIDATED_EXACTLY", "severity": "BLOCKER"},
+    {"finding_id": "GARCH_INITIALIZATION_NOT_FULLY_PINNED", "severity": "MAJOR"},
+    {"finding_id": "SAMPLE_LENGTH_ENDPOINT_CONVENTION_AMBIGUOUS", "severity": "MAJOR"},
+    {"finding_id": "RNG_COMPONENT_SUBSTREAMS_AND_DRAW_ORDER_UNDER_SPECIFIED", "severity": "MAJOR"},
+]
 _H001_CALIBRATION_REREVIEW_HISTORY = [
     {
         "reviewed_head": "806b230bedeff32f7f84ad4b7127c606de74686f",
         "verdict": "QNTY_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REREVIEW_FAILED",
-        "finding_counts": {"blocker": 4, "major": 0, "minor": 0},
-        "findings": _H001_CALIBRATION_REREVIEW_CLOSED_FINDINGS,
+        "finding_counts": {"blocker": 1, "major": 3, "minor": 0},
+        "findings": _H001_CALIBRATION_REREVIEW_HISTORICAL_FINDINGS,
         "historical": True,
     },
     {
@@ -593,6 +599,13 @@ def validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_reco
         _fail("H001 calibration rereview scope drifted")
     if data["closed_findings"] != _H001_CALIBRATION_REREVIEW_CLOSED_FINDINGS:
         _fail("H001 calibration rereview closed findings drifted")
+    failed_review, passing_review = data["review_history"]
+    if failed_review["finding_counts"] != {"blocker": 1, "major": 3, "minor": 0}:
+        _fail("H001 calibration historical finding counts drifted")
+    if failed_review["findings"] != _H001_CALIBRATION_REREVIEW_HISTORICAL_FINDINGS:
+        _fail("H001 calibration historical finding severities drifted")
+    if passing_review["finding_counts"] != {"blocker": 0, "major": 0, "minor": 0} or passing_review["findings"] != []:
+        _fail("H001 calibration passing review findings drifted")
     if data["review_history"] != _H001_CALIBRATION_REREVIEW_HISTORY:
         _fail("H001 calibration rereview history drifted")
     if data["review_results"] != _H001_CALIBRATION_REREVIEW_RESULTS or data["semantic_review_results"] != _H001_CALIBRATION_REREVIEW_SEMANTICS:
