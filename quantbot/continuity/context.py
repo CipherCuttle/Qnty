@@ -156,6 +156,7 @@ _H001_TEMPORAL_ACTIVE_SCOPE = [
     ACTIVE_TASK_RELPATH,
     "quantbot/continuity/context.py",
     "tests/continuity/test_cross_agent_continuity.py",
+    "tests/experiment/test_h001_temporal_causality.py",
 ]
 _H001_TEMPORAL_ACTIVE_EVIDENCE = [
     "docs/artifacts/candidate1-real-input-v0.json",
@@ -1617,7 +1618,7 @@ def _validate_h001_temporal_activation_handoff(receipt: dict, root: Path) -> Non
     if receipt["predecessor"] != {"path": f"docs/control/tasks/{TASK_ID}/handoff_v017.json", "sha256": _H001_TEMPORAL_ACTIVE_V017_SHA}:
         _fail("H001 temporal activation predecessor is wrong")
     if receipt["changed_file_scope"] != _H001_TEMPORAL_ACTIVE_SCOPE:
-        _fail("H001 temporal activation changed_file_scope is not the exact ordered eight-file scope")
+        _fail("H001 temporal activation changed_file_scope must be exact and ordered")
     if receipt["next_actions"] != [_H001_TEMPORAL_ACTIVE_NEXT_ACTION]:
         _fail("H001 temporal activation next action is wrong")
     if receipt["decisions"] != _H001_TEMPORAL_ACTIVE_DECISIONS or len(receipt["decisions"]) != len(set(receipt["decisions"])):

@@ -2092,6 +2092,7 @@ def test_activation_production_state_renders_effective_strict_contract():
     state = load_and_verify_continuity_state(ROOT)
     assert state["active_task"]["phase"] == context._H001_TEMPORAL_ACTIVE_PHASE
     assert state["handoff_receipt"]["receipt_index"] == 18
+    assert state["handoff_receipt"]["changed_file_scope"] == context._H001_TEMPORAL_ACTIVE_SCOPE
     packet = render_context_packet(state)
     for marker in (
         "PHASE=candidate1_h001_temporal_causality_amendment_effective",
@@ -2109,6 +2110,36 @@ def test_activation_production_state_renders_effective_strict_contract():
         assert marker in packet
     assert "H001_TEMPORAL_CAUSALITY_CURRENT_SIGNAL_RULE=FUNDING_TIME_LTE_DECISION" not in packet
     assert "reviewed H001 temporal causality amendment is not yet activated" not in packet
+
+
+def test_activation_production_scope_is_exactly_nine_files_in_governance_order():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["handoff_receipt"]["changed_file_scope"] == [
+        "docs/control/amendments/candidate1_h001_temporal_causality_activation_v001.json",
+        "docs/experiments/candidate1_h001_real_data_falsification_v0.json",
+        "quantbot/experiment/h001_real_falsification_preregistration.py",
+        "tests/experiment/test_h001_real_falsification_preregistration.py",
+        f"docs/control/tasks/{TASK_ID}/handoff_v018.json",
+        "docs/control/active_task.json",
+        "quantbot/continuity/context.py",
+        "tests/continuity/test_cross_agent_continuity.py",
+        "tests/experiment/test_h001_temporal_causality.py",
+    ]
+
+
+@pytest.mark.parametrize("mutate, expected_error", [
+    pytest.param(lambda r: r["changed_file_scope"].pop(), "H001 temporal activation changed_file_scope must be exact and ordered", id="eight-file-scope"),
+    pytest.param(lambda r: r["changed_file_scope"].remove("tests/experiment/test_h001_temporal_causality.py"), "H001 temporal activation changed_file_scope must be exact and ordered", id="missing-temporal-test"),
+    pytest.param(lambda r: r["changed_file_scope"].insert(0, r["changed_file_scope"].pop()), "H001 temporal activation changed_file_scope must be exact and ordered", id="temporal-test-wrong-position"),
+    pytest.param(lambda r: r["changed_file_scope"].reverse(), "H001 temporal activation changed_file_scope must be exact and ordered", id="reversed-scope"),
+    pytest.param(lambda r: r["changed_file_scope"].append("tests/experiment/test_h001_temporal_causality.py"), "H001 temporal activation changed_file_scope must be exact and ordered", id="duplicate-temporal-test"),
+    pytest.param(lambda r: r["changed_file_scope"].append("docs/extra.md"), "H001 temporal activation changed_file_scope must be exact and ordered", id="extra-path"),
+    pytest.param(lambda r: r["changed_file_scope"].__setitem__(-1, "docs/wrong.md"), "H001 temporal activation changed_file_scope must be exact and ordered", id="wrong-path"),
+    pytest.param(lambda r: r["changed_file_scope"].__setitem__(-1, 123), "changed_file_scope entry must be a non-empty string", id="non-string-path"),
+])
+def test_activation_exact_scope_mutations_fail_at_scope_validation(tmp_path, mutate, expected_error):
+    with pytest.raises(ValueError, match=expected_error):
+        load_and_verify_continuity_state(_activation_mutated_tree(tmp_path, mutate_receipt=mutate))
 
 
 @pytest.mark.parametrize("mutate", [
