@@ -318,7 +318,7 @@ _H001_CALIBRATION_REREVIEW_DECISIONS = sorted([
     "BLOCK_LIVE_INTEGRATION", "DURABLE_STORES=UNCONFIGURED", "EDGE_UNPROVEN",
     "H001_CURRENT_EXECUTION_BUDGET=0", "H001_CURRENT_EXECUTION_COUNT=0", "H001_DURABLE_STORES_CONFIGURED=FALSE",
     "H001_EXECUTION=0/0", "H001_LIVE_AUTHORIZATION=FALSE", "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
-    "H001_REAL_DATA_ACCESS=FORBIDDEN", "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+    "H001_REAL_DATA_ACCESS=FORBIDDEN",
     "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED", "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
     "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=NOT_EFFECTIVE",
     "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE=IMPLEMENTED",
@@ -332,6 +332,72 @@ _H001_CALIBRATION_REREVIEW_DECISIONS = sorted([
 ])
 _H001_CALIBRATION_REREVIEW_BLOCKERS = set(_H001_CALIBRATION_GOVERNANCE_BLOCKERS)
 _H001_CALIBRATION_REREVIEW_PROHIBITIONS = _H001_CALIBRATION_CANDIDATE_PROHIBITIONS
+_H001_CALIBRATION_EFFECTIVE_PHASE = "candidate1_h001_synthetic_null_calibration_spec_freeze_effective"
+_H001_CALIBRATION_EFFECTIVE_NEXT_ACTION = "AUTHORIZE_H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_GOVERNANCE"
+_H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH = "docs/control/amendments/candidate1_h001_synthetic_null_calibration_spec_freeze_activation_v001.json"
+_H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH = f"docs/control/tasks/{TASK_ID}/handoff_v022.json"
+_H001_CALIBRATION_EFFECTIVE_BASE_SHA = "8b4548ac556a4260926cab7e2cb387040e396487"
+_H001_CALIBRATION_EFFECTIVE_V021_SHA = "1ed0282d4ffbe90cf5d8c56988745ef2359105bef1e76424381fa5d99b183b8b"
+_H001_CALIBRATION_EFFECTIVE_AMENDMENT_SHA = "3fa3d21492645baba8a1fd7fd5fbe8a601ccccec1371e5e7a81faff430c2ab48"
+_H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA = "04b6ea5b7453fccf4787abb26c230e2a02a77545c741c19f6686df16fc2cb7a2"
+_H001_CALIBRATION_EFFECTIVE_REREVIEW_SHA = "8614fa4b1c49fc665107c42ec900d9c998562dff236333a9dcdd38628a341fe0"
+_H001_CALIBRATION_EFFECTIVE_GOVERNANCE_SHA = "9e633c6bfc551bfc4efd9b8da2d986d018dac1d1c6a70cf96fc39b97adfb72b3"
+_H001_CALIBRATION_EFFECTIVE_DRAFT_SHA = "7e05a0b2b44dd4e3fbadf3e121791eb2ee76385a6b2ec6b872984cbb3510ecf6"
+_H001_CALIBRATION_EFFECTIVE_DESIGN_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
+_H001_CALIBRATION_EFFECTIVE_VALIDATOR_SHA = "d9326c7b73c68f3958901899f46ef11a4f529ed1954f268de06ae6e8abdcede3"
+_H001_CALIBRATION_EFFECTIVE_TEMPORAL_SHA = "b60f322650c5b83500b89ad9914b50cd2eb200cbae573670d307b5a72190ee1b"
+_H001_CALIBRATION_EFFECTIVE_SCOPE = [
+    _H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH,
+    _H001_CALIBRATION_CANDIDATE_RELPATH,
+    "quantbot/assurance/contracts.py",
+    "quantbot/assurance/h001_null_calibration.py",
+    "tests/assurance/test_contracts.py",
+    "tests/assurance/test_h001_null_calibration.py",
+    _H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+]
+_H001_CALIBRATION_EFFECTIVE_EVIDENCE = [
+    _H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH,
+    _H001_CALIBRATION_CANDIDATE_RELPATH,
+    _H001_CALIBRATION_REREVIEW_RECORD_RELPATH,
+    f"docs/control/tasks/{TASK_ID}/handoff_v021.json",
+    _H001_CALIBRATION_GOVERNANCE_AMENDMENT_RELPATH,
+    "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json",
+    H001_DESIGN_JSON_RELPATH,
+    "quantbot/experiment/h001_real_falsification_preregistration.py",
+    _H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH,
+    "quantbot/assurance/contracts.py",
+    "quantbot/assurance/h001_null_calibration.py",
+    "tests/assurance/test_contracts.py",
+    "tests/assurance/test_h001_null_calibration.py",
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+    "docs/artifacts/candidate1-real-input-v0.json",
+    STORE_REGISTRY_RELPATH,
+]
+_H001_CALIBRATION_EFFECTIVE_DECISIONS = sorted([
+    "BLOCK_LIVE_INTEGRATION", "DURABLE_STORES=UNCONFIGURED", "EDGE_UNPROVEN",
+    "H001_CURRENT_EXECUTION_BUDGET=0", "H001_CURRENT_EXECUTION_COUNT=0", "H001_DURABLE_STORES_CONFIGURED=FALSE",
+    "H001_EXECUTION=0/0",
+    "H001_REAL_DATA_ACCESS=FORBIDDEN",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_GOVERNANCE=NOT_AUTHORIZED",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_AUTHORIZED",
+    "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=EFFECTIVE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FROZEN=TRUE",
+    "H001_SYNTHETIC_NULL_CALIBRATION_EFFECTIVE_SPEC_SHA256=04b6ea5b7453fccf4787abb26c230e2a02a77545c741c19f6686df16fc2cb7a2",
+    "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW=PASSED",
+    "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW_RECORD=RECORDED",
+    "H001_SCIENTIFIC_AUTHORIZATION=FALSE", "H001_PAPER_TRADE_AUTHORIZATION=FALSE", "H001_LIVE_AUTHORIZATION=FALSE",
+    "H001_TEMPORAL_CAUSALITY_ACTIVATION_EFFECTIVE=TRUE", "V0_AVAILABILITY=UNAVAILABLE", "V0_VERIFIED_COPY_COUNT=0",
+])
+_H001_CALIBRATION_EFFECTIVE_BLOCKERS = {
+    "V0 remains unavailable", "durable stores remain unconfigured", "real data access remains forbidden",
+    "H001 synthetic calibration execution remains unauthorized", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION",
+}
 _H001_TEMPORAL_ACTIVE_BASE_SHA = "eb953e04685b57e22d1b27d043618da4b44d549b"
 _H001_TEMPORAL_ACTIVE_V017_SHA = "687c8192403cc5c4ff62bbe2ed43e5a4c080868c0b4760386a0d7429798c8d32"
 _H001_TEMPORAL_ACTIVE_DESIGN_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
@@ -1469,6 +1535,8 @@ def _validate_receipt_body(parsed: dict, label: str, root: Path, *, verify_evide
     receipt_keys = set(_RECEIPT_KEYS)
     if parsed.get("receipt_index") == 15:
         receipt_keys.add("review_binding")
+    if parsed.get("receipt_index") == 22:
+        receipt_keys.add("phase")
     _require_exact_keys(parsed, receipt_keys, label)
     if parsed["schema_version"] != "0.1.0":
         _fail(f"{label} schema_version is not 0.1.0")
@@ -1566,6 +1634,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
     elif active["phase"] == _H001_CALIBRATION_REREVIEW_PHASE:
         _cross_check_artifact_records(parsed, root)
         _validate_h001_calibration_rereview_handoff(parsed, root)
+    elif active["phase"] == _H001_CALIBRATION_EFFECTIVE_PHASE:
+        _cross_check_artifact_records(parsed, root)
+        amendment = _validate_h001_calibration_effective_handoff(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
@@ -2138,6 +2209,94 @@ def _validate_h001_calibration_rereview_handoff(receipt: dict, root: Path) -> No
         _fail("held-funding contract drifted")
 
 
+def _validate_h001_calibration_effective_handoff(receipt: dict, root: Path) -> dict:
+    """Validate activation of the independently reviewed freeze candidate.
+
+    The effective status is a metadata transition only. Every execution and
+    authority boundary remains false, and the reviewed candidate/rereview bytes
+    remain independently hash-bound.
+    """
+    if receipt["receipt_index"] != 22:
+        _fail("H001 calibration effective receipt index is wrong")
+    if receipt["phase"] != _H001_CALIBRATION_EFFECTIVE_PHASE:
+        _fail("H001 calibration effective phase is wrong")
+    if receipt["source_branch"] != "feat/h001-calibration-spec-freeze-activation" or receipt["source_head_commit"] != _H001_CALIBRATION_EFFECTIVE_BASE_SHA:
+        _fail("H001 calibration effective source binding is wrong")
+    if receipt["predecessor"] != {"path": f"docs/control/tasks/{TASK_ID}/handoff_v021.json", "sha256": _H001_CALIBRATION_EFFECTIVE_V021_SHA}:
+        _fail("H001 calibration effective predecessor is wrong")
+    if receipt["changed_file_scope"] != _H001_CALIBRATION_EFFECTIVE_SCOPE or len(receipt["changed_file_scope"]) != len(set(receipt["changed_file_scope"])):
+        _fail("H001 calibration effective changed_file_scope must be exact, ordered, and unique")
+    if receipt["next_actions"] != [_H001_CALIBRATION_EFFECTIVE_NEXT_ACTION]:
+        _fail("H001 calibration effective next action is wrong")
+    if receipt["decisions"] != _H001_CALIBRATION_EFFECTIVE_DECISIONS or len(receipt["decisions"]) != len(set(receipt["decisions"])):
+        _fail("H001 calibration effective decisions drifted")
+    if set(receipt["blockers"]) != _H001_CALIBRATION_EFFECTIVE_BLOCKERS:
+        _fail("H001 calibration effective blockers drifted")
+    if receipt["prohibited_actions"] != _H001_CALIBRATION_REREVIEW_PROHIBITIONS:
+        _fail("H001 calibration effective prohibitions drifted")
+    if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 calibration effective changed persistent safety state")
+    expected_static = {
+        _H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_AMENDMENT_SHA,
+        _H001_CALIBRATION_CANDIDATE_RELPATH: _H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA,
+        _H001_CALIBRATION_REREVIEW_RECORD_RELPATH: _H001_CALIBRATION_EFFECTIVE_REREVIEW_SHA,
+        f"docs/control/tasks/{TASK_ID}/handoff_v021.json": _H001_CALIBRATION_EFFECTIVE_V021_SHA,
+        _H001_CALIBRATION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_GOVERNANCE_SHA,
+        "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json": _H001_CALIBRATION_EFFECTIVE_DRAFT_SHA,
+        H001_DESIGN_JSON_RELPATH: _H001_CALIBRATION_EFFECTIVE_DESIGN_SHA,
+        "quantbot/experiment/h001_real_falsification_preregistration.py": _H001_CALIBRATION_EFFECTIVE_VALIDATOR_SHA,
+        _H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_TEMPORAL_SHA,
+    }
+    expected_evidence = []
+    for path in _H001_CALIBRATION_EFFECTIVE_EVIDENCE:
+        target = root / path
+        if not target.is_file():
+            _fail(f"H001 calibration effective evidence file {path!r} is missing")
+        digest = expected_static.get(path, hashlib.sha256(target.read_bytes()).hexdigest())
+        if path in expected_static and hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+            _fail(f"H001 calibration effective immutable evidence drifted for {path}")
+        expected_evidence.append({"path": path, "sha256": digest})
+    if receipt["evidence"] != expected_evidence or len(receipt["evidence"]) != len(set(item["path"] for item in receipt["evidence"])):
+        _fail("H001 calibration effective evidence must be exact, unique, and ordered")
+    amendment_path = root / _H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH
+    amendment_bytes = amendment_path.read_bytes()
+    if hashlib.sha256(amendment_bytes).hexdigest() != _H001_CALIBRATION_EFFECTIVE_AMENDMENT_SHA:
+        _fail("H001 calibration activation amendment hash is wrong")
+    try:
+        amendment = contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_activation(amendment_bytes)
+    except contracts.AssuranceValidationError as error:
+        _fail(f"H001 calibration activation amendment is invalid: {error}")
+    candidate_bytes = (root / _H001_CALIBRATION_CANDIDATE_RELPATH).read_bytes()
+    if hashlib.sha256(candidate_bytes).hexdigest() != _H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA:
+        _fail("H001 reviewed freeze candidate bytes drifted")
+    try:
+        candidate = contracts.load_and_validate_calibration_spec_freeze_candidate(candidate_bytes)
+    except contracts.AssuranceValidationError as error:
+        _fail(f"H001 reviewed freeze candidate is invalid: {error}")
+    if candidate["status"] != contracts.H001_FREEZE_CANDIDATE_STATUS or candidate["authorization_state"]["specification_effective"] is not False:
+        _fail("H001 candidate source status was rewritten")
+    record_bytes = (root / _H001_CALIBRATION_REREVIEW_RECORD_RELPATH).read_bytes()
+    if hashlib.sha256(record_bytes).hexdigest() != _H001_CALIBRATION_EFFECTIVE_REREVIEW_SHA:
+        _fail("H001 candidate rereview record bytes drifted")
+    try:
+        contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(record_bytes)
+    except contracts.AssuranceValidationError as error:
+        _fail(f"H001 candidate rereview record is invalid: {error}")
+    for key, digest in expected_static.items():
+        if key in {_H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH, _H001_CALIBRATION_CANDIDATE_RELPATH, _H001_CALIBRATION_REREVIEW_RECORD_RELPATH}:
+            continue
+        if hashlib.sha256((root / key).read_bytes()).hexdigest() != digest:
+            _fail(f"H001 activation binding drifted for {key}")
+    validator_bytes = (root / "quantbot/experiment/h001_real_falsification_preregistration.py").read_bytes()
+    if validator_bytes.count(b"latest funding_time_utc < bar[t].open_time_utc") != 1 or b"latest funding_time_utc <= bar[t].open_time_utc" in validator_bytes:
+        _fail("activated H001 temporal strict-< signal contract is not effective")
+    if b"bar[t].open_time_utc < funding_time_utc <= bar[t].close_time_utc" not in validator_bytes:
+        _fail("held-funding contract drifted")
+    if amendment["effective_specification"]["sha256"] != _H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA:
+        _fail("effective specification hash does not bind the reviewed candidate")
+    return amendment
+
+
 def _validate_entrypoints(root: Path) -> None:
     start_here = root / START_HERE_RELPATH
     if not start_here.is_file():
@@ -2546,6 +2705,29 @@ def render_context_packet(state: dict) -> str:
             "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
             "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
             "H001_LIVE_AUTHORIZATION=FALSE",
+            "EDGE_UNPROVEN",
+            "BLOCK_LIVE_INTEGRATION",
+        ])
+    elif active["phase"] == _H001_CALIBRATION_EFFECTIVE_PHASE:
+        lines.extend([
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW=PASSED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REVIEW_RECORD=RECORDED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE=EFFECTIVE",
+            "H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FROZEN=TRUE",
+            f"H001_SYNTHETIC_NULL_CALIBRATION_EFFECTIVE_SPEC_SHA256={_H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA}",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_GOVERNANCE=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED",
+            "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE",
+            "H001_REAL_DATA_ACCESS=FORBIDDEN",
+            "H001_EXECUTION=0/0",
+            "H001_CURRENT_EXECUTION_BUDGET=0",
+            "H001_CURRENT_EXECUTION_COUNT=0",
+            "H001_SCIENTIFIC_AUTHORIZATION=FALSE",
+            "H001_PAPER_TRADE_AUTHORIZATION=FALSE",
+            "H001_LIVE_AUTHORIZATION=FALSE",
+            "V0_AVAILABILITY=UNAVAILABLE",
+            "H001_DURABLE_STORES_CONFIGURED=FALSE",
             "EDGE_UNPROVEN",
             "BLOCK_LIVE_INTEGRATION",
         ])

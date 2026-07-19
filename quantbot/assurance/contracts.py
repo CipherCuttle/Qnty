@@ -925,3 +925,172 @@ def load_and_validate_calibration_spec_freeze_candidate(raw: bytes) -> dict:
     if canonical_json_bytes(parsed) != raw:
         _fail("non-canonical JSON bytes")
     return validate_calibration_spec_freeze_candidate(parsed)
+
+
+# --- H001 synthetic-null calibration specification freeze activation ---------
+#
+# This amendment changes only the governed effective status of the immutable
+# review candidate. It does not copy, rewrite, or execute that candidate.
+H001_CALIBRATION_ACTIVATION_AMENDMENT_ID = "candidate1-h001-synthetic-null-calibration-spec-freeze-activation-v001"
+H001_CALIBRATION_ACTIVATION_AMENDMENT_KIND = "qnty_h001_synthetic_null_calibration_spec_freeze_activation_amendment"
+H001_CALIBRATION_ACTIVATION_STATUS = "ACTIVATED_AFTER_INDEPENDENT_REVIEW"
+H001_CALIBRATION_ACTIVATION_BASE_MAIN_COMMIT = "8b4548ac556a4260926cab7e2cb387040e396487"
+H001_CALIBRATION_EFFECTIVE_SPECIFICATION_SHA256 = "04b6ea5b7453fccf4787abb26c230e2a02a77545c741c19f6686df16fc2cb7a2"
+H001_CALIBRATION_REREVIEW_RECORD_SHA256 = "8614fa4b1c49fc665107c42ec900d9c998562dff236333a9dcdd38628a341fe0"
+H001_CALIBRATION_V021_SHA256 = "1ed0282d4ffbe90cf5d8c56988745ef2359105bef1e76424381fa5d99b183b8b"
+H001_CALIBRATION_ACTIVATION_GOVERNANCE_SHA256 = "9e633c6bfc551bfc4efd9b8da2d986d018dac1d1c6a70cf96fc39b97adfb72b3"
+H001_CALIBRATION_ACTIVATED_DESIGN_SHA256 = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
+H001_CALIBRATION_ACTIVATED_VALIDATOR_SHA256 = "d9326c7b73c68f3958901899f46ef11a4f529ed1954f268de06ae6e8abdcede3"
+H001_CALIBRATION_TEMPORAL_ACTIVATION_SHA256 = "b60f322650c5b83500b89ad9914b50cd2eb200cbae573670d307b5a72190ee1b"
+
+_H001_CALIBRATION_ACTIVATION_KEYS = {
+    "amendment_id", "amendment_kind", "authorization_state", "base_main_commit",
+    "candidate_review_completed", "candidate_review_recorded", "effective",
+    "document_id", "document_kind", "effective_specification", "frozen_values",
+    "governed_h001_protocol_id", "hash_bindings", "non_effects", "review_history",
+    "schema_version", "status",
+}
+_H001_CALIBRATION_ACTIVATION_AUTH_KEYS = {
+    "execution_authorized", "execution_implementation_authorized", "h001_holdout_execution_authorized",
+    "h001_validation_execution_authorized", "live_authorization", "paper_trade_authorization",
+    "real_data_access_authorized", "results_exposed", "scientific_authorization",
+    "specification_effective", "specification_frozen_effective",
+}
+_H001_CALIBRATION_ACTIVATION_HASH_BINDINGS = {
+    "effective_specification": (
+        "docs/assurance/h001_synthetic_null_calibration_spec_freeze_candidate_v001.json",
+        H001_CALIBRATION_EFFECTIVE_SPECIFICATION_SHA256,
+    ),
+    "candidate_rereview_record": (
+        "docs/assurance/reviews/h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record_v001.json",
+        H001_CALIBRATION_REREVIEW_RECORD_SHA256,
+    ),
+    "handoff_v021": (
+        "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v021.json",
+        H001_CALIBRATION_V021_SHA256,
+    ),
+    "freeze_governance_amendment": (
+        "docs/control/amendments/candidate1_h001_synthetic_null_calibration_spec_freeze_governance_v001.json",
+        H001_CALIBRATION_ACTIVATION_GOVERNANCE_SHA256,
+    ),
+    "historical_calibration_draft": (
+        "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json",
+        H001_HISTORICAL_CALIBRATION_DRAFT_SHA256,
+    ),
+    "activated_h001_design": (
+        "docs/experiments/candidate1_h001_real_data_falsification_v0.json",
+        H001_CALIBRATION_ACTIVATED_DESIGN_SHA256,
+    ),
+    "activated_h001_validator": (
+        "quantbot/experiment/h001_real_falsification_preregistration.py",
+        H001_CALIBRATION_ACTIVATED_VALIDATOR_SHA256,
+    ),
+    "temporal_activation_amendment": (
+        "docs/control/amendments/candidate1_h001_temporal_causality_activation_v001.json",
+        H001_CALIBRATION_TEMPORAL_ACTIVATION_SHA256,
+    ),
+}
+_H001_CALIBRATION_ACTIVATION_REVIEW_HISTORY = {
+    "candidate_base_commit": "6465d036af6b66ae6d845511c652d5857651bc49",
+    "candidate_failed_reviewed_head": "806b230bedeff32f7f84ad4b7127c606de74686f",
+    "candidate_final_reviewed_head": "d79f8908d55e8dd9d5f33b9f174e01d8796e02fe",
+    "candidate_merge_commit": "841ae1b43ca69e8290311b7c0fb6f803513a7df5",
+    "candidate_pr_number": 288,
+    "review_record_final_reviewed_head": "276b0e0dad49a7c10517d01f7fd9aebd4947050b",
+    "review_record_merge_commit": "8b4548ac556a4260926cab7e2cb387040e396487",
+    "review_record_pr_number": 289,
+}
+_H001_CALIBRATION_ACTIVATION_FROZEN_VALUES = {
+    "bootstrap_repetitions": 10000,
+    "familywise_alpha": 0.05,
+    "fwer_upper_bound_threshold": 0.075,
+    "hac_lag": 21,
+    "outer_synthetic_replications": 2000,
+    "registered_variant_series": 9,
+    "rng": "numpy.random.Generator using numpy.random.Philox",
+    "sample_length_intervals": 2193,
+    "stationary_block_length": 63,
+    "binomial_method": "one-sided exact Clopper-Pearson upper bound",
+}
+_H001_CALIBRATION_ACTIVATION_NON_EFFECTS = [
+    "CALIBRATION_EXECUTION_NOT_AUTHORIZED",
+    "CALIBRATION_EXECUTION_IMPLEMENTATION_NOT_AUTHORIZED",
+    "CALIBRATION_NOT_EXECUTED",
+    "NO_CALIBRATION_RESULTS",
+    "NO_REAL_DATA_ACCESS",
+    "NO_ARTIFACT_OR_STORE_ACCESS",
+    "NO_EXECUTION_COUNT_CONSUMED",
+    "NO_H001_VALIDATION_EXECUTION",
+    "NO_H001_HOLDOUT_EXECUTION",
+    "NO_SCIENTIFIC_AUTHORITY",
+    "NO_PAPER_TRADING_AUTHORITY",
+    "NO_LIVE_AUTHORITY",
+    "REVIEW_RESULTS_NOT_CALIBRATION_RESULTS",
+    "CALIBRATION_RESULTS_NOT_MARKET_EVIDENCE",
+    "EDGE_UNPROVEN",
+    "BLOCK_LIVE_INTEGRATION",
+]
+
+
+def _validate_activation_hash_binding(value: object, key: str) -> None:
+    binding = _keys(value, {"path", "sha256"}, f"H001 activation {key} binding")
+    _require_repo_relative_review_path(binding["path"])
+    _sha(binding["sha256"], f"H001 activation {key} sha256")
+    if (binding["path"], binding["sha256"]) != _H001_CALIBRATION_ACTIVATION_HASH_BINDINGS[key]:
+        _fail(f"H001 activation {key} hash binding drifted")
+
+
+def validate_h001_synthetic_null_calibration_spec_freeze_activation(value: object) -> dict:
+    """Validate the effective freeze amendment without filesystem or execution access."""
+    data = _base(
+        value,
+        H001_CALIBRATION_ACTIVATION_AMENDMENT_KIND,
+        H001_CALIBRATION_ACTIVATION_AMENDMENT_ID,
+        H001_CALIBRATION_ACTIVATION_STATUS,
+        _H001_CALIBRATION_ACTIVATION_KEYS,
+    )
+    if data["base_main_commit"] != H001_CALIBRATION_ACTIVATION_BASE_MAIN_COMMIT or data["governed_h001_protocol_id"] != H001_PROTOCOL_ID:
+        _fail("H001 activation identity or base-main binding drifted")
+    if data["amendment_id"] != H001_CALIBRATION_ACTIVATION_AMENDMENT_ID or data["amendment_kind"] != H001_CALIBRATION_ACTIVATION_AMENDMENT_KIND:
+        _fail("H001 activation amendment identity drifted")
+    _require_exact_bool(data["candidate_review_completed"], True, "candidate_review_completed")
+    _require_exact_bool(data["candidate_review_recorded"], True, "candidate_review_recorded")
+    for key in ("effective",):
+        _require_exact_bool(data[key], True, key)
+    auth = _keys(data["authorization_state"], _H001_CALIBRATION_ACTIVATION_AUTH_KEYS, "H001 activation authorization_state")
+    for key in _H001_CALIBRATION_ACTIVATION_AUTH_KEYS:
+        _require_exact_bool(auth[key], key in {"specification_effective", "specification_frozen_effective"}, f"authorization_state {key}")
+    effective = _keys(data["effective_specification"], {"document_id", "path", "sha256", "source_status", "source_status_explanation"}, "H001 effective specification")
+    if effective != {
+        "document_id": H001_FREEZE_CANDIDATE_DOCUMENT_ID,
+        "path": _H001_CALIBRATION_ACTIVATION_HASH_BINDINGS["effective_specification"][0],
+        "sha256": H001_CALIBRATION_EFFECTIVE_SPECIFICATION_SHA256,
+        "source_status": H001_FREEZE_CANDIDATE_STATUS,
+        "source_status_explanation": "The immutable candidate artifact retains its historical source status. This activation amendment changes its governed effective status without mutating its bytes.",
+    }:
+        _fail("H001 effective specification identity drifted")
+    bindings = _keys(data["hash_bindings"], set(_H001_CALIBRATION_ACTIVATION_HASH_BINDINGS), "H001 activation hash_bindings")
+    for key in _H001_CALIBRATION_ACTIVATION_HASH_BINDINGS:
+        _validate_activation_hash_binding(bindings[key], key)
+    history = _keys(data["review_history"], set(_H001_CALIBRATION_ACTIVATION_REVIEW_HISTORY), "H001 activation review_history")
+    if history != _H001_CALIBRATION_ACTIVATION_REVIEW_HISTORY:
+        _fail("H001 activation candidate and review-record history drifted")
+    frozen = _keys(data["frozen_values"], set(_H001_CALIBRATION_ACTIVATION_FROZEN_VALUES), "H001 activation frozen_values")
+    if frozen != _H001_CALIBRATION_ACTIVATION_FROZEN_VALUES:
+        _fail("H001 activation frozen values drifted")
+    if data["non_effects"] != _H001_CALIBRATION_ACTIVATION_NON_EFFECTS or "SPECIFICATION_REMAINS_UNFROZEN" in data["non_effects"]:
+        _fail("H001 activation non-effects drifted")
+    return data
+
+
+def load_and_validate_h001_synthetic_null_calibration_spec_freeze_activation(raw: bytes) -> dict:
+    """Strict UTF-8, duplicate-key rejecting, canonical byte-level activation loader."""
+    if type(raw) is not bytes:
+        _fail("exact bytes input required")
+    try:
+        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, AssuranceValidationError) as error:
+        raise AssuranceValidationError("strict UTF-8 JSON without duplicate keys required") from error
+    if canonical_json_bytes(parsed) != raw:
+        _fail("non-canonical JSON bytes")
+    return validate_h001_synthetic_null_calibration_spec_freeze_activation(parsed)

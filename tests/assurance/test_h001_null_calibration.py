@@ -1,6 +1,7 @@
 import ast
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -40,6 +41,10 @@ def freeze_candidate():
     return json.loads(FREEZE_CANDIDATE.read_bytes())
 
 
+def freeze_activation():
+    return json.loads((ROOT / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_spec_freeze_activation_v001.json").read_bytes())
+
+
 def test_freeze_candidate_cannot_build_an_execution_plan():
     """The candidate is recognized and fully validated, then refused: recognized
     is not the same as effective."""
@@ -53,6 +58,23 @@ def test_historical_draft_and_candidate_fail_closed_with_distinct_reasons():
         build_calibration_execution_plan(draft)
     with pytest.raises(AssuranceValidationError, match="CALIBRATION_SPEC_NOT_EFFECTIVE"):
         build_calibration_execution_plan(freeze_candidate())
+
+
+def test_reviewed_candidate_with_exact_activation_reaches_execution_boundary():
+    with pytest.raises(AssuranceValidationError, match="CALIBRATION_EXECUTION_NOT_AUTHORIZED"):
+        build_calibration_execution_plan(freeze_candidate(), freeze_activation())
+
+
+def test_invalid_activation_is_rejected_by_strict_activation_validation():
+    activation = freeze_activation()
+    activation["hash_bindings"]["effective_specification"]["sha256"] = "0" * 64
+    with pytest.raises(AssuranceValidationError, match="hash binding"):
+        build_calibration_execution_plan(freeze_candidate(), activation)
+
+
+def test_no_execution_plan_object_can_be_constructed():
+    assert not hasattr(calibration, "CalibrationExecutionPlan")
+    assert "NoReturn" in str(calibration.build_calibration_execution_plan.__annotations__["return"])
 
 
 @pytest.mark.parametrize("argument", [
