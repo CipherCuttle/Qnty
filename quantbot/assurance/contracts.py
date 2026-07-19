@@ -486,6 +486,139 @@ def validate_h001_temporal_candidate_rereview_record(raw: bytes) -> dict:
     return data
 
 
+_H001_CALIBRATION_REREVIEW_RECORD_KEYS = {
+    "artifact_bindings", "candidate_review_scope", "closed_findings", "document_id",
+    "document_kind", "final_finding_counts", "final_verdict", "non_effects",
+    "preregistered", "recorded_after_review", "repair_scope", "review_bindings",
+    "review_history", "review_id", "review_results", "schema_version",
+    "semantic_review_results", "status",
+}
+_H001_CALIBRATION_REREVIEW_ARTIFACTS = [
+    {"path": "docs/assurance/h001_synthetic_null_calibration_spec_freeze_candidate_v001.json", "sha256": "04b6ea5b7453fccf4787abb26c230e2a02a77545c741c19f6686df16fc2cb7a2"},
+    {"path": "quantbot/assurance/contracts.py", "sha256": "f4a5f783d1ae4276326a2056734377961cec4b5a927487febc91f5aca732a340"},
+    {"path": "quantbot/assurance/h001_null_calibration.py", "sha256": "1bddb607041409c991b1f0b609fced17916d6c7c08d311db2706b4734f7e9c34"},
+    {"path": "tests/assurance/test_contracts.py", "sha256": "92c4e8dd8bcdf2dbcc6c1b09d8ad4044ac53156e316b160f2e9bd61f2b66d549"},
+    {"path": "tests/assurance/test_h001_null_calibration.py", "sha256": "60d0d09236c9e4e49b722fa0402b934e0a799b101ec605608f683cd1137b2e37"},
+    {"path": "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v020.json", "sha256": "6c9a429d2644b8e6fd9f59ee71585994fb6439ff6451ec41e22cdc7b338969a4"},
+    {"path": "docs/control/amendments/candidate1_h001_synthetic_null_calibration_spec_freeze_governance_v001.json", "sha256": "9e633c6bfc551bfc4efd9b8da2d986d018dac1d1c6a70cf96fc39b97adfb72b3"},
+    {"path": "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json", "sha256": "7e05a0b2b44dd4e3fbadf3e121791eb2ee76385a6b2ec6b872984cbb3510ecf6"},
+    {"path": "docs/experiments/candidate1_h001_real_data_falsification_v0.json", "sha256": "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"},
+    {"path": "quantbot/experiment/h001_real_falsification_preregistration.py", "sha256": "d9326c7b73c68f3958901899f46ef11a4f529ed1954f268de06ae6e8abdcede3"},
+    {"path": "docs/control/amendments/candidate1_h001_temporal_causality_activation_v001.json", "sha256": "b60f322650c5b83500b89ad9914b50cd2eb200cbae573670d307b5a72190ee1b"},
+]
+_H001_CALIBRATION_REREVIEW_PR_SCOPE = [
+    "docs/assurance/h001_synthetic_null_calibration_spec_freeze_candidate_v001.json",
+    "docs/control/active_task.json",
+    "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v020.json",
+    "quantbot/assurance/contracts.py", "quantbot/assurance/h001_null_calibration.py",
+    "quantbot/continuity/context.py", "tests/assurance/test_contracts.py",
+    "tests/assurance/test_h001_null_calibration.py", "tests/continuity/test_cross_agent_continuity.py",
+]
+_H001_CALIBRATION_REREVIEW_REPAIR_SCOPE = [
+    "docs/assurance/h001_synthetic_null_calibration_spec_freeze_candidate_v001.json",
+    "docs/control/active_task.json",
+    "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v020.json",
+    "quantbot/assurance/contracts.py", "quantbot/continuity/context.py",
+    "tests/assurance/test_contracts.py", "tests/continuity/test_cross_agent_continuity.py",
+]
+_H001_CALIBRATION_REREVIEW_NON_EFFECTS = [
+    "SPECIFICATION_NOT_EFFECTIVE", "SPECIFICATION_REMAINS_UNFROZEN", "CALIBRATION_EXECUTION_NOT_AUTHORIZED",
+    "CALIBRATION_NOT_EXECUTED", "NO_CALIBRATION_RESULTS", "NO_REAL_DATA_ACCESS", "NO_ARTIFACT_OR_STORE_ACCESS",
+    "NO_EXECUTION_COUNT_CONSUMED", "NO_SCIENTIFIC_AUTHORITY", "NO_PAPER_TRADING_AUTHORITY", "NO_LIVE_AUTHORITY",
+    "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION", "REVIEW_RESULTS_NOT_MARKET_EVIDENCE",
+    "REVIEW_RESULTS_NOT_CALIBRATION_EVIDENCE",
+]
+_H001_CALIBRATION_REREVIEW_RESULTS = {
+    "assurance": "200 passed", "focused_continuity": "526 passed, 12 skipped", "continuity": "526 passed, 12 skipped",
+    "sandbox": "53 passed", "artifacts": "103 passed", "temporal": "34 passed", "current_preregistration": "538 passed",
+    "full_suite": "6593 passed, 12 skipped", "release_smoke": "6 passed", "exported_assurance_continuity": "726 passed, 12 skipped",
+    "semantic_mutation_probes": "27/27 rejected", "remote_ci": "ALL_REPORTED_CHECKS_SUCCESS",
+}
+_H001_CALIBRATION_REREVIEW_SEMANTICS = {
+    "sample_boundary_review": "PASSED",
+    "garch_review": "PASSED_WITH_EXPLICIT_DETERMINISTIC_BURN_IN_APPROXIMATION",
+    "rng_substream_review": "PASSED", "exact_semantics_review": "PASSED", "harness_fail_closed_review": "PASSED",
+}
+_H001_CALIBRATION_REREVIEW_CLOSED_FINDINGS = [
+    "DGP_STRESS_AND_SAMPLE_SEMANTICS_NOT_VALIDATED_EXACTLY",
+    "GARCH_INITIALIZATION_NOT_FULLY_PINNED",
+    "SAMPLE_LENGTH_ENDPOINT_CONVENTION_AMBIGUOUS",
+    "RNG_COMPONENT_SUBSTREAMS_AND_DRAW_ORDER_UNDER_SPECIFIED",
+]
+_H001_CALIBRATION_REREVIEW_HISTORY = [
+    {
+        "reviewed_head": "806b230bedeff32f7f84ad4b7127c606de74686f",
+        "verdict": "QNTY_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REREVIEW_FAILED",
+        "finding_counts": {"blocker": 4, "major": 0, "minor": 0},
+        "findings": _H001_CALIBRATION_REREVIEW_CLOSED_FINDINGS,
+        "historical": True,
+    },
+    {
+        "reviewed_head": "d79f8908d55e8dd9d5f33b9f174e01d8796e02fe",
+        "verdict": "QNTY_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REPAIRED_REREVIEW_PASSED",
+        "finding_counts": {"blocker": 0, "major": 0, "minor": 0},
+        "findings": [],
+        "historical": False,
+    },
+]
+
+
+def validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(value: object) -> dict:
+    """Validate the H001 freeze-candidate rereview as metadata only."""
+    data = _base(
+        value,
+        "qnty_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record",
+        "h001-synthetic-null-calibration-spec-freeze-candidate-repaired-rereview-v001",
+        "RECORDED_AFTER_REVIEW_NOT_EFFECTIVE_NOT_EXECUTABLE",
+        _H001_CALIBRATION_REREVIEW_RECORD_KEYS,
+    )
+    if data["recorded_after_review"] is not True or data["preregistered"] is not False:
+        _fail("H001 calibration rereview record status drifted")
+    if data["final_verdict"] != "QNTY_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REPAIRED_REREVIEW_PASSED":
+        _fail("H001 calibration rereview final verdict drifted")
+    if data["final_finding_counts"] != {"blocker": 0, "major": 0, "minor": 0}:
+        _fail("H001 calibration rereview final findings must be zero")
+    if data["review_bindings"] != {
+        "pr_number": 288,
+        "candidate_base_commit": "6465d036af6b66ae6d845511c652d5857651bc49",
+        "initial_failed_reviewed_head": "806b230bedeff32f7f84ad4b7127c606de74686f",
+        "repair_commit": "d79f8908d55e8dd9d5f33b9f174e01d8796e02fe",
+        "final_reviewed_head": "d79f8908d55e8dd9d5f33b9f174e01d8796e02fe",
+        "candidate_merge_commit": "841ae1b43ca69e8290311b7c0fb6f803513a7df5",
+    }:
+        _fail("H001 calibration rereview PR bindings drifted")
+    if data["artifact_bindings"] != _H001_CALIBRATION_REREVIEW_ARTIFACTS:
+        _fail("H001 calibration rereview immutable bindings drifted")
+    if data["candidate_review_scope"] != _H001_CALIBRATION_REREVIEW_PR_SCOPE or data["repair_scope"] != _H001_CALIBRATION_REREVIEW_REPAIR_SCOPE:
+        _fail("H001 calibration rereview scope drifted")
+    if data["closed_findings"] != _H001_CALIBRATION_REREVIEW_CLOSED_FINDINGS:
+        _fail("H001 calibration rereview closed findings drifted")
+    if data["review_history"] != _H001_CALIBRATION_REREVIEW_HISTORY:
+        _fail("H001 calibration rereview history drifted")
+    if data["review_results"] != _H001_CALIBRATION_REREVIEW_RESULTS or data["semantic_review_results"] != _H001_CALIBRATION_REREVIEW_SEMANTICS:
+        _fail("H001 calibration rereview results drifted")
+    if data["non_effects"] != _H001_CALIBRATION_REREVIEW_NON_EFFECTS:
+        _fail("H001 calibration rereview non-effects drifted")
+    for binding in data["artifact_bindings"]:
+        _keys(binding, {"path", "sha256"}, "H001 calibration rereview artifact binding")
+        _require_repo_relative_review_path(binding["path"])
+        _sha(binding["sha256"], "H001 calibration rereview artifact sha256")
+    return data
+
+
+def load_and_validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(raw: bytes) -> dict:
+    """Strict UTF-8, duplicate-key rejecting, canonical byte-level loader."""
+    if type(raw) is not bytes:
+        _fail("exact bytes input required")
+    try:
+        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, AssuranceValidationError) as error:
+        raise AssuranceValidationError("strict UTF-8 JSON without duplicate keys required") from error
+    if canonical_json_bytes(parsed) != raw:
+        _fail("non-canonical JSON bytes")
+    return validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(parsed)
+
+
 def _require_repo_relative_review_path(path: object) -> str:
     if type(path) is not str or not re.fullmatch(r"[A-Za-z0-9._/-]+", path) or path.startswith("/") or ".." in path.split("/"):
         _fail("unsafe repository-relative review path")

@@ -12,6 +12,7 @@ ROOT = Path(__file__).parents[2]
 DOCS = ROOT / "docs/assurance"
 REVIEWS = DOCS / "reviews"
 TEMPORAL_REREVIEW = REVIEWS / "h001_temporal_causality_amendment_candidate_rereview_record_v001.json"
+CALIBRATION_REREVIEW = REVIEWS / "h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record_v001.json"
 VALIDATORS = {
     "h001_temporal_causality_amendment_draft_v001.json": contracts.validate_temporal_amendment_draft,
     "h001_synthetic_null_calibration_spec_draft_v001.json": contracts.validate_calibration_spec_draft,
@@ -297,6 +298,66 @@ def test_h001_temporal_candidate_rereview_record_rejects_duplicate_or_noncanonic
         contracts.validate_h001_temporal_candidate_rereview_record(duplicate)
     with pytest.raises(ValueError):
         contracts.validate_h001_temporal_candidate_rereview_record(json.dumps(json.loads(raw)).encode())
+
+
+def calibration_rereview_record():
+    return json.loads(CALIBRATION_REREVIEW.read_bytes())
+
+
+def test_h001_calibration_rereview_record_is_canonical_and_strict():
+    raw = CALIBRATION_REREVIEW.read_bytes()
+    value = contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(raw)
+    assert contracts.validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(value)
+    assert value["final_verdict"] == "QNTY_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REPAIRED_REREVIEW_PASSED"
+    assert value["review_history"][0]["verdict"] == "QNTY_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REREVIEW_FAILED"
+    assert value["review_history"][1]["reviewed_head"] == "d79f8908d55e8dd9d5f33b9f174e01d8796e02fe"
+    assert not raw.endswith(b"\n")
+
+
+@pytest.mark.parametrize("raw", [bytearray(CALIBRATION_REREVIEW.read_bytes()), memoryview(CALIBRATION_REREVIEW.read_bytes()), CALIBRATION_REREVIEW.read_text(), CALIBRATION_REREVIEW, object()])
+def test_h001_calibration_rereview_requires_exact_bytes(raw):
+    with pytest.raises(ValueError, match="exact bytes input"):
+        contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(raw)
+
+
+def test_h001_calibration_rereview_rejects_duplicate_or_noncanonical_bytes():
+    raw = CALIBRATION_REREVIEW.read_bytes()
+    duplicate = raw[:-1] + b',"status":"RECORDED_AFTER_REVIEW_NOT_EFFECTIVE_NOT_EXECUTABLE"}'
+    with pytest.raises(ValueError, match="duplicate"):
+        contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(duplicate)
+    with pytest.raises(ValueError, match="non-canonical"):
+        contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(json.dumps(json.loads(raw)).encode())
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda v: v["review_history"].pop(0),
+    lambda v: v["review_history"][0].update(verdict=v["review_history"][1]["verdict"]),
+    lambda v: v["review_history"][1].update(reviewed_head=v["review_history"][0]["reviewed_head"]),
+    lambda v: v["review_bindings"].update(repair_commit="0" * 40),
+    lambda v: v["review_bindings"].update(candidate_merge_commit="0" * 40),
+    lambda v: v["artifact_bindings"][0].update(sha256="0" * 64),
+    lambda v: v["artifact_bindings"][1].update(sha256="0" * 64),
+    lambda v: v["artifact_bindings"][2].update(sha256="0" * 64),
+    lambda v: v["artifact_bindings"][5].update(sha256="0" * 64),
+    lambda v: v["candidate_review_scope"].reverse(),
+    lambda v: v["repair_scope"].append("unexpected.py"),
+    lambda v: v["repair_scope"].__setitem__(0, "wrong.py"),
+    lambda v: v["review_results"].update(assurance="201 passed"),
+    lambda v: v["review_results"].update(remote_ci="FAILURE"),
+    lambda v: v["semantic_review_results"].update(garch_review="PASSED"),
+    lambda v: v["final_finding_counts"].update(major=1),
+    lambda v: v["closed_findings"].pop(),
+    lambda v: v.update(final_verdict="QNTY_H001_SYNTHETIC_NULL_CALIBRATION_SPEC_FREEZE_CANDIDATE_REREVIEW_FAILED"),
+    lambda v: v.update(status="FROZEN_EFFECTIVE"),
+    lambda v: v.update(preregistered=True),
+    lambda v: v["non_effects"].remove("EDGE_UNPROVEN"),
+    lambda v: v["non_effects"].append("EDGE_PROVEN"),
+])
+def test_h001_calibration_rereview_record_rejects_semantic_mutations(mutation):
+    value = calibration_rereview_record()
+    mutation(value)
+    with pytest.raises(ValueError):
+        contracts.validate_h001_synthetic_null_calibration_spec_freeze_candidate_rereview_record(value)
 
 
 # --- H001 synthetic-null calibration spec freeze candidate -------------------
