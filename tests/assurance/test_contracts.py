@@ -744,3 +744,31 @@ def test_h001_calibration_activation_loader_rejects_duplicate_noncanonical_and_n
         contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_activation(json.dumps(json.loads(raw)).encode())
     with pytest.raises(ValueError, match="exact bytes"):
         contracts.load_and_validate_h001_synthetic_null_calibration_spec_freeze_activation(bytearray(raw))
+
+
+# BEGIN H001 RNG RUNTIME CANDIDATE V027 TEST APPEND
+def test_h001_rng_runtime_candidate_is_canonical_review_only():
+    from pathlib import Path
+    candidate = Path(__file__).parents[2] / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_v001.json"
+    raw = candidate.read_bytes()
+    value = contracts.load_and_validate_h001_rng_runtime_amendment_candidate(raw)
+    assert contracts.canonical_json_bytes(value) == raw
+    assert value["effective"] is False and value["activated"] is False
+    assert len(value["known_answer_fixtures"]) == 24
+
+
+def test_h001_rng_runtime_candidate_rejects_effective_or_authorized_mutations():
+    import json
+    from pathlib import Path
+    candidate = Path(__file__).parents[2] / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_v001.json"
+    for mutate in (
+        lambda value: value.update(effective=True),
+        lambda value: value.update(activated=True),
+        lambda value: value["authority_non_effects"].update(calibration_execution_authorized=True),
+        lambda value: value["domain_resolutions"][0].update(additional_choice_required=True),
+    ):
+        value = json.loads(candidate.read_bytes())
+        mutate(value)
+        with pytest.raises(ValueError):
+            contracts.validate_h001_rng_runtime_amendment_candidate(value)
+# END H001 RNG RUNTIME CANDIDATE V027 TEST APPEND

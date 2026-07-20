@@ -3247,3 +3247,75 @@ def render_context_packet(state: dict) -> str:
     for prohibited in receipt["prohibited_actions"]:
         lines.append(f"PROHIBITED={prohibited}")
     return "\n".join(lines)
+
+
+# BEGIN H001 RNG RUNTIME CANDIDATE V027 APPEND
+# This extension is intentionally appended so v026 reconstruction can truncate
+# at this marker and recover byte-identical historical sources without Git.
+from quantbot.continuity import h001_rng_runtime_candidate_v027 as _v027
+
+_H001_RNG_CANDIDATE_PHASE = _v027.PHASE
+_H001_RNG_CANDIDATE_NEXT_ACTION = _v027.NEXT_ACTION
+_H001_RNG_CANDIDATE_RELPATH = _v027.RELPATH
+_H001_RNG_CANDIDATE_HANDOFF_RELPATH = _v027.HANDOFF_RELPATH
+_H001_RNG_CANDIDATE_BRANCH = _v027.BRANCH
+_H001_RNG_CANDIDATE_BASE_SHA = _v027.BASE_SHA
+_H001_RNG_CANDIDATE_DOCUMENT_SHA = _v027.DOCUMENT_SHA
+_H001_RNG_CANDIDATE_V026_SHA = _v027.V026_SHA
+_H001_RNG_CANDIDATE_SELECTED_ARCHITECTURE = _v027.ARCHITECTURE
+_H001_RNG_CANDIDATE_GAPS = _v027.GAPS
+_H001_RNG_CANDIDATE_DOMAINS = _v027.DOMAINS
+_H001_RNG_CANDIDATE_SCOPE = _v027.SCOPE
+_H001_RNG_CANDIDATE_CURRENT_TRANSITION_FILES = _v027.CURRENT_FILES
+_H001_RNG_CANDIDATE_PROTECTED = _v027.PROTECTED
+_H001_RNG_CANDIDATE_EVIDENCE = list(_v027.PROTECTED)
+_H001_RNG_CANDIDATE_BLOCKERS = _v027.BLOCKERS
+_H001_RNG_CANDIDATE_DECISIONS = _v027.DECISIONS
+_H001_RNG_CANDIDATE_PROHIBITIONS = _v027.PROHIBITIONS
+_H001_RNG_CANDIDATE_BINDING = _v027.BINDING
+
+_validate_receipt_v026 = _validate_receipt
+
+
+def _validate_v027_receipt_body(parsed: dict, root: Path) -> None:
+    keys = set(_RECEIPT_KEYS) | {"phase", "current_transition_files", "numerical_convention_gap_inventory", "rng_runtime_candidate_resolved_inventory", "candidate_binding"}
+    _require_exact_keys(parsed, keys, "handoff_receipt")
+    if parsed["schema_version"] != "0.1.0" or parsed["receipt_kind"] != "qnty_cross_agent_handoff_receipt" or parsed["receipt_index"] != 27:
+        _fail("H001 RNG-runtime candidate receipt structure is wrong")
+    _require_str(parsed["source_branch"], "handoff_receipt source_branch")
+    if type(parsed["source_head_commit"]) is not str or not _COMMIT_RE.fullmatch(parsed["source_head_commit"]):
+        _fail("handoff_receipt source_head_commit must be a lowercase 40-hex commit")
+    _require_str_list(parsed["decisions"], "handoff_receipt decisions", minimum=1)
+    _validate_required_artifacts(parsed["required_artifacts"])
+    for field in ("changed_file_scope", "blockers", "verified_commands", "prohibited_actions"):
+        _require_str_list(parsed[field], f"handoff_receipt {field}", minimum=1)
+    if type(parsed["next_actions"]) is not list or len(parsed["next_actions"]) != 1:
+        _fail("handoff_receipt next_actions must contain exactly one action")
+
+
+def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
+    if active["phase"] != _v027.PHASE:
+        return _validate_receipt_v026(parsed, active, root)
+    _validate_v027_receipt_body(parsed, root)
+    if parsed["task_id"] != active["task_id"] or parsed["protocol_id"] != active["protocol_id"]:
+        _fail("handoff_receipt identity does not match active_task")
+    _v027.validate(parsed, root)
+    _cross_check_artifact_records(parsed, root)
+    _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
+    return parsed
+
+
+_render_context_packet_v026 = render_context_packet
+
+
+def render_context_packet(state: dict) -> str:
+    packet = _render_context_packet_v026(state)
+    if state["active_task"]["phase"] != _v027.PHASE:
+        return packet
+    lines = packet.splitlines()
+    insert_at = next((index for index, line in enumerate(lines) if line.startswith("PROHIBITED=")), len(lines))
+    lines[insert_at:insert_at] = _v027.DECISIONS
+    return "\n".join(lines)
+
+
+# END H001 RNG RUNTIME CANDIDATE V027 APPEND
