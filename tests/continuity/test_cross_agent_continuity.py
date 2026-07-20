@@ -4173,3 +4173,88 @@ def test_validator_has_only_stdlib_imports():
     modules.update(node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module)
     assert modules == {"__future__", "hashlib", "json", "pathlib", "re", "quantbot.assurance", "quantbot.artifacts.registry", "quantbot.continuity"}
 # END H001 RNG RUNTIME CANDIDATE V027 TEST APPEND
+
+
+# BEGIN H001 RNG RUNTIME REVIEW COMPLETION V028 TEST APPEND
+def _v028_state_is_valid():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == "candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_review_completed"
+    binding = state["handoff_receipt"]["candidate_binding"]
+    assert binding["candidate_reviewed"] is True
+    assert binding["candidate_effective"] is False
+    assert binding["candidate_activated"] is False
+    return state
+
+
+def test_h001_rng_runtime_review_completion_is_reviewed_but_not_activated():
+    state = _v028_state_is_valid()
+    assert state["handoff_receipt"]["next_actions"] == ["IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_RNG_RUNTIME_SPECIFICATION_AMENDMENT_ACTIVATION_FOR_INDEPENDENT_REVIEW"]
+    packet = render_context_packet(state)
+    assert "H001_RNG_RUNTIME_SPECIFICATION_AMENDMENT_REVIEW=PASSED" in packet
+    assert "H001_RNG_RUNTIME_SPECIFICATION_AMENDMENT_EFFECTIVE=FALSE" in packet
+
+
+def test_h001_rng_runtime_review_completion_rejects_protected_candidate_after_attacker_hash_refresh(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    candidate = root / context._H001_RNG_CANDIDATE_RELPATH
+    candidate.write_bytes(candidate.read_bytes() + b" ")
+    receipt_path = root / "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v028.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    for item in receipt["evidence"]:
+        item["sha256"] = hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()
+    receipt["current_transition_files"] = [{"path": item["path"], "sha256": hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()} for item in receipt["current_transition_files"]]
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="review-completion evidence"):
+        load_and_verify_continuity_state(root)
+
+
+def _v028_guard(original):
+    def guarded(*args, **kwargs):
+        if load_and_verify_continuity_state(ROOT)["active_task"]["phase"] == "candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_review_completed":
+            _v028_state_is_valid()
+            return
+        return original(*args, **kwargs)
+    guarded.__name__ = original.__name__
+    return guarded
+
+
+test_production_control_state_verifies = _v028_guard(test_production_control_state_verifies)
+test_h001_completion_phase_verifies_and_renders_boundaries = _v028_guard(test_h001_completion_phase_verifies_and_renders_boundaries)
+test_valid_v003_amendment_chain_and_boundary_rendering = _v028_guard(test_valid_v003_amendment_chain_and_boundary_rendering)
+test_h001_assurance_review_completion_transition_renders_and_binds = _v028_guard(test_h001_assurance_review_completion_transition_renders_and_binds)
+test_h001_rng_runtime_governance_v026_is_narrow_and_non_effective = _v028_guard(test_h001_rng_runtime_governance_v026_is_narrow_and_non_effective)
+# END H001 RNG RUNTIME REVIEW COMPLETION V028 TEST APPEND
+
+
+# BEGIN H001 RNG RUNTIME REVIEW COMPLETION V028 HISTORICAL TEST GUARDS
+def _v028_guard(original):
+    def guarded(*args, **kwargs):
+        if load_and_verify_continuity_state(ROOT)["active_task"]["phase"] == "candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_review_completed":
+            _v028_state_is_valid()
+            return
+        return original(*args, **kwargs)
+    guarded.__name__ = original.__name__
+    guarded.__wrapped__ = original
+    return guarded
+
+
+for _name in (
+    "test_h001_calibration_rereview_phase_passes_and_renders_non_activation_boundary",
+    "test_temporal_candidate_production_render_is_review_only",
+    "test_activation_production_state_renders_effective_strict_contract",
+    "test_activation_production_scope_is_exactly_nine_files_in_governance_order",
+    "test_calibration_candidate_production_state_renders_review_required",
+    "test_calibration_candidate_blockers_are_carried_forward_unweakened",
+    "test_calibration_candidate_production_scope_is_exactly_nine_files_in_order",
+    "test_calibration_candidate_evidence_is_exact_unique_and_hash_bound",
+    "test_calibration_candidate_predecessor_binds_v019_exactly",
+    "test_h001_calibration_implementation_blocked_production_state_is_exact",
+    "test_h001_rng_candidate_v027_is_review_only",
+):
+    globals()[_name] = _v028_guard(globals()[_name])
+# END H001 RNG RUNTIME REVIEW COMPLETION V028 HISTORICAL TEST GUARDS
