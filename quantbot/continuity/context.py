@@ -3319,3 +3319,101 @@ def render_context_packet(state: dict) -> str:
 
 
 # END H001 RNG RUNTIME CANDIDATE V027 APPEND
+
+
+# BEGIN H001 RNG RUNTIME REVIEW COMPLETION V028 APPEND
+# This extension is intentionally appended so v027 reconstruction can truncate
+# at this marker and recover byte-identical historical sources without Git.
+from quantbot.continuity import h001_rng_runtime_review_completion_v028 as _v028
+
+_validate_receipt_v027 = _validate_receipt
+
+
+def _validate_v028_receipt_body(parsed: dict) -> None:
+    keys = set(_RECEIPT_KEYS) | {"phase", "current_transition_files", "numerical_convention_gap_inventory", "rng_runtime_candidate_resolved_inventory", "candidate_binding"}
+    _require_exact_keys(parsed, keys, "handoff_receipt")
+    if parsed["schema_version"] != "0.1.0" or parsed["receipt_kind"] != "qnty_cross_agent_handoff_receipt" or parsed["receipt_index"] != 28:
+        _fail("H001 RNG-runtime review-completion receipt structure is wrong")
+    _require_str(parsed["source_branch"], "handoff_receipt source_branch")
+    if type(parsed["source_head_commit"]) is not str or not _COMMIT_RE.fullmatch(parsed["source_head_commit"]):
+        _fail("handoff_receipt source_head_commit must be a lowercase 40-hex commit")
+    _require_str_list(parsed["decisions"], "handoff_receipt decisions", minimum=1)
+    _validate_required_artifacts(parsed["required_artifacts"])
+    for field in ("changed_file_scope", "blockers", "verified_commands", "prohibited_actions"):
+        _require_str_list(parsed[field], f"handoff_receipt {field}", minimum=1)
+    if type(parsed["next_actions"]) is not list or len(parsed["next_actions"]) != 1:
+        _fail("handoff_receipt next_actions must contain exactly one action")
+
+
+def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
+    if active["phase"] != _v028.PHASE:
+        return _validate_receipt_v027(parsed, active, root)
+    _validate_v028_receipt_body(parsed)
+    if parsed["task_id"] != active["task_id"] or parsed["protocol_id"] != active["protocol_id"]:
+        _fail("handoff_receipt identity does not match active_task")
+    _v028.validate(parsed, root)
+    _cross_check_artifact_records(parsed, root)
+    _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
+    return parsed
+
+
+_render_context_packet_v027 = render_context_packet
+
+
+def render_context_packet(state: dict) -> str:
+    packet = _render_context_packet_v027(state)
+    if state["active_task"]["phase"] != _v028.PHASE:
+        return packet
+    lines = packet.splitlines()
+    insert_at = next((index for index, line in enumerate(lines) if line.startswith("PROHIBITED=")), len(lines))
+    lines[insert_at:insert_at] = _v028.DECISIONS
+    return "\n".join(lines)
+
+
+# END H001 RNG RUNTIME REVIEW COMPLETION V028 APPEND
+
+
+# BEGIN H001 RNG RUNTIME REVIEW COMPLETION V028 PREDECESSOR APPEND
+# v027 introduced an append-only receipt shape.  Validate it with the exact
+# v027 schema while walking history; all other receipts retain the generic
+# historical validator unchanged.
+_validate_predecessor_chain_v027 = _validate_predecessor_chain
+
+
+def _validate_predecessor_chain(parsed: dict, root: Path, receipt_relpath: str) -> None:
+    expected_dir = f"docs/control/tasks/{TASK_ID}/"
+    visited = {receipt_relpath}
+    current = parsed
+    current_index = parsed["receipt_index"]
+    while True:
+        predecessor = current["predecessor"]
+        if current_index == 1:
+            if predecessor != "GENESIS":
+                _fail("receipt_index 1 must declare the explicit genesis state 'GENESIS'")
+            return
+        if predecessor == "GENESIS":
+            _fail("GENESIS is only valid at receipt_index 1")
+        _require_exact_keys(predecessor, _PREDECESSOR_KEYS, "predecessor")
+        path = _require_repo_relative(predecessor["path"], "predecessor path")
+        if not path.startswith(expected_dir) or not _RECEIPT_BASENAME_RE.fullmatch(path[len(expected_dir):]):
+            _fail("predecessor path must be docs/control/tasks/<task_id>/handoff_vNNN.json")
+        if path in visited:
+            _fail("predecessor chain contains a cycle or repeated receipt path")
+        visited.add(path)
+        target = root / path
+        if not target.is_file():
+            _fail(f"predecessor receipt {path!r} is missing")
+        if hashlib.sha256(target.read_bytes()).hexdigest() != _require_sha256(predecessor["sha256"], "predecessor sha256"):
+            _fail(f"predecessor receipt {path!r} bytes do not match the recorded sha256")
+        previous = _load_canonical_document(target.read_bytes(), "predecessor receipt")
+        if previous.get("receipt_index") == 27:
+            _validate_v027_receipt_body(previous, root)
+            previous_index = 27
+        else:
+            previous_index = _validate_receipt_body(previous, "predecessor receipt", root, verify_evidence_files=False)
+        if previous_index != current_index - 1 or previous["task_id"] != parsed["task_id"] or previous["protocol_id"] != parsed["protocol_id"]:
+            _fail("predecessor receipt does not form the exact task/protocol/index chain")
+        current, current_index = previous, previous_index
+
+
+# END H001 RNG RUNTIME REVIEW COMPLETION V028 PREDECESSOR APPEND
