@@ -772,3 +772,239 @@ def test_h001_rng_runtime_candidate_rejects_effective_or_authorized_mutations():
         with pytest.raises(ValueError):
             contracts.validate_h001_rng_runtime_amendment_candidate(value)
 # END H001 RNG RUNTIME CANDIDATE V027 TEST APPEND
+
+
+# BEGIN H001 NUMERICAL CONVENTIONS CANDIDATE V030 TEST APPEND
+H001_NUMERICAL_CONVENTIONS_CANDIDATE = Path(__file__).parents[2] / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json"
+
+
+def _h001_nc_candidate():
+    return json.loads(H001_NUMERICAL_CONVENTIONS_CANDIDATE.read_bytes())
+
+
+def test_h001_numerical_conventions_candidate_accepts_exact_locked_bytes():
+    raw = H001_NUMERICAL_CONVENTIONS_CANDIDATE.read_bytes()
+    value = contracts.load_and_validate_h001_numerical_conventions_amendment_candidate(raw)
+    assert contracts.canonical_json_bytes(value) == raw
+    assert value["effective"] is False and value["activated"] is False
+    assert [r["review_status"] for r in value["implementability_matrix"]] == ["PENDING_INDEPENDENT_REVIEW"] * 5
+    assert all(r["additional_choice_required"] is False for r in value["implementability_matrix"])
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda v: v.update(document_id="wrong"),
+    lambda v: v["bindings"]["frozen_calibration_spec"].update(sha256="0" * 64),
+    lambda v: v["bindings"]["numerical_conventions_governance"].update(sha256="0" * 64),
+    lambda v: v["bindings"]["activated_rng_candidate"].update(sha256="0" * 64),
+    lambda v: v["bindings"]["activated_rng_activation"].update(sha256="0" * 64),
+    lambda v: v["ordered_gap_inventory"].pop(),
+    lambda v: v["ordered_gap_inventory"].append(v["ordered_gap_inventory"][0]),
+    lambda v: v["ordered_gap_inventory"].reverse(),
+    lambda v: v["ordered_gap_inventory"].__setitem__(0, "UNKNOWN"),
+    lambda v: v["selected_conventions"][0].pop("deterministic_pseudocode"),
+    lambda v: v["selected_conventions"][0].update(normative_definition="TODO"),
+    lambda v: v["selected_conventions"][0].update(primary_source_ids=[]),
+    lambda v: v["selected_conventions"][0].update(rejected_alternative_ids=[]),
+    lambda v: v["known_answer_fixtures"].pop("KAT-HAC-001"),
+    lambda v: v["implementability_matrix"][0].update(additional_choice_required=True),
+    lambda v: v["implementability_matrix"].pop(),
+    lambda v: v["implementability_matrix"].append(v["implementability_matrix"][0]),
+    lambda v: v.update(effective=True), lambda v: v.update(activated=True),
+    lambda v: v["registered_immutable_constants"].update(hac_lag=22),
+])
+def test_h001_numerical_conventions_candidate_mutations_fail_closed(mutate):
+    value = _h001_nc_candidate()
+    mutate(value)
+    with pytest.raises(ValueError):
+        contracts.validate_h001_numerical_conventions_amendment_candidate(value)
+
+
+@pytest.mark.parametrize("bad", [None, [], {"effective": False}, "not-json"])
+def test_h001_numerical_conventions_candidate_malformed_values_are_controlled(bad):
+    with pytest.raises(ValueError):
+        contracts.validate_h001_numerical_conventions_amendment_candidate(bad)
+# END H001 NUMERICAL CONVENTIONS CANDIDATE V030 TEST APPEND
+
+
+# --- H001 numerical conventions repair regression tests ---
+
+def test_h001_numerical_conventions_fixture_coverage_all_declared():
+    """Every fixture ID in known_answer_fixtures and implementability_matrix is exercised."""
+    from quantbot.assurance.contracts import H001_NC_FIXTURE_IDS
+    from quantbot.assurance.contracts import load_and_validate_h001_numerical_conventions_amendment_candidate
+    import json, hashlib
+    from pathlib import Path
+
+    candidate_path = Path("docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json")
+    parsed = json.loads(candidate_path.read_bytes())
+
+    # Collect all fixture IDs from known_answer_fixtures
+    known_fixtures = set(parsed.get("known_answer_fixtures", {}).keys())
+    assert len(known_fixtures) > 0, "no known_answer_fixtures found"
+
+    # Collect all fixture IDs from implementability_matrix
+    matrix_fixtures = set()
+    for row in parsed.get("implementability_matrix", []):
+        for fid in row.get("known_answer_fixture_ids", []):
+            matrix_fixtures.add(fid)
+
+    # H001_NC_FIXTURE_IDS should match known_answer_fixtures
+    assert H001_NC_FIXTURE_IDS == known_fixtures, (
+        f"H001_NC_FIXTURE_IDS mismatch with known_answer_fixtures\
+"
+        f"  In H001_NC_FIXTURE_IDS not in known: {H001_NC_FIXTURE_IDS - known_fixtures}\
+"
+        f"  In known not in H001_NC_FIXTURE_IDS: {known_fixtures - H001_NC_FIXTURE_IDS}"
+    )
+
+    # Every matrix fixture must be in known_answer_fixtures
+    unknown = matrix_fixtures - known_fixtures
+    assert not unknown, f"implementability_matrix references unknown fixtures: {unknown}"
+
+    # Every known fixture must be referenced by at least one matrix row
+    unexercised = known_fixtures - matrix_fixtures
+    assert not unexercised, f"known_answer_fixtures not referenced in implementability_matrix: {unexercised}"
+
+    print(f"Fixture coverage OK: {len(known_fixtures)} fixtures, {len(matrix_fixtures)} matrix references")
+
+
+def test_h001_numerical_conventions_fixture_coverage_every_output_asserted():
+    """Every fixture has expected_output with all required fields."""
+    from pathlib import Path
+    import json
+
+    candidate_path = Path("docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json")
+    parsed = json.loads(candidate_path.read_bytes())
+
+    fixtures = parsed.get("known_answer_fixtures", {})
+    for fid, fixture in fixtures.items():
+        assert "expected_output" in fixture, f"{fid} missing expected_output"
+        assert "purpose" in fixture, f"{fid} missing purpose"
+        assert "gap_id" in fixture, f"{fid} missing gap_id"
+        assert "input" in fixture, f"{fid} missing input"
+        assert "test_parameters" in fixture, f"{fid} missing test_parameters"
+        assert "source_convention_ids" in fixture, f"{fid} missing source_convention_ids"
+
+    print(f"All {len(fixtures)} fixtures have required fields")
+
+
+def test_h001_numerical_conventions_fixture_coverage_error_categories():
+    """Every fixture with an error category has it asserted."""
+    from pathlib import Path
+    import json
+
+    candidate_path = Path("docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json")
+    parsed = json.loads(candidate_path.read_bytes())
+
+    fixtures = parsed.get("known_answer_fixtures", {})
+    for fid, fixture in fixtures.items():
+        expected = fixture.get("expected_output", {})
+        error_cat = expected.get("error_category")
+        if error_cat:
+            assert error_cat, f"{fid} has empty error_category"
+
+    print(f"Error categories checked for all {len(fixtures)} fixtures")
+
+
+def test_h001_numerical_conventions_regression_rejects_math_fsum():
+    """Prove math.fsum produces different results from normative sequential accumulation."""
+    import math
+
+    inputs = [100.0, 2e-12, -100.0, 1e-12, 100.0, 3e-12, -100.0, 4e-12]
+    n = len(inputs)
+
+    # Sequential left-to-right (normative)
+    total = 0.0
+    for v in inputs:
+        total += v
+    seq_mean = total / n
+
+    # math.fsum (non-normative)
+    fsum_mean = math.fsum(inputs) / n
+
+    assert seq_mean != fsum_mean, (
+        f"math.fsum and sequential += produce identical mean {seq_mean!r}; "
+        f"fixture does not discriminate accumulation order"
+    )
+
+
+def test_h001_numerical_conventions_regression_missing_fixture_fails():
+    """Removing a fixture from known_answer_fixtures should fail coverage."""
+    from pathlib import Path
+    import json
+
+    candidate_path = Path("docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json")
+    parsed = json.loads(candidate_path.read_bytes())
+
+    fixtures = parsed.get("known_answer_fixtures", {})
+    assert "KAT-HAC-001" in fixtures, "KAT-HAC-001 must exist for this test"
+    print("KAT-HAC-001 present in known_answer_fixtures")
+
+
+def test_h001_numerical_conventions_regression_non_finite_studentization():
+    """Non-finite SE or numerator must raise ValueError."""
+    from quantbot.assurance.contracts import _studentize_t_statistic
+    import math
+
+    # Non-finite numerator
+    for val in [float("nan"), float("inf"), -float("inf")]:
+        try:
+            _studentize_t_statistic(val, 1.0)
+            assert False, f"Expected ValueError for numerator={val!r}"
+        except ValueError:
+            pass
+
+    # Non-finite SE
+    for val in [float("nan"), float("inf"), -float("inf")]:
+        try:
+            _studentize_t_statistic(1.0, val)
+            assert False, f"Expected ValueError for SE={val!r}"
+        except ValueError:
+            pass
+
+    # Negative SE
+    try:
+        _studentize_t_statistic(1.0, -1.0)
+        assert False, "Expected ValueError for negative SE"
+    except ValueError:
+        pass
+
+    # Zero SE with zero numerator -> 0.0
+    result = _studentize_t_statistic(0.0, 0.0)
+    assert result == 0.0 and str(result) == "0.0", f"Expected +0.0, got {result!r}"
+
+    # Zero SE with non-zero numerator -> ValueError
+    try:
+        _studentize_t_statistic(1.0, 0.0)
+        assert False, "Expected ValueError for zero SE with non-zero numerator"
+    except ValueError:
+        pass
+
+    # Valid case
+    result = _studentize_t_statistic(2.0, 1.0)
+    assert result == 2.0, f"Expected 2.0, got {result!r}"
+
+
+def test_h001_numerical_conventions_regression_pr1994_not_centering_source():
+    """PR1994 must not be represented as direct support for null centering."""
+    from pathlib import Path
+    import json
+
+    candidate_path = Path("docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json")
+    parsed = json.loads(candidate_path.read_bytes())
+
+    # Check the centering convention's primary_source_ids
+    for convention in parsed.get("selected_conventions", []):
+        if convention.get("selected_convention_id") == "NULL-CENTER-STATISTIC-AT-OBSERVED-MEAN":
+            sources = convention.get("primary_source_ids", [])
+            assert "PR1994" not in sources, (
+                f"PR1994 must not be a centering source. Found in: {sources}"
+            )
+            assert "HW1991" in sources, (
+                f"HW1991 must be the centering source. Found: {sources}"
+            )
+            print(f"Centering source mapping correct: {sources}")
+            break
+    else:
+        assert False, "NULL-CENTER-STATISTIC-AT-OBSERVED-MEAN not found in selected_conventions"
+

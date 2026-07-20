@@ -1697,3 +1697,278 @@ def load_and_validate_h001_rng_runtime_amendment_candidate(raw: bytes) -> dict:
     if canonical_json_bytes(parsed) != raw:
         _fail("non-canonical JSON bytes")
     return validate_h001_rng_runtime_amendment_candidate(parsed)
+
+
+# --- H001 numerical-conventions amendment candidate (appended by the v030 transition) ---
+
+H001_NC_CANDIDATE_ID = "candidate1-h001-synthetic-null-calibration-numerical-conventions-amendment-candidate-v001"
+H001_NC_CANDIDATE_KIND = "qnty_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate"
+H001_NC_CANDIDATE_STATUS = "CANDIDATE_FOR_INDEPENDENT_REVIEW_ONLY_NOT_EFFECTIVE_NOT_ACTIVATED"
+H001_NC_GOVERNANCE_SHA256 = "b6309ef438129fd49218ab12a086996286b90408d2d97189a3ce8b9ed680e649"
+H001_NC_FROZEN_SPEC_SHA256 = "04b6ea5b7453fccf4787abb26c230e2a02a77545c741c19f6686df16fc2cb7a2"
+H001_NC_RNG_CANDIDATE_SHA256 = "e52b1a4733024e4255cf771b97765cff19f7f5e59cf824732784a1abd594812f"
+H001_NC_RNG_ACTIVATION_SHA256 = "77b27c218670ca427e2f9589dba144731dd456cce56650222ebb37a3d5528c97"
+H001_NC_RNG_REVIEW_SHA256 = "2c718622d76ed30faf8823c681e4d0e9c794e8e5b6dd9624d8cc437afb9758fb"
+H001_NC_GAPS = [
+    "HAC_AUTOCOVARIANCE_AND_STANDARD_ERROR_CONVENTION",
+    "BOOTSTRAP_NULL_CENTERING_TRANSFORM",
+    "BOOTSTRAP_STUDENTIZATION_CONVENTION",
+    "MAXIMUM_T_EXCEEDANCE_TIE_PVALUE_AND_REJECTION_RULES",
+    "STATIONARY_BOOTSTRAP_INITIAL_INDEX_AND_RNG_DRAW_ORDERING",
+]
+H001_NC_SELECTED = [
+    "HAC-NEWEY-WEST-BARTLETT-1TOVER-T",
+    "NULL-CENTER-STATISTIC-AT-OBSERVED-MEAN",
+    "STUDENTIZE-RECOMPUTE-BOOTSTRAP-SE",
+    "TWO-SIDED-MAXT-PLUS-ONE-NONSTRICT",
+    "SYNC-STATIONARY-PATH-BOUND-TO-ACTIVATED-RNG",
+]
+H001_NC_SOURCE_CLASSIFICATIONS = {
+    "SOURCE_SUPPORTED_CHOICE", "REPOSITORY_SPECIFIC_DETERMINISTIC_CHOICE",
+    "IMPLEMENTATION_DETAIL", "SCIENTIFIC_ASSUMPTION",
+}
+H001_NC_PRIMARY_SOURCE_IDS = {
+    "NW1987", "AND1991", "HW1991", "GK1996", "W2000", "RW2005", "PS2010", "DH1997", "PR1994", "IEEE754",
+}
+H001_NC_FIXTURE_IDS = {
+    "KAT-HAC-001", "KAT-HAC-SERIESC-001", "KAT-HAC-SERIESB-001", "KAT-HAC-ZEROVAR-001",
+    "KAT-HAC-NEGROUND-001", "KAT-HAC-NEGMATERIAL-001", "KAT-HAC-NONFINITE-001",
+    "KAT-HAC-ORDER-001",
+    "KAT-CENTER-001",
+    "KAT-STUD-VALID-001", "KAT-STUD-ZEROSE-ZEROMEAN-001", "KAT-STUD-ZEROSE-NONZERO-001", "KAT-STUD-OBS-VS-BOOT-001",
+    "KAT-PVAL-EXCEED-001", "KAT-PVAL-TIE-001", "KAT-PVAL-EQ-ALPHA-001", "KAT-PVAL-FINITEB-001",
+    "KAT-PVAL-GLOBAL-REJECT-001", "KAT-PVAL-GLOBAL-NOREJECT-001",
+    "KAT-PATH-INITIAL-001", "KAT-PATH-CONTINUE-001", "KAT-PATH-RESTART-001", "KAT-PATH-WRAP-001",
+    "KAT-PATH-SYNC-001", "KAT-PATH-PHILOX-BIND-001",
+    "KAT-E2E-001",
+}
+H001_NC_REGISTERED_CONSTANTS = {
+    "series_count": 9, "sample_length": 2193, "hac_lag": 21, "stationary_block_length": 63,
+    "restart_probability_numerator": 1, "restart_probability_denominator": 63,
+    "bootstrap_repetitions": 10000, "outer_synthetic_replications": 2000,
+    "familywise_alpha": 0.05, "procedure": "synchronous stationary-bootstrap maximum-t",
+}
+H001_NC_MATRIX_COLUMNS = {
+    "gap_id", "selected_convention_id", "normative_definition_location", "pseudocode_location",
+    "known_answer_fixture_ids", "expected_output_binding", "primary_source_ids",
+    "rejected_alternative_ids", "implementation_test_ids", "review_status", "additional_choice_required",
+}
+H001_NC_CONVENTION_KEYS = {
+    "gap_id", "selected_convention_id", "normative_definition", "indexing_conventions",
+    "denominators_and_normalization", "boundary_and_edge_cases", "non_finite_behavior",
+    "empty_singleton_degenerate_behavior", "comparison_operators", "deterministic_pseudocode",
+    "source_classification", "primary_source_ids", "rejected_alternative_ids",
+    "known_answer_fixture_ids", "implementation_test_ids", "additional_choice_required",
+}
+H001_NC_CANDIDATE_KEYS = {
+    "schema_version", "document_id", "document_kind", "amendment_id", "amendment_kind",
+    "status", "effective", "activated", "candidate_values_locked_for_review",
+    "independent_review_required", "candidate_review_completed", "governed_h001_protocol_id",
+    "bindings", "registered_immutable_constants", "binary64_operation_order_contract",
+    "ordered_gap_inventory", "selected_conventions", "integrated_end_to_end_pseudocode",
+    "primary_source_registry", "source_to_choice_mappings", "rejected_alternatives",
+    "known_answer_fixtures", "implementability_matrix", "two_independent_derivations",
+    "non_effects", "prohibitions",
+}
+H001_NC_PLACEHOLDER_MARKERS = ("TBD", "TODO", "FIXME", "PLACEHOLDER", "implementation-defined", "library default", "as appropriate")
+
+
+
+def _studentize_t_statistic(numerator, se):
+    """Studentize a t-statistic with explicit non-finite guards.
+
+    Required behavior per the numerical conventions contract:
+    - non-finite numerator -> ValueError
+    - non-finite SE -> ValueError
+    - SE < 0 -> ValueError
+    - SE == 0 and numerator == 0 -> +0.0
+    - SE == 0 and numerator != 0 -> ValueError
+    - otherwise -> numerator / se
+
+    Uses inline NaN/inf detection (x != x is NaN, inf comparisons)
+    rather than math.isfinite to avoid adding a math import
+    that would violate the base prefix import boundary test.
+    """
+    # Detect NaN via IEEE 754 property: NaN != NaN
+    # Detect infinity via comparison with the finite range
+    if not (numerator <= 1e308 and numerator >= -1e308 and numerator == numerator):
+        raise ValueError(f"non-finite numerator: {numerator}")
+    if not (se <= 1e308 and se >= -1e308 and se == se):
+        raise ValueError(f"non-finite standard error: {se}")
+    if se < 0:
+        raise ValueError(f"negative standard error: {se}")
+    if se == 0.0:
+        if numerator == 0.0:
+            return 0.0
+        raise ValueError(f"zero standard error with non-zero numerator: {numerator}")
+    return numerator / se
+
+
+def _nc_scan_placeholders(value: object) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            _nc_scan_placeholders(key)
+            _nc_scan_placeholders(child)
+    elif isinstance(value, list):
+        for child in value:
+            _nc_scan_placeholders(child)
+    elif type(value) is str:
+        for marker in H001_NC_PLACEHOLDER_MARKERS:
+            if marker in value:
+                _fail(f"unresolved placeholder marker {marker!r} in numerical-conventions candidate text")
+
+
+def validate_h001_numerical_conventions_amendment_candidate(value: object) -> dict:
+    data = _keys(value, H001_NC_CANDIDATE_KEYS, "H001 numerical-conventions candidate")
+    if data["document_id"] != H001_NC_CANDIDATE_ID or data["amendment_id"] != H001_NC_CANDIDATE_ID:
+        _fail("H001 numerical-conventions candidate identity drifted")
+    if data["document_kind"] != H001_NC_CANDIDATE_KIND or data["amendment_kind"] != H001_NC_CANDIDATE_KIND:
+        _fail("H001 numerical-conventions candidate kind drifted")
+    if data["schema_version"] != SCHEMA_VERSION or data["status"] != H001_NC_CANDIDATE_STATUS:
+        _fail("H001 numerical-conventions candidate schema or status drifted")
+    if data["governed_h001_protocol_id"] != H001_PROTOCOL_ID:
+        _fail("H001 numerical-conventions candidate protocol drifted")
+    for field, expected in (("effective", False), ("activated", False), ("candidate_review_completed", False), ("candidate_values_locked_for_review", True), ("independent_review_required", True)):
+        if data[field] is not expected:
+            _fail(f"H001 numerical-conventions candidate {field} must be {expected}")
+    bindings = _keys(data["bindings"], {
+        "frozen_calibration_spec", "numerical_conventions_governance", "activated_rng_candidate",
+        "activated_rng_activation", "rng_candidate_review_record", "base_main_commit",
+    }, "H001 numerical-conventions candidate bindings")
+    commit = bindings["base_main_commit"]
+    if type(commit) is not str or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        _fail("H001 numerical-conventions candidate base_main_commit must be a lowercase 40-hex commit")
+    expected_bindings = {
+        "frozen_calibration_spec": ("docs/assurance/h001_synthetic_null_calibration_spec_freeze_candidate_v001.json", H001_NC_FROZEN_SPEC_SHA256),
+        "numerical_conventions_governance": ("docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_governance_v001.json", H001_NC_GOVERNANCE_SHA256),
+        "activated_rng_candidate": ("docs/control/amendments/candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_v001.json", H001_NC_RNG_CANDIDATE_SHA256),
+        "activated_rng_activation": ("docs/control/amendments/candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_activation_v001.json", H001_NC_RNG_ACTIVATION_SHA256),
+        "rng_candidate_review_record": ("docs/assurance/reviews/candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_candidate_review_v001.json", H001_NC_RNG_REVIEW_SHA256),
+    }
+    for name, (path, digest) in expected_bindings.items():
+        if _keys(bindings[name], {"path", "sha256"}, f"H001 numerical-conventions candidate binding {name}") != {"path": path, "sha256": digest}:
+            _fail(f"H001 numerical-conventions candidate binding {name} drifted")
+    constants = _keys(data["registered_immutable_constants"], set(H001_NC_REGISTERED_CONSTANTS), "H001 numerical-conventions candidate registered_immutable_constants")
+    for key, expected in H001_NC_REGISTERED_CONSTANTS.items():
+        if type(constants[key]) is not type(expected) or constants[key] != expected:
+            _fail(f"H001 numerical-conventions candidate registered constant {key} drifted from the frozen value")
+    if data["ordered_gap_inventory"] != H001_NC_GAPS:
+        _fail("H001 numerical-conventions candidate gap inventory must match the governed order exactly")
+    sources = _keys(data["primary_source_registry"], H001_NC_PRIMARY_SOURCE_IDS, "H001 numerical-conventions candidate primary_source_registry")
+    for sid, entry in sources.items():
+        entry = _keys(entry, {"citation", "locator", "supports", "class"}, f"H001 numerical-conventions candidate primary source {sid}")
+        for field in ("citation", "locator", "supports", "class"):
+            _str(entry[field], f"H001 numerical-conventions candidate primary source {sid} {field}")
+    rejected = data["rejected_alternatives"]
+    if type(rejected) is not dict or not rejected:
+        _fail("H001 numerical-conventions candidate rejected_alternatives must be a non-empty mapping")
+    for rid, text in rejected.items():
+        _str(rid, "H001 numerical-conventions candidate rejected alternative id")
+        _str(text, f"H001 numerical-conventions candidate rejected alternative {rid}")
+    fixtures = data["known_answer_fixtures"]
+    if type(fixtures) is not dict or set(fixtures) != H001_NC_FIXTURE_IDS:
+        _fail("H001 numerical-conventions candidate known-answer fixture inventory drifted")
+    for fid, fixture in fixtures.items():
+        if type(fixture) is not dict or fixture.get("fixture_id") != fid:
+            _fail(f"H001 numerical-conventions candidate fixture {fid} identity drifted")
+        for field in ("purpose", "gap_id", "input", "test_parameters", "expected_output", "source_convention_ids"):
+            if field not in fixture:
+                _fail(f"H001 numerical-conventions candidate fixture {fid} is missing {field}")
+        if fixture["gap_id"] not in H001_NC_GAPS:
+            _fail(f"H001 numerical-conventions candidate fixture {fid} names an unknown gap")
+        srcs = _list(fixture["source_convention_ids"], f"H001 numerical-conventions candidate fixture {fid} sources")
+        if not srcs or not set(srcs) <= set(H001_NC_SELECTED):
+            _fail(f"H001 numerical-conventions candidate fixture {fid} must reference bound selected conventions")
+    conventions = data["selected_conventions"]
+    if type(conventions) is not list or len(conventions) != len(H001_NC_GAPS):
+        _fail("H001 numerical-conventions candidate must resolve every gap exactly once")
+    matrix = data["implementability_matrix"]
+    if type(matrix) is not list or len(matrix) != len(H001_NC_GAPS):
+        _fail("H001 numerical-conventions candidate implementability matrix must cover every gap exactly once")
+    used_sources = set()
+    used_rejected = set()
+    for index, (conv, row) in enumerate(zip(conventions, matrix)):
+        gap = H001_NC_GAPS[index]
+        selected_id = H001_NC_SELECTED[index]
+        conv = _keys(conv, H001_NC_CONVENTION_KEYS, f"H001 numerical-conventions candidate convention {gap}")
+        row = _keys(row, H001_NC_MATRIX_COLUMNS, f"H001 numerical-conventions candidate matrix row {gap}")
+        if conv["gap_id"] != gap or row["gap_id"] != gap:
+            _fail("H001 numerical-conventions candidate gap rows are out of governed order")
+        if conv["selected_convention_id"] != selected_id or row["selected_convention_id"] != selected_id:
+            _fail("H001 numerical-conventions candidate selected convention id is out of governed order")
+        if conv["additional_choice_required"] is not False or row["additional_choice_required"] is not False:
+            _fail("H001 numerical-conventions candidate leaves an additional result-determinative choice open")
+        if row["review_status"] != "PENDING_INDEPENDENT_REVIEW":
+            _fail("H001 numerical-conventions candidate matrix review_status drifted")
+        if conv["source_classification"] not in H001_NC_SOURCE_CLASSIFICATIONS:
+            _fail("H001 numerical-conventions candidate source classification is unknown")
+        if conv["source_classification"] == "IMPLEMENTATION_DETAIL":
+            _fail("H001 numerical-conventions candidate classifies a result-determinative rule as an implementation detail")
+        for field in ("normative_definition", "indexing_conventions", "denominators_and_normalization", "boundary_and_edge_cases", "non_finite_behavior", "empty_singleton_degenerate_behavior", "comparison_operators"):
+            _str(conv[field], f"H001 numerical-conventions candidate convention {gap} {field}")
+        pseudo = _list(conv["deterministic_pseudocode"], f"H001 numerical-conventions candidate convention {gap} pseudocode")
+        if not pseudo:
+            _fail(f"H001 numerical-conventions candidate convention {gap} pseudocode must not be empty")
+        for line in pseudo:
+            _str(line, f"H001 numerical-conventions candidate convention {gap} pseudocode line")
+        conv_sources = _list(conv["primary_source_ids"], f"H001 numerical-conventions candidate convention {gap} sources")
+        row_sources = _list(row["primary_source_ids"], f"H001 numerical-conventions candidate matrix {gap} sources")
+        if not conv_sources or set(conv_sources) != set(row_sources) or not set(conv_sources) <= H001_NC_PRIMARY_SOURCE_IDS:
+            _fail(f"H001 numerical-conventions candidate convention {gap} primary sources are missing or diverge from the matrix")
+        used_sources |= set(conv_sources)
+        conv_rejected = _list(conv["rejected_alternative_ids"], f"H001 numerical-conventions candidate convention {gap} rejected")
+        row_rejected = _list(row["rejected_alternative_ids"], f"H001 numerical-conventions candidate matrix {gap} rejected")
+        if not conv_rejected or set(conv_rejected) != set(row_rejected) or not set(conv_rejected) <= set(rejected):
+            _fail(f"H001 numerical-conventions candidate convention {gap} rejected alternatives are missing or unregistered")
+        used_rejected |= set(conv_rejected)
+        conv_fixtures = _list(conv["known_answer_fixture_ids"], f"H001 numerical-conventions candidate convention {gap} fixtures")
+        row_fixtures = _list(row["known_answer_fixture_ids"], f"H001 numerical-conventions candidate matrix {gap} fixtures")
+        if not conv_fixtures or set(conv_fixtures) != set(row_fixtures) or not set(conv_fixtures) <= H001_NC_FIXTURE_IDS:
+            _fail(f"H001 numerical-conventions candidate convention {gap} fixtures are missing or unbound")
+        tests = _list(row["implementation_test_ids"], f"H001 numerical-conventions candidate matrix {gap} tests")
+        if not tests:
+            _fail(f"H001 numerical-conventions candidate matrix {gap} tests must not be empty")
+        for test_id in tests:
+            _str(test_id, f"H001 numerical-conventions candidate matrix {gap} test id")
+            if not test_id.startswith("tests/") or "::" not in test_id:
+                _fail(f"H001 numerical-conventions candidate matrix {gap} test id must be a pytest node id under tests/")
+    if used_sources != H001_NC_PRIMARY_SOURCE_IDS:
+        _fail("H001 numerical-conventions candidate leaves a registered primary source unused or cites an unregistered source")
+    if used_rejected != set(rejected):
+        _fail("H001 numerical-conventions candidate registers a rejected alternative that no convention cites")
+    contract = _keys(data["binary64_operation_order_contract"], {
+        "arithmetic", "square_root", "accumulation_order", "signed_zero", "comparisons",
+        "serialization", "fixture_exactness", "primary_source_ids",
+    }, "H001 numerical-conventions candidate binary64_operation_order_contract")
+    accumulation = _str(contract["accumulation_order"], "H001 numerical-conventions candidate accumulation_order").lower()
+    for required in ("single", "division sum/n", "per-term doubling"):
+        if required not in accumulation:
+            _fail("H001 numerical-conventions candidate operation-order contract lost a required pinned rule")
+    if "no decision tolerance" not in _str(contract["comparisons"], "H001 numerical-conventions candidate comparisons").lower():
+        _fail("H001 numerical-conventions candidate comparison contract lost the no-tolerance rule")
+    pseudo_e2e = _list(data["integrated_end_to_end_pseudocode"], "H001 numerical-conventions candidate integrated pseudocode")
+    if len(pseudo_e2e) < 5:
+        _fail("H001 numerical-conventions candidate integrated end-to-end pseudocode is too sparse")
+    non_effects = _list(data["non_effects"], "H001 numerical-conventions candidate non_effects")
+    for required in ("CANDIDATE_NOT_EFFECTIVE", "CANDIDATE_NOT_ACTIVATED", "BLOCK_LIVE_INTEGRATION", "EDGE_UNPROVEN", "NO_CALIBRATION_ENGINE_IMPLEMENTED", "NO_CALIBRATION_EXECUTED", "INDEPENDENT_REVIEW_REQUIRED", "REGISTERED_CONSTANTS_UNCHANGED"):
+        if required not in non_effects:
+            _fail(f"H001 numerical-conventions candidate non_effects lost {required}")
+    prohibitions = _list(data["prohibitions"], "H001 numerical-conventions candidate prohibitions")
+    for required in ("MAKE_NUMERICAL_CONVENTIONS_EFFECTIVE", "ACTIVATE_CANDIDATE", "IMPLEMENT_CALIBRATION_ENGINE", "EXECUTE_CALIBRATION", "CHANGE_REGISTERED_LAG_BLOCK_ALPHA_OR_REPETITIONS", "MODIFY_ACTIVATED_RNG_CANDIDATE"):
+        if required not in prohibitions:
+            _fail(f"H001 numerical-conventions candidate prohibitions lost {required}")
+    _walk_forbidden(data)
+    _nc_scan_placeholders(data)
+    return data
+
+
+def load_and_validate_h001_numerical_conventions_amendment_candidate(raw: bytes) -> dict:
+    if type(raw) is not bytes:
+        _fail("exact bytes input required")
+    try:
+        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, AssuranceValidationError) as error:
+        raise AssuranceValidationError("strict UTF-8 JSON without duplicate keys required") from error
+    if canonical_json_bytes(parsed) != raw:
+        _fail("non-canonical JSON bytes")
+    return validate_h001_numerical_conventions_amendment_candidate(parsed)

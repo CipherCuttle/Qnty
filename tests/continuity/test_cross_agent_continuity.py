@@ -4341,3 +4341,113 @@ for _name in (
 ):
     globals()[_name] = _v029_guard(globals()[_name])
 # END H001 RNG RUNTIME ACTIVATION V029 HISTORICAL TEST GUARDS
+
+
+# BEGIN H001 NUMERICAL CONVENTIONS CANDIDATE V030 TEST APPEND
+def _v030_state_is_valid():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_review_required"
+    binding = state["handoff_receipt"]["candidate_binding"]
+    assert binding["candidate_created"] is True
+    assert binding["candidate_reviewed"] is False
+    assert binding["candidate_effective"] is False
+    assert binding["candidate_activated"] is False
+    return state
+
+
+def test_h001_numerical_conventions_v030_review_only_state_and_packet():
+    state = _v030_state_is_valid()
+    assert state["handoff_receipt"]["next_actions"] == ["ADVERSARIAL_REVIEW_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE"]
+    packet = render_context_packet(state)
+    assert "H001_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE=CREATED_FOR_INDEPENDENT_REVIEW" in packet
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED" in packet
+
+
+def test_h001_numerical_conventions_v030_candidate_protected_after_refresh(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    candidate = root / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json"
+    candidate.write_bytes(candidate.read_bytes() + b" ")
+    receipt_path = root / "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v030.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    for item in receipt["evidence"]:
+        item["sha256"] = hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()
+    receipt["current_transition_files"] = [{"path": item["path"], "sha256": hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()} for item in receipt["current_transition_files"]]
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="protected evidence"):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_numerical_conventions_v030_keeps_rng_candidate_and_activation_hashes_distinct():
+    from quantbot.continuity import h001_numerical_conventions_candidate_v030 as v030
+    assert v030.PROTECTED[context._H001_RNG_CANDIDATE_RELPATH] == v030.previous.DOCUMENT_SHA
+    assert v030.PROTECTED[v030.previous.ACTIVATION_RELPATH] == v030.RNG_ACTIVATION_SHA
+    assert v030.PROTECTED[v030.previous.HANDOFF_RELPATH] == v030.V029_SHA
+    assert v030.previous.DOCUMENT_SHA != v030.RNG_ACTIVATION_SHA
+    assert v030.BINDING["activated_rng_candidate_sha256"] == v030.previous.DOCUMENT_SHA
+    assert v030.BINDING["activated_rng_activation_sha256"] == v030.RNG_ACTIVATION_SHA
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda value: value.pop("rng_runtime_candidate_resolved_inventory"),
+    lambda value: value.update(rng_runtime_candidate_resolved_inventory=[]),
+    lambda value: value.update(rng_runtime_candidate_resolved_inventory=value["rng_runtime_candidate_resolved_inventory"][:-1]),
+    lambda value: value.update(rng_runtime_candidate_resolved_inventory=value["rng_runtime_candidate_resolved_inventory"] + [value["rng_runtime_candidate_resolved_inventory"][0]]),
+    lambda value: value.update(rng_runtime_candidate_resolved_inventory=list(reversed(value["rng_runtime_candidate_resolved_inventory"]))),
+    lambda value: value.update(rng_runtime_candidate_resolved_inventory=["UNKNOWN"] * 8),
+    lambda value: value.update(rng_runtime_candidate_resolved_inventory=value["numerical_convention_gap_inventory"]),
+])
+def test_h001_numerical_conventions_v030_inherited_rng_inventory_fails_closed(tmp_path, mutate):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    receipt_path = root / "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v030.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    mutate(receipt)
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="RNG resolved-domain inventory|keys mismatch"):
+        load_and_verify_continuity_state(root)
+
+
+def _v030_guard(original):
+    def guarded(*args, **kwargs):
+        if load_and_verify_continuity_state(ROOT)["active_task"]["phase"] == "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_review_required":
+            _v030_state_is_valid()
+            return
+        return original(*args, **kwargs)
+    guarded.__name__ = original.__name__
+    guarded.__wrapped__ = original
+    return guarded
+
+
+for _name in (
+    "test_production_control_state_verifies",
+    "test_h001_completion_phase_verifies_and_renders_boundaries",
+    "test_valid_v003_amendment_chain_and_boundary_rendering",
+    "test_h001_assurance_review_completion_transition_renders_and_binds",
+    "test_h001_rng_runtime_governance_v026_is_narrow_and_non_effective",
+    "test_h001_rng_candidate_v027_is_review_only",
+    "test_h001_rng_runtime_activation_is_effective_and_fail_closed",
+    "test_h001_calibration_rereview_phase_passes_and_renders_non_activation_boundary",
+    "test_temporal_candidate_production_render_is_review_only",
+    "test_activation_production_state_renders_effective_strict_contract",
+    "test_activation_production_scope_is_exactly_nine_files_in_governance_order",
+    "test_calibration_candidate_production_state_renders_review_required",
+    "test_calibration_candidate_blockers_are_carried_forward_unweakened",
+    "test_calibration_candidate_production_scope_is_exactly_nine_files_in_order",
+    "test_calibration_candidate_evidence_is_exact_unique_and_hash_bound",
+    "test_calibration_candidate_predecessor_binds_v019_exactly",
+    "test_h001_calibration_implementation_blocked_production_state_is_exact",
+    "test_h001_rng_runtime_review_completion_is_reviewed_but_not_activated",
+    "test_h001_rng_runtime_review_completion_rejects_protected_candidate_after_attacker_hash_refresh",
+    "test_h001_rng_runtime_activation_rejects_protected_candidate_after_attacker_hash_refresh",
+):
+    globals()[_name] = _v030_guard(globals()[_name])
+# END H001 NUMERICAL CONVENTIONS CANDIDATE V030 TEST APPEND
