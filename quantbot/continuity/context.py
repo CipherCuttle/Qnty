@@ -516,6 +516,20 @@ _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CURRENT_TRANSITION_FILES = [
     "quantbot/continuity/context.py",
     "tests/continuity/test_cross_agent_continuity.py",
 ]
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PHASE = "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_governance"
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_NEXT_ACTION = "IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE_FOR_INDEPENDENT_REVIEW"
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_AMENDMENT_RELPATH = "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_governance_v001.json"
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_HANDOFF_RELPATH = f"docs/control/tasks/{TASK_ID}/handoff_v025.json"
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_BASE_SHA = "6ced3c3746719c8e26d576169015433d0c2087c3"
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_V024_SHA = "94208bd83c64e65bbc431cc106c242f4f7e863185d2fc650437e0747ae267e62"
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_AMENDMENT_SHA = "b6309ef438129fd49218ab12a086996286b90408d2d97189a3ce8b9ed680e649"
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_SCOPE = [_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_AMENDMENT_RELPATH, _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_HANDOFF_RELPATH, ACTIVE_TASK_RELPATH, "quantbot/continuity/context.py", "tests/continuity/test_cross_agent_continuity.py"]
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_GAPS = list(_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_GAPS)
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_CURRENT_TRANSITION_FILES = list(_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CURRENT_TRANSITION_FILES)
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_EVIDENCE = [_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH, *_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_EVIDENCE]
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_DECISIONS = sorted([*_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_DECISIONS, "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_GOVERNANCE=AUTHORIZED_CANDIDATE_FOR_INDEPENDENT_REVIEW_ONLY", "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_SELECTED=FALSE", "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_EFFECTIVE=FALSE", "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE=NOT_CREATED", "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_REVIEW=NOT_COMPLETED"])
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_BLOCKERS = ["BLOCK_LIVE_INTEGRATION", "EDGE_UNPROVEN", "H001 numerical conventions amendment candidate requires independent review", "H001 synthetic calibration engine implementation remains blocked pending reviewed numerical conventions amendment", "H001 synthetic calibration execution remains unauthorized", "V0 remains unavailable", "durable stores remain unconfigured", "real data access remains forbidden"]
+_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PROHIBITIONS = sorted([*_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PROHIBITIONS, "CREATE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE_BEFORE_GOVERNANCE_TRANSITION_IS_MERGED", "MAKE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_EFFECTIVE", "MODIFY_FROZEN_H001_SYNTHETIC_NULL_CALIBRATION_CANDIDATE", "MODIFY_PRIOR_AMENDMENTS_OR_HANDOFF_RECEIPTS_V001_THROUGH_V024"])
 _H001_TEMPORAL_ACTIVE_BASE_SHA = "eb953e04685b57e22d1b27d043618da4b44d549b"
 _H001_TEMPORAL_ACTIVE_V017_SHA = "687c8192403cc5c4ff62bbe2ed43e5a4c080868c0b4760386a0d7429798c8d32"
 _H001_TEMPORAL_ACTIVE_DESIGN_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
@@ -1661,9 +1675,9 @@ def _validate_receipt_body(
     receipt_keys = set(_RECEIPT_KEYS)
     if parsed.get("receipt_index") == 15:
         receipt_keys.add("review_binding")
-    if parsed.get("receipt_index") in (22, 24):
+    if parsed.get("receipt_index") in (22, 24, 25):
         receipt_keys.add("phase")
-    if parsed.get("receipt_index") == 24:
+    if parsed.get("receipt_index") in (24, 25):
         receipt_keys.update({"current_transition_files", "numerical_convention_gap_inventory"})
     _require_exact_keys(parsed, receipt_keys, label)
     if parsed["schema_version"] != "0.1.0":
@@ -1701,7 +1715,7 @@ def _validate_receipt_body(
 
 
 def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
-    is_implementation_block = active["phase"] == _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE
+    is_implementation_block = active["phase"] in (_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE, _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PHASE)
     _validate_receipt_body(
         parsed,
         "handoff_receipt",
@@ -1780,6 +1794,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
         amendment = _validate_h001_calibration_execution_governance_handoff(parsed, root)
     elif active["phase"] == _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE:
         _validate_h001_calibration_implementation_blocked_handoff(parsed, root)
+        _cross_check_artifact_records(parsed, root)
+    elif active["phase"] == _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PHASE:
+        _validate_h001_numerical_conventions_governance_handoff(parsed, root)
         _cross_check_artifact_records(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
@@ -2605,6 +2622,76 @@ def _validate_h001_calibration_implementation_blocked_handoff(receipt: dict, roo
         _fail("H001 calibration implementation-block current-transition files must be exact, unique, and hash-bound")
 
 
+def _validate_h001_numerical_conventions_governance_handoff(receipt: dict, root: Path) -> None:
+    """Validate the candidate-only numerical-conventions governance transition."""
+    if type(receipt["safety_state"]) is not dict:
+        _validate_safety_state(receipt["safety_state"])
+    if type(receipt["evidence"]) is not list:
+        _validate_evidence(receipt["evidence"], root, verify_files=False)
+    for item in receipt["evidence"]:
+        if type(item) is not dict:
+            _fail("H001 numerical-conventions governance evidence entries must be JSON objects")
+        _require_exact_keys(item, _EVIDENCE_KEYS, "H001 numerical-conventions governance evidence entry")
+    if receipt["receipt_index"] != 25 or receipt["phase"] != _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PHASE:
+        _fail("H001 numerical-conventions governance receipt identity is wrong")
+    if receipt["source_branch"] != "chore/h001-calibration-numerical-conventions-governance" or receipt["source_head_commit"] != _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_BASE_SHA:
+        _fail("H001 numerical-conventions governance source binding is wrong")
+    if receipt["predecessor"] != {"path": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH, "sha256": _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_V024_SHA}:
+        _fail("H001 numerical-conventions governance predecessor is wrong")
+    if receipt["changed_file_scope"] != _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_SCOPE or len(receipt["changed_file_scope"]) != len(set(receipt["changed_file_scope"])):
+        _fail("H001 numerical-conventions governance changed-file scope is wrong")
+    if receipt["next_actions"] != [_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_NEXT_ACTION]:
+        _fail("H001 numerical-conventions governance next action is wrong")
+    if receipt["decisions"] != _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_DECISIONS or len(receipt["decisions"]) != len(set(receipt["decisions"])):
+        _fail("H001 numerical-conventions governance decisions drifted")
+    if receipt["blockers"] != _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_BLOCKERS or len(receipt["blockers"]) != len(set(receipt["blockers"])):
+        _fail("H001 numerical-conventions governance blockers drifted")
+    if receipt["prohibited_actions"] != _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PROHIBITIONS:
+        _fail("H001 numerical-conventions governance prohibitions drifted")
+    if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 numerical-conventions governance changed persistent safety state")
+    gaps = receipt["numerical_convention_gap_inventory"]
+    if type(gaps) is not list:
+        _fail("H001 numerical-conventions governance numerical gaps must be a list")
+    for gap in gaps:
+        _require_str(gap, "H001 numerical-conventions governance numerical gap")
+    if gaps != _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_GAPS:
+        _fail("H001 numerical-conventions governance numerical gaps drifted")
+    protected = {_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH: _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_V024_SHA, _H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH: _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA, _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_SHA, _H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_V022_SHA, _H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_AMENDMENT_SHA, _H001_CALIBRATION_CANDIDATE_RELPATH: _H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA, _H001_CALIBRATION_REREVIEW_RECORD_RELPATH: _H001_CALIBRATION_EFFECTIVE_REREVIEW_SHA, f"docs/control/tasks/{TASK_ID}/handoff_v021.json": _H001_CALIBRATION_EFFECTIVE_V021_SHA, _H001_CALIBRATION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_GOVERNANCE_SHA, "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json": _H001_CALIBRATION_EFFECTIVE_DRAFT_SHA, H001_DESIGN_JSON_RELPATH: _H001_CALIBRATION_EFFECTIVE_DESIGN_SHA, "quantbot/experiment/h001_real_falsification_preregistration.py": _H001_CALIBRATION_EFFECTIVE_VALIDATOR_SHA, _H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_TEMPORAL_SHA, "quantbot/assurance/contracts.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CONTRACTS_SHA, "quantbot/assurance/h001_null_calibration.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CALIBRATION_HARNESS_SHA, "tests/assurance/test_contracts.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CONTRACTS_SHA, "tests/assurance/test_h001_null_calibration.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CALIBRATION_SHA, "docs/artifacts/candidate1-real-input-v0.json": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_ARTIFACT_SHA, STORE_REGISTRY_RELPATH: _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_STORES_SHA}
+    if [item["path"] for item in receipt["evidence"]] != _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_EVIDENCE or len(receipt["evidence"]) != len({item["path"] for item in receipt["evidence"]}):
+        _fail("H001 numerical-conventions governance protected evidence list must be exact, unique, and ordered")
+    expected_evidence = []
+    for path in _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_EVIDENCE:
+        target = root / path
+        if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != protected[path]:
+            _fail(f"H001 numerical-conventions governance protected evidence {path!r} hash mismatch")
+        expected_evidence.append({"path": path, "sha256": protected[path]})
+    if receipt["evidence"] != expected_evidence:
+        _fail("H001 numerical-conventions governance protected evidence list must be exact, unique, and ordered")
+    current = receipt["current_transition_files"]
+    if type(current) is not list:
+        _fail("H001 numerical-conventions governance current-transition files must be a list")
+    expected_current = []
+    for item in current:
+        if type(item) is not dict:
+            _fail("H001 numerical-conventions governance current-transition entries must be JSON objects")
+        _require_exact_keys(item, _EVIDENCE_KEYS, "H001 numerical-conventions governance current-transition entry")
+    for path in _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_CURRENT_TRANSITION_FILES:
+        expected_current.append({"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()})
+    if current != expected_current or len(current) != len({item["path"] for item in current}):
+        _fail("H001 numerical-conventions governance current-transition files must be exact, unique, and hash-bound")
+    amendment_bytes = (root / _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_AMENDMENT_RELPATH).read_bytes()
+    if hashlib.sha256(amendment_bytes).hexdigest() != _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_AMENDMENT_SHA:
+        _fail("H001 numerical-conventions governance amendment hash is wrong")
+    amendment = _load_canonical_document(amendment_bytes, "H001 numerical-conventions governance amendment")
+    required = {"allowed_actions", "amendment_candidate_created", "amendment_id", "amendment_kind", "authorization_status", "base_main_commit", "calibration_engine_implemented", "calibration_execution_authorized", "calibration_execution_performed", "calibration_results", "candidate_review_completed", "current_phase", "effective", "future_candidate_completeness_contract", "governed_h001_protocol_id", "implementability_matrix_contract", "numerical_conventions_effective", "numerical_conventions_selected", "primary_source_requirement", "prohibited_actions", "real_data_access_authorized", "schema_version", "scientific_authorization", "status", "transition_gates", "unresolved_gap_inventory", "paper_trade_authorization", "live_authorization"}
+    _require_exact_keys(amendment, required, "H001 numerical-conventions governance amendment")
+    if amendment["unresolved_gap_inventory"] != _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_GAPS or amendment["numerical_conventions_selected"] is not False or amendment["numerical_conventions_effective"] is not False or amendment["amendment_candidate_created"] is not False or amendment["candidate_review_completed"] is not False or amendment["calibration_engine_implemented"] is not False or amendment["calibration_execution_authorized"] is not False or amendment["calibration_execution_performed"] is not False or amendment["calibration_results"] != "NONE":
+        _fail("H001 numerical-conventions governance amendment candidate-only state drifted")
+    if amendment["transition_gates"]["unique_result_implementability_gate"]["independent_review_must_fail_if_additional_choice_remains"] is not True:
+        _fail("H001 numerical-conventions governance unique-result gate is wrong")
+
+
 def _validate_entrypoints(root: Path) -> None:
     start_here = root / START_HERE_RELPATH
     if not start_here.is_file():
@@ -3091,6 +3178,8 @@ def render_context_packet(state: dict) -> str:
             "EDGE_UNPROVEN",
             "BLOCK_LIVE_INTEGRATION",
         ])
+    elif active["phase"] == _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PHASE:
+        lines.extend(_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_DECISIONS)
     for prohibited in receipt["prohibited_actions"]:
         lines.append(f"PROHIBITED={prohibited}")
     return "\n".join(lines)
