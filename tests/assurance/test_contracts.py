@@ -772,3 +772,55 @@ def test_h001_rng_runtime_candidate_rejects_effective_or_authorized_mutations():
         with pytest.raises(ValueError):
             contracts.validate_h001_rng_runtime_amendment_candidate(value)
 # END H001 RNG RUNTIME CANDIDATE V027 TEST APPEND
+
+
+# BEGIN H001 NUMERICAL CONVENTIONS CANDIDATE V030 TEST APPEND
+H001_NUMERICAL_CONVENTIONS_CANDIDATE = Path(__file__).parents[2] / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json"
+
+
+def _h001_nc_candidate():
+    return json.loads(H001_NUMERICAL_CONVENTIONS_CANDIDATE.read_bytes())
+
+
+def test_h001_numerical_conventions_candidate_accepts_exact_locked_bytes():
+    raw = H001_NUMERICAL_CONVENTIONS_CANDIDATE.read_bytes()
+    value = contracts.load_and_validate_h001_numerical_conventions_amendment_candidate(raw)
+    assert contracts.canonical_json_bytes(value) == raw
+    assert value["effective"] is False and value["activated"] is False
+    assert [r["review_status"] for r in value["implementability_matrix"]] == ["PENDING_INDEPENDENT_REVIEW"] * 5
+    assert all(r["additional_choice_required"] is False for r in value["implementability_matrix"])
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda v: v.update(document_id="wrong"),
+    lambda v: v["bindings"]["frozen_calibration_spec"].update(sha256="0" * 64),
+    lambda v: v["bindings"]["numerical_conventions_governance"].update(sha256="0" * 64),
+    lambda v: v["bindings"]["activated_rng_candidate"].update(sha256="0" * 64),
+    lambda v: v["bindings"]["activated_rng_activation"].update(sha256="0" * 64),
+    lambda v: v["ordered_gap_inventory"].pop(),
+    lambda v: v["ordered_gap_inventory"].append(v["ordered_gap_inventory"][0]),
+    lambda v: v["ordered_gap_inventory"].reverse(),
+    lambda v: v["ordered_gap_inventory"].__setitem__(0, "UNKNOWN"),
+    lambda v: v["selected_conventions"][0].pop("deterministic_pseudocode"),
+    lambda v: v["selected_conventions"][0].update(normative_definition="TODO"),
+    lambda v: v["selected_conventions"][0].update(primary_source_ids=[]),
+    lambda v: v["selected_conventions"][0].update(rejected_alternative_ids=[]),
+    lambda v: v["known_answer_fixtures"].pop("KAT-HAC-001"),
+    lambda v: v["implementability_matrix"][0].update(additional_choice_required=True),
+    lambda v: v["implementability_matrix"].pop(),
+    lambda v: v["implementability_matrix"].append(v["implementability_matrix"][0]),
+    lambda v: v.update(effective=True), lambda v: v.update(activated=True),
+    lambda v: v["registered_immutable_constants"].update(hac_lag=22),
+])
+def test_h001_numerical_conventions_candidate_mutations_fail_closed(mutate):
+    value = _h001_nc_candidate()
+    mutate(value)
+    with pytest.raises(ValueError):
+        contracts.validate_h001_numerical_conventions_amendment_candidate(value)
+
+
+@pytest.mark.parametrize("bad", [None, [], {"effective": False}, "not-json"])
+def test_h001_numerical_conventions_candidate_malformed_values_are_controlled(bad):
+    with pytest.raises(ValueError):
+        contracts.validate_h001_numerical_conventions_amendment_candidate(bad)
+# END H001 NUMERICAL CONVENTIONS CANDIDATE V030 TEST APPEND
