@@ -1094,3 +1094,606 @@ def load_and_validate_h001_synthetic_null_calibration_spec_freeze_activation(raw
     if canonical_json_bytes(parsed) != raw:
         _fail("non-canonical JSON bytes")
     return validate_h001_synthetic_null_calibration_spec_freeze_activation(parsed)
+
+
+# --- H001 RNG-runtime specification amendment candidate (appended by the v027 transition) ---
+
+H001_RNG_CANDIDATE_ID = "candidate1-h001-synthetic-null-calibration-rng-runtime-specification-amendment-v001"
+H001_RNG_CANDIDATE_KIND = "qnty_h001_synthetic_null_calibration_rng_runtime_specification_amendment_candidate"
+H001_RNG_CANDIDATE_STATUS = "IMPLEMENTED_FOR_INDEPENDENT_REVIEW_NOT_EFFECTIVE"
+H001_RNG_SELECTED_ARCHITECTURE = "RAW_NUMPY_PHILOX_WITH_REPOSITORY_OWNED_DETERMINISTIC_MAPPINGS"
+H001_RNG_SEED_DOMAIN = "h001-null-calibration/h001-synthetic-null-calibration-spec-freeze-candidate-v001/synthetic-only"
+H001_RNG_GOVERNANCE_AMENDMENT_SHA256 = "da27f06effb8321da84ee9f44ff90b810e8c36491d729387b4e820e14f0d8c36"
+H001_RNG_FROZEN_SPEC_SHA256 = "04b6ea5b7453fccf4787abb26c230e2a02a77545c741c19f6686df16fc2cb7a2"
+H001_RNG_SPEC_ACTIVATION_SHA256 = "3fa3d21492645baba8a1fd7fd5fbe8a601ccccec1371e5e7a81faff430c2ab48"
+H001_RNG_V026_RECEIPT_SHA256 = "fd62b1f648b50817b8c664fb38f9e1e685876981cb425d5daf29b78e14e13d2c"
+H001_RNG_RETRY_CAP = 8
+H001_RNG_SAMPLE_LENGTH = 2193
+H001_RNG_TWO_POW_64 = 1 << 64
+
+H001_RNG_DOMAINS = [
+    "NORMATIVE_RANDOM_BIT_SOURCE_AND_HIGH_LEVEL_API_BOUNDARY",
+    "LOGICAL_COORDINATE_SCHEMA_AND_CANONICAL_ENCODING",
+    "LOGICAL_COORDINATE_TO_PHILOX_KEY_COUNTER_AND_LANE_MAPPING",
+    "EXACT_BOUNDED_INTEGER_AND_RATIONAL_BERNOULLI_MAPPING",
+    "REJECTION_ATTEMPT_ISOLATION_RETRY_CAP_AND_FAIL_CLOSED_RULE",
+    "NUMPY_SEED_SEQUENCE_RUNTIME_DEPENDENCY_BOUNDARY",
+    "DRAW_PURPOSE_ALLOCATION_AND_STATIONARY_BOOTSTRAP_LOGICAL_ORDER",
+    "PORTABILITY_SCOPE_AND_REPRODUCIBILITY_CLAIM",
+]
+H001_RNG_SOURCE_CLASSIFICATIONS = {
+    "SOURCE_SUPPORTED_CHOICE", "REPOSITORY_SPECIFIC_DETERMINISTIC_CHOICE",
+    "IMPLEMENTATION_DETAIL", "SCIENTIFIC_ASSUMPTION",
+}
+H001_RNG_FAILURE_CATEGORIES = {
+    "H001_RNG_FORBIDDEN_HIGH_LEVEL_API", "H001_RNG_INVALID_COORDINATE",
+    "H001_RNG_COORDINATE_OUT_OF_DOMAIN", "H001_RNG_ADDRESSING_VIOLATION",
+    "H001_RNG_INVALID_BOUND", "H001_RNG_INVALID_RATIONAL",
+    "H001_RNG_RETRY_CAP_EXHAUSTED", "H001_RNG_UNKNOWN_DRAW_PURPOSE",
+    "H001_RNG_SEED_SEQUENCE_BOUNDARY_VIOLATION", "H001_RNG_PORTABILITY_CLAIM_VIOLATION",
+}
+H001_RNG_DRAW_PURPOSES = {"INITIAL_INDEX": 1, "RESTART_DECISION": 2, "RESTART_INDEX": 3}
+H001_RNG_COORDINATE_FIELDS = [
+    "protocol_seed_domain", "dgp_or_case_id", "outer_replication_index",
+    "bootstrap_replication_index", "draw_purpose", "sample_position", "attempt_index",
+]
+H001_RNG_FIXTURE_IDS = {
+    "KAT-PAYLOAD-001", "KAT-PAYLOAD-002", "KAT-HISTORICAL-SEEDSEQUENCE-001",
+    "KAT-RAW-001", "KAT-RAW-002", "KAT-RAW-003", "KAT-RAW-004", "KAT-RAW-005",
+    "KAT-RAW-006", "KAT-RAW-007", "KAT-RAW-008", "KAT-RAW-009",
+    "KAT-BOUNDED-N1-001", "KAT-BOUNDED-N63-001", "KAT-BOUNDED-N2193-001", "KAT-BOUNDED-NMAX-001",
+    "KAT-RETRY-001", "KAT-EXHAUSTION-001",
+    "KAT-BERNOULLI-TRUE-001", "KAT-BERNOULLI-FALSE-001", "KAT-BERNOULLI-P0-001", "KAT-BERNOULLI-P1Q1-001",
+    "KAT-PATH-001", "KAT-PATH-002",
+}
+H001_RNG_RESEARCH_DERIVED_SEED = "17221696974678360913"
+H001_RNG_RESEARCH_RAW_WORDS = [
+    "15467181228313756398", "16652732221003594432",
+    "2070436752386381772", "4733267601814909029",
+]
+H001_RNG_MATRIX_COLUMNS = {
+    "domain", "normative_rule", "source_classification", "input_domain",
+    "canonical_encoding", "algorithm", "edge_cases", "failure_category",
+    "known_answer_fixture_ids", "implementation_test_ids", "rejected_alternatives",
+    "additional_choice_required", "independent_review_must_fail_if_additional_choice_remains",
+}
+H001_RNG_CANDIDATE_KEYS = {
+    "amendment_id", "amendment_kind", "schema_version", "status", "effective", "activated",
+    "independent_review_required", "independent_review_completed", "governed_h001_protocol_id",
+    "base_main_commit", "authority_non_effects", "hash_bindings", "amendment_scope",
+    "selected_architecture", "alternative_adjudication", "domain_resolution_order",
+    "domain_resolutions", "implementability_matrix", "draw_purpose_registry",
+    "logical_coordinate_schema", "philox_binding", "exact_bounded_integer",
+    "exact_rational_bernoulli", "rejection_isolation_and_retry_cap",
+    "stationary_bootstrap_logical_order", "seed_sequence_decision",
+    "portability_and_reproducibility", "primary_sources", "known_answer_fixtures",
+    "fixture_policy", "unique_result_gate", "non_effects",
+}
+H001_RNG_EXPECTED_AUTHORITY_NON_EFFECTS = {
+    "calibration_engine_implemented": False,
+    "calibration_execution_authorized": False,
+    "calibration_execution_count": 0,
+    "calibration_execution_budget": 0,
+    "calibration_results_available": False,
+    "candidate_created": True,
+    "candidate_reviewed": False,
+    "candidate_effective": False,
+    "candidate_activated": False,
+    "edge_status": "EDGE_UNPROVEN",
+    "live_status": "BLOCK_LIVE_INTEGRATION",
+    "real_data_access": False,
+    "scientific_authorization_granted": False,
+    "paper_trade_authorization_granted": False,
+    "live_authorization_granted": False,
+}
+H001_RNG_PLACEHOLDER_MARKERS = ("TBD", "TODO", "FIXME", "PLACEHOLDER", "implementation-defined", "library default")
+H001_RNG_PRIMARY_SOURCE_IDS = [
+    "OFFICIAL_NUMPY_PHILOX_DOCUMENTATION",
+    "OFFICIAL_NUMPY_COMPATIBILITY_POLICY",
+    "OFFICIAL_NUMPY_RANDOM_RAW_DOCUMENTATION",
+    "SALMON_MORAES_DROR_SHAW_COUNTER_BASED_RNGS",
+    "POLITIS_ROMANO_STATIONARY_BOOTSTRAP",
+    "CANONICAL_EXACT_BOUNDED_INTEGER_SOURCE",
+]
+
+
+def _rng_uint64_str(value: object, label: str, *, maximum: int = (1 << 64) - 1) -> int:
+    if type(value) is not str or not value or (len(value) > 1 and value[0] == "0") or not value.isdigit():
+        _fail(f"{label}: canonical decimal string required")
+    number = int(value)
+    if number > maximum:
+        _fail(f"{label}: value exceeds the supported domain")
+    return number
+
+
+def _rng_bounded_int(value: object, label: str, minimum: int, maximum: int) -> int:
+    if type(value) is not int or isinstance(value, bool) or value < minimum or value > maximum:
+        _fail(f"{label}: integer in {minimum}..{maximum} required")
+    return value
+
+
+def _rng_payload_fixture(fixture: object, label: str) -> dict:
+    data = _keys(fixture, {
+        "dgp_or_case_id", "outer_replication_index", "bootstrap_replication_index",
+        "payload_string", "payload_utf8_sha256", "derived_seed64",
+        "philox_key_word_0", "philox_key_word_1",
+    }, label)
+    dgp = _identifier(data["dgp_or_case_id"], f"{label} dgp_or_case_id")
+    outer = _rng_bounded_int(data["outer_replication_index"], f"{label} outer_replication_index", 0, 1999)
+    boot = _rng_bounded_int(data["bootstrap_replication_index"], f"{label} bootstrap_replication_index", 0, 9999)
+    payload = _str(data["payload_string"], f"{label} payload_string")
+    if payload != f"{H001_RNG_SEED_DOMAIN}:{dgp}:outer:{outer}:bootstrap:{boot}":
+        _fail(f"{label}: payload_string does not follow the frozen grammar")
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    if _sha(data["payload_utf8_sha256"], f"{label} payload_utf8_sha256") != digest:
+        _fail(f"{label}: payload digest is not reproducible from the payload string")
+    if _rng_uint64_str(data["derived_seed64"], f"{label} derived_seed64") != int(digest[0:16], 16):
+        _fail(f"{label}: derived_seed64 breaks the frozen seed_integer_rule")
+    if data["philox_key_word_0"] != data["derived_seed64"]:
+        _fail(f"{label}: philox_key_word_0 must equal the frozen derived seed")
+    if _rng_uint64_str(data["philox_key_word_1"], f"{label} philox_key_word_1") != int(digest[16:32], 16):
+        _fail(f"{label}: philox_key_word_1 does not extend the digest")
+    return data
+
+
+def _rng_counter_consistent(fixture: dict, label: str) -> None:
+    purpose = _str(fixture["draw_purpose"], f"{label} draw_purpose")
+    if purpose not in H001_RNG_DRAW_PURPOSES:
+        _fail(f"{label}: unknown draw purpose")
+    position = _rng_bounded_int(fixture["sample_position"], f"{label} sample_position", 0, H001_RNG_SAMPLE_LENGTH - 1)
+    attempt = _rng_bounded_int(fixture["attempt_index"], f"{label} attempt_index", 0, H001_RNG_RETRY_CAP - 1)
+    expected = attempt | (H001_RNG_DRAW_PURPOSES[purpose] << 8) | (position << 16)
+    if _rng_uint64_str(fixture["counter_word_0"], f"{label} counter_word_0") != expected:
+        _fail(f"{label}: counter_word_0 does not match the packed coordinate")
+
+
+def _rng_accepted_words(words: object, n: int, label: str) -> tuple:
+    if type(words) is not list or not words or len(words) > H001_RNG_RETRY_CAP:
+        _fail(f"{label}: raw_words_consumed must be a bounded non-empty list")
+    limit = H001_RNG_TWO_POW_64 - (H001_RNG_TWO_POW_64 % n)
+    parsed = [_rng_uint64_str(word, f"{label} raw word") for word in words]
+    for rejected in parsed[:-1]:
+        if rejected < limit:
+            _fail(f"{label}: a rejected raw word is below the acceptance limit")
+    if parsed[-1] >= limit:
+        _fail(f"{label}: the accepted raw word is not below the acceptance limit")
+    return parsed, limit
+
+
+def _rng_bounded_fixture(fixture: object, label: str) -> None:
+    data = _keys(fixture, {
+        "payload_fixture", "draw_purpose", "sample_position", "bound_n", "acceptance_limit",
+        "raw_words_consumed", "accepted_attempt_index", "result",
+    }, label)
+    n = _rng_uint64_str(data["bound_n"], f"{label} bound_n", maximum=H001_RNG_TWO_POW_64)
+    if n < 1:
+        _fail(f"{label}: bound_n must be at least 1")
+    parsed, limit = _rng_accepted_words(data["raw_words_consumed"], n, label)
+    if _rng_uint64_str(data["acceptance_limit"], f"{label} acceptance_limit", maximum=H001_RNG_TWO_POW_64) != limit:
+        _fail(f"{label}: acceptance_limit is not 2**64 - (2**64 mod n)")
+    accepted = _rng_bounded_int(data["accepted_attempt_index"], f"{label} accepted_attempt_index", 0, H001_RNG_RETRY_CAP - 1)
+    if accepted != len(parsed) - 1:
+        _fail(f"{label}: accepted_attempt_index does not match the consumed words")
+    if _rng_uint64_str(data["result"], f"{label} result") != parsed[-1] % n:
+        _fail(f"{label}: result is not the accepted word reduced modulo n")
+
+
+def _rng_bernoulli_fixture(fixture: object, label: str) -> None:
+    data = _keys(fixture, {
+        "payload_fixture", "draw_purpose", "sample_position", "probability_numerator",
+        "probability_denominator", "raw_words_consumed", "uniform_value", "comparison", "result",
+    }, label)
+    if data["draw_purpose"] != "RESTART_DECISION":
+        _fail(f"{label}: Bernoulli fixtures must use the RESTART_DECISION purpose")
+    q = _rng_bounded_int(data["probability_denominator"], f"{label} probability_denominator", 1, (1 << 63))
+    p = _rng_bounded_int(data["probability_numerator"], f"{label} probability_numerator", 0, q)
+    parsed, _limit = _rng_accepted_words(data["raw_words_consumed"], q, label)
+    uniform = _rng_uint64_str(data["uniform_value"], f"{label} uniform_value")
+    if uniform != parsed[-1] % q:
+        _fail(f"{label}: uniform_value is not the accepted word reduced modulo q")
+    if type(data["result"]) is not bool or data["result"] != (uniform < p):
+        _fail(f"{label}: result does not equal the strict integer comparison uniform < p")
+    if _str(data["comparison"], f"{label} comparison") != f"{uniform} < {p}":
+        _fail(f"{label}: comparison transcript drifted")
+
+
+def _rng_path_fixture(fixture: object, label: str, *, wraparound_required: bool) -> None:
+    data = _keys(fixture, {
+        "payload_fixture", "sample_length", "index_path", "index_path_canonical_json_sha256",
+        "restart_positions", "restart_count", "wraparound_continuation_positions",
+    }, label)
+    if data["sample_length"] != H001_RNG_SAMPLE_LENGTH:
+        _fail(f"{label}: sample_length drifted from the frozen contract")
+    path = data["index_path"]
+    if type(path) is not list or len(path) != H001_RNG_SAMPLE_LENGTH:
+        _fail(f"{label}: index_path must contain exactly {H001_RNG_SAMPLE_LENGTH} entries")
+    for index in path:
+        _rng_bounded_int(index, f"{label} index_path entry", 0, H001_RNG_SAMPLE_LENGTH - 1)
+    restarts = data["restart_positions"]
+    if type(restarts) is not list or restarts != sorted(set(restarts)):
+        _fail(f"{label}: restart_positions must be strictly increasing and unique")
+    for position in restarts:
+        _rng_bounded_int(position, f"{label} restart position", 1, H001_RNG_SAMPLE_LENGTH - 1)
+    if data["restart_count"] != len(restarts):
+        _fail(f"{label}: restart_count does not match restart_positions")
+    restart_set = set(restarts)
+    for t in range(1, H001_RNG_SAMPLE_LENGTH):
+        if t not in restart_set and path[t] != (path[t - 1] + 1) % H001_RNG_SAMPLE_LENGTH:
+            _fail(f"{label}: continuation step at position {t} breaks the wraparound successor rule")
+    wraps = data["wraparound_continuation_positions"]
+    expected_wraps = [
+        t for t in range(1, H001_RNG_SAMPLE_LENGTH)
+        if t not in restart_set and path[t] == 0 and path[t - 1] == H001_RNG_SAMPLE_LENGTH - 1
+    ]
+    if type(wraps) is not list or wraps != expected_wraps:
+        _fail(f"{label}: wraparound_continuation_positions do not match the path")
+    if wraparound_required and not wraps:
+        _fail(f"{label}: a wraparound-exhibiting path fixture is required")
+    if _sha(data["index_path_canonical_json_sha256"], f"{label} path sha") != hashlib.sha256(canonical_json_bytes(path)).hexdigest():
+        _fail(f"{label}: index_path canonical hash is not reproducible")
+
+
+def _rng_scan_placeholders(value: object) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            _rng_scan_placeholders(key)
+            _rng_scan_placeholders(child)
+    elif isinstance(value, list):
+        for child in value:
+            _rng_scan_placeholders(child)
+    elif type(value) is str:
+        for marker in H001_RNG_PLACEHOLDER_MARKERS:
+            if marker in value:
+                _fail(f"unresolved placeholder marker {marker!r} in candidate text")
+
+
+def validate_h001_rng_runtime_amendment_candidate(value: object) -> dict:
+    data = _keys(value, H001_RNG_CANDIDATE_KEYS, "H001 RNG-runtime amendment candidate")
+    if data["amendment_id"] != H001_RNG_CANDIDATE_ID or data["amendment_kind"] != H001_RNG_CANDIDATE_KIND:
+        _fail("H001 RNG candidate identity drifted")
+    if data["schema_version"] != SCHEMA_VERSION or data["status"] != H001_RNG_CANDIDATE_STATUS:
+        _fail("H001 RNG candidate schema or status drifted")
+    if data["governed_h001_protocol_id"] != H001_PROTOCOL_ID:
+        _fail("H001 RNG candidate protocol drifted")
+    commit = data["base_main_commit"]
+    if type(commit) is not str or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        _fail("H001 RNG candidate base_main_commit must be a lowercase 40-hex commit")
+    for field, expected in (("effective", False), ("activated", False), ("independent_review_completed", False), ("independent_review_required", True)):
+        if data[field] is not expected:
+            _fail(f"H001 RNG candidate {field} must be {expected}")
+    non_effect_state = _keys(data["authority_non_effects"], set(H001_RNG_EXPECTED_AUTHORITY_NON_EFFECTS), "H001 RNG candidate authority_non_effects")
+    for key, expected in H001_RNG_EXPECTED_AUTHORITY_NON_EFFECTS.items():
+        actual = non_effect_state[key]
+        if type(expected) is bool:
+            if actual is not expected:
+                _fail(f"H001 RNG candidate authority_non_effects {key} drifted from the non-effective contract")
+        elif type(expected) is int:
+            if type(actual) is not int or actual != expected:
+                _fail(f"H001 RNG candidate authority_non_effects {key} drifted from the non-effective contract")
+        elif actual != expected:
+            _fail(f"H001 RNG candidate authority_non_effects {key} drifted from the non-effective contract")
+    bindings = _keys(data["hash_bindings"], {"governing_amendment", "frozen_calibration_spec_candidate", "spec_freeze_activation", "v026_receipt"}, "H001 RNG candidate hash_bindings")
+    expected_bindings = {
+        "governing_amendment": ("docs/control/amendments/candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_governance_v001.json", H001_RNG_GOVERNANCE_AMENDMENT_SHA256),
+        "frozen_calibration_spec_candidate": ("docs/assurance/h001_synthetic_null_calibration_spec_freeze_candidate_v001.json", H001_RNG_FROZEN_SPEC_SHA256),
+        "spec_freeze_activation": ("docs/control/amendments/candidate1_h001_synthetic_null_calibration_spec_freeze_activation_v001.json", H001_RNG_SPEC_ACTIVATION_SHA256),
+        "v026_receipt": ("docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v026.json", H001_RNG_V026_RECEIPT_SHA256),
+    }
+    for name, (path, digest) in expected_bindings.items():
+        if _keys(bindings[name], {"path", "sha256"}, f"H001 RNG candidate hash binding {name}") != {"path": path, "sha256": digest}:
+            _fail(f"H001 RNG candidate hash binding {name} drifted")
+    if data["selected_architecture"] != H001_RNG_SELECTED_ARCHITECTURE:
+        _fail("H001 RNG candidate selected architecture drifted")
+    adjudication = _keys(data["alternative_adjudication"], {
+        "alternative_a_high_level_generator_api",
+        "alternative_b_raw_numpy_philox_with_repository_owned_mappings",
+        "alternative_c_native_repository_philox",
+    }, "H001 RNG candidate alternative_adjudication")
+    for name, decision in (
+        ("alternative_a_high_level_generator_api", "REJECTED"),
+        ("alternative_b_raw_numpy_philox_with_repository_owned_mappings", "SELECTED"),
+        ("alternative_c_native_repository_philox", "REJECTED_AS_NORMATIVE_RUNTIME_RETAINED_AS_TEST_ONLY_VERIFIER"),
+    ):
+        entry = adjudication[name]
+        if type(entry) is not dict or entry.get("decision") != decision:
+            _fail(f"H001 RNG candidate adjudication for {name} drifted")
+    if data["domain_resolution_order"] != H001_RNG_DOMAINS:
+        _fail("H001 RNG candidate domain inventory must match the governed order exactly")
+    resolutions = data["domain_resolutions"]
+    matrix = data["implementability_matrix"]
+    if type(resolutions) is not list or len(resolutions) != len(H001_RNG_DOMAINS):
+        _fail("H001 RNG candidate domain_resolutions must cover every governed domain exactly once")
+    if type(matrix) is not list or len(matrix) != len(H001_RNG_DOMAINS):
+        _fail("H001 RNG candidate implementability matrix must cover every governed domain exactly once")
+    fixtures = data["known_answer_fixtures"]
+    if type(fixtures) is not dict or set(fixtures) != H001_RNG_FIXTURE_IDS:
+        _fail("H001 RNG candidate known-answer fixture inventory drifted")
+    for index, (resolution, row) in enumerate(zip(resolutions, matrix)):
+        domain = H001_RNG_DOMAINS[index]
+        resolution = _keys(resolution, {
+            "domain", "normative_rule", "source_classification", "failure_category",
+            "additional_choice_required", "independent_review_must_fail_if_additional_choice_remains",
+        }, f"H001 RNG candidate domain resolution {domain}")
+        row = _keys(row, H001_RNG_MATRIX_COLUMNS, f"H001 RNG candidate matrix row {domain}")
+        if resolution["domain"] != domain or row["domain"] != domain:
+            _fail("H001 RNG candidate domain rows are out of governed order")
+        if resolution["additional_choice_required"] is not False or row["additional_choice_required"] is not False:
+            _fail("H001 RNG candidate leaves an additional result-determinative choice open")
+        if resolution["independent_review_must_fail_if_additional_choice_remains"] is not True or row["independent_review_must_fail_if_additional_choice_remains"] is not True:
+            _fail("H001 RNG candidate weakened the additional-choice review gate")
+        if resolution["source_classification"] not in H001_RNG_SOURCE_CLASSIFICATIONS or row["source_classification"] not in H001_RNG_SOURCE_CLASSIFICATIONS:
+            _fail("H001 RNG candidate source classification is unknown")
+        if row["source_classification"] == "IMPLEMENTATION_DETAIL":
+            _fail("H001 RNG candidate classifies a result-determinative rule as an implementation detail")
+        if resolution["failure_category"] not in H001_RNG_FAILURE_CATEGORIES or row["failure_category"] not in H001_RNG_FAILURE_CATEGORIES:
+            _fail("H001 RNG candidate failure category is unknown")
+        if resolution["normative_rule"] != row["normative_rule"] or resolution["source_classification"] != row["source_classification"] or resolution["failure_category"] != row["failure_category"]:
+            _fail("H001 RNG candidate domain resolution and matrix row diverge")
+        _str(row["normative_rule"], f"H001 RNG candidate matrix normative_rule {domain}")
+        _str(row["input_domain"], f"H001 RNG candidate matrix input_domain {domain}")
+        _str(row["canonical_encoding"], f"H001 RNG candidate matrix canonical_encoding {domain}")
+        _str(row["algorithm"], f"H001 RNG candidate matrix algorithm {domain}")
+        for list_field in ("edge_cases", "rejected_alternatives"):
+            entries = row[list_field]
+            if type(entries) is not list or not entries:
+                _fail(f"H001 RNG candidate matrix {list_field} for {domain} must be a non-empty list")
+            for entry in entries:
+                _str(entry, f"H001 RNG candidate matrix {list_field} entry for {domain}")
+        fixture_ids = _list(row["known_answer_fixture_ids"], f"H001 RNG candidate matrix fixtures for {domain}", sorted_unique=True)
+        if not fixture_ids or not set(fixture_ids) <= H001_RNG_FIXTURE_IDS:
+            _fail(f"H001 RNG candidate matrix fixtures for {domain} must name bound known-answer fixtures")
+        test_ids = _list(row["implementation_test_ids"], f"H001 RNG candidate matrix tests for {domain}", sorted_unique=True)
+        if not test_ids:
+            _fail(f"H001 RNG candidate matrix tests for {domain} must not be empty")
+        for test_id in test_ids:
+            _str(test_id, f"H001 RNG candidate matrix test id for {domain}")
+            if not test_id.startswith("tests/") or "::" not in test_id:
+                _fail(f"H001 RNG candidate matrix test id for {domain} must be a pytest node id under tests/")
+    registry = _keys(data["draw_purpose_registry"], {
+        "registry_is_closed", "raw_word_sharing_across_purposes", "unknown_purpose_failure_category",
+        "purposes", "unused_logical_draws", "future_purposes",
+    }, "H001 RNG candidate draw_purpose_registry")
+    if registry["registry_is_closed"] is not True:
+        _fail("H001 RNG candidate draw-purpose registry must be closed")
+    if registry["raw_word_sharing_across_purposes"] != "FORBIDDEN":
+        _fail("H001 RNG candidate permits raw-word sharing across purposes")
+    if registry["unknown_purpose_failure_category"] != "H001_RNG_UNKNOWN_DRAW_PURPOSE":
+        _fail("H001 RNG candidate unknown-purpose failure category drifted")
+    purposes = registry["purposes"]
+    if type(purposes) is not list or len(purposes) != len(H001_RNG_DRAW_PURPOSES):
+        _fail("H001 RNG candidate draw-purpose registry must contain exactly the governed purposes")
+    seen_purpose_ids = []
+    for entry, (name, purpose_id) in zip(purposes, H001_RNG_DRAW_PURPOSES.items()):
+        entry = _keys(entry, {
+            "purpose", "purpose_id", "meaning", "permitted_coordinate_fields",
+            "sample_position_domain", "conditionally_evaluated",
+        }, f"H001 RNG candidate draw purpose {name}")
+        if entry["purpose"] != name or entry["purpose_id"] != purpose_id:
+            _fail("H001 RNG candidate draw-purpose identifiers drifted")
+        if entry["purpose_id"] in seen_purpose_ids:
+            _fail("H001 RNG candidate draw-purpose identifiers are duplicated")
+        seen_purpose_ids.append(entry["purpose_id"])
+        if entry["permitted_coordinate_fields"] != H001_RNG_COORDINATE_FIELDS:
+            _fail(f"H001 RNG candidate permitted coordinate fields drifted for {name}")
+        if type(entry["conditionally_evaluated"]) is not bool or entry["conditionally_evaluated"] is not (name == "RESTART_INDEX"):
+            _fail(f"H001 RNG candidate conditional-evaluation flag drifted for {name}")
+    schema = _keys(data["logical_coordinate_schema"], {
+        "fields", "field_order", "injectivity", "unexpected_field_behaviour", "environment_independence",
+    }, "H001 RNG candidate logical_coordinate_schema")
+    fields = schema["fields"]
+    if type(fields) is not list or [entry.get("field") if type(entry) is dict else None for entry in fields] != H001_RNG_COORDINATE_FIELDS:
+        _fail("H001 RNG candidate coordinate fields must match the governed schema exactly")
+    field_bounds = {
+        "outer_replication_index": (0, 1999), "bootstrap_replication_index": (0, 9999),
+        "draw_purpose": (1, 3), "sample_position": (0, 2192), "attempt_index": (0, 7),
+    }
+    for entry in fields:
+        name = entry["field"]
+        if name == "protocol_seed_domain" and entry.get("value") != H001_RNG_SEED_DOMAIN:
+            _fail("H001 RNG candidate seed-domain constant drifted")
+        if name in field_bounds and (entry.get("minimum"), entry.get("maximum")) != field_bounds[name]:
+            _fail(f"H001 RNG candidate bounds drifted for coordinate field {name}")
+    binding = _keys(data["philox_binding"], {
+        "block_function", "round_count", "counter_width_bits", "key_width_bits", "counter_word_order",
+        "key_derivation", "counter_derivation", "lane_rule", "numpy_realization", "numpy_realization_reason",
+        "reserved_address_ranges", "maximum_address_space", "collision_prohibition", "truncation_rationale",
+    }, "H001 RNG candidate philox_binding")
+    if binding["round_count"] != 10 or binding["counter_width_bits"] != 256 or binding["key_width_bits"] != 128:
+        _fail("H001 RNG candidate Philox parameters drifted")
+    if "Philox4x64-10" not in binding["block_function"]:
+        _fail("H001 RNG candidate block function drifted")
+    if "random_raw(4)[0]" not in binding["numpy_realization"] or "(counter_integer - 1) mod 2**256" not in binding["numpy_realization"]:
+        _fail("H001 RNG candidate numpy realization binding drifted")
+    if "lane 0" not in binding["lane_rule"]:
+        _fail("H001 RNG candidate lane rule drifted")
+    bounded = _keys(data["exact_bounded_integer"], {
+        "pseudocode", "arithmetic_width", "accepted_interval", "return_type", "unbiasedness_argument",
+        "n_equals_1", "n_equals_2_pow_64", "invalid_bounds", "prohibitions",
+    }, "H001 RNG candidate exact_bounded_integer")
+    prohibitions = _keys(bounded["prohibitions"], {
+        "plain_modulo_without_rejection", "floating_point_arithmetic",
+        "cross_coordinate_retry_consumption", "biased_fallback_after_exhaustion",
+    }, "H001 RNG candidate bounded-integer prohibitions")
+    for name, marker in prohibitions.items():
+        if marker != "FORBIDDEN":
+            _fail(f"H001 RNG candidate bounded-integer prohibition {name} is not FORBIDDEN")
+    pseudocode = _list(bounded["pseudocode"], "H001 RNG candidate bounded-integer pseudocode")
+    pseudocode_text = "\n".join(_str(line, "H001 RNG candidate pseudocode line") for line in pseudocode)
+    for required in ("limit = 2**64 - (2**64 mod n)", "if x < limit: return x mod n", "H001_RNG_RETRY_CAP_EXHAUSTED"):
+        if required not in pseudocode_text:
+            _fail("H001 RNG candidate bounded-integer pseudocode lost a required exact rule")
+    if "float" in pseudocode_text.lower():
+        _fail("H001 RNG candidate bounded-integer pseudocode mentions floating point")
+    bernoulli_spec = _keys(data["exact_rational_bernoulli"], {
+        "pseudocode", "numerator_domain", "denominator_domain", "reduction_requirement",
+        "comparison_operator", "output_type", "boundary_behaviour",
+        "governed_restart_probability", "floating_point_thresholds",
+    }, "H001 RNG candidate exact_rational_bernoulli")
+    if bernoulli_spec["comparison_operator"] != "strict less-than on exact integers":
+        _fail("H001 RNG candidate Bernoulli comparison operator drifted")
+    if bernoulli_spec["floating_point_thresholds"] != "FORBIDDEN":
+        _fail("H001 RNG candidate permits floating-point Bernoulli thresholds")
+    restart = _keys(bernoulli_spec["governed_restart_probability"], {"numerator", "denominator", "source"}, "H001 RNG candidate governed restart probability")
+    if restart["numerator"] != 1 or restart["denominator"] != 63:
+        _fail("H001 RNG candidate governed restart probability is not exactly 1/63")
+    isolation = _keys(data["rejection_isolation_and_retry_cap"], {
+        "structural_isolation_argument", "retry_cap", "retry_cap_configurable", "retry_cap_rationale",
+        "worst_governed_rejection_probability", "governed_rejection_probabilities",
+        "exhaustion_probability_bound", "exhaustion_failure_category", "fail_closed_behaviour",
+    }, "H001 RNG candidate rejection_isolation_and_retry_cap")
+    if isolation["retry_cap"] != H001_RNG_RETRY_CAP or type(isolation["retry_cap"]) is not int:
+        _fail("H001 RNG candidate retry cap drifted from the governed exact value")
+    if isolation["retry_cap_configurable"] is not False:
+        _fail("H001 RNG candidate leaves the retry cap configurable")
+    if isolation["exhaustion_failure_category"] != "H001_RNG_RETRY_CAP_EXHAUSTED":
+        _fail("H001 RNG candidate exhaustion failure category drifted")
+    order = _keys(data["stationary_bootstrap_logical_order"], {
+        "sample_length", "index_domain", "position_numbering", "bootstrap_replication_numbering",
+        "outer_replication_numbering", "algorithm", "position_zero_rule", "restart_decision_timing",
+        "restart_index_allocation", "wraparound_rule", "logical_versus_physical_order",
+        "shared_synchronous_path",
+    }, "H001 RNG candidate stationary_bootstrap_logical_order")
+    if order["sample_length"] != H001_RNG_SAMPLE_LENGTH:
+        _fail("H001 RNG candidate bootstrap sample length drifted")
+    algorithm_text = "\n".join(_str(line, "H001 RNG candidate bootstrap algorithm line") for line in _list(order["algorithm"], "H001 RNG candidate bootstrap algorithm"))
+    for required in ("uniform_bounded(coordinate(INITIAL_INDEX, position 0), 2193)", "bernoulli_rational(coordinate(RESTART_DECISION, position t), 1, 63)", "(b[t-1] + 1) mod 2193"):
+        if required not in algorithm_text:
+            _fail("H001 RNG candidate bootstrap logical order lost a required exact rule")
+    decision = _keys(data["seed_sequence_decision"], {
+        "selected_option", "seed_sequence_in_normative_bootstrap_index_path", "component_stream_layer",
+        "compatibility_with_frozen_contract",
+    }, "H001 RNG candidate seed_sequence_decision")
+    if decision["selected_option"] != "DIRECT_DETERMINISTIC_PHILOX_KEY_COUNTER_CONSTRUCTION_FOR_NORMATIVE_BOOTSTRAP_INDEX_PATH":
+        _fail("H001 RNG candidate SeedSequence decision drifted")
+    if decision["seed_sequence_in_normative_bootstrap_index_path"] is not False:
+        _fail("H001 RNG candidate reintroduces SeedSequence into the normative path")
+    layer = _keys(decision["component_stream_layer"], {
+        "decision", "rule", "declared_boundary", "outside_boundary_behaviour", "observed_runtime_evidence",
+    }, "H001 RNG candidate component-stream layer")
+    if layer["decision"] != "RETAINED_WITH_DECLARED_RUNTIME_BOUNDARY":
+        _fail("H001 RNG candidate component-stream SeedSequence boundary drifted")
+    portability = _keys(data["portability_and_reproducibility"], {
+        "bootstrap_index_path_claim", "component_stream_claim",
+        "cross_language_reproducibility_claimed", "claim_scope_note",
+    }, "H001 RNG candidate portability_and_reproducibility")
+    if portability["cross_language_reproducibility_claimed"] is not False:
+        _fail("H001 RNG candidate makes an unproven cross-language reproducibility claim")
+    gate = _keys(data["unique_result_gate"], {
+        "requirement", "additional_choice_required", "independent_review_must_fail_if_additional_choice_remains",
+    }, "H001 RNG candidate unique_result_gate")
+    if gate["additional_choice_required"] is not False or gate["independent_review_must_fail_if_additional_choice_remains"] is not True:
+        _fail("H001 RNG candidate unique-result gate drifted")
+    for fragment in ("TWO_INDEPENDENT_IMPLEMENTERS", "IDENTICAL_RAW_WORDS", "STATIONARY_BOOTSTRAP_INDEX_SEQUENCES", "WITHOUT_ANY_ADDITIONAL_RESULT_DETERMINATIVE_CHOICE"):
+        if fragment not in _str(gate["requirement"], "H001 RNG candidate unique-result requirement"):
+            _fail("H001 RNG candidate unique-result requirement lost a required fragment")
+    sources = data["primary_sources"]
+    if type(sources) is not list or [entry.get("source_id") if type(entry) is dict else None for entry in sources] != H001_RNG_PRIMARY_SOURCE_IDS:
+        _fail("H001 RNG candidate primary-source inventory drifted")
+    for entry in sources:
+        entry = _keys(entry, {
+            "source_id", "citation", "url_without_scheme", "what_the_source_guarantees",
+            "what_the_source_does_not_guarantee", "what_qnty_chooses", "why_qnty_chooses_it",
+            "rejected_alternatives",
+        }, "H001 RNG candidate primary source")
+        for field in ("citation", "url_without_scheme", "what_the_source_guarantees", "what_the_source_does_not_guarantee", "what_qnty_chooses", "why_qnty_chooses_it"):
+            _str(entry[field], f"H001 RNG candidate primary source {field}")
+        rejected = entry["rejected_alternatives"]
+        if type(rejected) is not list or not rejected:
+            _fail("H001 RNG candidate primary source must record rejected alternatives")
+    policy = _keys(data["fixture_policy"], {
+        "static_after_candidate_creation", "expected_values_must_not_be_generated_by_implementation_under_test",
+        "two_structurally_independent_derivations_required", "derivation_a", "derivation_b",
+        "supported_test_bound_note",
+    }, "H001 RNG candidate fixture_policy")
+    for field in ("static_after_candidate_creation", "expected_values_must_not_be_generated_by_implementation_under_test", "two_structurally_independent_derivations_required"):
+        if policy[field] is not True:
+            _fail(f"H001 RNG candidate fixture policy {field} must be true")
+    payload_1 = _rng_payload_fixture(fixtures["KAT-PAYLOAD-001"], "H001 RNG candidate KAT-PAYLOAD-001")
+    _rng_payload_fixture(fixtures["KAT-PAYLOAD-002"], "H001 RNG candidate KAT-PAYLOAD-002")
+    if payload_1["derived_seed64"] != H001_RNG_RESEARCH_DERIVED_SEED:
+        _fail("H001 RNG candidate lost the reconstructed research derived seed")
+    historical = _keys(fixtures["KAT-HISTORICAL-SEEDSEQUENCE-001"], {
+        "numpy_version_observed", "seed_sequence_entropy", "seed_sequence_generate_state_4_uint64",
+        "philox_seedsequence_key_words", "first_four_random_raw_words", "role", "normative",
+    }, "H001 RNG candidate historical SeedSequence fixture")
+    if historical["normative"] is not False:
+        _fail("H001 RNG candidate historical SeedSequence fixture must remain non-normative")
+    if historical["seed_sequence_entropy"] != H001_RNG_RESEARCH_DERIVED_SEED or historical["first_four_random_raw_words"] != H001_RNG_RESEARCH_RAW_WORDS:
+        _fail("H001 RNG candidate historical research values drifted")
+    for fixture_id in ("KAT-RAW-001", "KAT-RAW-002", "KAT-RAW-003", "KAT-RAW-004", "KAT-RAW-005", "KAT-RAW-006", "KAT-RAW-007", "KAT-RAW-008", "KAT-RAW-009"):
+        fixture = _keys(fixtures[fixture_id], {
+            "payload_fixture", "draw_purpose", "sample_position", "attempt_index",
+            "counter_word_0", "block_words", "normative_lane0_word",
+        }, f"H001 RNG candidate {fixture_id}")
+        if fixture["payload_fixture"] not in ("payload_1", "payload_2"):
+            _fail(f"H001 RNG candidate {fixture_id} references an unknown payload fixture")
+        _rng_counter_consistent(fixture, f"H001 RNG candidate {fixture_id}")
+        block = fixture["block_words"]
+        if type(block) is not list or len(block) != 4:
+            _fail(f"H001 RNG candidate {fixture_id} must bind all four block lanes")
+        for word in block:
+            _rng_uint64_str(word, f"H001 RNG candidate {fixture_id} block word")
+        if fixture["normative_lane0_word"] != block[0]:
+            _fail(f"H001 RNG candidate {fixture_id} normative word is not lane 0")
+    for fixture_id, expected_n in (("KAT-BOUNDED-N1-001", 1), ("KAT-BOUNDED-N63-001", 63), ("KAT-BOUNDED-N2193-001", 2193), ("KAT-BOUNDED-NMAX-001", H001_RNG_TWO_POW_64)):
+        fixture = fixtures[fixture_id]
+        _rng_bounded_fixture(fixture, f"H001 RNG candidate {fixture_id}")
+        if int(fixture["bound_n"]) != expected_n:
+            _fail(f"H001 RNG candidate {fixture_id} bound drifted")
+    retry = _keys(fixtures["KAT-RETRY-001"], {
+        "payload_fixture", "draw_purpose", "sample_position", "bound_n", "acceptance_limit",
+        "raw_words_consumed", "rejected_attempt_indices", "accepted_attempt_index", "result",
+    }, "H001 RNG candidate KAT-RETRY-001")
+    retry_n = _rng_uint64_str(retry["bound_n"], "H001 RNG candidate retry bound", maximum=H001_RNG_TWO_POW_64)
+    retry_words, retry_limit = _rng_accepted_words(retry["raw_words_consumed"], retry_n, "H001 RNG candidate KAT-RETRY-001")
+    if len(retry_words) < 2:
+        _fail("H001 RNG candidate retry fixture must contain at least one genuine rejection")
+    if _rng_uint64_str(retry["acceptance_limit"], "H001 RNG candidate retry limit", maximum=H001_RNG_TWO_POW_64) != retry_limit:
+        _fail("H001 RNG candidate retry acceptance limit drifted")
+    if retry["rejected_attempt_indices"] != list(range(len(retry_words) - 1)) or retry["accepted_attempt_index"] != len(retry_words) - 1:
+        _fail("H001 RNG candidate retry attempt bookkeeping drifted")
+    if _rng_uint64_str(retry["result"], "H001 RNG candidate retry result") != retry_words[-1] % retry_n:
+        _fail("H001 RNG candidate retry result drifted")
+    exhaustion = _keys(fixtures["KAT-EXHAUSTION-001"], {
+        "payload_fixture", "draw_purpose", "sample_position", "bound_n", "acceptance_limit",
+        "raw_words_all_rejected", "failure_category",
+    }, "H001 RNG candidate KAT-EXHAUSTION-001")
+    exhaustion_n = _rng_uint64_str(exhaustion["bound_n"], "H001 RNG candidate exhaustion bound", maximum=H001_RNG_TWO_POW_64)
+    exhaustion_limit = H001_RNG_TWO_POW_64 - (H001_RNG_TWO_POW_64 % exhaustion_n)
+    if _rng_uint64_str(exhaustion["acceptance_limit"], "H001 RNG candidate exhaustion limit", maximum=H001_RNG_TWO_POW_64) != exhaustion_limit:
+        _fail("H001 RNG candidate exhaustion acceptance limit drifted")
+    rejected_words = exhaustion["raw_words_all_rejected"]
+    if type(rejected_words) is not list or len(rejected_words) != H001_RNG_RETRY_CAP:
+        _fail("H001 RNG candidate exhaustion fixture must consume exactly the retry cap")
+    for word in rejected_words:
+        if _rng_uint64_str(word, "H001 RNG candidate exhaustion word") < exhaustion_limit:
+            _fail("H001 RNG candidate exhaustion fixture contains an accepted word")
+    if exhaustion["failure_category"] != "H001_RNG_RETRY_CAP_EXHAUSTED":
+        _fail("H001 RNG candidate exhaustion failure category drifted")
+    for fixture_id in ("KAT-BERNOULLI-TRUE-001", "KAT-BERNOULLI-FALSE-001", "KAT-BERNOULLI-P0-001", "KAT-BERNOULLI-P1Q1-001"):
+        _rng_bernoulli_fixture(fixtures[fixture_id], f"H001 RNG candidate {fixture_id}")
+    if fixtures["KAT-BERNOULLI-TRUE-001"]["result"] is not True or fixtures["KAT-BERNOULLI-FALSE-001"]["result"] is not False:
+        _fail("H001 RNG candidate Bernoulli truth fixtures drifted")
+    if fixtures["KAT-BERNOULLI-P0-001"]["result"] is not False or fixtures["KAT-BERNOULLI-P1Q1-001"]["result"] is not True:
+        _fail("H001 RNG candidate Bernoulli boundary fixtures drifted")
+    _rng_path_fixture(fixtures["KAT-PATH-001"], "H001 RNG candidate KAT-PATH-001", wraparound_required=False)
+    _rng_path_fixture(fixtures["KAT-PATH-002"], "H001 RNG candidate KAT-PATH-002", wraparound_required=True)
+    non_effects = _list(data["non_effects"], "H001 RNG candidate non_effects", sorted_unique=True)
+    for required in ("BLOCK_LIVE_INTEGRATION", "EDGE_UNPROVEN", "CANDIDATE_NOT_EFFECTIVE", "CANDIDATE_NOT_ACTIVATED", "CALIBRATION_EXECUTION_NOT_AUTHORIZED", "INDEPENDENT_REVIEW_REQUIRED", "NO_REAL_DATA_ACCESS"):
+        if required not in non_effects:
+            _fail(f"H001 RNG candidate non_effects lost {required}")
+    _walk_forbidden(data)
+    _rng_scan_placeholders(data)
+    return data
+
+
+def load_and_validate_h001_rng_runtime_amendment_candidate(raw: bytes) -> dict:
+    if type(raw) is not bytes:
+        _fail("exact bytes input required")
+    try:
+        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError, AssuranceValidationError) as error:
+        raise AssuranceValidationError("strict UTF-8 JSON without duplicate keys required") from error
+    if canonical_json_bytes(parsed) != raw:
+        _fail("non-canonical JSON bytes")
+    return validate_h001_rng_runtime_amendment_candidate(parsed)

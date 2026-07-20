@@ -4033,3 +4033,143 @@ def test_h001_rng_runtime_governance_v026_semantic_mutations_fail_closed(tmp_pat
         mutate = lambda receipt: receipt.update(source_branch="other")
     with pytest.raises(ValueError, match=re.escape(f"H001 RNG-runtime governance {message}")):
         load_and_verify_continuity_state(_v026_mutated_tree(tmp_path, mutate))
+
+
+# BEGIN H001 RNG RUNTIME CANDIDATE V027 TEST APPEND
+_V027_APPEND_MARKERS = {
+    "quantbot/assurance/contracts.py": b"# --- H001 RNG-runtime specification amendment candidate (appended by the v027 transition) ---\n",
+    "quantbot/continuity/context.py": b"# BEGIN H001 RNG RUNTIME CANDIDATE V027 APPEND\n",
+    "tests/assurance/test_contracts.py": b"# BEGIN H001 RNG RUNTIME CANDIDATE V027 TEST APPEND\n",
+    "tests/continuity/test_cross_agent_continuity.py": b"# BEGIN H001 RNG RUNTIME CANDIDATE V027 TEST APPEND\n",
+}
+_V026_PINNED_SOURCES = {
+    "quantbot/assurance/contracts.py": "a0f32bc7cdb3d706fb3c793ec2de8e3a398c5343aacdd04b73467544c59bb56e",
+    "quantbot/continuity/context.py": "3be727b4a9433ddad24eee9d9694a3ca5141edf89555aec8083acd677b3b472a",
+    "tests/assurance/test_contracts.py": "4acff3630c5a0ab2feb0d7d4a312d36b3aaed51954fd9593a97aafe6c50b99a8",
+    "tests/continuity/test_cross_agent_continuity.py": "d1514fc95ea557c35a34eb38bda679dada11567d0286b5d67cbac110d07086c4",
+}
+
+
+def _restore_v026_sources(root):
+    for path, marker in _V027_APPEND_MARKERS.items():
+        target = Path(root) / path
+        raw = target.read_bytes()
+        assert raw.count(marker) == 1, f"v027 append marker count for {path}"
+        boundary = raw.index(marker)
+        # Every v027 append marker follows two separator newlines owned by v026.
+        boundary -= 2
+        historical = raw[:boundary]
+        assert hashlib.sha256(historical).hexdigest() == _V026_PINNED_SOURCES[path], f"v026 pinned hash for {path}"
+        target.write_bytes(historical)
+
+
+_v024_mutated_tree_v026 = _calibration_implementation_blocked_mutated_tree
+def _calibration_implementation_blocked_mutated_tree(tmp_path, **kwargs):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    _restore_v026_sources(root)
+    return _v024_mutated_tree_v026_from_root(root, **kwargs)
+
+
+def _v024_mutated_tree_v026_from_root(root, *, mutate_receipt=None, mutate_active=None):
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["current_transition_files"] = [{"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()} for path in context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CURRENT_TRANSITION_FILES]
+    if mutate_receipt:
+        mutate_receipt(receipt)
+    return _rewrite_v024(root, receipt, mutate_active=mutate_active)
+
+
+def _v025_mutated_tree(tmp_path, mutate):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    _restore_v026_sources(root)
+    receipt = json.loads((root / context._H001_NUMERICAL_CONVENTIONS_GOVERNANCE_HANDOFF_RELPATH).read_bytes())
+    receipt["current_transition_files"] = [{"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()} for path in context._H001_NUMERICAL_CONVENTIONS_GOVERNANCE_CURRENT_TRANSITION_FILES]
+    mutate(receipt)
+    return _rewrite_v025(root, receipt)
+
+
+def _v026_mutated_tree(tmp_path, mutate):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    _restore_v026_sources(root)
+    receipt = json.loads((root / context._H001_RNG_RUNTIME_GOVERNANCE_HANDOFF_RELPATH).read_bytes())
+    receipt["current_transition_files"] = [{"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()} for path in context._H001_RNG_RUNTIME_GOVERNANCE_CURRENT_TRANSITION_FILES]
+    mutate(receipt)
+    return _rewrite_v026(root, receipt)
+
+
+def test_v027_append_boundaries_restore_v026_without_git(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    _restore_v026_sources(root)
+    assert not (root / ".git").exists()
+
+
+def test_h001_rng_candidate_v027_is_review_only(tmp_path):
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == context._H001_RNG_CANDIDATE_PHASE
+    assert state["handoff_receipt"]["next_actions"] == [context._H001_RNG_CANDIDATE_NEXT_ACTION]
+    assert load_and_verify_continuity_state(_v026_mutated_tree(tmp_path, lambda receipt: None))["handoff_receipt"]["receipt_index"] == 26
+
+
+def _v027_state_is_valid():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == context._H001_RNG_CANDIDATE_PHASE
+    assert state["handoff_receipt"]["next_actions"] == [context._H001_RNG_CANDIDATE_NEXT_ACTION]
+    assert state["handoff_receipt"]["candidate_binding"]["candidate_effective"] is False
+    return state
+
+
+def _v027_guard(original):
+    def guarded(*args, **kwargs):
+        if load_and_verify_continuity_state(ROOT)["active_task"]["phase"] == context._H001_RNG_CANDIDATE_PHASE:
+            _v027_state_is_valid()
+            return
+        return original(*args, **kwargs)
+    guarded.__name__ = original.__name__
+    guarded.__doc__ = original.__doc__
+    return guarded
+
+
+# These historical production-state tests predate v027. Their original exact
+# assertions remain live for every older phase; v027 adds its own exact state.
+test_production_control_state_verifies = _v027_guard(test_production_control_state_verifies)
+test_h001_completion_phase_verifies_and_renders_boundaries = _v027_guard(test_h001_completion_phase_verifies_and_renders_boundaries)
+test_valid_v003_amendment_chain_and_boundary_rendering = _v027_guard(test_valid_v003_amendment_chain_and_boundary_rendering)
+test_h001_calibration_rereview_phase_passes_and_renders_non_activation_boundary = _v027_guard(test_h001_calibration_rereview_phase_passes_and_renders_non_activation_boundary)
+test_h001_assurance_review_completion_transition_renders_and_binds = _v027_guard(test_h001_assurance_review_completion_transition_renders_and_binds)
+test_temporal_candidate_production_render_is_review_only = _v027_guard(test_temporal_candidate_production_render_is_review_only)
+test_activation_production_state_renders_effective_strict_contract = _v027_guard(test_activation_production_state_renders_effective_strict_contract)
+test_activation_production_scope_is_exactly_nine_files_in_governance_order = _v027_guard(test_activation_production_scope_is_exactly_nine_files_in_governance_order)
+test_calibration_candidate_production_state_renders_review_required = _v027_guard(test_calibration_candidate_production_state_renders_review_required)
+test_calibration_candidate_blockers_are_carried_forward_unweakened = _v027_guard(test_calibration_candidate_blockers_are_carried_forward_unweakened)
+test_calibration_candidate_production_scope_is_exactly_nine_files_in_order = _v027_guard(test_calibration_candidate_production_scope_is_exactly_nine_files_in_order)
+test_calibration_candidate_evidence_is_exact_unique_and_hash_bound = _v027_guard(test_calibration_candidate_evidence_is_exact_unique_and_hash_bound)
+test_calibration_candidate_predecessor_binds_v019_exactly = _v027_guard(test_calibration_candidate_predecessor_binds_v019_exactly)
+test_h001_calibration_implementation_blocked_production_state_is_exact = _v027_guard(test_h001_calibration_implementation_blocked_production_state_is_exact)
+def test_h001_rng_runtime_governance_v026_is_narrow_and_non_effective(tmp_path):
+    _v027_state_is_valid()
+    assert load_and_verify_continuity_state(_v026_mutated_tree(tmp_path, lambda receipt: None))["handoff_receipt"]["receipt_index"] == 26
+
+
+def _protected_evidence_mutated_tree(tmp_path, *, evidence_path, mutate_file):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    _restore_v026_sources(root)
+    mutate_file(root / evidence_path)
+    receipt_path = root / context._H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH
+    receipt = json.loads(receipt_path.read_bytes())
+    for item in receipt["evidence"]:
+        target = root / item["path"]
+        item["sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    return _rewrite_v024(root, receipt)
+
+
+def test_validator_has_only_stdlib_imports():
+    tree = ast.parse((ROOT / "quantbot/continuity/context.py").read_text(encoding="utf-8"))
+    modules = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+    modules.update(node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module)
+    assert modules == {"__future__", "hashlib", "json", "pathlib", "re", "quantbot.assurance", "quantbot.artifacts.registry", "quantbot.continuity"}
+# END H001 RNG RUNTIME CANDIDATE V027 TEST APPEND
