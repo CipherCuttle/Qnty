@@ -530,6 +530,19 @@ _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_EVIDENCE = [_H001_CALIBRATION_IMPLEMENTAT
 _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_DECISIONS = sorted([*_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_DECISIONS, "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_GOVERNANCE=AUTHORIZED_CANDIDATE_FOR_INDEPENDENT_REVIEW_ONLY", "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_SELECTED=FALSE", "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_EFFECTIVE=FALSE", "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE=NOT_CREATED", "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_REVIEW=NOT_COMPLETED"])
 _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_BLOCKERS = ["BLOCK_LIVE_INTEGRATION", "EDGE_UNPROVEN", "H001 numerical conventions amendment candidate requires independent review", "H001 synthetic calibration engine implementation remains blocked pending reviewed numerical conventions amendment", "H001 synthetic calibration execution remains unauthorized", "V0 remains unavailable", "durable stores remain unconfigured", "real data access remains forbidden"]
 _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PROHIBITIONS = sorted([*_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PROHIBITIONS, "CREATE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE_BEFORE_GOVERNANCE_TRANSITION_IS_MERGED", "MAKE_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_EFFECTIVE", "MODIFY_FROZEN_H001_SYNTHETIC_NULL_CALIBRATION_CANDIDATE", "MODIFY_PRIOR_AMENDMENTS_OR_HANDOFF_RECEIPTS_V001_THROUGH_V024"])
+_H001_RNG_RUNTIME_GOVERNANCE_PHASE = "candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_governance"
+_H001_RNG_RUNTIME_GOVERNANCE_NEXT_ACTION = "IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_RNG_RUNTIME_SPECIFICATION_AMENDMENT_CANDIDATE_FOR_INDEPENDENT_REVIEW"
+_H001_RNG_RUNTIME_GOVERNANCE_AMENDMENT_RELPATH = "docs/control/amendments/candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_governance_v001.json"
+_H001_RNG_RUNTIME_GOVERNANCE_HANDOFF_RELPATH = f"docs/control/tasks/{TASK_ID}/handoff_v026.json"
+_H001_RNG_RUNTIME_GOVERNANCE_AMENDMENT_SHA = "da27f06effb8321da84ee9f44ff90b810e8c36491d729387b4e820e14f0d8c36"
+_H001_RNG_RUNTIME_GOVERNANCE_GAPS = list(_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_GAPS)
+_H001_RNG_RUNTIME_GOVERNANCE_DOMAINS = ["NORMATIVE_RANDOM_BIT_SOURCE_AND_HIGH_LEVEL_API_BOUNDARY", "LOGICAL_COORDINATE_SCHEMA_AND_CANONICAL_ENCODING", "LOGICAL_COORDINATE_TO_PHILOX_KEY_COUNTER_AND_LANE_MAPPING", "EXACT_BOUNDED_INTEGER_AND_RATIONAL_BERNOULLI_MAPPING", "REJECTION_ATTEMPT_ISOLATION_RETRY_CAP_AND_FAIL_CLOSED_RULE", "NUMPY_SEED_SEQUENCE_RUNTIME_DEPENDENCY_BOUNDARY", "DRAW_PURPOSE_ALLOCATION_AND_STATIONARY_BOOTSTRAP_LOGICAL_ORDER", "PORTABILITY_SCOPE_AND_REPRODUCIBILITY_CLAIM"]
+_H001_RNG_RUNTIME_GOVERNANCE_SCOPE = [_H001_RNG_RUNTIME_GOVERNANCE_AMENDMENT_RELPATH, _H001_RNG_RUNTIME_GOVERNANCE_HANDOFF_RELPATH, ACTIVE_TASK_RELPATH, "quantbot/continuity/context.py", "tests/continuity/test_cross_agent_continuity.py"]
+_H001_RNG_RUNTIME_GOVERNANCE_CURRENT_TRANSITION_FILES = list(_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_CURRENT_TRANSITION_FILES)
+_H001_RNG_RUNTIME_GOVERNANCE_EVIDENCE = [_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_HANDOFF_RELPATH, _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_AMENDMENT_RELPATH, *_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_EVIDENCE, "pyproject.toml"]
+_H001_RNG_RUNTIME_GOVERNANCE_BLOCKERS = ["BLOCK_LIVE_INTEGRATION", "EDGE_UNPROVEN", "H001 RNG-runtime specification amendment candidate requires independent review", "H001 numerical conventions amendment candidate remains blocked pending reviewed RNG-runtime specification amendment", "H001 synthetic calibration engine implementation remains blocked pending reviewed numerical conventions amendment", "H001 synthetic calibration execution remains unauthorized", "V0 remains unavailable", "durable stores remain unconfigured", "real data access remains forbidden"]
+_H001_RNG_RUNTIME_GOVERNANCE_DECISIONS = sorted([*_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_DECISIONS, "H001_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE_IMPLEMENTATION_ATTEMPT=BLOCKED_BEFORE_CHANGE", "H001_NUMERICAL_CONVENTIONS_CANDIDATE_BLOCKER=PENDING_REVIEWED_RNG_RUNTIME_SPECIFICATION_AMENDMENT", "H001_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE=NOT_CREATED", "H001_NUMERICAL_CONVENTIONS_SELECTED=FALSE", "H001_NUMERICAL_CONVENTIONS_EFFECTIVE=FALSE", "H001_RNG_RUNTIME_RESEARCH=COMPLETED", "H001_RNG_RUNTIME_CONTRACT=UNRESOLVED", "H001_RNG_RUNTIME_SPECIFICATION_AMENDMENT_GOVERNANCE=AUTHORIZED_CANDIDATE_FOR_INDEPENDENT_REVIEW_ONLY", "H001_RNG_RUNTIME_SPECIFICATION_AMENDMENT_CANDIDATE=NOT_CREATED", "H001_RNG_RUNTIME_SPECIFICATION_AMENDMENT_REVIEW=NOT_COMPLETED", "H001_RNG_RUNTIME_SPECIFICATION_AMENDMENT_EFFECTIVE=FALSE"])
+_H001_RNG_RUNTIME_GOVERNANCE_PROHIBITIONS = sorted([*_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PROHIBITIONS, "CREATE_H001_SYNTHETIC_NULL_CALIBRATION_RNG_RUNTIME_SPECIFICATION_AMENDMENT_CANDIDATE_BEFORE_GOVERNANCE_TRANSITION_IS_MERGED", "MAKE_H001_SYNTHETIC_NULL_CALIBRATION_RNG_RUNTIME_SPECIFICATION_AMENDMENT_EFFECTIVE", "SELECT_H001_RAW_PHILOX_SEMANTICS", "SELECT_H001_COORDINATE_ADDRESSING", "SELECT_H001_BOUNDED_INTEGER_MAPPING", "SELECT_H001_RETRY_CAP", "SELECT_H001_SEED_SEQUENCE_BOUNDARY", "PIN_OR_CHANGE_NUMPY", "IMPLEMENT_H001_BOUNDED_INTEGER_UTILITIES", "MODIFY_PRIOR_AMENDMENTS_OR_HANDOFF_RECEIPTS_V001_THROUGH_V025"])
 _H001_TEMPORAL_ACTIVE_BASE_SHA = "eb953e04685b57e22d1b27d043618da4b44d549b"
 _H001_TEMPORAL_ACTIVE_V017_SHA = "687c8192403cc5c4ff62bbe2ed43e5a4c080868c0b4760386a0d7429798c8d32"
 _H001_TEMPORAL_ACTIVE_DESIGN_SHA = "c6fb8d796559c53188c10e729a2257bc593c7a80526963c97515f747820e2276"
@@ -1675,10 +1688,12 @@ def _validate_receipt_body(
     receipt_keys = set(_RECEIPT_KEYS)
     if parsed.get("receipt_index") == 15:
         receipt_keys.add("review_binding")
-    if parsed.get("receipt_index") in (22, 24, 25):
+    if parsed.get("receipt_index") in (22, 24, 25, 26):
         receipt_keys.add("phase")
-    if parsed.get("receipt_index") in (24, 25):
+    if parsed.get("receipt_index") in (24, 25, 26):
         receipt_keys.update({"current_transition_files", "numerical_convention_gap_inventory"})
+    if parsed.get("receipt_index") == 26:
+        receipt_keys.add("rng_runtime_unresolved_inventory")
     _require_exact_keys(parsed, receipt_keys, label)
     if parsed["schema_version"] != "0.1.0":
         _fail(f"{label} schema_version is not 0.1.0")
@@ -1715,7 +1730,7 @@ def _validate_receipt_body(
 
 
 def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
-    is_implementation_block = active["phase"] in (_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE, _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PHASE)
+    is_implementation_block = active["phase"] in (_H001_CALIBRATION_IMPLEMENTATION_BLOCKED_PHASE, _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PHASE, _H001_RNG_RUNTIME_GOVERNANCE_PHASE)
     _validate_receipt_body(
         parsed,
         "handoff_receipt",
@@ -1797,6 +1812,9 @@ def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
         _cross_check_artifact_records(parsed, root)
     elif active["phase"] == _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PHASE:
         _validate_h001_numerical_conventions_governance_handoff(parsed, root)
+        _cross_check_artifact_records(parsed, root)
+    elif active["phase"] == _H001_RNG_RUNTIME_GOVERNANCE_PHASE:
+        _validate_h001_rng_runtime_governance_handoff(parsed, root)
         _cross_check_artifact_records(parsed, root)
     else:
         _fail(f"unsupported active phase {phase!r}")
@@ -2692,6 +2710,50 @@ def _validate_h001_numerical_conventions_governance_handoff(receipt: dict, root:
         _fail("H001 numerical-conventions governance unique-result gate is wrong")
 
 
+def _validate_h001_rng_runtime_governance_handoff(receipt: dict, root: Path) -> None:
+    """Validate the narrow RNG-runtime prerequisite governance transition."""
+    if receipt["receipt_index"] != 26 or receipt["phase"] != _H001_RNG_RUNTIME_GOVERNANCE_PHASE:
+        _fail("H001 RNG-runtime governance receipt identity is wrong")
+    if receipt["source_branch"] != "chore/h001-rng-runtime-amendment-governance" or receipt["source_head_commit"] != "83c8511022f1caccfd1a350ca9f940f193f6a251":
+        _fail("H001 RNG-runtime governance source binding is wrong")
+    if receipt["predecessor"] != {"path": _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_HANDOFF_RELPATH, "sha256": "70ca9d1d0184828abc039df3c6ffcffec3d41065c8c5142ebfe44571283e0d80"}:
+        _fail("H001 RNG-runtime governance predecessor is wrong")
+    for field, expected, message in (("changed_file_scope", _H001_RNG_RUNTIME_GOVERNANCE_SCOPE, "changed-file scope"), ("next_actions", [_H001_RNG_RUNTIME_GOVERNANCE_NEXT_ACTION], "next action"), ("decisions", _H001_RNG_RUNTIME_GOVERNANCE_DECISIONS, "decisions"), ("blockers", _H001_RNG_RUNTIME_GOVERNANCE_BLOCKERS, "blockers"), ("prohibited_actions", _H001_RNG_RUNTIME_GOVERNANCE_PROHIBITIONS, "prohibitions"), ("numerical_convention_gap_inventory", _H001_RNG_RUNTIME_GOVERNANCE_GAPS, "numerical gaps"), ("rng_runtime_unresolved_inventory", _H001_RNG_RUNTIME_GOVERNANCE_DOMAINS, "RNG-runtime domains")):
+        value = receipt[field]
+        if type(value) is not list or value != expected or len(value) != len(set(value)):
+            _fail(f"H001 RNG-runtime governance {message} drifted")
+    if receipt["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 RNG-runtime governance changed persistent safety state")
+    protected = {_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_HANDOFF_RELPATH: "70ca9d1d0184828abc039df3c6ffcffec3d41065c8c5142ebfe44571283e0d80", _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_AMENDMENT_RELPATH: _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_AMENDMENT_SHA, _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_HANDOFF_RELPATH: _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_V024_SHA, _H001_CALIBRATION_EXECUTION_GOVERNANCE_HANDOFF_RELPATH: _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_V023_SHA, _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_AMENDMENT_SHA, _H001_CALIBRATION_EFFECTIVE_HANDOFF_RELPATH: _H001_CALIBRATION_EXECUTION_GOVERNANCE_V022_SHA, _H001_CALIBRATION_EFFECTIVE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_AMENDMENT_SHA, _H001_CALIBRATION_CANDIDATE_RELPATH: _H001_CALIBRATION_EFFECTIVE_CANDIDATE_SHA, _H001_CALIBRATION_REREVIEW_RECORD_RELPATH: _H001_CALIBRATION_EFFECTIVE_REREVIEW_SHA, f"docs/control/tasks/{TASK_ID}/handoff_v021.json": _H001_CALIBRATION_EFFECTIVE_V021_SHA, _H001_CALIBRATION_GOVERNANCE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_GOVERNANCE_SHA, "docs/assurance/h001_synthetic_null_calibration_spec_draft_v001.json": _H001_CALIBRATION_EFFECTIVE_DRAFT_SHA, H001_DESIGN_JSON_RELPATH: _H001_CALIBRATION_EFFECTIVE_DESIGN_SHA, "quantbot/experiment/h001_real_falsification_preregistration.py": _H001_CALIBRATION_EFFECTIVE_VALIDATOR_SHA, _H001_TEMPORAL_ACTIVE_AMENDMENT_RELPATH: _H001_CALIBRATION_EFFECTIVE_TEMPORAL_SHA, "quantbot/assurance/contracts.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CONTRACTS_SHA, "quantbot/assurance/h001_null_calibration.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_CALIBRATION_HARNESS_SHA, "tests/assurance/test_contracts.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CONTRACTS_SHA, "tests/assurance/test_h001_null_calibration.py": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_TEST_CALIBRATION_SHA, "docs/artifacts/candidate1-real-input-v0.json": _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_ARTIFACT_SHA, STORE_REGISTRY_RELPATH: _H001_CALIBRATION_IMPLEMENTATION_BLOCKED_STORES_SHA, "pyproject.toml": "bb9386d11b2139308226ab6eac5d978743fdde059056c2b6fbfc0983382a361a"}
+    evidence = receipt["evidence"]
+    if type(evidence) is not list or [item["path"] for item in evidence if type(item) is dict] != _H001_RNG_RUNTIME_GOVERNANCE_EVIDENCE or len(evidence) != len(_H001_RNG_RUNTIME_GOVERNANCE_EVIDENCE):
+        _fail("H001 RNG-runtime governance protected evidence list must be exact, unique, and ordered")
+    for item in evidence:
+        if type(item) is not dict:
+            _fail("H001 RNG-runtime governance evidence entries must be JSON objects")
+        _require_exact_keys(item, _EVIDENCE_KEYS, "H001 RNG-runtime governance evidence entry")
+        path = item["path"]
+        if path not in protected or item["sha256"] != protected[path] or not (root / path).is_file() or hashlib.sha256((root / path).read_bytes()).hexdigest() != protected[path]:
+            _fail(f"H001 RNG-runtime governance protected evidence {path!r} hash mismatch")
+    current = receipt["current_transition_files"]
+    if type(current) is not list:
+        _fail("H001 RNG-runtime governance current-transition files must be a list")
+    expected_current = [{"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()} for path in _H001_RNG_RUNTIME_GOVERNANCE_CURRENT_TRANSITION_FILES]
+    if current != expected_current or len(current) != len({item["path"] for item in current if type(item) is dict}):
+        _fail("H001 RNG-runtime governance current-transition files must be exact, unique, and hash-bound")
+    raw = (root / _H001_RNG_RUNTIME_GOVERNANCE_AMENDMENT_RELPATH).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != _H001_RNG_RUNTIME_GOVERNANCE_AMENDMENT_SHA:
+        _fail("H001 RNG-runtime governance amendment hash is wrong")
+    amendment = _load_canonical_document(raw, "H001 RNG-runtime governance amendment")
+    required = {"allowed_actions", "amendment_id", "amendment_kind", "authorization_status", "base_main_commit", "bounded_integer_mapping_selected", "calibration_engine_implemented", "calibration_execution_authorized", "calibration_execution_performed", "calibration_results", "coordinate_addressing_selected", "current_phase", "effective", "governed_h001_protocol_id", "live_authorization", "numerical_conventions_candidate_attempted", "numerical_conventions_candidate_created", "numerical_conventions_effective", "numerical_conventions_selected", "paper_trade_authorization", "primary_source_requirement", "prohibited_actions", "raw_philox_semantics_selected", "real_data_access_authorized", "research_conclusions", "retry_cap_selected", "rng_runtime_amendment_candidate_created", "rng_runtime_amendment_effective", "rng_runtime_amendment_governance_authorized", "rng_runtime_amendment_review_completed", "rng_runtime_contract_resolved", "rng_runtime_research_completed", "schema_version", "scientific_authorization", "seed_sequence_boundary_selected", "status", "transition_gates", "unresolved_gap_inventory", "unresolved_rng_runtime_inventory"}
+    _require_exact_keys(amendment, required, "H001 RNG-runtime governance amendment")
+    if amendment["amendment_id"] != "candidate1-h001-synthetic-null-calibration-rng-runtime-specification-amendment-governance-v001" or amendment["authorization_status"] != "AUTHORIZED_H001_SYNTHETIC_NULL_CALIBRATION_RNG_RUNTIME_SPECIFICATION_AMENDMENT_CANDIDATE_FOR_INDEPENDENT_REVIEW_ONLY" or amendment["unresolved_gap_inventory"] != _H001_RNG_RUNTIME_GOVERNANCE_GAPS or amendment["unresolved_rng_runtime_inventory"] != _H001_RNG_RUNTIME_GOVERNANCE_DOMAINS:
+        _fail("H001 RNG-runtime governance amendment identity or inventories drifted")
+    false_fields = ("numerical_conventions_candidate_created", "numerical_conventions_selected", "numerical_conventions_effective", "rng_runtime_contract_resolved", "rng_runtime_amendment_candidate_created", "rng_runtime_amendment_review_completed", "rng_runtime_amendment_effective", "raw_philox_semantics_selected", "coordinate_addressing_selected", "bounded_integer_mapping_selected", "retry_cap_selected", "seed_sequence_boundary_selected", "calibration_engine_implemented", "calibration_execution_authorized", "calibration_execution_performed", "real_data_access_authorized", "scientific_authorization", "paper_trade_authorization", "live_authorization")
+    if any(amendment[field] is not False for field in false_fields) or amendment["rng_runtime_research_completed"] is not True or amendment["rng_runtime_amendment_governance_authorized"] is not True or amendment["calibration_results"] != "NONE":
+        _fail("H001 RNG-runtime governance amendment selected or authorized a forbidden effect")
+
+
 def _validate_entrypoints(root: Path) -> None:
     start_here = root / START_HERE_RELPATH
     if not start_here.is_file():
@@ -3180,6 +3242,8 @@ def render_context_packet(state: dict) -> str:
         ])
     elif active["phase"] == _H001_NUMERICAL_CONVENTIONS_GOVERNANCE_PHASE:
         lines.extend(_H001_NUMERICAL_CONVENTIONS_GOVERNANCE_DECISIONS)
+    elif active["phase"] == _H001_RNG_RUNTIME_GOVERNANCE_PHASE:
+        lines.extend(_H001_RNG_RUNTIME_GOVERNANCE_DECISIONS)
     for prohibited in receipt["prohibited_actions"]:
         lines.append(f"PROHIBITED={prohibited}")
     return "\n".join(lines)
