@@ -772,3 +772,225 @@ def test_h001_rng_runtime_candidate_rejects_effective_or_authorized_mutations():
         with pytest.raises(ValueError):
             contracts.validate_h001_rng_runtime_amendment_candidate(value)
 # END H001 RNG RUNTIME CANDIDATE V027 TEST APPEND
+
+
+# BEGIN H001 NUMERICAL CONVENTIONS CANDIDATE V030 TEST APPEND
+H001_NUMERICAL_CONVENTIONS_CANDIDATE = Path(__file__).parents[2] / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json"
+
+
+def _h001_nc_candidate():
+    return json.loads(H001_NUMERICAL_CONVENTIONS_CANDIDATE.read_bytes())
+
+
+def test_h001_numerical_conventions_candidate_accepts_exact_locked_bytes():
+    raw = H001_NUMERICAL_CONVENTIONS_CANDIDATE.read_bytes()
+    value = contracts.load_and_validate_h001_numerical_conventions_amendment_candidate(raw)
+    assert contracts.canonical_json_bytes(value) == raw
+    assert value["effective"] is False and value["activated"] is False
+    assert [r["review_status"] for r in value["implementability_matrix"]] == ["PENDING_INDEPENDENT_REVIEW"] * 5
+    assert all(r["additional_choice_required"] is False for r in value["implementability_matrix"])
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda v: v.update(document_id="wrong"),
+    lambda v: v["bindings"]["frozen_calibration_spec"].update(sha256="0" * 64),
+    lambda v: v["bindings"]["numerical_conventions_governance"].update(sha256="0" * 64),
+    lambda v: v["bindings"]["activated_rng_candidate"].update(sha256="0" * 64),
+    lambda v: v["bindings"]["activated_rng_activation"].update(sha256="0" * 64),
+    lambda v: v["ordered_gap_inventory"].pop(),
+    lambda v: v["ordered_gap_inventory"].append(v["ordered_gap_inventory"][0]),
+    lambda v: v["ordered_gap_inventory"].reverse(),
+    lambda v: v["ordered_gap_inventory"].__setitem__(0, "UNKNOWN"),
+    lambda v: v["selected_conventions"][0].pop("deterministic_pseudocode"),
+    lambda v: v["selected_conventions"][0].update(normative_definition="TODO"),
+    lambda v: v["selected_conventions"][0].update(primary_source_ids=[]),
+    lambda v: v["selected_conventions"][0].update(rejected_alternative_ids=[]),
+    lambda v: v["known_answer_fixtures"].pop("KAT-HAC-001"),
+    lambda v: v["implementability_matrix"][0].update(additional_choice_required=True),
+    lambda v: v["implementability_matrix"].pop(),
+    lambda v: v["implementability_matrix"].append(v["implementability_matrix"][0]),
+    lambda v: v.update(effective=True), lambda v: v.update(activated=True),
+    lambda v: v["registered_immutable_constants"].update(hac_lag=22),
+])
+def test_h001_numerical_conventions_candidate_mutations_fail_closed(mutate):
+    value = _h001_nc_candidate()
+    mutate(value)
+    with pytest.raises(ValueError):
+        contracts.validate_h001_numerical_conventions_amendment_candidate(value)
+
+
+@pytest.mark.parametrize("bad", [None, [], {"effective": False}, "not-json"])
+def test_h001_numerical_conventions_candidate_malformed_values_are_controlled(bad):
+    with pytest.raises(ValueError):
+        contracts.validate_h001_numerical_conventions_amendment_candidate(bad)
+# END H001 NUMERICAL CONVENTIONS CANDIDATE V030 TEST APPEND
+
+
+# --- H001 numerical conventions repair regression tests ---
+#
+# These are STRUCTURAL/NECESSARY-BUT-NOT-SUFFICIENT checks: they prove the
+# candidate document's fixture inventory is internally consistent (every
+# fixture declared, every fixture referenced, every category non-empty).
+# They do NOT prove any fixture actually executes. The SUFFICIENT,
+# execution-derived proof lives in the two governed KAT derivation files
+# (test_h001_numerical_conventions_kat_reference_derivation.py and
+# test_h001_numerical_conventions_kat_independent_derivation.py), each of
+# which parametrizes over every declared fixture ID, dispatches it through
+# its own governed arithmetic, asserts its expected output or error
+# category, and only then marks it exercised in a module-level ledger that
+# a final test compares against the full declared set.
+
+def test_h001_numerical_conventions_fixture_coverage_all_declared():
+    """Every fixture ID in known_answer_fixtures and implementability_matrix is declared consistently."""
+    from quantbot.assurance.contracts import H001_NC_FIXTURE_IDS
+
+    parsed = _h001_nc_candidate()
+
+    known_fixtures = set(parsed.get("known_answer_fixtures", {}).keys())
+    assert len(known_fixtures) > 0, "no known_answer_fixtures found"
+
+    matrix_fixtures = set()
+    for row in parsed.get("implementability_matrix", []):
+        for fid in row.get("known_answer_fixture_ids", []):
+            matrix_fixtures.add(fid)
+
+    assert H001_NC_FIXTURE_IDS == known_fixtures, (
+        f"H001_NC_FIXTURE_IDS mismatch with known_answer_fixtures\n"
+        f"  In H001_NC_FIXTURE_IDS not in known: {H001_NC_FIXTURE_IDS - known_fixtures}\n"
+        f"  In known not in H001_NC_FIXTURE_IDS: {known_fixtures - H001_NC_FIXTURE_IDS}"
+    )
+    unknown = matrix_fixtures - known_fixtures
+    assert not unknown, f"implementability_matrix references unknown fixtures: {unknown}"
+    unexercised = known_fixtures - matrix_fixtures
+    assert not unexercised, f"known_answer_fixtures not referenced in implementability_matrix: {unexercised}"
+
+
+def test_h001_numerical_conventions_fixture_coverage_every_output_asserted():
+    """Every fixture has expected_output/expected_error_category with all required fields."""
+    parsed = _h001_nc_candidate()
+    fixtures = parsed.get("known_answer_fixtures", {})
+    assert len(fixtures) >= 32, "expected at least the 26 original plus 6 repair fixtures"
+    for fid, fixture in fixtures.items():
+        for field in ("expected_output", "purpose", "gap_id", "input", "test_parameters", "source_convention_ids"):
+            assert field in fixture, f"{fid} missing {field}"
+        has_error = bool(fixture.get("expected_error_category"))
+        has_output = bool(fixture["expected_output"])
+        assert has_error != has_output, (
+            f"{fid} must have exactly one of a non-empty expected_output or an expected_error_category"
+        )
+
+
+def test_h001_numerical_conventions_fixture_coverage_error_categories():
+    """Every declared error category is one of the candidate's known controlled-failure categories."""
+    known_categories = {
+        "H001_NC_NON_FINITE_INPUT",
+        "H001_NC_NON_FINITE_INTERMEDIATE",
+        "H001_NC_NEGATIVE_LONG_RUN_VARIANCE",
+        "H001_NC_ZERO_STANDARD_ERROR",
+        "H001_NC_NEGATIVE_STANDARD_ERROR",
+    }
+    parsed = _h001_nc_candidate()
+    fixtures = parsed.get("known_answer_fixtures", {})
+    seen = set()
+    for fid, fixture in fixtures.items():
+        category = fixture.get("expected_error_category")
+        if category:
+            assert category in known_categories, f"{fid} declares unknown error category {category!r}"
+            seen.add(category)
+    # every non-finite/negative/zero category actually has at least one fixture
+    assert {"H001_NC_NON_FINITE_INTERMEDIATE", "H001_NC_NEGATIVE_LONG_RUN_VARIANCE",
+            "H001_NC_ZERO_STANDARD_ERROR", "H001_NC_NEGATIVE_STANDARD_ERROR"} <= seen
+
+
+def test_h001_numerical_conventions_regression_rejects_math_fsum():
+    """Prove math.fsum produces different results from normative sequential accumulation."""
+    import math
+
+    inputs = [100.0, 2e-12, -100.0, 1e-12, 100.0, 3e-12, -100.0, 4e-12]
+    n = len(inputs)
+
+    total = 0.0
+    for v in inputs:
+        total += v
+    seq_mean = total / n
+
+    fsum_mean = math.fsum(inputs) / n
+
+    assert seq_mean != fsum_mean, (
+        f"math.fsum and sequential += produce identical mean {seq_mean!r}; "
+        f"fixture does not discriminate accumulation order"
+    )
+
+
+def test_h001_numerical_conventions_regression_rejects_reciprocal_multiply():
+    """KAT-HAC-DIVISION-001: n=7 fixture must discriminate sum/n from sum*(1.0/n)."""
+    fixtures = _h001_nc_candidate()["known_answer_fixtures"]
+    fixture = fixtures["KAT-HAC-DIVISION-001"]
+    x = [float(v) for v in fixture["input"]["x"]]
+    n = len(x)
+    assert n == 7 and n & (n - 1) != 0, "fixture n must not be a power of two"
+    total = 0.0
+    for v in x:
+        total += v
+    assert (total / n) != (total * (1.0 / n))
+    assert repr(total / n) == fixture["expected_output"]["xbar"]
+
+
+def test_h001_numerical_conventions_regression_negmaterial_is_a_distinct_fixture():
+    """KAT-HAC-NEGMATERIAL-001 must be declared as its own fixture, distinct from NEGROUND-001."""
+    fixtures = _h001_nc_candidate()["known_answer_fixtures"]
+    negmaterial = fixtures["KAT-HAC-NEGMATERIAL-001"]
+    neground = fixtures["KAT-HAC-NEGROUND-001"]
+    assert negmaterial["input"] != neground["input"]
+    assert negmaterial["input"]["omega2"] == "-1.0"
+    assert negmaterial["expected_error_category"] == "H001_NC_NEGATIVE_LONG_RUN_VARIANCE"
+
+
+def test_h001_numerical_conventions_regression_non_finite_studentization():
+    """The contract-level helper enforces the same categories as the governed KAT derivations.
+
+    This is necessary-but-not-sufficient evidence on its own (see the module
+    docstring above): the governed KAT files independently implement and
+    execute their own studentization function against the same fixtures.
+    """
+    import math
+
+    from quantbot.assurance.contracts import _studentize_t_statistic
+
+    for val in [float("nan"), float("inf"), -float("inf")]:
+        with pytest.raises(ValueError, match="NON_FINITE_INTERMEDIATE"):
+            _studentize_t_statistic(val, 1.0)
+        with pytest.raises(ValueError, match="NON_FINITE_INTERMEDIATE"):
+            _studentize_t_statistic(1.0, val)
+
+    with pytest.raises(ValueError, match="NEGATIVE_STANDARD_ERROR"):
+        _studentize_t_statistic(1.0, -1.0)
+    with pytest.raises(ValueError, match="NEGATIVE_STANDARD_ERROR"):
+        _studentize_t_statistic(0.0, -1.0)
+
+    result = _studentize_t_statistic(0.0, 0.0)
+    assert result == 0.0 and str(result) == "0.0"
+
+    with pytest.raises(ValueError, match="ZERO_STANDARD_ERROR"):
+        _studentize_t_statistic(1.0, 0.0)
+
+    assert _studentize_t_statistic(2.0, 1.0) == 2.0
+
+    with pytest.raises(ValueError, match="NON_FINITE_INTERMEDIATE"):
+        _studentize_t_statistic(1.7976931348623157e+308, 1e-300)
+
+    canonical = _studentize_t_statistic(-0.0, 5.0)
+    assert canonical == 0.0 and math.copysign(1.0, canonical) == 1.0
+
+
+def test_h001_numerical_conventions_regression_pr1994_not_centering_source():
+    """PR1994 must not be represented as direct support for null centering."""
+    parsed = _h001_nc_candidate()
+    for convention in parsed.get("selected_conventions", []):
+        if convention.get("selected_convention_id") == "NULL-CENTER-STATISTIC-AT-OBSERVED-MEAN":
+            sources = convention.get("primary_source_ids", [])
+            assert "PR1994" not in sources
+            assert "HW1991" in sources
+            break
+    else:
+        assert False, "NULL-CENTER-STATISTIC-AT-OBSERVED-MEAN not found in selected_conventions"
