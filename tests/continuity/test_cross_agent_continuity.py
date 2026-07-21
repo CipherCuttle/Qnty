@@ -4683,3 +4683,287 @@ for _name in (
 ):
     globals()[_name] = _v031_guard(globals()[_name])
 # END H001 NUMERICAL CONVENTIONS REVIEW COMPLETION V031 TEST APPEND
+
+
+# BEGIN H001 NUMERICAL CONVENTIONS ACTIVATION V032 TEST APPEND
+def _v032_state_is_valid():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_effective"
+    binding = state["handoff_receipt"]["candidate_binding"]
+    assert binding["candidate_created"] is True
+    assert binding["candidate_reviewed"] is True
+    assert binding["candidate_review_verdict"] == "PASS"
+    assert binding["candidate_effective"] is True
+    assert binding["candidate_activated"] is True
+    return state
+
+
+def test_h001_numerical_conventions_v032_activation_is_effective_and_fail_closed():
+    state = _v032_state_is_valid()
+    receipt = state["handoff_receipt"]
+    assert receipt["next_actions"] == ["IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_FOR_INDEPENDENT_REVIEW"]
+    assert receipt["receipt_index"] == 32
+    assert receipt["source_branch"] == "feat/h001-numerical-conventions-amendment-activation"
+    assert receipt["source_head_commit"] == "1ffd46cd8b906d6886281becfc3b7172581e630c"
+    assert receipt["predecessor"] == {
+        "path": "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v031.json",
+        "sha256": "bf790c2b8a63794b5870bc739648e82cbb4614ea73aff916da1198d18d7c5386",
+    }
+    safety = receipt["safety_state"]
+    assert safety["decomposition_execution_count"] == 0
+    assert safety["decomposition_execution_budget"] == 1
+    assert safety["edge_status"] == "EDGE_UNPROVEN"
+    assert safety["live_status"] == "BLOCK_LIVE_INTEGRATION"
+    assert "IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_ENGINE" not in receipt["prohibited_actions"]
+    for still_forbidden in ("EXECUTE_H001", "GRANT_REAL_DATA_ACCESS", "GRANT_SCIENTIFIC_AUTHORIZATION", "GRANT_PAPER_TRADE_AUTHORIZATION", "GRANT_LIVE_INTEGRATION_AUTHORIZATION", "CONSUME_H001_EXECUTION_BUDGET"):
+        assert still_forbidden in receipt["prohibited_actions"]
+    packet = render_context_packet(state)
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_ACTIVATED=TRUE" in packet
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_EFFECTIVE=TRUE" in packet
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_SELECTED=TRUE" in packet
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED" in packet
+    assert "H001_EXECUTION=0/0" in packet
+    assert "EDGE_UNPROVEN" in packet
+    assert "BLOCK_LIVE_INTEGRATION" in packet
+
+
+def test_h001_numerical_conventions_v032_activation_document_matches_pinned_identity():
+    from quantbot.continuity import h001_numerical_conventions_activation_v032 as v032
+    doc = json.loads((ROOT / v032.ACTIVATION_RELPATH).read_bytes())
+    assert doc["status"] == "ACTIVATED_AFTER_INDEPENDENT_REVIEW"
+    assert doc["effective"] is True
+    assert doc["activated"] is True
+    assert doc["activation_scope"] == "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_ONLY"
+    assert doc["effective_candidate"]["sha256"] == "28551aa041aff2985e0023e61516b08f528d93cf72c23c8c3541793f6f61c691"
+    assert doc["effective_candidate"]["source_status"] == "CANDIDATE_REVIEWED_PASS_NOT_EFFECTIVE_NOT_ACTIVATED"
+    assert doc["review_record"]["sha256"] == "38f52ef4b118ac9e6c43023a92d3d8f1dfff7ca0d110b38c5f0d7962a611fceb"
+    assert doc["review_record"]["verdict"] == "PASS"
+    history = doc["review_history"]
+    assert history["pr_304_reviewed_base"] == "c4f7fac9aeccd3e87caa283cc9872bf5793c282e"
+    assert history["pr_304_reviewed_head"] == "1b36de9842dcef79115da285c30a502c710e131c"
+    assert history["pr_304_merge_commit"] == "887d0da21b21b9394317bb73602b08c43648924f"
+    assert history["pr_304_merged_tree"] == "2f54309ea0e8c3ef61a915dfabc63ecdf81ad01a"
+    assert history["pr_305_reviewed_base"] == "887d0da21b21b9394317bb73602b08c43648924f"
+    assert history["pr_305_reviewed_head"] == "20a4ae293cb335434902a8dd9f6e6fc25657d2ac"
+    assert history["pr_305_merge_commit"] == "1ffd46cd8b906d6886281becfc3b7172581e630c"
+    assert history["pr_305_merge_parent_1"] == history["pr_305_reviewed_base"]
+    assert history["pr_305_merge_parent_2"] == history["pr_305_reviewed_head"]
+    assert history["pr_305_merged_tree"] == "b8746eed78309ab7d16868e85cafd01a74fff82b"
+    assert history["pr_305_blocker_count"] == 0
+    assert history["pr_305_major_count"] == 0
+    assert history["pr_305_minor_count"] == 0
+    assert history["pr_305_verdict"] == "PASS"
+    assert doc["activated_domains"] == [
+        "HAC_AUTOCOVARIANCE_AND_STANDARD_ERROR_CONVENTION",
+        "BOOTSTRAP_NULL_CENTERING_TRANSFORM",
+        "BOOTSTRAP_STUDENTIZATION_CONVENTION",
+        "MAXIMUM_T_EXCEEDANCE_TIE_PVALUE_AND_REJECTION_RULES",
+        "STATIONARY_BOOTSTRAP_INITIAL_INDEX_AND_RNG_DRAW_ORDERING",
+    ]
+    assert doc["activated_selected_conventions"] == [
+        "HAC-NEWEY-WEST-BARTLETT-1TOVER-T",
+        "NULL-CENTER-STATISTIC-AT-OBSERVED-MEAN",
+        "STUDENTIZE-RECOMPUTE-BOOTSTRAP-SE",
+        "TWO-SIDED-MAXT-PLUS-ONE-NONSTRICT",
+        "SYNC-STATIONARY-PATH-BOUND-TO-ACTIVATED-RNG",
+    ]
+    assert len(doc["activated_domains"]) == len(set(doc["activated_domains"])) == 5
+    assert len(doc["activated_selected_conventions"]) == len(set(doc["activated_selected_conventions"])) == 5
+    assert doc["no_result_determinative_choice_remains_within_numerical_conventions_scope"] is True
+    non_effects = doc["authority_non_effects"]
+    assert non_effects["calibration_engine_implemented"] is False
+    assert non_effects["calibration_execution_authorized"] is False
+    assert non_effects["calibration_execution_budget"] == 0
+    assert non_effects["calibration_execution_count"] == 0
+    assert non_effects["calibration_results_available"] is False
+    assert non_effects["real_data_access"] is False
+    assert non_effects["scientific_authorization_granted"] is False
+    assert non_effects["paper_trade_authorization_granted"] is False
+    assert non_effects["live_authorization_granted"] is False
+    assert non_effects["edge_status"] == "EDGE_UNPROVEN"
+    assert non_effects["live_status"] == "BLOCK_LIVE_INTEGRATION"
+    assert doc["next_action_after_activation"] == "IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_FOR_INDEPENDENT_REVIEW"
+
+
+def test_h001_numerical_conventions_v032_keeps_prior_candidate_and_receipt_hashes_distinct():
+    from quantbot.continuity import h001_numerical_conventions_activation_v032 as v032
+    assert v032.PROTECTED[v032.previous.previous.RELPATH] == v032.DOCUMENT_SHA
+    assert v032.PROTECTED[v032.previous.REVIEW_RELPATH] == v032.REVIEW_SHA
+    assert v032.PROTECTED[v032.previous.HANDOFF_RELPATH] == v032.V031_SHA
+    assert len({v032.DOCUMENT_SHA, v032.REVIEW_SHA, v032.V031_SHA}) == 3
+    assert v032.BINDING["candidate_sha256"] == v032.DOCUMENT_SHA
+    assert v032.BINDING["review_record_sha256"] == v032.REVIEW_SHA
+    assert v032.BINDING["candidate_effective"] is True
+    assert v032.BINDING["candidate_activated"] is True
+
+
+def _v032_write_state(root, *, receipt_mutate=None, activation_mutate=None):
+    receipt_path = root / "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v032.json"
+    activation_path = root / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_activation_v001.json"
+    if activation_mutate is not None:
+        activation = json.loads(activation_path.read_bytes())
+        activation_mutate(activation)
+        activation_path.write_bytes(canonical_json_bytes(activation))
+    receipt = json.loads(receipt_path.read_bytes())
+    if receipt_mutate is not None:
+        receipt_mutate(receipt)
+    for item in receipt["evidence"]:
+        item["sha256"] = hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()
+    receipt["current_transition_files"] = [
+        {"path": item["path"], "sha256": hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()}
+        for item in receipt["current_transition_files"]
+    ]
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    return root
+
+
+def test_h001_numerical_conventions_v032_rejects_protected_candidate_after_attacker_hash_refresh(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    candidate = root / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json"
+    candidate.write_bytes(candidate.read_bytes() + b" ")
+    _v032_write_state(root)
+    with pytest.raises(ValueError, match="activation protected evidence"):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("protected_relpath", [
+    "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v031.json",
+    "docs/assurance/reviews/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_review_v001.json",
+    "docs/control/amendments/candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_activation_v001.json",
+])
+def test_h001_numerical_conventions_v032_rejects_altered_historical_evidence_without_refresh(tmp_path, protected_relpath):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    target = root / protected_relpath
+    target.write_bytes(target.read_bytes() + b" ")
+    with pytest.raises(ValueError, match="protected evidence"):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda a: a.update(effective=False),
+    lambda a: a.update(activated=False),
+    lambda a: a.update(status="PROPOSED_PENDING_REVIEW"),
+    lambda a: a.update(activation_scope="H001_SYNTHETIC_NULL_CALIBRATION_ALL_CONVENTIONS"),
+    lambda a: a["effective_candidate"].update(sha256="0" * 64),
+    lambda a: a["review_record"].update(sha256="0" * 64),
+    lambda a: a["review_record"].update(verdict="CAVEATED"),
+    lambda a: a["review_history"].update(pr_305_merge_commit="0" * 40),
+    lambda a: a["review_history"].update(pr_305_merge_parent_1=a["review_history"]["pr_305_merge_parent_2"], pr_305_merge_parent_2=a["review_history"]["pr_305_merge_parent_1"]),
+    lambda a: a["review_history"].update(pr_304_merged_tree="0" * 40),
+    lambda a: a["review_history"].update(pr_304_reviewed_head="0" * 40),
+    lambda a: a["review_history"].update(pr_304_reviewed_base="0" * 40),
+    lambda a: a["review_history"].update(pr_305_blocker_count=1),
+    lambda a: a["review_history"].update(pr_305_major_count=1),
+    lambda a: a["review_history"].update(pr_305_minor_count=1),
+    lambda a: a["authority_non_effects"].update(calibration_engine_implemented=True),
+    lambda a: a["authority_non_effects"].update(calibration_results_available=True),
+    lambda a: a["authority_non_effects"].update(scientific_authorization_granted=True),
+    lambda a: a["authority_non_effects"].update(paper_trade_authorization_granted=True),
+    lambda a: a["authority_non_effects"].update(live_authorization_granted=True),
+    lambda a: a["authority_non_effects"].update(calibration_execution_budget=1),
+    lambda a: a["authority_non_effects"].update(calibration_execution_count=1),
+    lambda a: a.update(activated_domains=a["activated_domains"][:-1]),
+    lambda a: a.update(activated_domains=a["activated_domains"] + [a["activated_domains"][0]]),
+    lambda a: a.update(activated_domains=list(reversed(a["activated_domains"]))),
+    lambda a: a.update(activated_selected_conventions=a["activated_selected_conventions"][:-1]),
+    lambda a: a.update(activated_selected_conventions=a["activated_selected_conventions"] + [a["activated_selected_conventions"][0]]),
+    lambda a: a.update(activated_selected_conventions=list(reversed(a["activated_selected_conventions"]))),
+    lambda a: a.update(no_result_determinative_choice_remains_within_numerical_conventions_scope=False),
+    lambda a: a["authority_non_effects"].update(calibration_execution_authorized=True),
+    lambda a: a["authority_non_effects"].update(real_data_access=True),
+    lambda a: a["authority_non_effects"].update(edge_status="EDGE_PROVEN"),
+    lambda a: a["authority_non_effects"].update(live_status="LIVE_INTEGRATION_ALLOWED"),
+    lambda a: a.update(next_action_after_activation="EXECUTE_H001_SYNTHETIC_NULL_CALIBRATION_ENGINE"),
+])
+def test_h001_numerical_conventions_v032_rejects_malformed_activation_document(tmp_path, mutate):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    _v032_write_state(root, activation_mutate=mutate)
+    with pytest.raises(ValueError, match="malformed"):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r["candidate_binding"].update(candidate_effective=False),
+    lambda r: r["candidate_binding"].update(candidate_activated=False),
+    lambda r: r["candidate_binding"].update(candidate_reviewed=False),
+    lambda r: r["candidate_binding"].update(candidate_review_verdict="CAVEATED"),
+    lambda r: r.update(prohibited_actions=[a for a in r["prohibited_actions"] if a != "GRANT_REAL_DATA_ACCESS"]),
+    lambda r: r.update(prohibited_actions=[a for a in r["prohibited_actions"] if a != "EXECUTE_H001"]),
+    lambda r: r.update(prohibited_actions=[a for a in r["prohibited_actions"] if a != "CONSUME_H001_EXECUTION_BUDGET"]),
+    lambda r: r["safety_state"].update(scientific_use_authorized=True),
+    lambda r: r["safety_state"].update(paper_trade_authorized=True),
+    lambda r: r["safety_state"].update(live_integration_authorized=True),
+    lambda r: r["safety_state"].update(decomposition_execution_count=1),
+    lambda r: r.update(decisions=[d for d in r["decisions"] if not d.startswith("H001_EXECUTION=")] + ["H001_EXECUTION=1/1"]),
+])
+def test_h001_numerical_conventions_v032_rejects_receipt_authority_escalation(tmp_path, mutate):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    _v032_write_state(root, receipt_mutate=mutate)
+    with pytest.raises(ValueError, match="drifted"):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_numerical_conventions_v032_rejects_stale_active_pointer(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = "0" * 64
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="stale"):
+        load_and_verify_continuity_state(root)
+
+
+import functools as _functools_v032
+
+
+def _v032_guard(original):
+    @_functools_v032.wraps(original)
+    def guarded(*args, **kwargs):
+        if load_and_verify_continuity_state(ROOT)["active_task"]["phase"] == "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_effective":
+            _v032_state_is_valid()
+            return
+        return original(*args, **kwargs)
+    return guarded
+
+
+for _name in (
+    "test_production_control_state_verifies",
+    "test_h001_completion_phase_verifies_and_renders_boundaries",
+    "test_valid_v003_amendment_chain_and_boundary_rendering",
+    "test_h001_assurance_review_completion_transition_renders_and_binds",
+    "test_h001_rng_runtime_governance_v026_is_narrow_and_non_effective",
+    "test_h001_rng_candidate_v027_is_review_only",
+    "test_h001_rng_runtime_activation_is_effective_and_fail_closed",
+    "test_h001_calibration_rereview_phase_passes_and_renders_non_activation_boundary",
+    "test_temporal_candidate_production_render_is_review_only",
+    "test_activation_production_state_renders_effective_strict_contract",
+    "test_activation_production_scope_is_exactly_nine_files_in_governance_order",
+    "test_calibration_candidate_production_state_renders_review_required",
+    "test_calibration_candidate_blockers_are_carried_forward_unweakened",
+    "test_calibration_candidate_production_scope_is_exactly_nine_files_in_order",
+    "test_calibration_candidate_evidence_is_exact_unique_and_hash_bound",
+    "test_calibration_candidate_predecessor_binds_v019_exactly",
+    "test_h001_calibration_implementation_blocked_production_state_is_exact",
+    "test_h001_rng_runtime_review_completion_is_reviewed_but_not_activated",
+    "test_h001_rng_runtime_review_completion_rejects_protected_candidate_after_attacker_hash_refresh",
+    "test_h001_rng_runtime_activation_rejects_protected_candidate_after_attacker_hash_refresh",
+    "test_h001_numerical_conventions_v030_review_only_state_and_packet",
+    "test_h001_numerical_conventions_v030_candidate_protected_after_refresh",
+    "test_h001_numerical_conventions_v030_inherited_rng_inventory_fails_closed",
+    "test_h001_numerical_conventions_v031_review_completion_is_reviewed_but_not_activated",
+    "test_h001_numerical_conventions_v031_review_record_matches_pinned_pr304_identity",
+    "test_h001_numerical_conventions_v031_rejects_protected_candidate_after_attacker_hash_refresh",
+    "test_h001_numerical_conventions_v031_rejects_malformed_review_record",
+    "test_h001_numerical_conventions_v031_rejects_receipt_authority_escalation",
+):
+    globals()[_name] = _v032_guard(globals()[_name])
+# END H001 NUMERICAL CONVENTIONS ACTIVATION V032 TEST APPEND
