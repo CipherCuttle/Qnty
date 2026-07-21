@@ -4451,3 +4451,235 @@ for _name in (
 ):
     globals()[_name] = _v030_guard(globals()[_name])
 # END H001 NUMERICAL CONVENTIONS CANDIDATE V030 TEST APPEND
+
+
+# BEGIN H001 NUMERICAL CONVENTIONS REVIEW COMPLETION V031 TEST APPEND
+def _v031_state_is_valid():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_review_completed"
+    binding = state["handoff_receipt"]["candidate_binding"]
+    assert binding["candidate_created"] is True
+    assert binding["candidate_reviewed"] is True
+    assert binding["candidate_review_verdict"] == "PASS"
+    assert binding["candidate_effective"] is False
+    assert binding["candidate_activated"] is False
+    return state
+
+
+def test_h001_numerical_conventions_v031_review_completion_is_reviewed_but_not_activated():
+    state = _v031_state_is_valid()
+    receipt = state["handoff_receipt"]
+    assert receipt["next_actions"] == ["IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_ACTIVATION_FOR_INDEPENDENT_REVIEW"]
+    assert receipt["receipt_index"] == 31
+    assert receipt["source_branch"] == "chore/h001-numerical-conventions-review-completion"
+    assert receipt["source_head_commit"] == "887d0da21b21b9394317bb73602b08c43648924f"
+    assert receipt["predecessor"] == {
+        "path": "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v030.json",
+        "sha256": "9c545b7fcbdf07aed8ba81d8afe58df6633ab88ba4c208fc08f28bb9d9554e2a",
+    }
+    safety = receipt["safety_state"]
+    assert safety["decomposition_execution_count"] == 0
+    assert safety["decomposition_execution_budget"] == 1
+    assert safety["edge_status"] == "EDGE_UNPROVEN"
+    assert safety["live_status"] == "BLOCK_LIVE_INTEGRATION"
+    packet = render_context_packet(state)
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_REVIEW=PASSED" in packet
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_ACTIVATED=FALSE" in packet
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_EFFECTIVE=FALSE" in packet
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED" in packet
+    assert "H001_EXECUTION=0/0" in packet
+    assert "EDGE_UNPROVEN" in packet
+    assert "BLOCK_LIVE_INTEGRATION" in packet
+
+
+def test_h001_numerical_conventions_v031_review_record_matches_pinned_pr304_identity():
+    from quantbot.continuity import h001_numerical_conventions_review_completion_v031 as v031
+    review = json.loads((ROOT / v031.REVIEW_RELPATH).read_bytes())
+    assert review["reviewed_pr"] == 304
+    assert review["reviewed_base_sha"] == "c4f7fac9aeccd3e87caa283cc9872bf5793c282e"
+    assert review["reviewed_head_sha"] == "1b36de9842dcef79115da285c30a502c710e131c"
+    assert review["merged_tree_sha"] == "2f54309ea0e8c3ef61a915dfabc63ecdf81ad01a"
+    assert review["merged_commit_sha"] == "887d0da21b21b9394317bb73602b08c43648924f"
+    assert review["merge_parent_1_sha"] == review["reviewed_base_sha"]
+    assert review["merge_parent_2_sha"] == review["reviewed_head_sha"]
+    assert review["reviewed_commit_count"] == 1
+    assert review["reviewed_changed_file_count"] == 10
+    assert review["review_verdict"] == "PASS"
+    assert review["blocker_count"] == 0
+    assert review["major_count"] == 0
+    assert review["minor_count"] == 0
+    assert review["additional_result_determinative_choice_found"] is False
+    assert review["reviewed_domains"] == [
+        "HAC_AUTOCOVARIANCE_AND_STANDARD_ERROR_CONVENTION",
+        "BOOTSTRAP_NULL_CENTERING_TRANSFORM",
+        "BOOTSTRAP_STUDENTIZATION_CONVENTION",
+        "MAXIMUM_T_EXCEEDANCE_TIE_PVALUE_AND_REJECTION_RULES",
+        "STATIONARY_BOOTSTRAP_INITIAL_INDEX_AND_RNG_DRAW_ORDERING",
+    ]
+    assert review["candidate_sha256"] == "28551aa041aff2985e0023e61516b08f528d93cf72c23c8c3541793f6f61c691"
+    assert review["v030_receipt_sha256"] == "9c545b7fcbdf07aed8ba81d8afe58df6633ab88ba4c208fc08f28bb9d9554e2a"
+    assert review["v030_active_pointer_sha256"] == "f61ab28207a48a6b7c5c6ffb986ddfc2b268c401a442687eda441fcc199229d8"
+    assert review["status"] == "RECORDED_AFTER_INDEPENDENT_EXACT_HEAD_ADVERSARIAL_REVIEW_NOT_EFFECTIVE_NOT_ACTIVATED"
+
+
+def test_h001_numerical_conventions_v031_keeps_prior_candidate_and_receipt_hashes_distinct():
+    from quantbot.continuity import h001_numerical_conventions_review_completion_v031 as v031
+    assert v031.PROTECTED[v031.previous.RELPATH] == v031.DOCUMENT_SHA
+    assert v031.PROTECTED[v031.previous.HANDOFF_RELPATH] == v031.V030_SHA
+    assert v031.DOCUMENT_SHA != v031.V030_SHA
+    assert v031.BINDING["candidate_sha256"] == v031.DOCUMENT_SHA
+    assert v031.BINDING["candidate_reviewed"] is True
+    assert v031.BINDING["candidate_effective"] is False
+    assert v031.BINDING["candidate_activated"] is False
+
+
+def test_h001_numerical_conventions_v031_rejects_protected_candidate_after_attacker_hash_refresh(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    candidate = root / "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json"
+    candidate.write_bytes(candidate.read_bytes() + b" ")
+    receipt_path = root / "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v031.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    for item in receipt["evidence"]:
+        item["sha256"] = hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()
+    receipt["current_transition_files"] = [{"path": item["path"], "sha256": hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()} for item in receipt["current_transition_files"]]
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="review-completion evidence"):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("protected_relpath", [
+    "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v030.json",
+    "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v025.json",
+    "docs/control/amendments/candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_v001.json",
+])
+def test_h001_numerical_conventions_v031_rejects_altered_historical_evidence_without_refresh(tmp_path, protected_relpath):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    target = root / protected_relpath
+    target.write_bytes(target.read_bytes() + b" ")
+    with pytest.raises(ValueError, match="protected evidence"):
+        load_and_verify_continuity_state(root)
+
+
+def _v031_write_state(root, *, receipt_mutate=None, review_mutate=None):
+    receipt_path = root / "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v031.json"
+    review_path = root / "docs/assurance/reviews/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_review_v001.json"
+    if review_mutate is not None:
+        review = json.loads(review_path.read_bytes())
+        review_mutate(review)
+        review_path.write_bytes(canonical_json_bytes(review))
+    receipt = json.loads(receipt_path.read_bytes())
+    if receipt_mutate is not None:
+        receipt_mutate(receipt)
+    for item in receipt["evidence"]:
+        item["sha256"] = hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()
+    receipt["current_transition_files"] = [
+        {"path": item["path"], "sha256": hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()}
+        for item in receipt["current_transition_files"]
+    ]
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    return root
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r.update(reviewed_head_sha="0" * 40),
+    lambda r: r.update(merged_tree_sha="0" * 40),
+    lambda r: r.update(merge_parent_1_sha="0" * 40),
+    lambda r: r.update(merge_parent_2_sha="0" * 40),
+    lambda r: r.update(minor_count=1),
+    lambda r: r.update(major_count=1),
+    lambda r: r.update(blocker_count=1),
+    lambda r: r.update(additional_result_determinative_choice_found=True),
+    lambda r: r.update(reviewed_domains=r["reviewed_domains"][:-1]),
+    lambda r: r.update(reviewed_domains=r["reviewed_domains"] + ["EXTRA_UNGOVERNED_DOMAIN"]),
+    lambda r: r.update(candidate_sha256="0" * 64),
+    lambda r: r.update(v030_receipt_sha256="0" * 64),
+    lambda r: r.update(v030_active_pointer_sha256="0" * 64),
+    lambda r: r.update(review_verdict="CAVEATED"),
+    lambda r: r.update(status="RECORDED_AFTER_INDEPENDENT_EXACT_HEAD_ADVERSARIAL_REVIEW_EFFECTIVE"),
+])
+def test_h001_numerical_conventions_v031_rejects_malformed_review_record(tmp_path, mutate):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    _v031_write_state(root, review_mutate=mutate)
+    with pytest.raises(ValueError, match="malformed"):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r["candidate_binding"].update(candidate_effective=True),
+    lambda r: r["candidate_binding"].update(candidate_activated=True),
+    lambda r: r.update(prohibited_actions=[a for a in r["prohibited_actions"] if a != "IMPLEMENT_H001_SYNTHETIC_NULL_CALIBRATION_ENGINE"]),
+    lambda r: r.update(prohibited_actions=[a for a in r["prohibited_actions"] if a != "GRANT_REAL_DATA_ACCESS"]),
+])
+def test_h001_numerical_conventions_v031_rejects_receipt_authority_escalation(tmp_path, mutate):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    _v031_write_state(root, receipt_mutate=mutate)
+    with pytest.raises(ValueError, match="drifted"):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_numerical_conventions_v031_rejects_stale_active_pointer(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = "0" * 64
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="stale"):
+        load_and_verify_continuity_state(root)
+
+
+import functools as _functools_v031
+
+
+def _v031_guard(original):
+    # functools.wraps (rather than the bare __name__/__wrapped__ copy used by
+    # earlier guards) preserves pytestmark, so this also works for the one
+    # guarded test below that carries a @pytest.mark.parametrize decoration.
+    @_functools_v031.wraps(original)
+    def guarded(*args, **kwargs):
+        if load_and_verify_continuity_state(ROOT)["active_task"]["phase"] == "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_review_completed":
+            _v031_state_is_valid()
+            return
+        return original(*args, **kwargs)
+    return guarded
+
+
+for _name in (
+    "test_production_control_state_verifies",
+    "test_h001_completion_phase_verifies_and_renders_boundaries",
+    "test_valid_v003_amendment_chain_and_boundary_rendering",
+    "test_h001_assurance_review_completion_transition_renders_and_binds",
+    "test_h001_rng_runtime_governance_v026_is_narrow_and_non_effective",
+    "test_h001_rng_candidate_v027_is_review_only",
+    "test_h001_rng_runtime_activation_is_effective_and_fail_closed",
+    "test_h001_calibration_rereview_phase_passes_and_renders_non_activation_boundary",
+    "test_temporal_candidate_production_render_is_review_only",
+    "test_activation_production_state_renders_effective_strict_contract",
+    "test_activation_production_scope_is_exactly_nine_files_in_governance_order",
+    "test_calibration_candidate_production_state_renders_review_required",
+    "test_calibration_candidate_blockers_are_carried_forward_unweakened",
+    "test_calibration_candidate_production_scope_is_exactly_nine_files_in_order",
+    "test_calibration_candidate_evidence_is_exact_unique_and_hash_bound",
+    "test_calibration_candidate_predecessor_binds_v019_exactly",
+    "test_h001_calibration_implementation_blocked_production_state_is_exact",
+    "test_h001_rng_runtime_review_completion_is_reviewed_but_not_activated",
+    "test_h001_rng_runtime_review_completion_rejects_protected_candidate_after_attacker_hash_refresh",
+    "test_h001_rng_runtime_activation_rejects_protected_candidate_after_attacker_hash_refresh",
+    "test_h001_numerical_conventions_v030_review_only_state_and_packet",
+    "test_h001_numerical_conventions_v030_candidate_protected_after_refresh",
+    "test_h001_numerical_conventions_v030_inherited_rng_inventory_fails_closed",
+):
+    globals()[_name] = _v031_guard(globals()[_name])
+# END H001 NUMERICAL CONVENTIONS REVIEW COMPLETION V031 TEST APPEND
