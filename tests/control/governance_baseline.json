@@ -2,7 +2,36 @@
   "_comment": "Accepted PR-0 all-surface governance baseline (policy A). Measured by tests/control/governance_ratchet.py. Legacy and replacement governance surfaces plus QNTY mixed-purpose tooling are measured in bytes and exact per-file bytes. Later PRs may reduce or preserve the surface; positive net growth requires a bounded, expiring exact-path exception.",
   "baseline_origin": "PR_307_ACCEPTANCE_TREE_OUTER_GIT_ENVELOPE",
   "baseline_policy": "A_ACCEPTED_PR0_ALL_SURFACE_RATCHET_DOWNWARD",
-  "exceptions": [],
+  "exceptions": [
+    {
+      "surface": "quantbot/control/",
+      "path": "quantbot/control/__init__.py",
+      "max_additional_bytes": 651,
+      "reason": "Temporary additive replacement-control work: public API surface for the new deny-only control-state validator package, not wired into any runtime path.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    },
+    {
+      "surface": "quantbot/control/",
+      "path": "quantbot/control/state.py",
+      "max_additional_bytes": 15499,
+      "reason": "Temporary additive replacement-control work: new deny-only canonical control-state validator, schema 1.0.0, unreachable from runtime.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    },
+    {
+      "surface": "tests/control/",
+      "path": "tests/control/test_control_state.py",
+      "max_additional_bytes": 17795,
+      "reason": "Temporary additive replacement-control work: deterministic adversarial tests for the new deny-only control-state validator.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    },
+    {
+      "surface": "tests/control/",
+      "path": "tests/control/governance_baseline.json",
+      "max_additional_bytes": 1405,
+      "reason": "Temporary additive replacement-control work: exact-path exception metadata recording the new control-state validator's own additive growth.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    }
+  ],
   "governed_basenames": [
     "__init__.py",
     "__main__.py",
