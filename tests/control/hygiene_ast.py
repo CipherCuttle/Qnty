@@ -6,7 +6,8 @@ still caught. Callers narrow results with an exact, path-scoped debt allowlist
 (see ``debt_allowlist.json``) rather than the detectors themselves knowing
 about any historical exception.
 
-Known blind spots (documented, not solved, in this first version):
+Known blind spots (accepted for PR-0, not solved in this structural-tripwire
+pass):
 - Detection is per-function/per-dict-literal within a single file; a pattern
   spread across multiple helper functions/modules working together will not
   be found.
@@ -17,8 +18,15 @@ Known blind spots (documented, not solved, in this first version):
   ``find_globals_rebindings`` (which only looks for ``globals()[...] = ...``
   assignment), though it would still be caught by
   ``find_fake_pass_wrappers`` if the closure shape matches.
-- ``find_self_hash_source_bindings`` only looks at dict literals; a hash bound
-  via two separate statements (assign key, assign value elsewhere) is missed.
+- Aliased ``globals`` calls and ``setattr(module, name, wrapper)`` rebinding
+  are outside the direct ``globals()[...] = ...`` shape.
+- Source reconstruction split across helpers, or using ``open(..., "wb")``
+  rather than ``Path.write_bytes``, is outside the one-function helper shape.
+- ``find_self_hash_source_bindings`` only looks at dict literals; source hashes
+  assembled through separate statements are missed.
+
+These checks catch known and straightforward renamed forms; they are not proof
+against every equivalent Python implementation.
 """
 
 from __future__ import annotations

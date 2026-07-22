@@ -1,107 +1,133 @@
-"""Governance growth ratchet: measure the governed control-plane surface and
-prevent net growth relative to a recorded baseline.
+"""Exact-surface governance growth ratchet helpers.
 
-Metric: total bytes per directory (not newline-count lines). Several files
-under ``docs/control/`` are canonical JSON written with no trailing newline
-(per docs/agent/START_HERE.md's canonical-bytes contract), so a naive
-``wc -l``-style line count silently reads as zero for an entire directory of
-real content -- a blind spot this ratchet must not have. Byte count is not a
-perfect defense against someone minifying code into an unreadable one-liner
-to dodge the check either; that residual gap is intentionally left to human
-review (see module docstring note in the test file), not mechanical
-enforcement, in this first version.
+The ratchet measures legacy and replacement governance directories plus the
+QNTY namespace in mixed-purpose tooling directories.  Exceptions are exact
+repository-relative file paths, never a fungible per-directory byte budget.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-# Replacement control-plane directories are governed alongside their legacy
-# counterparts.  New control work must live in one of these prefixes, rather
-# than being hidden beside an older surface under a new basename.
 GOVERNED_DIRS = [
-    "quantbot/continuity/",
-    "quantbot/assurance/",
-    "quantbot/control/",
-    "tests/continuity/",
-    "tests/assurance/",
-    "tests/control/",
-    "docs/control/",
-    "docs/governance/",
+    "quantbot/continuity/", "quantbot/assurance/", "quantbot/control/",
+    "tests/continuity/", "tests/assurance/", "tests/control/",
+    "docs/control/", "docs/governance/",
 ]
-
-# These directories contain unrelated repository tooling, so count only the
-# QNTY governance namespace within them.  Prefixes intentionally cover future
-# QNTY governance files regardless of basename; exact paths preserve the two
-# existing entrypoints whose names do not use that namespace convention.
-GOVERNED_FILE_PREFIXES = ["scripts/qnty_", ".github/workflows/qnty-"]
-GOVERNED_EXACT_FILES = {
-    "scripts/qnty_ruleset_snapshot.py",
-    ".github/workflows/qnty-full-suite.yml",
-}
-
-# Generic/boilerplate basenames that recur across many unrelated packages and
-# would swamp the relocation tripwire with false positives (every package has
-# an __init__.py). Excluded from the relocation-basename set only; they still
-# count fully toward the byte-size ratchet.
+MIXED_SURFACE = "mixed_governance_files"
+GOVERNED_FILE_PREFIXES = ("scripts/qnty_", ".github/workflows/qnty-")
 _GENERIC_BASENAMES = {"__init__.py", "__main__.py", "conftest.py", "README.md"}
+_EXCLUDED_DIR_PARTS = {".git", ".venv", "__pycache__"}
+_GLOB_CHARS = set("*?[]{}")
+
+
+def classify_governance_path(relative_path: str | Path) -> str | None:
+    """Return the one measured surface that owns a repository-relative path."""
+    rel = str(relative_path).replace("\\", "/")
+    for surface in GOVERNED_DIRS:
+        if rel.startswith(surface):
+            return surface
+    if rel.startswith(GOVERNED_FILE_PREFIXES):
+        return MIXED_SURFACE
+    return None
+
+
+def _is_scannable(path: Path, root: Path) -> bool:
+    if not path.is_file():
+        return False
+    rel = path.relative_to(root)
+    return not (_EXCLUDED_DIR_PARTS & set(rel.parts))
 
 
 def measure_governed_surface(root: Path) -> dict:
     root = Path(root)
-    per_dir_bytes: dict[str, int] = {}
-    governed_files: list[str] = []
-    for governed_dir in GOVERNED_DIRS:
-        base = root / governed_dir
-        dir_total = 0
-        if not base.exists():
-            per_dir_bytes[governed_dir] = 0
-            continue
-        for path in sorted(base.rglob("*")):
-            if not path.is_file() or "__pycache__" in path.parts:
-                continue
-            dir_total += path.stat().st_size
-            governed_files.append(str(path.relative_to(root)))
-        per_dir_bytes[governed_dir] = dir_total
-    mixed_files = []
+    per_surface = {surface: 0 for surface in [*GOVERNED_DIRS, MIXED_SURFACE]}
+    per_file_bytes: dict[str, int] = {}
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or ".git" in path.parts or ".venv" in path.parts or "__pycache__" in path.parts:
+        if not _is_scannable(path, root):
             continue
         rel = str(path.relative_to(root))
-        if rel in GOVERNED_EXACT_FILES or any(rel.startswith(prefix) for prefix in GOVERNED_FILE_PREFIXES):
-            mixed_files.append((rel, path.stat().st_size))
-
-    per_dir_bytes["mixed_governance_files"] = sum(size for _, size in mixed_files)
-    governed_files.extend(rel for rel, _ in mixed_files)
+        surface = classify_governance_path(rel)
+        if surface is None:
+            continue
+        size = path.stat().st_size
+        per_surface[surface] += size
+        per_file_bytes[rel] = size
     return {
-        "per_dir_bytes": per_dir_bytes,
-        "total_bytes": sum(per_dir_bytes.values()),
-        "governed_basenames": sorted({Path(f).name for f in governed_files}),
+        "per_dir_bytes": per_surface,
+        "per_file_bytes": per_file_bytes,
+        "total_bytes": sum(per_surface.values()),
+        "governed_basenames": sorted({Path(path).name for path in per_file_bytes}),
     }
 
 
+def validate_exceptions(baseline: dict) -> list[str]:
+    """Validate exact, surface-owned exception records without reading disk."""
+    problems = []
+    seen_paths = set()
+    surfaces = set(baseline["per_dir_bytes"])
+    for exception in baseline.get("exceptions", []):
+        surface = exception.get("surface")
+        path = exception.get("path")
+        if surface not in surfaces:
+            problems.append(f"unknown exception surface: {surface!r}")
+        if not isinstance(path, str) or not path or path.endswith("/"):
+            problems.append(f"exception path must be an exact file path: {path!r}")
+            continue
+        pure = PurePosixPath(path)
+        if pure.is_absolute() or ".." in pure.parts or any(char in path for char in _GLOB_CHARS):
+            problems.append(f"exception path is not a safe exact relative path: {path!r}")
+            continue
+        classified = classify_governance_path(path)
+        if classified is None:
+            problems.append(f"exception path is outside governed surfaces: {path!r}")
+        elif classified != surface:
+            problems.append(f"exception surface/path mismatch: {surface!r} != {classified!r} for {path!r}")
+        if path in seen_paths:
+            problems.append(f"duplicate exception path: {path!r}")
+        seen_paths.add(path)
+        amount = exception.get("max_additional_bytes")
+        if not isinstance(amount, int) or isinstance(amount, bool) or amount < 1:
+            problems.append(f"exception max_additional_bytes must be a positive integer: {path!r}")
+        for key in ("reason", "expires_in_pr"):
+            if not isinstance(exception.get(key), str) or not exception[key]:
+                problems.append(f"exception {key} must be non-empty: {path!r}")
+    return problems
+
+
+def ratchet_problems(current: dict, baseline: dict) -> list[str]:
+    """Return growth violations under exact-path exception semantics."""
+    problems = validate_exceptions(baseline)
+    if problems:
+        return problems
+    exceptions = {item["path"]: item for item in baseline.get("exceptions", [])}
+    baseline_files = baseline.get("per_file_bytes", {})
+    permitted_by_surface = {surface: 0 for surface in baseline["per_dir_bytes"]}
+    for path, exception in exceptions.items():
+        delta = max(0, current["per_file_bytes"].get(path, 0) - baseline_files.get(path, 0))
+        if delta > exception["max_additional_bytes"]:
+            problems.append(f"{path}: positive delta {delta} exceeds exception cap {exception['max_additional_bytes']}")
+        permitted_by_surface[exception["surface"]] += min(delta, exception["max_additional_bytes"])
+    for surface, baseline_bytes in baseline["per_dir_bytes"].items():
+        delta = current["per_dir_bytes"].get(surface, 0) - baseline_bytes
+        if delta > permitted_by_surface[surface]:
+            problems.append(f"{surface}: net growth {delta} exceeds exact-path exception delta budget {permitted_by_surface[surface]}")
+    total_delta = current["total_bytes"] - baseline["total_bytes"]
+    total_permitted = sum(permitted_by_surface.values())
+    if total_delta > total_permitted:
+        problems.append(f"total: net growth {total_delta} exceeds exact-path exception delta budget {total_permitted}")
+    return problems
+
+
 def find_relocated_governance_basenames(root: Path, governed_basenames: list[str]) -> list[str]:
-    """Anti-evasion tripwire: reject a file elsewhere in the repo sharing a
-    basename with a file that exists in one of the governed directories at
-    baseline time. Catches the common evasion of moving/renaming a governed
-    module out of the counted directories to make the ratchet look like it
-    shrank. This is a heuristic, not a proof: a determined rewrite-and-rename
-    (different basename, same logic) would not be caught by this check alone;
-    it relies on the AST hygiene checks and human review for that case.
-    """
+    """Defense-in-depth tripwire for known governed basenames outside a surface."""
     root = Path(root)
     basenames = set(governed_basenames) - _GENERIC_BASENAMES
     hits = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.name not in basenames:
+        if not _is_scannable(path, root) or path.name not in basenames:
             continue
-        rel = path.relative_to(root)
-        rel_text = str(rel)
-        if any(rel_text.startswith(d) for d in GOVERNED_DIRS):
-            continue
-        if rel_text in GOVERNED_EXACT_FILES or any(rel_text.startswith(prefix) for prefix in GOVERNED_FILE_PREFIXES):
-            continue
-        if ".git" in rel.parts or ".venv" in rel.parts or "__pycache__" in rel.parts:
-            continue
-        hits.append(str(rel))
+        rel = str(path.relative_to(root))
+        if classify_governance_path(rel) is None:
+            hits.append(rel)
     return hits

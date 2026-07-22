@@ -1,116 +1,135 @@
-"""Governance growth ratchet: the governed control-plane surface
-(legacy and replacement code, tests, control/governance docs, and named QNTY
-tooling) may not grow beyond the accepted PR-0 all-surface baseline.
-
-This is a floor, not a target: a shrinkage (e.g. the entropy-brake PR
-deleting fake-pass wrappers) is always allowed and should be followed by
-re-recording a lower baseline in that same PR. Nothing here can verify that a
-given deletion preserved every meaningful adversarial test rather than just
-deleting it to make a byte budget -- that judgment call is for human review;
-this ratchet only proves size didn't silently grow.
-"""
+"""Tests for the all-surface, exact-path governance growth ratchet."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from governance_ratchet import find_relocated_governance_basenames, measure_governed_surface
+import pytest
+
+from governance_ratchet import (
+    MIXED_SURFACE, classify_governance_path, find_relocated_governance_basenames,
+    measure_governed_surface, ratchet_problems, validate_exceptions,
+)
 
 ROOT = Path(__file__).parents[2]
 BASELINE_PATH = Path(__file__).parent / "governance_baseline.json"
+
+
+def _baseline(root: Path, exceptions=()):
+    measured = measure_governed_surface(root)
+    return {**measured, "exceptions": list(exceptions)}
+
+
+def _exception(surface, path, cap=10):
+    return {"surface": surface, "path": path, "max_additional_bytes": cap,
+            "reason": "temporary exact-path governance work", "expires_in_pr": "fix/continuity-entropy-brake-v032"}
+
+
+def _write(root: Path, path: str, content: bytes):
+    target = root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
 
 
 def _load_baseline():
     return json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
 
 
-def _exception_budget_for(baseline, governed_dir):
-    return sum(
-        exc["max_additional_bytes"]
-        for exc in baseline["exceptions"]
-        if exc["path"] == governed_dir or exc["path"].startswith(governed_dir)
-    )
-
-
-def test_governed_surface_has_not_grown_beyond_baseline_plus_exceptions():
-    baseline = _load_baseline()
-    current = measure_governed_surface(ROOT)
-
-    problems = []
-    for governed_dir, baseline_bytes in baseline["per_dir_bytes"].items():
-        current_bytes = current["per_dir_bytes"].get(governed_dir, 0)
-        ceiling = baseline_bytes + _exception_budget_for(baseline, governed_dir)
-        if current_bytes > ceiling:
-            problems.append(
-                f"{governed_dir}: {current_bytes} bytes exceeds baseline+exceptions ceiling {ceiling} "
-                f"(baseline={baseline_bytes}, exception_budget={ceiling - baseline_bytes})"
-            )
-
-    total_ceiling = baseline["total_bytes"] + sum(exc["max_additional_bytes"] for exc in baseline["exceptions"])
-    if current["total_bytes"] > total_ceiling:
-        problems.append(f"total: {current['total_bytes']} bytes exceeds ceiling {total_ceiling}")
-
-    assert not problems, "\n".join(problems)
+def test_governed_surface_has_not_grown_beyond_exact_path_exception_deltas():
+    assert not ratchet_problems(measure_governed_surface(ROOT), _load_baseline())
 
 
 def test_no_governance_code_relocated_outside_counted_directories():
-    baseline = _load_baseline()
-    # Use the basenames frozen in the baseline (not recomputed from the
-    # current tree): the evasion this guards against is moving a file fully
-    # OUT of a governed directory, which would make it vanish from a
-    # "current tree" basename set and defeat the check entirely.
-    hits = find_relocated_governance_basenames(ROOT, baseline["governed_basenames"])
-    assert not hits, f"governance-named files found outside counted directories: {hits}"
+    assert not find_relocated_governance_basenames(ROOT, _load_baseline()["governed_basenames"])
 
 
-def test_every_exception_is_path_scoped_bounded_justified_and_has_an_expiry():
-    baseline = _load_baseline()
-    for exc in baseline["exceptions"]:
-        assert isinstance(exc.get("path"), str) and exc["path"], exc
-        assert any(exc["path"].startswith(d) for d in baseline["per_dir_bytes"]), (
-            f"exception path must be scoped under a counted governed directory: {exc}"
-        )
-        assert isinstance(exc.get("max_additional_bytes"), int) and exc["max_additional_bytes"] > 0, exc
-        assert isinstance(exc.get("reason"), str) and exc["reason"], exc
-        assert isinstance(exc.get("expires_in_pr"), str) and exc["expires_in_pr"], exc
+def test_classifier_owns_every_governance_surface():
+    assert classify_governance_path("quantbot/control/guard.py") == "quantbot/control/"
+    assert classify_governance_path("scripts/qnty_runtime_guard_audit.py") == MIXED_SURFACE
+    assert classify_governance_path(".github/workflows/qnty-new-check.yml") == MIXED_SURFACE
 
 
-def test_seeded_growth_beyond_baseline_is_rejected(tmp_path):
-    """Proves the ratchet actually fires: build a synthetic tree matching the
-    baseline's governed directories, add one file's worth of growth beyond the
-    recorded baseline, and confirm the same comparison logic used above would
-    reject it.
-    """
-    baseline = _load_baseline()
-    for governed_dir in baseline["per_dir_bytes"]:
-        (tmp_path / governed_dir).mkdir(parents=True, exist_ok=True)
-    # Recorded baseline says quantbot/continuity/ had 305061 bytes; write more.
-    (tmp_path / "quantbot/continuity/context.py").write_bytes(b"x" * (baseline["per_dir_bytes"]["quantbot/continuity/"] + 1))
-
-    current = measure_governed_surface(tmp_path)
-    grew_dir = "quantbot/continuity/"
-    ceiling = baseline["per_dir_bytes"][grew_dir] + _exception_budget_for(baseline, grew_dir)
-    assert current["per_dir_bytes"][grew_dir] > ceiling
+def test_exact_exception_for_replacement_control_file_is_accepted(tmp_path):
+    base = _baseline(tmp_path)
+    _write(tmp_path, "quantbot/control/guard.py", b"x" * 8)
+    assert not ratchet_problems(measure_governed_surface(tmp_path), base | {"exceptions": [_exception("quantbot/control/", "quantbot/control/guard.py")]})
 
 
-def test_seeded_new_replacement_control_module_is_counted(tmp_path):
-    path = tmp_path / "quantbot/control/newly_named_governance_module.py"
-    path.parent.mkdir(parents=True)
-    path.write_text("x = 1\n", encoding="utf-8")
-    assert measure_governed_surface(tmp_path)["per_dir_bytes"]["quantbot/control/"] == path.stat().st_size
+def test_exact_exception_for_new_mixed_tool_is_accepted(tmp_path):
+    base = _baseline(tmp_path)
+    _write(tmp_path, "scripts/qnty_runtime_guard_audit.py", b"x" * 8)
+    assert not ratchet_problems(measure_governed_surface(tmp_path), base | {"exceptions": [_exception(MIXED_SURFACE, "scripts/qnty_runtime_guard_audit.py")]})
 
 
-def test_seeded_new_replacement_control_test_is_counted(tmp_path):
-    path = tmp_path / "tests/control/test_newly_named_governance_contract.py"
-    path.parent.mkdir(parents=True)
-    path.write_text("def test_contract(): pass\n", encoding="utf-8")
-    assert measure_governed_surface(tmp_path)["per_dir_bytes"]["tests/control/"] == path.stat().st_size
+def test_exact_exception_for_new_mixed_workflow_is_accepted(tmp_path):
+    base = _baseline(tmp_path)
+    _write(tmp_path, ".github/workflows/qnty-new-check.yml", b"x" * 8)
+    assert not ratchet_problems(measure_governed_surface(tmp_path), base | {"exceptions": [_exception(MIXED_SURFACE, ".github/workflows/qnty-new-check.yml")]})
 
 
-def test_seeded_new_qnty_governance_tool_name_is_counted(tmp_path):
-    path = tmp_path / "scripts/qnty_new_governance_tool.py"
-    path.parent.mkdir(parents=True)
-    path.write_text("# new basename still governed\n", encoding="utf-8")
-    measured = measure_governed_surface(tmp_path)
-    assert measured["per_dir_bytes"]["mixed_governance_files"] == path.stat().st_size
+def test_mixed_exception_contributes_its_permitted_budget(tmp_path):
+    base = _baseline(tmp_path)
+    _write(tmp_path, "scripts/qnty_runtime_guard_audit.py", b"x" * 10)
+    assert not ratchet_problems(measure_governed_surface(tmp_path), base | {"exceptions": [_exception(MIXED_SURFACE, "scripts/qnty_runtime_guard_audit.py", 10)]})
+
+
+def test_mixed_exception_cannot_be_consumed_by_another_mixed_path(tmp_path):
+    base = _baseline(tmp_path)
+    _write(tmp_path, "scripts/qnty_other.py", b"x" * 4)
+    problems = ratchet_problems(measure_governed_surface(tmp_path), base | {"exceptions": [_exception(MIXED_SURFACE, "scripts/qnty_guard.py")]})
+    assert problems
+
+
+def test_control_exception_cannot_be_consumed_by_another_control_file(tmp_path):
+    base = _baseline(tmp_path)
+    _write(tmp_path, "quantbot/control/other.py", b"x" * 4)
+    assert ratchet_problems(measure_governed_surface(tmp_path), base | {"exceptions": [_exception("quantbot/control/", "quantbot/control/guard.py")]})
+
+
+def test_new_file_baseline_is_zero_and_growth_over_cap_fails(tmp_path):
+    base = _baseline(tmp_path)
+    assert base["per_file_bytes"].get("quantbot/control/guard.py", 0) == 0
+    _write(tmp_path, "quantbot/control/guard.py", b"x" * 11)
+    problems = ratchet_problems(measure_governed_surface(tmp_path), base | {"exceptions": [_exception("quantbot/control/", "quantbot/control/guard.py", 10)]})
+    assert any("exceeds exception cap" in problem for problem in problems)
+
+
+@pytest.mark.parametrize(("surface", "path", "identifier"), [
+    ("quantbot/control/", "quantbot/control/*.py", "wildcard"),
+    ("quantbot/control/", "quantbot/control/", "directory"),
+    ("quantbot/control/", "/quantbot/control/guard.py", "absolute"),
+    ("quantbot/control/", "quantbot/control/../guard.py", "traversal"),
+    (MIXED_SURFACE, "quantbot/control/guard.py", "surface_mismatch"),
+    ("unknown", "quantbot/control/guard.py", "unknown_surface"),
+])
+def test_invalid_exception_path_or_ownership_fails(tmp_path, surface, path, identifier):
+    base = _baseline(tmp_path)
+    assert validate_exceptions(base | {"exceptions": [_exception(surface, path)]}), identifier
+
+
+def test_duplicate_exception_path_fails(tmp_path):
+    base = _baseline(tmp_path)
+    item = _exception("quantbot/control/", "quantbot/control/guard.py")
+    assert validate_exceptions(base | {"exceptions": [item, item.copy()]})
+
+
+def test_net_shrinkage_without_exceptions_remains_allowed(tmp_path):
+    _write(tmp_path, "quantbot/control/old.py", b"x" * 10)
+    base = _baseline(tmp_path)
+    (tmp_path / "quantbot/control/old.py").unlink()
+    assert not ratchet_problems(measure_governed_surface(tmp_path), base)
+
+
+def test_net_zero_refactoring_without_exceptions_remains_allowed(tmp_path):
+    _write(tmp_path, "quantbot/control/old.py", b"x" * 10)
+    base = _baseline(tmp_path)
+    (tmp_path / "quantbot/control/old.py").unlink()
+    _write(tmp_path, "quantbot/control/new.py", b"x" * 10)
+    assert not ratchet_problems(measure_governed_surface(tmp_path), base)
+
+
+def test_unexcepted_growth_fails(tmp_path):
+    base = _baseline(tmp_path)
+    _write(tmp_path, "quantbot/control/guard.py", b"x")
+    assert ratchet_problems(measure_governed_surface(tmp_path), base)
