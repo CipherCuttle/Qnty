@@ -73,6 +73,7 @@
     "test_contracts.py",
     "test_cross_agent_continuity.py",
     "test_debt_allowlist_exactness.py",
+    "test_full_suite_workflow.py",
     "test_governance_ratchet.py",
     "test_h001_null_calibration.py",
     "test_h001_numerical_conventions_kat_independent_derivation.py",
@@ -90,18 +91,18 @@
   "per_dir_bytes": {
     "docs/control/": 473794,
     "docs/governance/": 601,
-    "mixed_governance_files": 9775,
+    "mixed_governance_files": 9814,
     "quantbot/assurance/": 138752,
     "quantbot/continuity/": 305061,
     "quantbot/control/": 0,
     "tests/assurance/": 157845,
     "tests/continuity/": 312886,
-    "tests/control/": 65584
+    "tests/control/": 66678
   },
   "per_file_bytes": {
     ".github/workflows/qnty-artifacts.yml": 1016,
     ".github/workflows/qnty-continuity.yml": 1077,
-    ".github/workflows/qnty-full-suite.yml": 1515,
+    ".github/workflows/qnty-full-suite.yml": 1554,
     ".github/workflows/qnty-sandbox.yml": 1218,
     "docs/control/active_task.json": 495,
     "docs/control/amendments/candidate1_h001_pre_data_assurance_v001.json": 8397,
@@ -169,11 +170,12 @@
     "tests/assurance/test_h001_rng_runtime_kat_reference_derivation.py": 12680,
     "tests/continuity/test_cross_agent_continuity.py": 312886,
     "tests/control/debt_allowlist.json": 4208,
-    "tests/control/governance_baseline.json": 10814,
+    "tests/control/governance_baseline.json": 10904,
     "tests/control/governance_ratchet.py": 6132,
     "tests/control/hygiene_ast.py": 14506,
     "tests/control/test_basetemp_path_sensitivity_debt.py": 3753,
     "tests/control/test_debt_allowlist_exactness.py": 939,
+    "tests/control/test_full_suite_workflow.py": 1004,
     "tests/control/test_governance_ratchet.py": 6028,
     "tests/control/test_no_dynamic_test_rebinding.py": 1818,
     "tests/control/test_no_historical_source_reconstruction.py": 4005,
@@ -182,5 +184,5 @@
     "tests/control/test_no_self_hash_source_binding.py": 2736,
     "tests/control/test_ruleset_snapshot_tool.py": 6840
   },
-  "total_bytes": 1464298
+  "total_bytes": 1465431
 }
