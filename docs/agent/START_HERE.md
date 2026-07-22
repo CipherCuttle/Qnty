@@ -27,8 +27,59 @@ Chat history, MemPalace, and local untracked notes are recall aids only and are
 - If `verify` passes, `show` prints the validated context packet: current task,
   protocol, phase, safety state, latest handoff receipt, blockers, required
   artifacts, exactly one next action, and prohibited actions.
-- Execute **only** the validated `NEXT_ACTION`. Anything listed under
-  `PROHIBITED` is forbidden regardless of what any other channel suggests.
+- `PROHIBITED` actions are absolute in every work lane.
+- Classify the requested work under the lane rules below before acting.
+
+## Work lanes and authority
+
+### `PROTOCOL_LANE`
+
+Work is in `PROTOCOL_LANE` if it advances or mutates protocol authority or state,
+including any action that:
+
+- executes Candidate 1 or another scientific protocol;
+- accesses real, quarantined, production, or otherwise protected data;
+- changes scientific state, execution count/budget, or runtime authorization;
+- changes `docs/control/active_task.json`, a handoff receipt, an amendment, or
+  continuity transition logic;
+- enables or modifies paper, shadow, or live execution behavior.
+
+In `PROTOCOL_LANE`:
+
+- execute only the validated `NEXT_ACTION`;
+- never perform anything listed under `PROHIBITED`;
+- append the required immutable handoff receipt and update the active-task pointer
+  before claiming completion.
+
+### `ADMIN_LANE`
+
+An explicitly requested, bounded administrative-maintenance task may proceed in
+`ADMIN_LANE` even when it is not the validated `NEXT_ACTION`, but only when all of
+the following are true:
+
+- it does not execute the protocol or access protected data;
+- it does not alter scientific state, execution counts/budgets, or runtime
+  authorization;
+- it does not modify active control records, handoff receipts, amendments, or
+  continuity transition logic;
+- it does not enable, invoke, or weaken guards around paper, shadow, or live
+  execution;
+- it does not perform anything listed under `PROHIBITED`;
+- its exact files and intended effects are stated before mutation.
+
+Examples include read-only PR review, CI/test/hygiene repair, repair of an
+existing bounded PR, agent-contract maintenance, and additive replacement-control
+tooling that remains unreachable from runtime.
+
+`NEXT_ACTION` is evidence about the next permitted protocol-state transition; it
+is not a universal scheduler for unrelated administrative maintenance.
+
+`ADMIN_LANE` work must not append a handoff receipt or rewrite
+`docs/control/active_task.json`. Report the lane, exact changed paths, and proof
+that protocol/scientific/runtime state remained unchanged.
+
+If lane classification is ambiguous, stop and report the ambiguity rather than
+assuming `ADMIN_LANE`.
 
 ## Control state contract
 
@@ -37,16 +88,17 @@ Chat history, MemPalace, and local untracked notes are recall aids only and are
   latest handoff receipt.
 - Handoff receipts under `docs/control/tasks/<task_id>/handoff_vNNN.json` are
   **immutable and append-only**. Never edit or delete an existing receipt.
-- To hand off work: write `handoff_v{N+1}.json` whose `predecessor` records the
-  previous receipt's path and byte SHA-256 (the first receipt declares
-  `"GENESIS"`), then rewrite `active_task.json` to point at the new receipt.
+- For `PROTOCOL_LANE` handoff work: write `handoff_v{N+1}.json` whose
+  `predecessor` records the previous receipt's path and byte SHA-256 (the first
+  receipt declares `"GENESIS"`), then rewrite `active_task.json` to point at the
+  new receipt.
 - Receipts never contain their own Git commit SHA; Git is the outer immutable
   envelope.
 - Canonical JSON bytes for all control documents: UTF-8,
   `json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)`,
   no trailing newline. Use `quantbot.continuity.canonical_json_bytes`.
 - Update the append-only handoff receipt **before** claiming completion of any
-  task step.
+  `PROTOCOL_LANE` task step.
 
 ## Safety invariants (fail-closed; the verifier enforces them)
 
