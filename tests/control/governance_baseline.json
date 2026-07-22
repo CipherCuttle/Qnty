@@ -97,7 +97,7 @@
     "quantbot/control/": 0,
     "tests/assurance/": 157845,
     "tests/continuity/": 312886,
-    "tests/control/": 66678
+    "tests/control/": 69171
   },
   "per_file_bytes": {
     ".github/workflows/qnty-artifacts.yml": 1016,
@@ -175,7 +175,7 @@
     "tests/control/hygiene_ast.py": 14506,
     "tests/control/test_basetemp_path_sensitivity_debt.py": 3753,
     "tests/control/test_debt_allowlist_exactness.py": 939,
-    "tests/control/test_full_suite_workflow.py": 1004,
+    "tests/control/test_full_suite_workflow.py": 3497,
     "tests/control/test_governance_ratchet.py": 6028,
     "tests/control/test_no_dynamic_test_rebinding.py": 1818,
     "tests/control/test_no_historical_source_reconstruction.py": 4005,
@@ -184,5 +184,5 @@
     "tests/control/test_no_self_hash_source_binding.py": 2736,
     "tests/control/test_ruleset_snapshot_tool.py": 6840
   },
-  "total_bytes": 1465431
+  "total_bytes": 1467924
 }
