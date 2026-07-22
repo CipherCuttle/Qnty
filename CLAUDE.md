@@ -12,8 +12,16 @@ Shared task-state rules live in the canonical contract, imported here:
 
 Before non-trivial work: run `.venv/bin/python -m quantbot.continuity verify`,
 then `show`. If `verify` fails, stop and report — do not reconstruct task state
-from chat or MemPalace. Execute only the validated `NEXT_ACTION`; append the
-handoff receipt under `docs/control/tasks/<task_id>/` before claiming completion.
+from chat or MemPalace. Then classify the task using the canonical contract:
+
+- `PROTOCOL_LANE` work must match the validated `NEXT_ACTION` and must complete
+  the required append-only handoff.
+- Explicitly requested bounded `ADMIN_LANE` maintenance may proceed outside
+  `NEXT_ACTION` only when it cannot alter protocol, scientific, data-access, or
+  runtime authority and does not touch active control records.
+- `PROHIBITED` actions remain absolute in both lanes.
+
+Do not append a handoff receipt for `ADMIN_LANE` work.
 
 ## Stack & layout
 - Python >=3.10; deps: numpy, pandas, requests; tests: pytest. No TS/frontend, no CI,
