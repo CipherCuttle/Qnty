@@ -1,7 +1,6 @@
 """Governance growth ratchet: the governed control-plane surface
-(quantbot/continuity/, quantbot/assurance/, tests/continuity/,
-tests/assurance/, docs/control/) may not grow beyond its recorded baseline
-except through an exact, path-scoped, expiring exception.
+(legacy and replacement code, tests, control/governance docs, and named QNTY
+tooling) may not grow beyond the accepted PR-0 all-surface baseline.
 
 This is a floor, not a target: a shrinkage (e.g. the entropy-brake PR
 deleting fake-pass wrappers) is always allowed and should be followed by
@@ -93,3 +92,25 @@ def test_seeded_growth_beyond_baseline_is_rejected(tmp_path):
     grew_dir = "quantbot/continuity/"
     ceiling = baseline["per_dir_bytes"][grew_dir] + _exception_budget_for(baseline, grew_dir)
     assert current["per_dir_bytes"][grew_dir] > ceiling
+
+
+def test_seeded_new_replacement_control_module_is_counted(tmp_path):
+    path = tmp_path / "quantbot/control/newly_named_governance_module.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("x = 1\n", encoding="utf-8")
+    assert measure_governed_surface(tmp_path)["per_dir_bytes"]["quantbot/control/"] == path.stat().st_size
+
+
+def test_seeded_new_replacement_control_test_is_counted(tmp_path):
+    path = tmp_path / "tests/control/test_newly_named_governance_contract.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("def test_contract(): pass\n", encoding="utf-8")
+    assert measure_governed_surface(tmp_path)["per_dir_bytes"]["tests/control/"] == path.stat().st_size
+
+
+def test_seeded_new_qnty_governance_tool_name_is_counted(tmp_path):
+    path = tmp_path / "scripts/qnty_new_governance_tool.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("# new basename still governed\n", encoding="utf-8")
+    measured = measure_governed_surface(tmp_path)
+    assert measured["per_dir_bytes"]["mixed_governance_files"] == path.stat().st_size

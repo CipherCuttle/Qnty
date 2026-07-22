@@ -22,7 +22,21 @@ import sys
 from datetime import datetime, timezone
 
 
-def _gh_api_json(args: list[str]) -> object:
+def _is_expected_unprotected_main(args: list[str], result: subprocess.CompletedProcess[str]) -> bool:
+    """Return true only for GitHub's normal unprotected-main response."""
+    if len(args) != 1 or not args[0].startswith("repos/") or not args[0].endswith("/branches/main/protection"):
+        return False
+    for text in (result.stderr, result.stdout):
+        try:
+            payload = json.loads(text.strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get("status") == "404" and payload.get("message") == "Branch not protected":
+            return True
+    return False
+
+
+def _gh_api_json(args: list[str], *, allow_unprotected_main: bool = False) -> object:
     result = subprocess.run(
         ["gh", "api", *args],
         capture_output=True,
@@ -30,9 +44,8 @@ def _gh_api_json(args: list[str]) -> object:
         check=False,
     )
     if result.returncode != 0:
-        # Branch protection 404s ("Branch not protected") when none is
-        # configured; that is a normal, expected state, not a tool failure.
-        if "404" in result.stderr or '"status":"404"' in result.stdout:
+        # Only this exact endpoint and response represent normal absence.
+        if allow_unprotected_main and _is_expected_unprotected_main(args, result):
             return None
         raise RuntimeError(f"gh api {' '.join(args)} failed: {result.stderr.strip()}")
     text = result.stdout.strip()
@@ -43,7 +56,7 @@ def _gh_api_json(args: list[str]) -> object:
 
 def normalize(repo: str, *, now: datetime | None = None) -> dict:
     rulesets = _gh_api_json(["--paginate", f"repos/{repo}/rulesets"])
-    branch_protection = _gh_api_json([f"repos/{repo}/branches/main/protection"])
+    branch_protection = _gh_api_json([f"repos/{repo}/branches/main/protection"], allow_unprotected_main=True)
     repo_settings = _gh_api_json([f"repos/{repo}"])
 
     merge_methods = {}
@@ -55,25 +68,35 @@ def normalize(repo: str, *, now: datetime | None = None) -> dict:
             "allow_rebase_merge": repo_settings.get("allow_rebase_merge"),
             "delete_branch_on_merge": repo_settings.get("delete_branch_on_merge"),
         }
-    if isinstance(rulesets, list):
-        for rs in rulesets:
-            if isinstance(rs, dict) and rs.get("bypass_actors"):
-                bypass_actors_present = True
+    detailed_rulesets = []
+    if not isinstance(rulesets, list):
+        raise RuntimeError("rulesets endpoint returned a non-list response")
+    for summary in rulesets:
+        if not isinstance(summary, dict) or not isinstance(summary.get("id"), int):
+            raise RuntimeError(f"ruleset summary missing integer id: {summary!r}")
+        detail = _gh_api_json([f"repos/{repo}/rulesets/{summary['id']}"])
+        if not isinstance(detail, dict):
+            raise RuntimeError(f"ruleset detail was not an object for id={summary['id']}")
+        detailed_rulesets.append(detail)
+        if detail.get("bypass_actors"):
+            bypass_actors_present = True
 
     captured_at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {
-        "captured_at_utc": captured_at,
-        "repo": repo,
-        "commands": [
-            f"gh api --paginate repos/{repo}/rulesets",
-            f"gh api repos/{repo}/branches/main/protection",
-        ],
-        "rulesets": rulesets if rulesets is not None else [],
-        "rulesets_configured": bool(rulesets),
-        "main_branch_protection": branch_protection,
-        "main_branch_protected": branch_protection is not None,
-        "merge_methods": merge_methods,
-        "bypass_actors_present": bypass_actors_present,
+        "capture": {"captured_at_utc": captured_at},
+        "policy": {
+            "repo": repo,
+            "commands": [
+                f"gh api --paginate repos/{repo}/rulesets",
+                f"gh api repos/{repo}/branches/main/protection",
+            ],
+            "rulesets": detailed_rulesets,
+            "rulesets_configured": bool(detailed_rulesets),
+            "main_branch_protection": branch_protection,
+            "main_branch_protected": branch_protection is not None,
+            "merge_methods": merge_methods,
+            "bypass_actors_present": bypass_actors_present,
+        },
     }
 
 

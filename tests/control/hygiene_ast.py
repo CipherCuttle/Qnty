@@ -264,32 +264,48 @@ def check_against_allowlist(violations: list[dict], allowlist_entries: list[dict
     """Compare detected violations against an exact debt allowlist.
 
     Each allowlist entry names the ``key_fields`` values it permits plus a
-    ``max_count`` bound. Returns a list of human-readable problem descriptions:
-    empty means every detected violation is covered by the allowlist within
-    its bound, and nothing exceeds it. A violation tuple absent from the
-    allowlist, or present but over its ``max_count``, is reported. Allowlist
-    entries are exact (file [+ function/wrapper/key/kind]) -- there is no
-    wildcard that matches a whole directory or file.
+    ``max_count`` exact count. Returns a list of human-readable problem
+    descriptions: empty means the detected debt multiset exactly equals the
+    allowlisted debt multiset. A new violation, an over-count, a stale
+    allowance, a missing key/path/symbol, or duplicate entries is reported.
+    Allowlist entries are exact (file [+ function/wrapper/key/kind]) -- there
+    is no wildcard that matches a whole directory or file.
     """
     actual_counts: Counter = Counter()
     for v in violations:
         actual_counts[tuple(v.get(f) for f in key_fields)] += 1
 
     allowed_max: dict[tuple, int] = {}
+    problems = []
     for entry in allowlist_entries:
         key = tuple(entry.get(f) for f in key_fields)
-        allowed_max[key] = entry.get("max_count", 0)
+        if any(value is None or value == "" for value in key):
+            problems.append(f"allowlist entry missing required key: {entry}")
+            continue
+        max_count = entry.get("max_count")
+        if not isinstance(max_count, int) or isinstance(max_count, bool) or max_count < 1:
+            problems.append(f"allowlist entry has invalid max_count: {entry}")
+            continue
+        if key in allowed_max:
+            problems.append(f"duplicate or contradictory allowlist entry: {dict(zip(key_fields, key))}")
+            continue
+        allowed_max[key] = max_count
 
-    problems = []
     for key, count in actual_counts.items():
         max_count = allowed_max.get(key)
         if max_count is None:
             problems.append(
                 f"NEW instance not in debt allowlist: {dict(zip(key_fields, key))} (count={count})"
             )
-        elif count > max_count:
+        elif count != max_count:
             problems.append(
-                f"instance exceeds allowlisted max_count: {dict(zip(key_fields, key))} "
+                f"allowlist count mismatch: {dict(zip(key_fields, key))} "
                 f"(found={count}, allowed={max_count})"
+            )
+    for key, max_count in allowed_max.items():
+        if key not in actual_counts:
+            problems.append(
+                f"stale allowlist entry has no detected instance: {dict(zip(key_fields, key))} "
+                f"(allowed={max_count})"
             )
     return problems

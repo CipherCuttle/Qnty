@@ -62,23 +62,27 @@ def test_normalize_reports_absent_enforcement_faithfully(monkeypatch):
 
     snapshot = tool.normalize("CipherCuttle/Qnty", now=datetime(2026, 1, 1, tzinfo=timezone.utc))
 
-    assert snapshot["rulesets"] == []
-    assert snapshot["rulesets_configured"] is False
-    assert snapshot["main_branch_protected"] is False
-    assert snapshot["main_branch_protection"] is None
-    assert snapshot["merge_methods"] == {
+    policy = snapshot["policy"]
+    assert policy["rulesets"] == []
+    assert policy["rulesets_configured"] is False
+    assert policy["main_branch_protected"] is False
+    assert policy["main_branch_protection"] is None
+    assert policy["merge_methods"] == {
         "allow_squash_merge": True,
         "allow_merge_commit": True,
         "allow_rebase_merge": True,
         "delete_branch_on_merge": False,
     }
-    assert snapshot["bypass_actors_present"] is False
+    assert policy["bypass_actors_present"] is False
 
 
 def test_normalize_flags_bypass_actors_when_present(monkeypatch):
     responses = {
         ("gh", "api", "--paginate", "repos/CipherCuttle/Qnty/rulesets"): _FakeCompletedProcess(
-            stdout=json.dumps([{"id": 1, "bypass_actors": [{"actor_id": 1}]}]), returncode=0
+            stdout=json.dumps([{"id": 1}]), returncode=0
+        ),
+        ("gh", "api", "repos/CipherCuttle/Qnty/rulesets/1"): _FakeCompletedProcess(
+            stdout=json.dumps({"id": 1, "bypass_actors": [{"actor_id": 1}]}), returncode=0
         ),
         ("gh", "api", "repos/CipherCuttle/Qnty/branches/main/protection"): _FakeCompletedProcess(
             stdout=json.dumps({"required_status_checks": {}}), returncode=0
@@ -89,13 +93,70 @@ def test_normalize_flags_bypass_actors_when_present(monkeypatch):
 
     snapshot = tool.normalize("CipherCuttle/Qnty")
 
-    assert snapshot["bypass_actors_present"] is True
-    assert snapshot["main_branch_protected"] is True
+    assert snapshot["policy"]["bypass_actors_present"] is True
+    assert snapshot["policy"]["main_branch_protected"] is True
+
+
+def test_list_summary_cannot_hide_bypass_actors(monkeypatch):
+    responses = {
+        ("gh", "api", "--paginate", "repos/CipherCuttle/Qnty/rulesets"): _FakeCompletedProcess(
+            stdout=json.dumps([{"id": 7, "name": "summary-without-bypass"}]), returncode=0
+        ),
+        ("gh", "api", "repos/CipherCuttle/Qnty/rulesets/7"): _FakeCompletedProcess(
+            stdout=json.dumps({"id": 7, "bypass_actors": [{"actor_id": 9}]}), returncode=0
+        ),
+        ("gh", "api", "repos/CipherCuttle/Qnty/branches/main/protection"): _FakeCompletedProcess(
+            stdout=json.dumps({}), returncode=0
+        ),
+        ("gh", "api", "repos/CipherCuttle/Qnty"): _FakeCompletedProcess(stdout=json.dumps({}), returncode=0),
+    }
+    monkeypatch.setattr(subprocess, "run", _fake_run_factory(responses))
+    assert tool.normalize("CipherCuttle/Qnty")["policy"]["bypass_actors_present"] is True
+
+
+def test_unexpected_404_raises(monkeypatch):
+    responses = {
+        ("gh", "api", "--paginate", "repos/CipherCuttle/Qnty/rulesets"): _FakeCompletedProcess(
+            stdout="", stderr='{"message":"Not Found","status":"404"}', returncode=1
+        ),
+    }
+    monkeypatch.setattr(subprocess, "run", _fake_run_factory(responses))
+    import pytest
+    with pytest.raises(RuntimeError, match="failed"):
+        tool.normalize("CipherCuttle/Qnty")
+
+
+def test_unexpected_branch_protection_404_raises(monkeypatch):
+    responses = {
+        ("gh", "api", "--paginate", "repos/CipherCuttle/Qnty/rulesets"): _FakeCompletedProcess(stdout="[]", returncode=0),
+        ("gh", "api", "repos/CipherCuttle/Qnty/branches/main/protection"): _FakeCompletedProcess(
+            stdout="", stderr='{"message":"Not Found","status":"404"}', returncode=1
+        ),
+    }
+    monkeypatch.setattr(subprocess, "run", _fake_run_factory(responses))
+    import pytest
+    with pytest.raises(RuntimeError, match="failed"):
+        tool.normalize("CipherCuttle/Qnty")
+
+
+def test_unchanged_policy_is_deterministic_across_capture_times(monkeypatch):
+    responses = {
+        ("gh", "api", "--paginate", "repos/CipherCuttle/Qnty/rulesets"): _FakeCompletedProcess(stdout="[]", returncode=0),
+        ("gh", "api", "repos/CipherCuttle/Qnty/branches/main/protection"): _FakeCompletedProcess(
+            stdout="", stderr='{"message":"Branch not protected","status":"404"}', returncode=1
+        ),
+        ("gh", "api", "repos/CipherCuttle/Qnty"): _FakeCompletedProcess(stdout=json.dumps({}), returncode=0),
+    }
+    monkeypatch.setattr(subprocess, "run", _fake_run_factory(responses))
+    first = tool.normalize("CipherCuttle/Qnty", now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    second = tool.normalize("CipherCuttle/Qnty", now=datetime(2026, 1, 2, tzinfo=timezone.utc))
+    assert first["policy"] == second["policy"]
+    assert first["capture"] != second["capture"]
 
 
 def test_committed_snapshot_matches_audit_baseline():
     snapshot_path = ROOT / "docs/governance/github_ruleset_snapshot.json"
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    assert snapshot["rulesets"] == []
-    assert snapshot["main_branch_protected"] is False
-    assert snapshot["repo"] == "CipherCuttle/Qnty"
+    assert snapshot["policy"]["rulesets"] == []
+    assert snapshot["policy"]["main_branch_protected"] is False
+    assert snapshot["policy"]["repo"] == "CipherCuttle/Qnty"

@@ -16,13 +16,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Replacement control-plane directories are governed alongside their legacy
+# counterparts.  New control work must live in one of these prefixes, rather
+# than being hidden beside an older surface under a new basename.
 GOVERNED_DIRS = [
     "quantbot/continuity/",
     "quantbot/assurance/",
+    "quantbot/control/",
     "tests/continuity/",
     "tests/assurance/",
+    "tests/control/",
     "docs/control/",
+    "docs/governance/",
 ]
+
+# These directories contain unrelated repository tooling, so count only the
+# QNTY governance namespace within them.  Prefixes intentionally cover future
+# QNTY governance files regardless of basename; exact paths preserve the two
+# existing entrypoints whose names do not use that namespace convention.
+GOVERNED_FILE_PREFIXES = ["scripts/qnty_", ".github/workflows/qnty-"]
+GOVERNED_EXACT_FILES = {
+    "scripts/qnty_ruleset_snapshot.py",
+    ".github/workflows/qnty-full-suite.yml",
+}
 
 # Generic/boilerplate basenames that recur across many unrelated packages and
 # would swamp the relocation tripwire with false positives (every package has
@@ -47,6 +63,16 @@ def measure_governed_surface(root: Path) -> dict:
             dir_total += path.stat().st_size
             governed_files.append(str(path.relative_to(root)))
         per_dir_bytes[governed_dir] = dir_total
+    mixed_files = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or ".git" in path.parts or ".venv" in path.parts or "__pycache__" in path.parts:
+            continue
+        rel = str(path.relative_to(root))
+        if rel in GOVERNED_EXACT_FILES or any(rel.startswith(prefix) for prefix in GOVERNED_FILE_PREFIXES):
+            mixed_files.append((rel, path.stat().st_size))
+
+    per_dir_bytes["mixed_governance_files"] = sum(size for _, size in mixed_files)
+    governed_files.extend(rel for rel, _ in mixed_files)
     return {
         "per_dir_bytes": per_dir_bytes,
         "total_bytes": sum(per_dir_bytes.values()),
@@ -70,7 +96,10 @@ def find_relocated_governance_basenames(root: Path, governed_basenames: list[str
         if not path.is_file() or path.name not in basenames:
             continue
         rel = path.relative_to(root)
-        if any(str(rel).startswith(d) for d in GOVERNED_DIRS):
+        rel_text = str(rel)
+        if any(rel_text.startswith(d) for d in GOVERNED_DIRS):
+            continue
+        if rel_text in GOVERNED_EXACT_FILES or any(rel_text.startswith(prefix) for prefix in GOVERNED_FILE_PREFIXES):
             continue
         if ".git" in rel.parts or ".venv" in rel.parts or "__pycache__" in rel.parts:
             continue
