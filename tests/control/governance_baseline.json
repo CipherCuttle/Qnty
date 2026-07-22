@@ -1,0 +1,16 @@
+{
+  "_comment": "Frozen governance-surface baseline, measured against origin/main at the commit below using tests/control/governance_ratchet.py's measure_governed_surface(). Metric is total bytes per directory, not newline count (several docs/control/ files are canonical JSON with no trailing newline, per docs/agent/START_HERE.md, which would silently read as zero lines). The ratchet forbids net growth of total_bytes beyond this baseline plus any active exception listed below.",
+  "measured_at_commit": "1ffd46cd8b906d6886281becfc3b7172581e630c",
+  "measured_at_ref": "origin/main",
+  "metric": "total_bytes_per_directory",
+  "per_dir_bytes": {
+    "quantbot/continuity/": 305061,
+    "quantbot/assurance/": 138752,
+    "tests/continuity/": 312886,
+    "tests/assurance/": 157845,
+    "docs/control/": 473794
+  },
+  "total_bytes": 1388338,
+  "governed_basenames": ["__init__.py", "__main__.py", "active_task.json", "candidate1_h001_pre_data_assurance_v001.json", "candidate1_h001_real_falsification_design_v001.json", "candidate1_h001_synthetic_null_calibration_execution_governance_v001.json", "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json", "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_governance_v001.json", "candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_activation_v001.json", "candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_governance_v001.json", "candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_v001.json", "candidate1_h001_synthetic_null_calibration_spec_freeze_activation_v001.json", "candidate1_h001_synthetic_null_calibration_spec_freeze_governance_v001.json", "candidate1_h001_temporal_causality_activation_v001.json", "candidate1_h001_temporal_causality_v001.json", "candidate1_v1_synthetic_sandbox_v001.json", "context.py", "contracts.py", "h001_null_calibration.py", "h001_numerical_conventions_candidate_v030.py", "h001_numerical_conventions_review_completion_v031.py", "h001_rng_runtime_activation_v029.py", "h001_rng_runtime_candidate_v027.py", "h001_rng_runtime_review_completion_v028.py", "handoff_v001.json", "handoff_v002.json", "handoff_v003.json", "handoff_v004.json", "handoff_v005.json", "handoff_v006.json", "handoff_v007.json", "handoff_v008.json", "handoff_v009.json", "handoff_v010.json", "handoff_v011.json", "handoff_v012.json", "handoff_v013.json", "handoff_v014.json", "handoff_v015.json", "handoff_v016.json", "handoff_v017.json", "handoff_v018.json", "handoff_v019.json", "handoff_v020.json", "handoff_v021.json", "handoff_v022.json", "handoff_v023.json", "handoff_v024.json", "handoff_v025.json", "handoff_v026.json", "handoff_v027.json", "handoff_v028.json", "handoff_v029.json", "handoff_v030.json", "handoff_v031.json", "test_contracts.py", "test_cross_agent_continuity.py", "test_h001_null_calibration.py", "test_h001_numerical_conventions_kat_independent_derivation.py", "test_h001_numerical_conventions_kat_reference_derivation.py", "test_h001_rng_runtime_kat_numpy_derivation.py", "test_h001_rng_runtime_kat_reference_derivation.py"],
+  "exceptions": []
+}
