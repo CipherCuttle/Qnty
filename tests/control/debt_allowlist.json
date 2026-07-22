@@ -1,0 +1,45 @@
+{
+  "_comment": "Exact, path-scoped debt allowlist of governance anti-pattern instances confirmed present on origin/main (1ffd46cd8b906d6886281becfc3b7172581e630c) at the time PR-0 (chore/control-enforcement-baseline) was authored. Every entry here is verified by running tests/control/hygiene_ast.py's detectors directly against that commit -- not by manual grep. This allowlist permits exactly these already-existing instances and rejects any new one (a new instance at a new location, a new wrapper/function name beyond what is listed, or any instance exceeding max_count). It intentionally does NOT grant a broad per-directory or per-file wildcard.",
+  "removal_pr": "fix/continuity-entropy-brake-v032 (PHASE E / PR-3 of the continuity/control replacement architecture -- see plans/ hostile-review mandate). Every entry below must be removed or migrated to an honest historical fixture by that PR; none may be renewed.",
+  "globals_rebindings": [
+    {"file": "tests/continuity/test_cross_agent_continuity.py", "wrapper": "_v028_guard", "max_count": 1},
+    {"file": "tests/continuity/test_cross_agent_continuity.py", "wrapper": "_v029_guard", "max_count": 2},
+    {"file": "tests/continuity/test_cross_agent_continuity.py", "wrapper": "_v030_guard", "max_count": 1},
+    {"file": "tests/continuity/test_cross_agent_continuity.py", "wrapper": "_v031_guard", "max_count": 1}
+  ],
+  "fake_pass_wrappers": [
+    {"file": "tests/continuity/test_cross_agent_continuity.py", "function": "_v027_guard", "max_count": 1},
+    {"file": "tests/continuity/test_cross_agent_continuity.py", "function": "_v028_guard", "max_count": 2},
+    {"file": "tests/continuity/test_cross_agent_continuity.py", "function": "_v029_guard", "max_count": 1},
+    {"file": "tests/continuity/test_cross_agent_continuity.py", "function": "_v030_guard", "max_count": 1},
+    {"file": "tests/continuity/test_cross_agent_continuity.py", "function": "_v031_guard", "max_count": 1}
+  ],
+  "source_reconstruction_functions": [
+    {
+      "file": "tests/continuity/test_cross_agent_continuity.py",
+      "function": "restore_historical_h001_inputs",
+      "max_count": 1,
+      "note": "In-place byte-level find/replace truncation/rewrite of quantbot/experiment/h001_real_falsification_preregistration.py and tests/experiment/test_h001_real_falsification_preregistration.py source, hash-verified."
+    },
+    {
+      "file": "tests/continuity/test_cross_agent_continuity.py",
+      "function": "_restore_v026_sources",
+      "max_count": 1,
+      "note": "Truncates current source back to a pre-v027-append-marker boundary, hash-verified against _V026_PINNED_SOURCES."
+    },
+    {
+      "file": "tests/continuity/test_cross_agent_continuity.py",
+      "function": "_restore_h001_calibration_governance_assurance_tree",
+      "max_count": 1,
+      "note": "CORRECTION: this helper was originally described (by the task author) as living only on a separate, not-yet-merged local branch and therefore excluded from this allowlist. Direct verification (`git show origin/main:... | grep`, `git log --all -S`) proves it is already committed on origin/main via commit adccdb0 / merged PR #295-296, predating the separate branch entirely. It is included here because omitting it would make the hygiene test fail against origin/main's own unmodified baseline content, which this PR must not do. Flagged to the requester as a factual correction to the PR-0 instructions."
+    }
+  ],
+  "self_hash_source_bindings": [
+    {"file": "quantbot/continuity/context.py", "key": "tests/assurance/test_contracts.py", "kind": "pinned_hash", "max_count": 2},
+    {"file": "quantbot/continuity/context.py", "key": "tests/assurance/test_h001_null_calibration.py", "kind": "pinned_hash", "max_count": 2},
+    {"file": "quantbot/continuity/context.py", "key": "tests/continuity/test_cross_agent_continuity.py", "kind": "pinned_hash", "max_count": 1},
+    {"file": "quantbot/continuity/context.py", "key": "quantbot/continuity/context.py", "kind": "dynamic_hash", "max_count": 2},
+    {"file": "quantbot/continuity/context.py", "key": "tests/continuity/test_cross_agent_continuity.py", "kind": "dynamic_hash", "max_count": 2}
+  ],
+  "per_phase_validator_modules": []
+}

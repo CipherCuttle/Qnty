@@ -1,0 +1,23 @@
+{
+  "capture": {
+    "captured_at_utc": "2026-07-22T13:38:16Z"
+  },
+  "policy": {
+    "bypass_actors_present": false,
+    "commands": [
+      "gh api --paginate repos/CipherCuttle/Qnty/rulesets",
+      "gh api repos/CipherCuttle/Qnty/branches/main/protection"
+    ],
+    "main_branch_protected": false,
+    "main_branch_protection": null,
+    "merge_methods": {
+      "allow_merge_commit": true,
+      "allow_rebase_merge": true,
+      "allow_squash_merge": true,
+      "delete_branch_on_merge": false
+    },
+    "repo": "CipherCuttle/Qnty",
+    "rulesets": [],
+    "rulesets_configured": false
+  }
+}

@@ -1,0 +1,44 @@
+name: qnty-full-suite
+
+# Always-on, unfiltered full-suite check. Unlike qnty-continuity /
+# qnty-sandbox / qnty-artifacts (which each run only their own test
+# directory), this workflow has no `paths:` filter and runs the entire
+# repository test suite on every push to main and every pull request, so a
+# regression anywhere (tests/experiment, tests/lab, tests/assurance, the
+# root-level paper-ledger/replay/walkforward tests, etc.) is visible in CI
+# instead of only being caught by a manual `pytest -q`.
+#
+# Uses pytest's default (unset) --basetemp, which resolves under /tmp. A
+# non-/tmp basetemp has been shown to produce path-sensitivity false failures
+# in tests/artifacts/test_store.py (see tests/control/test_basetemp_path_sensitivity_debt.py
+# for an isolated reproduction and explanation); do not add --basetemp here.
+#
+# This workflow existing does not by itself make it a *required* check --
+# that is a GitHub branch-protection/ruleset setting, applied separately and
+# only after the requester reviews the proposed ruleset configuration.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package (test extras only)
+        run: python -m pip install -e ".[test]"
+
+      - name: Full suite (unfiltered, default /tmp-backed tmp_path)
+        run: python -m pytest -q
