@@ -154,9 +154,38 @@ def test_unchanged_policy_is_deterministic_across_capture_times(monkeypatch):
     assert first["capture"] != second["capture"]
 
 
-def test_committed_snapshot_matches_audit_baseline():
+def test_committed_snapshot_matches_active_enforcement_audit():
     snapshot_path = ROOT / "docs/governance/github_ruleset_snapshot.json"
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    assert snapshot["policy"]["rulesets"] == []
-    assert snapshot["policy"]["main_branch_protected"] is False
-    assert snapshot["policy"]["repo"] == "CipherCuttle/Qnty"
+    policy = snapshot["policy"]
+
+    assert policy["repo"] == "CipherCuttle/Qnty"
+    assert policy["rulesets_configured"] is True
+    assert policy["main_branch_protected"] is False
+    assert policy["main_branch_protection"] is None
+    assert policy["bypass_actors_present"] is False
+
+    assert len(policy["rulesets"]) == 1
+    ruleset = policy["rulesets"][0]
+    assert ruleset["id"] == 19570430
+    assert ruleset["name"] == "Qnty main enforcement"
+    assert ruleset["enforcement"] == "active"
+    assert ruleset["target"] == "branch"
+    assert ruleset["bypass_actors"] == []
+    assert ruleset["conditions"]["ref_name"]["include"] == ["refs/heads/main"]
+    assert ruleset["conditions"]["ref_name"]["exclude"] == []
+
+    rule_types = [rule["type"] for rule in ruleset["rules"]]
+    assert rule_types == ["deletion", "non_fast_forward", "pull_request", "required_status_checks"]
+
+    rules_by_type = {rule["type"]: rule for rule in ruleset["rules"]}
+
+    pr_params = rules_by_type["pull_request"]["parameters"]
+    assert pr_params["required_approving_review_count"] == 0
+    assert pr_params["require_code_owner_review"] is False
+    assert pr_params["require_last_push_approval"] is False
+
+    status_params = rules_by_type["required_status_checks"]["parameters"]
+    assert status_params["strict_required_status_checks_policy"] is True
+    contexts = {check["context"]: check["integration_id"] for check in status_params["required_status_checks"]}
+    assert contexts == {"artifacts": 15368, "continuity": 15368, "full-suite": 15368}
