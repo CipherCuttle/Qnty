@@ -333,22 +333,79 @@ def load_and_validate_control_state(raw: bytes) -> ControlState:
     return _validate_root(value)
 
 
+def _revalidate(state: ControlState) -> ControlState:
+    """Re-run schema validation on a ControlState's own field content.
+
+    A ControlState (or any nested frozen dataclass) can be forged with
+    dataclasses.replace() without ever passing through
+    load_and_validate_control_state(). Python's type system alone cannot
+    distinguish a forged instance from a genuinely validated one, so this
+    rebuilds an explicit plain mapping from the dataclass fields and pushes
+    it back through the same schema validators used on first load.
+    """
+    if (
+        type(state) is not ControlState
+        or type(state.scientific_state) is not ScientificState
+        or type(state.administrative_state) is not AdministrativeState
+        or type(state.runtime_authorization) is not RuntimeAuthorization
+        or type(state.provenance) is not Provenance
+    ):
+        raise TypeError("expected a ControlState produced by load_and_validate_control_state")
+    mapping = {
+        "control_kind": state.control_kind,
+        "schema_version": state.schema_version,
+        "state_revision": state.state_revision,
+        "protocol_id": state.protocol_id,
+        "scientific_state": {
+            "hypothesis_id": state.scientific_state.hypothesis_id,
+            "edge_status": state.scientific_state.edge_status,
+            "live_status": state.scientific_state.live_status,
+            "real_data_access": state.scientific_state.real_data_access,
+            "synthetic_calibration_execution": state.scientific_state.synthetic_calibration_execution,
+            "execution_count": state.scientific_state.execution_count,
+            "execution_budget": state.scientific_state.execution_budget,
+        },
+        "administrative_state": {
+            "workflow_status": state.administrative_state.workflow_status,
+            "proposal_ref": state.administrative_state.proposal_ref,
+            "superseded_by": state.administrative_state.superseded_by,
+        },
+        "runtime_authorization": {
+            "public_data_fetch": state.runtime_authorization.public_data_fetch,
+            "h001_real_data_fetch": state.runtime_authorization.h001_real_data_fetch,
+            "synthetic_calibration": state.runtime_authorization.synthetic_calibration,
+            "paper_execution": state.runtime_authorization.paper_execution,
+            "shadow_execution": state.runtime_authorization.shadow_execution,
+            "live_execution": state.runtime_authorization.live_execution,
+        },
+        "provenance": {
+            "source_receipt_path": state.provenance.source_receipt_path,
+            "source_receipt_sha256": state.provenance.source_receipt_sha256,
+            "source_head_commit": state.provenance.source_head_commit,
+        },
+    }
+    return _validate_root(mapping)
+
+
 def authorize(state: ControlState, action: RuntimeAction) -> AuthorizationDecision:
     if not isinstance(state, ControlState):
         raise TypeError("authorize() requires a validated ControlState")
     if not isinstance(action, RuntimeAction):
         raise TypeError("authorize() requires a RuntimeAction enum member")
+    validated = _revalidate(state)
     return AuthorizationDecision(
         action=action,
         authorized=False,
         reason="schema_version 1.0.0 is a deny-only bootstrap; all runtime actions are denied",
-        state_revision=state.state_revision,
+        state_revision=validated.state_revision,
     )
 
 
 def validate_transition(previous: ControlState, candidate: ControlState) -> None:
     if not isinstance(previous, ControlState) or not isinstance(candidate, ControlState):
         raise TypeError("validate_transition() requires validated ControlState values")
+    previous = _revalidate(previous)
+    candidate = _revalidate(candidate)
     if previous.control_kind != candidate.control_kind:
         _fail("IDENTITY_CHANGED", "$.control_kind", "control_kind must not change across a transition")
     if previous.schema_version != candidate.schema_version:

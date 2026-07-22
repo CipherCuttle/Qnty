@@ -316,7 +316,9 @@ def test_transition_rejects_hypothesis_change():
     )
     with pytest.raises(ControlStateValidationError) as excinfo:
         validate_transition(previous, candidate)
-    assert excinfo.value.code == "IDENTITY_CHANGED"
+    # hypothesis_id is itself a fixed schema literal, so revalidation now
+    # catches this before the identity-comparison step is ever reached.
+    assert excinfo.value.code == "INVALID_LITERAL"
 
 
 def test_transition_rejects_schema_version_change():
@@ -324,7 +326,9 @@ def test_transition_rejects_schema_version_change():
     candidate = dataclasses.replace(previous, state_revision=33, schema_version="2.0.0")
     with pytest.raises(ControlStateValidationError) as excinfo:
         validate_transition(previous, candidate)
-    assert excinfo.value.code == "IDENTITY_CHANGED"
+    # schema_version is itself pinned by the schema, so revalidation now
+    # catches this before the identity-comparison step is ever reached.
+    assert excinfo.value.code == "UNSUPPORTED_SCHEMA_VERSION"
 
 
 def test_validate_transition_rejects_non_control_state_arguments():
@@ -333,6 +337,121 @@ def test_validate_transition_rejects_non_control_state_arguments():
         validate_transition(previous, BASE_STATE)
     with pytest.raises(TypeError):
         validate_transition(BASE_STATE, previous)
+
+
+# --- Forged-state revalidation boundary: dataclasses.replace() must not bypass schema. ---
+
+
+def test_authorize_rejects_forged_live_execution_authorized():
+    previous = _load(BASE_STATE)
+    forged = dataclasses.replace(
+        previous,
+        runtime_authorization=dataclasses.replace(previous.runtime_authorization, live_execution="AUTHORIZED"),
+    )
+    with pytest.raises(ControlStateValidationError) as excinfo:
+        authorize(forged, RuntimeAction.LIVE_EXECUTION)
+    assert excinfo.value.code == "INVALID_LITERAL"
+
+
+def test_authorize_rejects_forged_edge_proven():
+    previous = _load(BASE_STATE)
+    forged = dataclasses.replace(
+        previous,
+        scientific_state=dataclasses.replace(previous.scientific_state, edge_status="EDGE_PROVEN"),
+    )
+    with pytest.raises(ControlStateValidationError) as excinfo:
+        authorize(forged, RuntimeAction.LIVE_EXECUTION)
+    assert excinfo.value.code == "INVALID_LITERAL"
+
+
+@pytest.mark.parametrize("bad_count", [1, -1, 100])
+def test_authorize_rejects_forged_nonzero_execution_count(bad_count):
+    previous = _load(BASE_STATE)
+    forged = dataclasses.replace(
+        previous,
+        scientific_state=dataclasses.replace(previous.scientific_state, execution_count=bad_count),
+    )
+    with pytest.raises(ControlStateValidationError) as excinfo:
+        authorize(forged, RuntimeAction.LIVE_EXECUTION)
+    assert excinfo.value.code == "INVALID_LITERAL"
+
+
+@pytest.mark.parametrize(
+    "bad_revision,expected_code",
+    [(True, "WRONG_TYPE"), (0, "INVALID_REVISION"), (-5, "INVALID_REVISION")],
+)
+def test_authorize_rejects_forged_boolean_or_invalid_revision(bad_revision, expected_code):
+    previous = _load(BASE_STATE)
+    forged = dataclasses.replace(previous, state_revision=bad_revision)
+    with pytest.raises(ControlStateValidationError) as excinfo:
+        authorize(forged, RuntimeAction.LIVE_EXECUTION)
+    assert excinfo.value.code == expected_code
+
+
+@pytest.mark.parametrize("action", list(RuntimeAction))
+def test_validate_transition_rejects_forged_authorized_action(action):
+    previous = _load(BASE_STATE)
+    forged_candidate = dataclasses.replace(
+        previous,
+        state_revision=previous.state_revision + 1,
+        runtime_authorization=dataclasses.replace(
+            previous.runtime_authorization, **{action.value: "AUTHORIZED"}
+        ),
+    )
+    with pytest.raises(ControlStateValidationError) as excinfo:
+        validate_transition(previous, forged_candidate)
+    assert excinfo.value.code == "INVALID_LITERAL"
+
+
+@pytest.mark.parametrize("field,bad_value", SCIENTIFIC_LITERAL_FIELDS[1:])
+def test_validate_transition_rejects_forged_scientific_invariant(field, bad_value):
+    previous = _load(BASE_STATE)
+    forged_candidate = dataclasses.replace(
+        previous,
+        state_revision=previous.state_revision + 1,
+        scientific_state=dataclasses.replace(previous.scientific_state, **{field: bad_value}),
+    )
+    with pytest.raises(ControlStateValidationError) as excinfo:
+        validate_transition(previous, forged_candidate)
+    assert excinfo.value.code == "INVALID_LITERAL"
+
+
+def test_validate_transition_rejects_malformed_nested_content_at_correct_revision():
+    previous = _load(BASE_STATE)
+    forged_candidate = dataclasses.replace(
+        previous,
+        state_revision=previous.state_revision + 1,
+        provenance=dataclasses.replace(previous.provenance, source_receipt_sha256="not-a-hash"),
+    )
+    with pytest.raises(ControlStateValidationError) as excinfo:
+        validate_transition(previous, forged_candidate)
+    assert excinfo.value.code == "INVALID_SHA256"
+
+
+def test_loaded_state_still_authorizes_only_explicit_denial():
+    state = _load(BASE_STATE)
+    for action in RuntimeAction:
+        assert authorize(state, action).authorized is False
+
+
+def test_valid_n_to_n_plus_1_transition_still_passes_after_revalidation():
+    previous = _load(BASE_STATE)
+    candidate = dataclasses.replace(previous, state_revision=previous.state_revision + 1)
+    validate_transition(previous, candidate)
+
+
+def test_administrative_only_replace_remains_irrelevant_to_authorization():
+    previous = _load(BASE_STATE)
+    administrative_only = dataclasses.replace(
+        previous,
+        administrative_state=dataclasses.replace(
+            previous.administrative_state,
+            workflow_status="APPROVED",
+            superseded_by="docs/control/amendments/example.json",
+        ),
+    )
+    for action in RuntimeAction:
+        assert authorize(previous, action) == authorize(administrative_only, action)
 
 
 def _module_ast() -> ast.Module:

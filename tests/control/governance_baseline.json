@@ -13,14 +13,14 @@
     {
       "surface": "quantbot/control/",
       "path": "quantbot/control/state.py",
-      "max_additional_bytes": 12585,
+      "max_additional_bytes": 15499,
       "reason": "Temporary additive replacement-control work: new deny-only canonical control-state validator, schema 1.0.0, unreachable from runtime.",
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
     },
     {
       "surface": "tests/control/",
       "path": "tests/control/test_control_state.py",
-      "max_additional_bytes": 12936,
+      "max_additional_bytes": 17795,
       "reason": "Temporary additive replacement-control work: deterministic adversarial tests for the new deny-only control-state validator.",
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
     },
