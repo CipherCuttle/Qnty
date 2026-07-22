@@ -48,6 +48,7 @@ def test_classifier_owns_every_governance_surface():
     assert classify_governance_path("quantbot/control/guard.py") == "quantbot/control/"
     assert classify_governance_path("scripts/qnty_runtime_guard_audit.py") == MIXED_SURFACE
     assert classify_governance_path(".github/workflows/qnty-new-check.yml") == MIXED_SURFACE
+    assert classify_governance_path("scripts/qnty_tools/unrelated.py") is None
 
 
 def test_exact_exception_for_replacement_control_file_is_accepted(tmp_path):

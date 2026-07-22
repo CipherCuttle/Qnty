@@ -15,7 +15,6 @@ GOVERNED_DIRS = [
     "docs/control/", "docs/governance/",
 ]
 MIXED_SURFACE = "mixed_governance_files"
-GOVERNED_FILE_PREFIXES = ("scripts/qnty_", ".github/workflows/qnty-")
 _GENERIC_BASENAMES = {"__init__.py", "__main__.py", "conftest.py", "README.md"}
 _EXCLUDED_DIR_PARTS = {".git", ".venv", "__pycache__"}
 _GLOB_CHARS = set("*?[]{}")
@@ -27,7 +26,10 @@ def classify_governance_path(relative_path: str | Path) -> str | None:
     for surface in GOVERNED_DIRS:
         if rel.startswith(surface):
             return surface
-    if rel.startswith(GOVERNED_FILE_PREFIXES):
+    pure = PurePosixPath(rel)
+    if pure.parent == PurePosixPath("scripts") and pure.name.startswith("qnty_"):
+        return MIXED_SURFACE
+    if pure.parent == PurePosixPath(".github/workflows") and pure.name.startswith("qnty-"):
         return MIXED_SURFACE
     return None
 
