@@ -17,8 +17,8 @@ _legacy_adapter = importlib.import_module("quantbot" + ".control.legacy_adapter"
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTIVE_PATH = "docs/control/active_task.json"
-RECEIPT_PATH = "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v032.json"
-HEAD = "afada1090c5312f329fd6be9d2bfbd7525d1077c"
+RECEIPT_PATH = "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v033.json"
+HEAD = "6fb0e9b88e16a504a9e053f53ac7e5e55b40fda8"
 EFFECTIVE = tuple(
     sorted(
         path for path in (ROOT / "docs/control/amendments").glob("*.json")
@@ -97,10 +97,10 @@ def _fails(code, **inputs):
 def test_current_state_projects_exactly_and_is_repeatable():
     state = project_legacy_control_state(**_inputs())
     assert project_legacy_control_state(**_inputs()) == state
-    assert state.state_revision == 33
+    assert state.state_revision == 34
     assert state.protocol_id == "real_btc_candidate1_train_mechanism_decomposition_v0"
     assert state.administrative_state.workflow_status == "UNDER_REVIEW"
-    assert state.administrative_state.proposal_ref == "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json"
+    assert state.administrative_state.proposal_ref == "quantbot/experiment/h001_null_calibration_engine.py"
     assert state.provenance.source_receipt_path == RECEIPT_PATH
     assert state.provenance.source_receipt_sha256 == hashlib.sha256((ROOT / RECEIPT_PATH).read_bytes()).hexdigest()
     assert state.provenance.source_head_commit == HEAD
@@ -600,6 +600,85 @@ def test_source_receipt_authority_like_keys_stay_deny_safe_at_false(key):
     inputs = _mutate_receipt(lambda value: value.__setitem__(key, False))
     state = project_legacy_control_state(**inputs)
     _assert_deny_only(state)
+
+
+# --- v033 transition: receipt index 33, engine-implementation-for-review
+# evidence only, no new effective amendment role. ---
+
+
+@pytest.mark.parametrize("bad_index", [32, 34])
+def test_receipt_index_32_and_34_fail_under_current_v033_adapter(bad_index):
+    _fails("LEGACY_REVISION_MISMATCH", **_mutate_receipt(lambda value: value.__setitem__("receipt_index", bad_index)))
+
+
+def test_missing_engine_implementation_binding_fails():
+    inputs = _mutate_receipt(lambda value: value.pop("engine_implementation_binding"))
+    _fails("LEGACY_MISSING_FIELD", **inputs)
+
+
+def test_missing_engine_implementation_status_fails():
+    inputs = _mutate_receipt(lambda value: value["engine_implementation_binding"].pop("engine_implementation_status"))
+    _fails("LEGACY_AUTHORITY_ESCALATION", **inputs)
+
+
+@pytest.mark.parametrize("bad_status", [
+    "EXECUTED",
+    "AUTHORIZED",
+    "EXECUTION_AUTHORIZED",
+    "EFFECTIVE_FOR_EXECUTION",
+    "RESULTS_AVAILABLE",
+    "SCIENTIFICALLY_VALIDATED",
+])
+def test_engine_implementation_status_variants_fail_closed(bad_status):
+    inputs = _mutate_receipt(lambda value: value["engine_implementation_binding"].__setitem__("engine_implementation_status", bad_status))
+    _fails("LEGACY_AUTHORITY_ESCALATION", **inputs)
+
+
+def test_engine_implementation_status_is_the_only_allowed_value():
+    assert _legacy_adapter._ENGINE_IMPLEMENTATION_STATUS_ALLOWED_VALUES == {"IMPLEMENTED_FOR_INDEPENDENT_REVIEW_ONLY"}
+    state = project_legacy_control_state(**_inputs())
+    _assert_deny_only(state)
+
+
+def test_engine_implemented_false_fails():
+    inputs = _mutate_receipt(lambda value: value["engine_implementation_binding"].__setitem__("engine_implemented", False))
+    _fails("LEGACY_REQUIRED_EVIDENCE_MISSING", **inputs)
+
+
+@pytest.mark.parametrize("field", ["engine_executed", "engine_reviewed", "engine_wired_into_execute_calibration"])
+def test_engine_binding_boolean_escalation_fails_closed(field):
+    inputs = _mutate_receipt(lambda value: value["engine_implementation_binding"].__setitem__(field, True))
+    _fails("LEGACY_AUTHORITY_ESCALATION", **inputs)
+
+
+@pytest.mark.parametrize("field", ["engine_executed", "engine_reviewed", "engine_wired_into_execute_calibration"])
+def test_engine_binding_boolean_stays_deny_safe_at_false(field):
+    inputs = _mutate_receipt(lambda value: value["engine_implementation_binding"].__setitem__(field, False))
+    state = project_legacy_control_state(**inputs)
+    _assert_deny_only(state)
+
+
+def test_no_new_effective_amendment_role_exists_for_v033():
+    roles = {json.loads(document.raw)["amendment_kind"] for document in _inputs()["amendments"]}
+    assert roles == _legacy_adapter._REQUIRED_EFFECTIVE_AMENDMENT_ROLES
+    assert len(roles) == 7
+
+
+def test_all_seven_current_effective_amendments_match_frozen_role_digests_v033():
+    digests = _legacy_adapter._REQUIRED_EFFECTIVE_AMENDMENT_ROLE_DIGESTS
+    assert set(digests) == _legacy_adapter._REQUIRED_EFFECTIVE_AMENDMENT_ROLES
+    assert len(digests) == 7
+    for document in _inputs()["amendments"]:
+        role = json.loads(document.raw)["amendment_kind"]
+        assert hashlib.sha256(document.raw).hexdigest() == digests[role]
+
+
+def test_every_runtime_action_remains_denied_at_v033():
+    state = project_legacy_control_state(**_inputs())
+    assert set(vars(state.runtime_authorization).values()) == {"DENIED"}
+    for action in RuntimeAction:
+        result = authorize(state, action)
+        assert result.authorized is False
 
 
 def test_no_raw_python_exception_escapes_content_binding_or_status_mutations():

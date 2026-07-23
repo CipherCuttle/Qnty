@@ -4656,41 +4656,17 @@ def _v031_guard(original):
         if phase == "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_effective":
             _v032_state_is_valid()
             return
+        if phase == "candidate1_h001_synthetic_null_calibration_execution_engine_implementation_review_required":
+            _v033_state_is_valid()
+            return
         return original(*args, **kwargs)
     return guarded
 
 
-for _name in (
-    "test_production_control_state_verifies",
-    "test_h001_completion_phase_verifies_and_renders_boundaries",
-    "test_valid_v003_amendment_chain_and_boundary_rendering",
-    "test_h001_assurance_review_completion_transition_renders_and_binds",
-    "test_h001_rng_runtime_governance_v026_is_narrow_and_non_effective",
-    "test_h001_rng_candidate_v027_is_review_only",
-    "test_h001_rng_runtime_activation_is_effective_and_fail_closed",
-    "test_h001_calibration_rereview_phase_passes_and_renders_non_activation_boundary",
-    "test_temporal_candidate_production_render_is_review_only",
-    "test_activation_production_state_renders_effective_strict_contract",
-    "test_activation_production_scope_is_exactly_nine_files_in_governance_order",
-    "test_calibration_candidate_production_state_renders_review_required",
-    "test_calibration_candidate_blockers_are_carried_forward_unweakened",
-    "test_calibration_candidate_production_scope_is_exactly_nine_files_in_order",
-    "test_calibration_candidate_evidence_is_exact_unique_and_hash_bound",
-    "test_calibration_candidate_predecessor_binds_v019_exactly",
-    "test_h001_calibration_implementation_blocked_production_state_is_exact",
-    "test_h001_rng_runtime_review_completion_is_reviewed_but_not_activated",
-    "test_h001_rng_runtime_review_completion_rejects_protected_candidate_after_attacker_hash_refresh",
-    "test_h001_rng_runtime_activation_rejects_protected_candidate_after_attacker_hash_refresh",
-    "test_h001_numerical_conventions_v030_review_only_state_and_packet",
-    "test_h001_numerical_conventions_v030_candidate_protected_after_refresh",
-    "test_h001_numerical_conventions_v030_inherited_rng_inventory_fails_closed",
-    "test_h001_numerical_conventions_v031_review_completion_is_reviewed_but_not_activated",
-    "test_h001_numerical_conventions_v031_review_record_matches_pinned_pr304_identity",
-    "test_h001_numerical_conventions_v031_rejects_protected_candidate_after_attacker_hash_refresh",
-    "test_h001_numerical_conventions_v031_rejects_malformed_review_record",
-    "test_h001_numerical_conventions_v031_rejects_receipt_authority_escalation",
-):
-    globals()[_name] = _v031_guard(globals()[_name])
+# The wrapping loop that applies _v031_guard is relocated to the very end of
+# this file (single occurrence, kept below the v032 and v033 test-append
+# blocks) so it can reference every guarded name, including v032's, without a
+# second globals()-rebinding statement.
 # END H001 NUMERICAL CONVENTIONS REVIEW COMPLETION V031 TEST APPEND
 
 # BEGIN H001 NUMERICAL CONVENTIONS ACTIVATION V032 TEST APPEND
@@ -4928,3 +4904,178 @@ def test_h001_numerical_conventions_v032_rejects_stale_active_pointer(tmp_path):
     active_path.write_bytes(canonical_json_bytes(active))
     with pytest.raises(ValueError, match="stale"):
         load_and_verify_continuity_state(root)
+# END H001 NUMERICAL CONVENTIONS ACTIVATION V032 TEST APPEND
+
+
+# BEGIN H001 SYNTHETIC NULL CALIBRATION EXECUTION ENGINE IMPLEMENTATION V033 TEST APPEND
+def _v033_state_is_valid():
+    state = load_and_verify_continuity_state(ROOT)
+    assert state["active_task"]["phase"] == "candidate1_h001_synthetic_null_calibration_execution_engine_implementation_review_required"
+    binding = state["handoff_receipt"]["engine_implementation_binding"]
+    assert binding["engine_implemented"] is True
+    assert binding["engine_executed"] is False
+    assert binding["engine_reviewed"] is False
+    assert binding["engine_wired_into_execute_calibration"] is False
+    return state
+
+
+def test_h001_engine_implementation_v033_is_review_required_and_fail_closed():
+    state = _v033_state_is_valid()
+    receipt = state["handoff_receipt"]
+    assert receipt["next_actions"] == ["ADVERSARIAL_REVIEW_H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION"]
+    assert receipt["receipt_index"] == 33
+    assert receipt["source_branch"] == "feat/h001-null-calibration-engine-v033"
+    assert receipt["source_head_commit"] == "6fb0e9b88e16a504a9e053f53ac7e5e55b40fda8"
+    assert receipt["predecessor"] == {
+        "path": "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v032.json",
+        "sha256": "43d4b4f89d594d8a79804ca9a0c4227405255a12d09f380c085f193b44ccd91d",
+    }
+    safety = receipt["safety_state"]
+    assert safety["decomposition_execution_count"] == 0
+    assert safety["decomposition_execution_budget"] == 1
+    assert safety["edge_status"] == "EDGE_UNPROVEN"
+    assert safety["live_status"] == "BLOCK_LIVE_INTEGRATION"
+    assert safety["scientific_use_authorized"] is False
+    assert safety["paper_trade_authorized"] is False
+    assert safety["live_integration_authorized"] is False
+    for still_forbidden in (
+        "EXECUTE_H001", "EXECUTE_H001_SYNTHETIC_NULL_CALIBRATION_ENGINE", "GRANT_REAL_DATA_ACCESS",
+        "GRANT_SCIENTIFIC_AUTHORIZATION", "GRANT_PAPER_TRADE_AUTHORIZATION", "GRANT_LIVE_INTEGRATION_AUTHORIZATION",
+        "CONSUME_H001_EXECUTION_BUDGET", "WIRE_ENGINE_INTO_EXECUTE_CALIBRATION",
+        "MERGE_H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_ENGINE_IMPLEMENTATION_BEFORE_INDEPENDENT_ADVERSARIAL_REVIEW",
+    ):
+        assert still_forbidden in receipt["prohibited_actions"]
+    packet = render_context_packet(state)
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION=IMPLEMENTED_FOR_INDEPENDENT_REVIEW_NOT_EXECUTED" in packet
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION=NOT_AUTHORIZED" in packet
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_RESULTS=NONE" in packet
+    assert "H001_SYNTHETIC_NULL_CALIBRATION_RESULT_EXPOSURE=NONE" in packet
+    assert "H001_SCIENTIFIC_AUTHORIZATION=FALSE" in packet
+    assert "H001_PAPER_TRADE_AUTHORIZATION=FALSE" in packet
+    assert "H001_LIVE_AUTHORIZATION=FALSE" in packet
+    assert "H001_REAL_DATA_ACCESS=FORBIDDEN" in packet
+    assert "H001_EXECUTION=0/0" in packet
+    assert "EDGE_UNPROVEN" in packet
+    assert "BLOCK_LIVE_INTEGRATION" in packet
+
+
+def test_h001_engine_implementation_v033_keeps_prior_receipt_hash_distinct():
+    from quantbot.continuity import h001_synthetic_null_calibration_execution_engine_implementation_v033 as v033
+    assert v033.PROTECTED[v033.previous.HANDOFF_RELPATH] == v033.V032_SHA
+    assert v033.BINDING["engine_implemented"] is True
+    assert v033.BINDING["engine_executed"] is False
+    assert v033.BINDING["engine_reviewed"] is False
+
+
+def test_h001_engine_implementation_v033_legacy_harness_is_byte_identical_and_still_unauthorized():
+    from quantbot.assurance import h001_null_calibration as harness
+    with pytest.raises(harness.AssuranceValidationError, match="CALIBRATION_EXECUTION_NOT_AUTHORIZED"):
+        harness.execute_calibration()
+    harness_path = ROOT / "quantbot/assurance/h001_null_calibration.py"
+    from quantbot.continuity import h001_synthetic_null_calibration_execution_engine_implementation_v033 as v033
+    assert v033.PROTECTED[harness_path.relative_to(ROOT).as_posix()] == hashlib.sha256(harness_path.read_bytes()).hexdigest()
+
+
+def _v033_write_state(root, *, receipt_mutate=None):
+    receipt_path = root / "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v033.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    if receipt_mutate is not None:
+        receipt_mutate(receipt)
+    for item in receipt["evidence"]:
+        item["sha256"] = hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()
+    receipt["current_transition_files"] = [
+        {"path": item["path"], "sha256": hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()}
+        for item in receipt["current_transition_files"]
+    ]
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    active_path.write_bytes(canonical_json_bytes(active))
+    return root
+
+
+def test_h001_engine_implementation_v033_rejects_protected_v032_receipt_after_attacker_hash_refresh(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    v032_receipt = root / "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v032.json"
+    v032_receipt.write_bytes(v032_receipt.read_bytes() + b" ")
+    _v033_write_state(root)
+    with pytest.raises(ValueError, match="protected evidence"):
+        load_and_verify_continuity_state(root)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r["engine_implementation_binding"].update(engine_executed=True),
+    lambda r: r["engine_implementation_binding"].update(engine_reviewed=True),
+    lambda r: r["engine_implementation_binding"].update(engine_wired_into_execute_calibration=True),
+    lambda r: r.update(prohibited_actions=[a for a in r["prohibited_actions"] if a != "EXECUTE_H001_SYNTHETIC_NULL_CALIBRATION_ENGINE"]),
+    lambda r: r.update(prohibited_actions=[a for a in r["prohibited_actions"] if a != "WIRE_ENGINE_INTO_EXECUTE_CALIBRATION"]),
+    lambda r: r.update(prohibited_actions=[a for a in r["prohibited_actions"] if a != "GRANT_REAL_DATA_ACCESS"]),
+    lambda r: r["safety_state"].update(scientific_use_authorized=True),
+    lambda r: r["safety_state"].update(paper_trade_authorized=True),
+    lambda r: r["safety_state"].update(live_integration_authorized=True),
+    lambda r: r["safety_state"].update(decomposition_execution_count=1),
+    lambda r: r.update(decisions=[d for d in r["decisions"] if not d.startswith("H001_EXECUTION=")] + ["H001_EXECUTION=1/1"]),
+])
+def test_h001_engine_implementation_v033_rejects_receipt_authority_escalation(tmp_path, mutate):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    _v033_write_state(root, receipt_mutate=mutate)
+    with pytest.raises(ValueError, match="drifted"):
+        load_and_verify_continuity_state(root)
+
+
+def test_h001_engine_implementation_v033_rejects_stale_active_pointer(tmp_path):
+    root = tmp_path / "repo"
+    copy_repo_without_runtime(ROOT, root)
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = json.loads(active_path.read_bytes())
+    active["handoff_receipt_sha256"] = "0" * 64
+    active_path.write_bytes(canonical_json_bytes(active))
+    with pytest.raises(ValueError, match="stale"):
+        load_and_verify_continuity_state(root)
+
+
+# Single relocated globals()-rebinding statement for _v031_guard (extended
+# above with a v033 branch): kept as exactly one occurrence in the whole
+# file, now that every name it needs to reference -- including the v032
+# tests added after the original loop's old location -- is already defined
+# above this point.
+for _name in (
+    "test_production_control_state_verifies",
+    "test_h001_completion_phase_verifies_and_renders_boundaries",
+    "test_valid_v003_amendment_chain_and_boundary_rendering",
+    "test_h001_assurance_review_completion_transition_renders_and_binds",
+    "test_h001_rng_runtime_governance_v026_is_narrow_and_non_effective",
+    "test_h001_rng_candidate_v027_is_review_only",
+    "test_h001_rng_runtime_activation_is_effective_and_fail_closed",
+    "test_h001_calibration_rereview_phase_passes_and_renders_non_activation_boundary",
+    "test_temporal_candidate_production_render_is_review_only",
+    "test_activation_production_state_renders_effective_strict_contract",
+    "test_activation_production_scope_is_exactly_nine_files_in_governance_order",
+    "test_calibration_candidate_production_state_renders_review_required",
+    "test_calibration_candidate_blockers_are_carried_forward_unweakened",
+    "test_calibration_candidate_production_scope_is_exactly_nine_files_in_order",
+    "test_calibration_candidate_evidence_is_exact_unique_and_hash_bound",
+    "test_calibration_candidate_predecessor_binds_v019_exactly",
+    "test_h001_calibration_implementation_blocked_production_state_is_exact",
+    "test_h001_rng_runtime_review_completion_is_reviewed_but_not_activated",
+    "test_h001_rng_runtime_review_completion_rejects_protected_candidate_after_attacker_hash_refresh",
+    "test_h001_rng_runtime_activation_rejects_protected_candidate_after_attacker_hash_refresh",
+    "test_h001_numerical_conventions_v030_review_only_state_and_packet",
+    "test_h001_numerical_conventions_v030_candidate_protected_after_refresh",
+    "test_h001_numerical_conventions_v030_inherited_rng_inventory_fails_closed",
+    "test_h001_numerical_conventions_v031_review_completion_is_reviewed_but_not_activated",
+    "test_h001_numerical_conventions_v031_review_record_matches_pinned_pr304_identity",
+    "test_h001_numerical_conventions_v031_rejects_protected_candidate_after_attacker_hash_refresh",
+    "test_h001_numerical_conventions_v031_rejects_malformed_review_record",
+    "test_h001_numerical_conventions_v031_rejects_receipt_authority_escalation",
+    "test_h001_numerical_conventions_v032_activation_is_effective_and_fail_closed",
+    "test_h001_numerical_conventions_v032_activation_document_matches_pinned_identity",
+    "test_h001_numerical_conventions_v032_rejects_protected_candidate_after_attacker_hash_refresh",
+    "test_h001_numerical_conventions_v032_rejects_malformed_activation_document",
+    "test_h001_numerical_conventions_v032_rejects_receipt_authority_escalation",
+):
+    globals()[_name] = _v031_guard(globals()[_name])
+# END H001 SYNTHETIC NULL CALIBRATION EXECUTION ENGINE IMPLEMENTATION V033 TEST APPEND
