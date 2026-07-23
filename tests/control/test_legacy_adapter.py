@@ -415,6 +415,41 @@ def test_unknown_authority_bearing_fields_stay_deny_safe_at_false(field):
     _assert_deny_only(state)
 
 
+@pytest.mark.parametrize(("key", "container", "path"), [
+    ("runtime_permission", {"granted": False}, "source_receipt.runtime_permission"),
+    ("live_authorization", [{"granted": False}], "source_receipt.live_authorization"),
+    ("paper_trade_authorized", {"value": False}, "source_receipt.paper_trade_authorized"),
+    ("Live_Authorization_Granted", {"value": False}, "source_receipt.Live_Authorization_Granted"),
+])
+def test_recognized_authority_containers_fail_closed(key, container, path):
+    inputs = _mutate_receipt(lambda value: value.__setitem__(key, container))
+    with pytest.raises(LegacyAdapterError) as excinfo:
+        project_legacy_control_state(**inputs)
+    assert excinfo.value.code == "LEGACY_AUTHORITY_ESCALATION"
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize(("container", "path"), [
+    ({"authority_non_effects": {"live_authorization_granted": True}}, "source_receipt.authority_non_effects.live_authorization_granted"),
+    ({"metadata": {"nested": {"runtime_permission_granted": True}}}, "source_receipt.metadata.nested.runtime_permission_granted"),
+])
+def test_unrecognized_grouping_containers_recurse_to_reject_positive_authority_leaf(container, path):
+    inputs = _mutate_receipt(lambda value: value.update(container))
+    with pytest.raises(LegacyAdapterError) as excinfo:
+        project_legacy_control_state(**inputs)
+    assert excinfo.value.code == "LEGACY_AUTHORITY_ESCALATION"
+    assert excinfo.value.path == path
+
+
+@pytest.mark.parametrize("container", [
+    {"authority_non_effects": {"live_authorization_granted": False}},
+    {"metadata": {"nested": {"runtime_permission_granted": False}}},
+])
+def test_unrecognized_grouping_containers_recurse_to_accept_deny_safe_authority_leaf(container):
+    state = project_legacy_control_state(**_mutate_receipt(lambda value: value.update(container)))
+    _assert_deny_only(state)
+
+
 def test_current_frozen_authorization_status_values_are_all_accepted():
     found = {
         json.loads(document.raw)["authorization_status"]
@@ -473,6 +508,39 @@ def test_relocation_with_identical_bytes_preserves_role_content_binding():
 def test_any_byte_mutation_fails_content_binding_even_with_rebound_evidence():
     inputs = _rebind_amendment(_inputs(), 0, parsed_mutator=lambda parsed: parsed.__setitem__("amendment_id", parsed.get("amendment_id", "") + "-tampered"))
     _fails("LEGACY_AMENDMENT_CONTENT_MISMATCH", **inputs)
+
+
+def test_active_receipt_mismatch_precedes_combined_amendment_and_evidence_failures_regardless_of_order():
+    """Freeze the existing validation order without creating a new hierarchy."""
+    inputs = _inputs()
+    amendments = list(inputs["amendments"])
+    for index, document in enumerate(amendments):
+        parsed = json.loads(document.raw)
+        if "execution_governance" in document.path:
+            parsed["runtime_permission"] = True
+            mutated_raw = _canonical(parsed)
+            amendments[index] = LegacyDocument(document.path, mutated_raw)
+            break
+    else:  # pragma: no cover - frozen fixture must retain this amendment.
+        raise AssertionError("missing execution-governance amendment")
+    inputs["amendments"] = tuple(amendments)
+    receipt = json.loads(inputs["source_receipt"].raw)
+    receipt["evidence"][0]["sha256"] = "0" * 64
+    # Deliberately leave active_task's receipt hash stale.  This creates an
+    # active-receipt mismatch alongside the receipt-evidence mismatch and the
+    # authority/content failures above; current behavior must fail here first.
+    inputs["source_receipt"] = LegacyDocument(RECEIPT_PATH, _canonical(receipt))
+
+    observed = []
+    for ordering in (inputs["amendments"], tuple(reversed(inputs["amendments"]))):
+        ordered_inputs = dict(inputs, amendments=ordering)
+        with pytest.raises(LegacyAdapterError) as excinfo:
+            project_legacy_control_state(**ordered_inputs)
+        observed.append((excinfo.value.code, excinfo.value.path))
+    assert observed == [
+        ("ACTIVE_RECEIPT_MISMATCH", "active_task.handoff_receipt_sha256"),
+        ("ACTIVE_RECEIPT_MISMATCH", "active_task.handoff_receipt_sha256"),
+    ]
 
 
 def test_false_to_true_content_mutation_fails_content_binding():

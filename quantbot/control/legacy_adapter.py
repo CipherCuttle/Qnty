@@ -252,8 +252,10 @@ def _classify_authority_leaf(key: str, item: object, path: str) -> None:
     3. Known deny-only authority fields (exact name or recognized suffix):
        must be exactly `False` or one of the safe deny strings.
     Anything not matching one of these three categories is not classified
-    here at all -- it is not scanned for keyword text, and containers under
-    it are still recursed into by the caller.
+    here at all -- it is not scanned for keyword text.  Ordinary grouping
+    containers under such a key are recursed into by the caller; a recognized
+    authority-like key, however, must be a scalar leaf and rejects a dict or
+    list rather than broadening the frozen packet's accepted input language.
     """
     normalized = _ascii_lower(key)
     if normalized in _ADMINISTRATIVE_ALLOW_BOOLEAN_FIELDS:
@@ -281,10 +283,12 @@ def _check_boolean_authority_fields(value: object, path: str) -> None:
     Recognition is by exact (ASCII-lowercased) key name, never by scanning a
     value's text: a suffix such as "_ONLY" appended to an escalating string
     on a *recognized* field cannot hide it, because the comparison is exact
-    membership in a finite allowed set. Containers (dicts/lists) are always
-    recursed into regardless of whether their own key is recognized, so an
-    authority-bearing leaf nested under an unrecognized container name (e.g.
-    a `..._non_effects` grouping) is still classified individually.
+    membership in a finite allowed set.  Unrecognized grouping containers are
+    recursed into, so an authority-bearing scalar leaf nested under an
+    unrecognized container name (e.g. a `..._non_effects` grouping) is still
+    classified individually.  A recognized authority-like key is required to
+    be a scalar leaf; a dict or list at that key fails closed as an unexpected
+    authority-field type and is not a supported deny-safe container form.
     """
     if isinstance(value, dict):
         for key, item in value.items():
