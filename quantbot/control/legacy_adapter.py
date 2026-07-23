@@ -1,8 +1,8 @@
 """Pure projection of the frozen legacy continuity packet into control state.
 
-The current legacy packet is receipt index 31.  The one documented mapping is
-``state_revision = receipt_index + 1``: index 31 therefore projects to revision
-32.  Inputs are documents supplied by the caller; this module does not inspect
+The current legacy packet is receipt index 32.  The one documented mapping is
+``state_revision = receipt_index + 1``: index 32 therefore projects to revision
+33.  Inputs are documents supplied by the caller; this module does not inspect
 the repository, environment, process, network, or Git state.
 
 Amendment semantic identity is derived only from the explicit
@@ -54,7 +54,7 @@ _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _TASK_ID = "RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT"
 _PROTOCOL_ID = "real_btc_candidate1_train_mechanism_decomposition_v0"
 _GOVERNED_H001_PROTOCOL_ID = "real_btc_h001_funding_crowding_reversal_falsification_v0"
-_CURRENT_RECEIPT_INDEX = 31
+_CURRENT_RECEIPT_INDEX = 32
 
 # The smallest finite adapter-local semantic-role mapping supported by the six
 # currently effective amendments' own explicit `amendment_kind` fields.  Each
@@ -67,6 +67,7 @@ _REQUIRED_EFFECTIVE_AMENDMENT_ROLES = frozenset(
         "qnty_h001_synthetic_null_calibration_numerical_conventions_amendment_governance",
         "qnty_h001_synthetic_null_calibration_rng_runtime_specification_amendment_governance",
         "qnty_h001_rng_runtime_specification_amendment_activation_amendment",
+        "qnty_h001_numerical_conventions_amendment_activation_amendment",
     }
 )
 
@@ -84,6 +85,7 @@ _REQUIRED_EFFECTIVE_AMENDMENT_ROLE_DIGESTS = {
     "qnty_h001_synthetic_null_calibration_numerical_conventions_amendment_governance": "b6309ef438129fd49218ab12a086996286b90408d2d97189a3ce8b9ed680e649",
     "qnty_h001_synthetic_null_calibration_rng_runtime_specification_amendment_governance": "da27f06effb8321da84ee9f44ff90b810e8c36491d729387b4e820e14f0d8c36",
     "qnty_h001_rng_runtime_specification_amendment_activation_amendment": "77b27c218670ca427e2f9589dba144731dd456cce56650222ebb37a3d5528c97",
+    "qnty_h001_numerical_conventions_amendment_activation_amendment": "c497359a292f5a9b1333e5d881fee16c39d80f68ec1a6613f625a368532ae200",
 }
 
 # Structural, field-aware runtime-authority validation.
@@ -427,13 +429,13 @@ def project_legacy_control_state(*, active_task: LegacyDocument, source_receipt:
         _fail("LEGACY_IDENTITY_MISMATCH", "source_receipt", "wrong task or protocol")
     index = _required(receipt, "receipt_index", "source_receipt", int)
     if index != _CURRENT_RECEIPT_INDEX:
-        _fail("LEGACY_REVISION_MISMATCH", "source_receipt.receipt_index", "current mapping requires receipt index 31")
+        _fail("LEGACY_REVISION_MISMATCH", "source_receipt.receipt_index", "current mapping requires receipt index 32")
     _require_safety(receipt)
     _validate_amendments(amendments, receipt)
     binding = _required(receipt, "candidate_binding", "source_receipt", dict)
     proposal_ref = _safe_path(_required(binding, "candidate_path", "source_receipt.candidate_binding", str), "source_receipt.candidate_binding.candidate_path")
-    if binding.get("candidate_effective") is not False:
-        _fail("LEGACY_AMENDMENT_CONFLICT", "source_receipt.candidate_binding.candidate_effective", "candidate must remain non-effective")
+    if binding.get("candidate_effective") is not True or binding.get("candidate_activated") is not True:
+        _fail("LEGACY_AMENDMENT_CONFLICT", "source_receipt.candidate_binding", "current packet must bind the activated effective candidate")
     projected = {
         "control_kind": "qnty_control_state", "schema_version": "1.0.0", "state_revision": index + 1,
         "protocol_id": _PROTOCOL_ID,
