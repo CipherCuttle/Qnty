@@ -1,9 +1,15 @@
 """Pure projection of the frozen legacy continuity packet into control state.
 
-The current legacy packet is receipt index 32.  The one documented mapping is
-``state_revision = receipt_index + 1``: index 32 therefore projects to revision
-33.  Inputs are documents supplied by the caller; this module does not inspect
+The current legacy packet is receipt index 33.  The one documented mapping is
+``state_revision = receipt_index + 1``: index 33 therefore projects to revision
+34.  Inputs are documents supplied by the caller; this module does not inspect
 the repository, environment, process, network, or Git state.
+
+Receipt index 33 records only that the H001 synthetic-null calibration
+execution engine's statistic/bootstrap-path core was implemented for
+independent review; it was not executed, not reviewed, and not wired into
+`execute_calibration`. The exactly seven currently effective amendment roles
+are unchanged from index 32 -- this transition activates no new amendment.
 
 Amendment semantic identity is derived only from the explicit
 ``amendment_kind`` field each amendment document declares, never from its
@@ -54,7 +60,7 @@ _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _TASK_ID = "RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT"
 _PROTOCOL_ID = "real_btc_candidate1_train_mechanism_decomposition_v0"
 _GOVERNED_H001_PROTOCOL_ID = "real_btc_h001_funding_crowding_reversal_falsification_v0"
-_CURRENT_RECEIPT_INDEX = 32
+_CURRENT_RECEIPT_INDEX = 33
 
 # The smallest finite adapter-local semantic-role mapping supported by the six
 # currently effective amendments' own explicit `amendment_kind` fields.  Each
@@ -152,6 +158,15 @@ _ADMINISTRATIVE_STATUS_ALLOWED_VALUES = frozenset(
 )
 
 _STRING_AUTHORITY_SAFE_VALUES = frozenset({"DENIED", "FORBIDDEN", "NOT_AUTHORIZED", "UNAUTHORIZED", "NONE"})
+
+# The finite, exact-value marker recognized on
+# `source_receipt.engine_implementation_binding.engine_implementation_status`
+# for receipt index 33: it records only that the engine core was implemented
+# for independent review. Any other string -- including plausible-looking
+# escalations such as EXECUTED, AUTHORIZED, EXECUTION_AUTHORIZED,
+# EFFECTIVE_FOR_EXECUTION, RESULTS_AVAILABLE, or SCIENTIFICALLY_VALIDATED --
+# is rejected by exact non-membership, never by substring matching.
+_ENGINE_IMPLEMENTATION_STATUS_ALLOWED_VALUES = frozenset({"IMPLEMENTED_FOR_INDEPENDENT_REVIEW_ONLY"})
 
 _ASCII_LOWER_TABLE = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
@@ -429,13 +444,17 @@ def project_legacy_control_state(*, active_task: LegacyDocument, source_receipt:
         _fail("LEGACY_IDENTITY_MISMATCH", "source_receipt", "wrong task or protocol")
     index = _required(receipt, "receipt_index", "source_receipt", int)
     if index != _CURRENT_RECEIPT_INDEX:
-        _fail("LEGACY_REVISION_MISMATCH", "source_receipt.receipt_index", "current mapping requires receipt index 32")
+        _fail("LEGACY_REVISION_MISMATCH", "source_receipt.receipt_index", "current mapping requires receipt index 33")
     _require_safety(receipt)
     _validate_amendments(amendments, receipt)
-    binding = _required(receipt, "candidate_binding", "source_receipt", dict)
-    proposal_ref = _safe_path(_required(binding, "candidate_path", "source_receipt.candidate_binding", str), "source_receipt.candidate_binding.candidate_path")
-    if binding.get("candidate_effective") is not True or binding.get("candidate_activated") is not True:
-        _fail("LEGACY_AMENDMENT_CONFLICT", "source_receipt.candidate_binding", "current packet must bind the activated effective candidate")
+    binding = _required(receipt, "engine_implementation_binding", "source_receipt", dict)
+    proposal_ref = _safe_path(_required(binding, "engine_path", "source_receipt.engine_implementation_binding", str), "source_receipt.engine_implementation_binding.engine_path")
+    if binding.get("engine_implementation_status") not in _ENGINE_IMPLEMENTATION_STATUS_ALLOWED_VALUES:
+        _fail("LEGACY_AUTHORITY_ESCALATION", "source_receipt.engine_implementation_binding.engine_implementation_status", "not the exact frozen implemented-for-review-only marker")
+    if binding.get("engine_implemented") is not True:
+        _fail("LEGACY_REQUIRED_EVIDENCE_MISSING", "source_receipt.engine_implementation_binding", "current packet must record the engine as implemented for independent review")
+    if binding.get("engine_executed") is not False or binding.get("engine_reviewed") is not False or binding.get("engine_wired_into_execute_calibration") is not False:
+        _fail("LEGACY_AUTHORITY_ESCALATION", "source_receipt.engine_implementation_binding", "engine implementation binding claims more than implemented-for-review-only")
     projected = {
         "control_kind": "qnty_control_state", "schema_version": "1.0.0", "state_revision": index + 1,
         "protocol_id": _PROTOCOL_ID,
