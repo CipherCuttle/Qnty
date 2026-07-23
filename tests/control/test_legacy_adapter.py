@@ -17,8 +17,8 @@ _legacy_adapter = importlib.import_module("quantbot" + ".control.legacy_adapter"
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTIVE_PATH = "docs/control/active_task.json"
-RECEIPT_PATH = "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v031.json"
-HEAD = "5504f4f348a153fe8248055fe762fb15f5065503"
+RECEIPT_PATH = "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v032.json"
+HEAD = "afada1090c5312f329fd6be9d2bfbd7525d1077c"
 EFFECTIVE = tuple(
     sorted(
         path for path in (ROOT / "docs/control/amendments").glob("*.json")
@@ -97,7 +97,7 @@ def _fails(code, **inputs):
 def test_current_state_projects_exactly_and_is_repeatable():
     state = project_legacy_control_state(**_inputs())
     assert project_legacy_control_state(**_inputs()) == state
-    assert state.state_revision == 32
+    assert state.state_revision == 33
     assert state.protocol_id == "real_btc_candidate1_train_mechanism_decomposition_v0"
     assert state.administrative_state.workflow_status == "UNDER_REVIEW"
     assert state.administrative_state.proposal_ref == "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_candidate_v001.json"
@@ -107,6 +107,10 @@ def test_current_state_projects_exactly_and_is_repeatable():
     assert state.scientific_state == type(state.scientific_state)("H001", "EDGE_UNPROVEN", "BLOCK_LIVE_INTEGRATION", "FORBIDDEN", "NOT_AUTHORIZED", 0, 0)
     assert set(vars(state.runtime_authorization).values()) == {"DENIED"}
     assert all(not authorize(state, action).authorized for action in RuntimeAction)
+    roles = {json.loads(document.raw)["amendment_kind"] for document in _inputs()["amendments"]}
+    assert len(roles) == 7
+    activation = next(document for document in _inputs()["amendments"] if json.loads(document.raw)["amendment_kind"] == "qnty_h001_numerical_conventions_amendment_activation_amendment")
+    assert hashlib.sha256(activation.raw).hexdigest() == "c497359a292f5a9b1333e5d881fee16c39d80f68ec1a6613f625a368532ae200"
 
 
 def test_amendment_order_does_not_matter():

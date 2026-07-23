@@ -20,8 +20,8 @@
     {
       "surface": "quantbot/control/",
       "path": "quantbot/control/legacy_adapter.py",
-      "max_additional_bytes": 24560,
-      "reason": "Temporary additive replacement-control work: pure explicit-input projection from validated legacy records into the deny-only control-state schema, unreachable from runtime.",
+      "max_additional_bytes": 24824,
+      "reason": "Temporary additive replacement-control work: pure explicit-input projection of the exact v032 deny-only packet at revision 33, unreachable from runtime.",
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
     },
     {
@@ -34,15 +34,50 @@
     {
       "surface": "tests/control/",
       "path": "tests/control/test_legacy_adapter.py",
-      "max_additional_bytes": 30283,
-      "reason": "Temporary additive replacement-control work: deterministic current-state and fail-closed legacy-adapter projection tests.",
+      "max_additional_bytes": 30717,
+      "reason": "Temporary additive replacement-control work: deterministic exact seven-role v032 packet and stale-v031 rejection coverage.",
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
     },
     {
       "surface": "tests/control/",
       "path": "tests/control/governance_baseline.json",
-      "max_additional_bytes": 2190,
-      "reason": "Temporary additive replacement-control work: exact-path exception metadata recording the new control-state validator's own additive growth.",
+      "max_additional_bytes": 4065,
+      "reason": "Temporary additive replacement-control work: exact-path exception metadata recording bounded governance growth.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    },
+    {
+      "surface": "docs/control/",
+      "path": "docs/control/amendments/candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_activation_v001.json",
+      "max_additional_bytes": 3168,
+      "reason": "Temporary exact-path protocol transition growth: independently reviewed H001 numerical-conventions activation amendment; no execution or data authority.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    },
+    {
+      "surface": "docs/control/",
+      "path": "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v032.json",
+      "max_additional_bytes": 18577,
+      "reason": "Temporary exact-path continuity transition growth: v032 receipt binding the reviewed numerical-conventions activation and deny-only next action.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    },
+    {
+      "surface": "quantbot/continuity/",
+      "path": "quantbot/continuity/context.py",
+      "max_additional_bytes": 5670,
+      "reason": "Temporary exact-path continuity validation growth required to recognize and verify the authorized v032 activation transition.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    },
+    {
+      "surface": "quantbot/continuity/",
+      "path": "quantbot/continuity/h001_numerical_conventions_activation_v032.py",
+      "max_additional_bytes": 10669,
+      "reason": "Temporary exact-path continuity transition module for independently reviewed H001 numerical-conventions activation.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    },
+    {
+      "surface": "tests/continuity/",
+      "path": "tests/continuity/test_cross_agent_continuity.py",
+      "max_additional_bytes": 15308,
+      "reason": "Temporary exact-path deterministic transition coverage for v032 numerical-conventions activation and authority non-effects.",
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
     }
   ],
