@@ -13,6 +13,7 @@ from .state import (
     load_and_validate_control_state,
     validate_transition,
 )
+from .legacy_adapter import LegacyAdapterError, LegacyDocument, project_legacy_control_state
 
 __all__ = [
     "AdministrativeState",
@@ -26,4 +27,7 @@ __all__ = [
     "authorize",
     "load_and_validate_control_state",
     "validate_transition",
+    "LegacyAdapterError",
+    "LegacyDocument",
+    "project_legacy_control_state",
 ]

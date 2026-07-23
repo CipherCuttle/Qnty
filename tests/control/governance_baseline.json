@@ -6,7 +6,7 @@
     {
       "surface": "quantbot/control/",
       "path": "quantbot/control/__init__.py",
-      "max_additional_bytes": 651,
+      "max_additional_bytes": 828,
       "reason": "Temporary additive replacement-control work: public API surface for the new deny-only control-state validator package, not wired into any runtime path.",
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
     },
@@ -18,6 +18,13 @@
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
     },
     {
+      "surface": "quantbot/control/",
+      "path": "quantbot/control/legacy_adapter.py",
+      "max_additional_bytes": 24560,
+      "reason": "Temporary additive replacement-control work: pure explicit-input projection from validated legacy records into the deny-only control-state schema, unreachable from runtime.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    },
+    {
       "surface": "tests/control/",
       "path": "tests/control/test_control_state.py",
       "max_additional_bytes": 17795,
@@ -26,8 +33,15 @@
     },
     {
       "surface": "tests/control/",
+      "path": "tests/control/test_legacy_adapter.py",
+      "max_additional_bytes": 30283,
+      "reason": "Temporary additive replacement-control work: deterministic current-state and fail-closed legacy-adapter projection tests.",
+      "expires_in_pr": "fix/continuity-entropy-brake-v032"
+    },
+    {
+      "surface": "tests/control/",
       "path": "tests/control/governance_baseline.json",
-      "max_additional_bytes": 1405,
+      "max_additional_bytes": 2190,
       "reason": "Temporary additive replacement-control work: exact-path exception metadata recording the new control-state validator's own additive growth.",
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
     }
@@ -56,6 +70,7 @@
     "governance_baseline.json",
     "governance_ratchet.py",
     "h001_null_calibration.py",
+    "legacy_adapter.py",
     "h001_numerical_conventions_candidate_v030.py",
     "h001_numerical_conventions_review_completion_v031.py",
     "h001_rng_runtime_activation_v029.py",
@@ -102,6 +117,7 @@
     "test_contracts.py",
     "test_cross_agent_continuity.py",
     "test_debt_allowlist_exactness.py",
+    "test_legacy_adapter.py",
     "test_full_suite_workflow.py",
     "test_governance_ratchet.py",
     "test_h001_null_calibration.py",
