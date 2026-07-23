@@ -13,6 +13,7 @@ LegacyDocument = control.LegacyDocument
 RuntimeAction = control.RuntimeAction
 authorize = control.authorize
 project_legacy_control_state = control.project_legacy_control_state
+_legacy_adapter = importlib.import_module("quantbot" + ".control.legacy_adapter")
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTIVE_PATH = "docs/control/active_task.json"
@@ -198,10 +199,33 @@ def test_unknown_amendment_kind_role_fails():
     _fails("LEGACY_UNKNOWN_AMENDMENT_ROLE", **inputs)
 
 
-def test_duplicate_amendment_kind_role_fails():
+def test_relabeled_amendment_kind_fails_content_binding_before_duplicate_check():
+    # Relabeling amendment_kind to impersonate another role changes the raw
+    # bytes, so the exact role-to-content binding now rejects it before the
+    # (still-present) duplicate-role check is even reached -- a strictly
+    # stronger guarantee than the pre-repair "duplicate role" classification.
     inputs = _inputs()
     donor_role = json.loads(inputs["amendments"][1].raw)["amendment_kind"]
     inputs = _rebind_amendment(inputs, 0, parsed_mutator=lambda parsed: parsed.__setitem__("amendment_kind", donor_role))
+    _fails("LEGACY_AMENDMENT_CONTENT_MISMATCH", **inputs)
+
+
+def test_duplicate_amendment_role_fails_via_byte_identical_second_copy():
+    # A genuine duplicate role claim: the exact same frozen bytes supplied
+    # twice at two distinct, safe paths. Both copies pass the content
+    # binding individually; the second is rejected only for claiming a role
+    # already supplied.
+    inputs = _inputs()
+    original = inputs["amendments"][0]
+    duplicate_path = "docs/control/amendments/duplicate_role_probe.json"
+    duplicate = LegacyDocument(duplicate_path, original.raw)
+    inputs["amendments"] = inputs["amendments"] + (duplicate,)
+    receipt = json.loads(inputs["source_receipt"].raw)
+    receipt["evidence"].append({"path": duplicate_path, "sha256": hashlib.sha256(original.raw).hexdigest()})
+    inputs["source_receipt"] = LegacyDocument(RECEIPT_PATH, _canonical(receipt))
+    active = json.loads(inputs["active_task"].raw)
+    active["handoff_receipt_sha256"] = hashlib.sha256(inputs["source_receipt"].raw).hexdigest()
+    inputs["active_task"] = LegacyDocument(ACTIVE_PATH, _canonical(active))
     _fails("LEGACY_DUPLICATE_AMENDMENT_ROLE", **inputs)
 
 
@@ -323,3 +347,200 @@ def test_adapter_is_pure_and_unreachable_from_runtime():
             assert forbidden not in text, f"{relative} must not reference {forbidden!r}"
     assert (ROOT / "quantbot/control/state.py").read_bytes() == __import__("subprocess").check_output(["git", "show", f"{HEAD}:quantbot/control/state.py"], cwd=ROOT)
     assert not list(ROOT.rglob("*control_state*.json"))
+
+
+# --- Repair regression: exact role-content binding closes the authority-
+# field validation gap where keys ending in "_granted" (and other names not
+# covered by the old suffix tuple) were silently accepted. ---
+
+
+def _assert_deny_only(state):
+    assert state.scientific_state.edge_status == "EDGE_UNPROVEN"
+    assert state.scientific_state.live_status == "BLOCK_LIVE_INTEGRATION"
+    assert state.scientific_state.real_data_access == "FORBIDDEN"
+    assert state.scientific_state.synthetic_calibration_execution == "NOT_AUTHORIZED"
+    assert state.scientific_state.execution_count == 0
+    assert state.scientific_state.execution_budget == 0
+    assert set(vars(state.runtime_authorization).values()) == {"DENIED"}
+    assert all(not authorize(state, action).authorized for action in RuntimeAction)
+
+
+def test_exact_reported_reproducer_live_authorization_granted_now_rejected():
+    """The exact defect reproducer: false -> true on a `_granted`-suffixed
+    field inside the real currently-effective RNG-runtime activation
+    amendment, with the receipt evidence hash correctly updated to bind the
+    mutated bytes. Previously silently accepted; must now fail closed."""
+    inputs = _rebind_amendment(
+        _inputs(),
+        [i for i, d in enumerate(_inputs()["amendments"]) if "rng_runtime_specification_amendment_activation" in d.path][0],
+        parsed_mutator=lambda parsed: parsed["authority_non_effects"].__setitem__("live_authorization_granted", True),
+    )
+    _fails("LEGACY_AUTHORITY_ESCALATION", **inputs)
+
+
+@pytest.mark.parametrize("field", ["live_authorization_granted", "paper_trade_authorization_granted", "scientific_authorization_granted"])
+def test_existing_granted_fields_reject_true(field):
+    inputs = _rebind_amendment(
+        _inputs(),
+        [i for i, d in enumerate(_inputs()["amendments"]) if "rng_runtime_specification_amendment_activation" in d.path][0],
+        parsed_mutator=lambda parsed: parsed["authority_non_effects"].__setitem__(field, True),
+    )
+    _fails("LEGACY_AUTHORITY_ESCALATION", **inputs)
+
+
+@pytest.mark.parametrize("field", ["live_authorization_granted", "paper_trade_authorization_granted", "scientific_authorization_granted"])
+def test_existing_granted_fields_stay_deny_safe_at_false(field):
+    inputs = _rebind_amendment(
+        _inputs(),
+        [i for i, d in enumerate(_inputs()["amendments"]) if "rng_runtime_specification_amendment_activation" in d.path][0],
+        parsed_mutator=lambda parsed: parsed["authority_non_effects"].__setitem__(field, False),
+    )
+    state = project_legacy_control_state(**inputs)
+    _assert_deny_only(state)
+
+
+@pytest.mark.parametrize("field", ["runtime_permission_granted", "shadow_execution_granted", "real_data_access_granted", "Live_Authorization_Granted"])
+def test_unknown_authority_bearing_fields_reject_true(field):
+    # Exercised on the source receipt, which (unlike the six pinned
+    # amendments) is not byte-frozen -- this isolates the structural
+    # classifier itself rather than the separate content-binding guarantee.
+    inputs = _mutate_receipt(lambda value: value.__setitem__(field, True))
+    _fails("LEGACY_AUTHORITY_ESCALATION", **inputs)
+
+
+@pytest.mark.parametrize("field", ["runtime_permission_granted", "shadow_execution_granted", "real_data_access_granted", "Live_Authorization_Granted"])
+def test_unknown_authority_bearing_fields_stay_deny_safe_at_false(field):
+    inputs = _mutate_receipt(lambda value: value.__setitem__(field, False))
+    state = project_legacy_control_state(**inputs)
+    _assert_deny_only(state)
+
+
+def test_current_frozen_authorization_status_values_are_all_accepted():
+    found = {
+        json.loads(document.raw)["authorization_status"]
+        for document in _inputs()["amendments"]
+        if "authorization_status" in json.loads(document.raw)
+    }
+    assert found  # the current packet does exercise this field
+    assert found == _legacy_adapter._ADMINISTRATIVE_STATUS_ALLOWED_VALUES
+    state = project_legacy_control_state(**_inputs())
+    _assert_deny_only(state)
+
+
+@pytest.mark.parametrize("bad_status", [
+    "AUTHORIZED_LIVE_EXECUTION",
+    "LIVE_EXECUTION_AUTHORIZED",
+    "AUTHORIZED_PAPER_EXECUTION_FOR_REVIEW_ONLY",
+    "REAL_DATA_ACCESS_AUTHORIZED_CANDIDATE",
+    "SCIENTIFIC_USE_AUTHORIZED_PROPOSED",
+])
+def test_unknown_authorization_status_values_are_rejected(bad_status):
+    index = [i for i, d in enumerate(_inputs()["amendments"]) if "execution_governance" in d.path][0]
+    inputs = _rebind_amendment(_inputs(), index, parsed_mutator=lambda parsed: parsed.__setitem__("authorization_status", bad_status))
+    _fails("LEGACY_AUTHORITY_ESCALATION", **inputs)
+
+
+def test_all_six_current_effective_amendments_match_frozen_role_digests():
+    digests = _legacy_adapter._REQUIRED_EFFECTIVE_AMENDMENT_ROLE_DIGESTS
+    assert set(digests) == _legacy_adapter._REQUIRED_EFFECTIVE_AMENDMENT_ROLES
+    for document in _inputs()["amendments"]:
+        role = json.loads(document.raw)["amendment_kind"]
+        assert hashlib.sha256(document.raw).hexdigest() == digests[role]
+    # The digest map is keyed by role, never by path or filename.
+    for key in digests:
+        assert "/" not in key and not key.endswith(".json")
+
+
+def test_relocation_with_identical_bytes_preserves_role_content_binding():
+    inputs = _inputs()
+    original = inputs["amendments"][0]
+    relocated_path = "docs/control/amendments/relocated_content_binding_probe/" + Path(original.path).name
+    inputs = _rebind_amendment(inputs, 0, new_path=relocated_path)
+    state = project_legacy_control_state(**inputs)
+    baseline = project_legacy_control_state(**_inputs())
+    _assert_deny_only(state)
+    # The receipt's evidence binding legitimately changed (new path), so its
+    # bytes/sha256 (reflected only in provenance) differ; every other
+    # projected field -- including the role-to-content-bound scientific and
+    # administrative state -- must not.
+    assert state.state_revision == baseline.state_revision
+    assert state.protocol_id == baseline.protocol_id
+    assert state.scientific_state == baseline.scientific_state
+    assert state.administrative_state == baseline.administrative_state
+    assert state.runtime_authorization == baseline.runtime_authorization
+
+
+def test_any_byte_mutation_fails_content_binding_even_with_rebound_evidence():
+    inputs = _rebind_amendment(_inputs(), 0, parsed_mutator=lambda parsed: parsed.__setitem__("amendment_id", parsed.get("amendment_id", "") + "-tampered"))
+    _fails("LEGACY_AMENDMENT_CONTENT_MISMATCH", **inputs)
+
+
+def test_false_to_true_content_mutation_fails_content_binding():
+    index = [i for i, d in enumerate(_inputs()["amendments"]) if "spec_freeze_activation" in d.path][0]
+    inputs = _rebind_amendment(_inputs(), index, parsed_mutator=lambda parsed: parsed["authorization_state"].__setitem__("execution_authorized", True))
+    # The structural classifier fires first (defense-in-depth); either code
+    # proves the mutation cannot slip through.
+    with pytest.raises(LegacyAdapterError) as excinfo:
+        project_legacy_control_state(**inputs)
+    assert excinfo.value.code in ("LEGACY_AUTHORITY_ESCALATION", "LEGACY_AMENDMENT_CONTENT_MISMATCH")
+
+
+def test_swapping_content_between_roles_fails_content_binding():
+    inputs = _inputs()
+    amendments = list(inputs["amendments"])
+    temporal_index = [i for i, d in enumerate(amendments) if "temporal_causality_activation" in d.path][0]
+    donor_index = [i for i, d in enumerate(amendments) if "execution_governance" in d.path][0]
+    temporal_role = json.loads(amendments[temporal_index].raw)["amendment_kind"]
+    donor_parsed = json.loads(amendments[donor_index].raw)
+    assert donor_parsed.get("document_kind") is None  # no document_kind conflict to muddy the result
+    donor_parsed["amendment_kind"] = temporal_role
+    swapped_raw = _canonical(donor_parsed)
+    swapped_path = "docs/control/amendments/swapped_role_probe.json"
+    swapped = LegacyDocument(swapped_path, swapped_raw)
+    # Replace the genuine temporal-causality slot with the swapped content;
+    # keep the genuine donor document in place so its own role is unaffected.
+    amendments[temporal_index] = swapped
+    inputs["amendments"] = tuple(amendments)
+    receipt = json.loads(inputs["source_receipt"].raw)
+    receipt["evidence"].append({"path": swapped_path, "sha256": hashlib.sha256(swapped_raw).hexdigest()})
+    inputs["source_receipt"] = LegacyDocument(RECEIPT_PATH, _canonical(receipt))
+    active = json.loads(inputs["active_task"].raw)
+    active["handoff_receipt_sha256"] = hashlib.sha256(inputs["source_receipt"].raw).hexdigest()
+    inputs["active_task"] = LegacyDocument(ACTIVE_PATH, _canonical(active))
+    _fails("LEGACY_AMENDMENT_CONTENT_MISMATCH", **inputs)
+
+
+def test_role_content_binding_survives_amendment_reordering():
+    inputs = _inputs()
+    inputs["amendments"] = tuple(reversed(inputs["amendments"]))
+    state = project_legacy_control_state(**inputs)
+    assert state == project_legacy_control_state(**_inputs())
+
+
+@pytest.mark.parametrize("key", ["mixed_Case_Live_Authorization", "REAL_DATA_ACCESS_PERMISSION", "shadow_execution_granted"])
+def test_source_receipt_mixed_case_authority_like_keys_reject_true(key):
+    inputs = _mutate_receipt(lambda value: value.__setitem__(key, True))
+    _fails("LEGACY_AUTHORITY_ESCALATION", **inputs)
+
+
+@pytest.mark.parametrize("key", ["mixed_Case_Live_Authorization", "REAL_DATA_ACCESS_PERMISSION", "shadow_execution_granted"])
+def test_source_receipt_authority_like_keys_stay_deny_safe_at_false(key):
+    inputs = _mutate_receipt(lambda value: value.__setitem__(key, False))
+    state = project_legacy_control_state(**inputs)
+    _assert_deny_only(state)
+
+
+def test_no_raw_python_exception_escapes_content_binding_or_status_mutations():
+    mutators = [
+        lambda parsed: parsed["authority_non_effects"].__setitem__("live_authorization_granted", True),
+        lambda parsed: parsed.__setitem__("amendment_id", "tampered"),
+        lambda parsed: parsed.__setitem__("authorization_status", "AUTHORIZED_LIVE_EXECUTION"),
+    ]
+    for mutator in mutators:
+        base = _inputs()
+        index = [i for i, d in enumerate(base["amendments"]) if "rng_runtime_specification_amendment_activation" in d.path][0]
+        inputs = _rebind_amendment(base, index, parsed_mutator=mutator)
+        with pytest.raises(LegacyAdapterError) as excinfo:
+            project_legacy_control_state(**inputs)
+        assert excinfo.value.code
+        assert excinfo.value.path

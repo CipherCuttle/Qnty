@@ -20,7 +20,7 @@
     {
       "surface": "quantbot/control/",
       "path": "quantbot/control/legacy_adapter.py",
-      "max_additional_bytes": 17727,
+      "max_additional_bytes": 24216,
       "reason": "Temporary additive replacement-control work: pure explicit-input projection from validated legacy records into the deny-only control-state schema, unreachable from runtime.",
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
     },
@@ -34,7 +34,7 @@
     {
       "surface": "tests/control/",
       "path": "tests/control/test_legacy_adapter.py",
-      "max_additional_bytes": 14650,
+      "max_additional_bytes": 26676,
       "reason": "Temporary additive replacement-control work: deterministic current-state and fail-closed legacy-adapter projection tests.",
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
     },

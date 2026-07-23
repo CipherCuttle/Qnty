@@ -10,6 +10,33 @@ Amendment semantic identity is derived only from the explicit
 path, basename, suffix, or directory.  Paths are used only for safe-path
 validation, duplicate detection, receipt evidence lookup, exact SHA-256 byte
 binding, and provenance.
+
+The real guarantees this module provides:
+
+* Exact role-to-content binding freezes the six currently effective
+  amendments: each required semantic role must be supplied by a document
+  whose raw bytes hash to that role's pinned SHA-256 digest, computed once
+  from the actual current effective amendment bytes.  This is the primary
+  amendment-integrity boundary -- it is independent of path, filename,
+  ordering, or the receipt's own evidence bookkeeping, and it fails closed on
+  any byte change, any role swap, or any relocation that also changes bytes.
+* A finite, explicit leaf-field authority classifier is defense-in-depth on
+  top of that binding, and is the *only* protection for the source receipt
+  (which is not pinned to a single frozen content hash).  It recognizes
+  authority-bearing fields by exact key name and a small set of key
+  suffixes, normalized to ASCII lowercase; every recognized leaf must hold
+  exactly `False` or one of a small set of safe deny strings.  It does not
+  and cannot enumerate every conceivable future authority-bearing field name
+  -- an unrecognized field name is defense-in-depth blind spot, not a
+  guarantee -- so the role-to-content binding above remains the load-bearing
+  control for amendments.
+* Administrative exceptions (fields that legitimately carry a non-deny
+  value, e.g. an implementation-authorized marker or a review-stage status
+  string) are finite, exact-key, exact-value allowlists derived from the
+  actual frozen packet.  They can never authorize runtime, scientific,
+  paper, shadow, live, or real-data operations: the projected control state
+  below is built entirely from literal deny constants and never reads an
+  authority value out of the supplied documents.
 """
 
 from __future__ import annotations
@@ -43,15 +70,33 @@ _REQUIRED_EFFECTIVE_AMENDMENT_ROLES = frozenset(
     }
 )
 
-# Structural, field-aware runtime-authority validation (Defect 2).
+# Exact SHA-256 of the actual current effective amendment bytes, one per
+# required role, computed once from the frozen packet at the pinned source
+# head commit.  This is the primary amendment-integrity boundary: unlike the
+# structural classifier below, it is not a defense-in-depth heuristic -- any
+# byte difference from the pinned digest fails closed, regardless of what
+# fields the mutated content does or does not contain, and regardless of
+# whether the receipt's own evidence hash was also (mis)updated to match.
+_REQUIRED_EFFECTIVE_AMENDMENT_ROLE_DIGESTS = {
+    "qnty_h001_temporal_causality_activation_amendment": "b60f322650c5b83500b89ad9914b50cd2eb200cbae573670d307b5a72190ee1b",
+    "qnty_h001_synthetic_null_calibration_spec_freeze_activation_amendment": "3fa3d21492645baba8a1fd7fd5fbe8a601ccccec1371e5e7a81faff430c2ab48",
+    "qnty_h001_synthetic_null_calibration_execution_governance_amendment": "23b98106326b655ec334e54eaf1757d24f77ab643a64efeddad7226801ad16a5",
+    "qnty_h001_synthetic_null_calibration_numerical_conventions_amendment_governance": "b6309ef438129fd49218ab12a086996286b90408d2d97189a3ce8b9ed680e649",
+    "qnty_h001_synthetic_null_calibration_rng_runtime_specification_amendment_governance": "da27f06effb8321da84ee9f44ff90b810e8c36491d729387b4e820e14f0d8c36",
+    "qnty_h001_rng_runtime_specification_amendment_activation_amendment": "77b27c218670ca427e2f9589dba144731dd456cce56650222ebb37a3d5528c97",
+}
+
+# Structural, field-aware runtime-authority validation.
 #
-# Rather than scanning free text for suspicious substrings, every recognized
-# field is looked up by its exact key name and its value is required to equal
-# one of a small set of known-safe (deny/administrative) values.  Any other
-# value -- including one that merely appends a suffix such as "_ONLY" or
-# "_FOR_REVIEW" to an escalating word -- fails closed, because the comparison
-# is exact-value membership, never substring matching.
-_BOOLEAN_DENY_FIELDS = frozenset(
+# Every recognized field is looked up by its exact key name (normalized to
+# ASCII lowercase); its value is then required to equal one of a small set
+# of known-safe (deny/administrative) values.  This is defense-in-depth: it
+# protects the source receipt (which has no per-document content-hash
+# binding) and backs up the amendment role-to-content binding above.  It is
+# necessarily a finite, explicit enumeration -- it does not claim to catch
+# every conceivable future authority-bearing field name, only the ones
+# listed here plus the small set of recognized suffixes.
+_AUTHORITY_DENY_ONLY_FIELDS = frozenset(
     {
         "execution_authorized",
         "h001_holdout_execution_authorized",
@@ -67,26 +112,46 @@ _BOOLEAN_DENY_FIELDS = frozenset(
         "calibration_execution_authorized",
         "calibration_execution_performed",
         "calibration_engine_implemented",
+        "live_authorization_granted",
+        "paper_trade_authorization_granted",
+        "scientific_authorization_granted",
     }
 )
 
-# Any field name ending in one of these suffixes is treated as runtime-authority
-# bearing structurally -- by key, never by scanning its value's text -- so a
-# field the enumerated list above does not yet anticipate (e.g. an injected
-# `runtime_permission` field) is still caught.
-_AUTHORITY_FIELD_SUFFIXES = ("_authorized", "_authorization", "_permission", "_authority")
+# Any field name ending in one of these suffixes (matched on the ASCII
+# lowercase form of the key) is treated as runtime-authority bearing
+# structurally -- by key, never by scanning its value's text.
+_AUTHORITY_FIELD_SUFFIXES = ("_authorized", "_authorization", "_permission", "_authority", "_granted")
 
-# Fields that legitimately carry a non-deny value as administrative or
-# implementation-only evidence and must never be treated as runtime-authority
-# escalation, even though their name matches an authority suffix above.
-_BOOLEAN_ADMINISTRATIVE_ALLOW_FIELDS = frozenset(
+# Fields that legitimately carry a non-deny boolean value as administrative
+# or implementation-only evidence and must never be treated as
+# runtime-authority escalation, even though their name matches an authority
+# suffix above.  Still required to be an actual bool (true or false).
+_ADMINISTRATIVE_ALLOW_BOOLEAN_FIELDS = frozenset(
     {
         "execution_implementation_authorized",
         "rng_runtime_amendment_governance_authorized",
     }
 )
 
+# Fields that carry an administrative status *string*, never a boolean deny
+# value.  Recognized by exact key name; the value must equal one of a
+# finite, exact allowlist of the current frozen packet's legitimate values
+# (see `_ADMINISTRATIVE_STATUS_ALLOWED_VALUES`), never merely "contain" a
+# review-stage word such as ONLY, REVIEW, CANDIDATE, or PROPOSED.
+_ADMINISTRATIVE_STATUS_FIELDS = frozenset({"authorization_status"})
+
+_ADMINISTRATIVE_STATUS_ALLOWED_VALUES = frozenset(
+    {
+        "AUTHORIZED_H001_SYNTHETIC_NULL_CALIBRATION_EXECUTION_IMPLEMENTATION_FOR_INDEPENDENT_REVIEW_ONLY",
+        "AUTHORIZED_H001_SYNTHETIC_NULL_CALIBRATION_NUMERICAL_CONVENTIONS_AMENDMENT_CANDIDATE_FOR_INDEPENDENT_REVIEW_ONLY",
+        "AUTHORIZED_H001_SYNTHETIC_NULL_CALIBRATION_RNG_RUNTIME_SPECIFICATION_AMENDMENT_CANDIDATE_FOR_INDEPENDENT_REVIEW_ONLY",
+    }
+)
+
 _STRING_AUTHORITY_SAFE_VALUES = frozenset({"DENIED", "FORBIDDEN", "NOT_AUTHORIZED", "UNAUTHORIZED", "NONE"})
+
+_ASCII_LOWER_TABLE = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 # `KEY=VALUE` decision tokens (as used in `source_receipt.decisions`) are
 # matched by key, exact-value allow-listed, never substring-scanned.
@@ -173,30 +238,58 @@ def _required(obj: dict, key: str, path: str, expected_type: type | None = None)
     return value
 
 
-def _is_authority_field(key: str) -> bool:
-    return key in _BOOLEAN_DENY_FIELDS or key.endswith(_AUTHORITY_FIELD_SUFFIXES)
+def _ascii_lower(key: str) -> str:
+    return key.translate(_ASCII_LOWER_TABLE)
+
+
+def _classify_authority_leaf(key: str, item: object, path: str) -> None:
+    """Classify a single dict leaf by its exact (ASCII-lowercased) key name.
+
+    Three finite, explicit categories, checked in order:
+    1. Known administrative booleans: must be an actual bool (either value).
+    2. Known administrative status strings: must equal one of a finite exact
+       allowlist of the current frozen packet's legitimate values.
+    3. Known deny-only authority fields (exact name or recognized suffix):
+       must be exactly `False` or one of the safe deny strings.
+    Anything not matching one of these three categories is not classified
+    here at all -- it is not scanned for keyword text, and containers under
+    it are still recursed into by the caller.
+    """
+    normalized = _ascii_lower(key)
+    if normalized in _ADMINISTRATIVE_ALLOW_BOOLEAN_FIELDS:
+        if type(item) is not bool:
+            _fail("LEGACY_WRONG_TYPE", path, "administrative authorization field must be a boolean")
+        return
+    if normalized in _ADMINISTRATIVE_STATUS_FIELDS:
+        if type(item) is not str or item not in _ADMINISTRATIVE_STATUS_ALLOWED_VALUES:
+            _fail("LEGACY_AUTHORITY_ESCALATION", path, "administrative status is not an exact frozen allowed value")
+        return
+    if normalized in _AUTHORITY_DENY_ONLY_FIELDS or normalized.endswith(_AUTHORITY_FIELD_SUFFIXES):
+        if type(item) is bool:
+            if item is not False:
+                _fail("LEGACY_AUTHORITY_ESCALATION", path, "runtime-authority field is not false")
+        elif type(item) is str:
+            if item not in _STRING_AUTHORITY_SAFE_VALUES:
+                _fail("LEGACY_AUTHORITY_ESCALATION", path, "runtime-authority field is not a safe deny value")
+        else:
+            _fail("LEGACY_AUTHORITY_ESCALATION", path, "runtime-authority field has unexpected type")
 
 
 def _check_boolean_authority_fields(value: object, path: str) -> None:
-    """Recursively require known runtime-authority fields to hold a safe deny value.
+    """Recursively require known runtime-authority leaf fields to be deny-safe.
 
-    Fields are recognized by exact key name (an enumerated set, plus any key
-    ending in a recognized authority suffix); their value is then required to
-    equal an exact safe value. No field's value text is scanned for keywords,
-    so a suffix such as "_ONLY" appended to an escalating value cannot hide it.
+    Recognition is by exact (ASCII-lowercased) key name, never by scanning a
+    value's text: a suffix such as "_ONLY" appended to an escalating string
+    on a *recognized* field cannot hide it, because the comparison is exact
+    membership in a finite allowed set. Containers (dicts/lists) are always
+    recursed into regardless of whether their own key is recognized, so an
+    authority-bearing leaf nested under an unrecognized container name (e.g.
+    a `..._non_effects` grouping) is still classified individually.
     """
     if isinstance(value, dict):
         for key, item in value.items():
             child_path = f"{path}.{key}"
-            if _is_authority_field(key) and key not in _BOOLEAN_ADMINISTRATIVE_ALLOW_FIELDS:
-                if type(item) is bool:
-                    if item is not False:
-                        _fail("LEGACY_AUTHORITY_ESCALATION", child_path, "runtime-authority field is not false")
-                elif type(item) is str:
-                    if item not in _STRING_AUTHORITY_SAFE_VALUES:
-                        _fail("LEGACY_AUTHORITY_ESCALATION", child_path, "runtime-authority field is not a safe deny value")
-                else:
-                    _fail("LEGACY_AUTHORITY_ESCALATION", child_path, "runtime-authority field has unexpected type")
+            _classify_authority_leaf(key, item, child_path)
             _check_boolean_authority_fields(item, child_path)
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -280,19 +373,28 @@ def _validate_amendments(amendments: tuple["LegacyDocument", ...], receipt: dict
         parsed = _load(document, "amendment")
         if parsed.get("effective") is not True:
             continue
+        # 1-2. Derive and validate the semantic role from the explicit field.
         role = parsed.get("amendment_kind")
         if type(role) is not str or not role or role not in _REQUIRED_EFFECTIVE_AMENDMENT_ROLES:
             _fail("LEGACY_UNKNOWN_AMENDMENT_ROLE", document.path, f"unknown or missing effective amendment role: {role!r}")
+        # 3. Optional `document_kind` consistency.
         document_kind = parsed.get("document_kind")
         if document_kind is not None and document_kind != role:
             _fail("LEGACY_AMENDMENT_ROLE_CONFLICT", document.path, "amendment_kind and document_kind disagree")
         if role in roles:
             _fail("LEGACY_DUPLICATE_AMENDMENT_ROLE", document.path, f"role already supplied by {roles[role]!r}")
+        # 4. Governed protocol identity.
         if parsed.get("governed_h001_protocol_id") != _GOVERNED_H001_PROTOCOL_ID:
             _fail("LEGACY_IDENTITY_MISMATCH", document.path, "wrong governed H001 protocol")
         _check_authority_structure(parsed, "amendment")
+        # 5. Receipt evidence path + SHA-256 binding.
         if evidence.get(document.path) != hashlib.sha256(document.raw).hexdigest():
             _fail("LEGACY_REQUIRED_EVIDENCE_MISSING", document.path, "receipt does not bind exact amendment bytes")
+        # 6. Independent exact role-to-content binding: the primary
+        # amendment-integrity boundary, checked regardless of path or of
+        # what the receipt's own evidence hash says.
+        if hashlib.sha256(document.raw).hexdigest() != _REQUIRED_EFFECTIVE_AMENDMENT_ROLE_DIGESTS[role]:
+            _fail("LEGACY_AMENDMENT_CONTENT_MISMATCH", document.path, f"amendment bytes do not match the frozen digest for role {role!r}")
         roles[role] = document.path
     missing = _REQUIRED_EFFECTIVE_AMENDMENT_ROLES - roles.keys()
     if missing:
