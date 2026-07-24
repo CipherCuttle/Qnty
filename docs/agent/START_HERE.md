@@ -139,6 +139,27 @@ existing V0 recovery/retirement prohibition remains active.
 - Agents resolve artifact identity through Git-owned artifact records under
   `docs/artifacts/`, never from a local path or chat history.
 
+## Long-running command ownership
+
+Start only one instance of a logical long-running command. Record enough
+ownership evidence to identify it: PID or process group, command, working
+directory, a durable output log when needed, and its final exit status. A tool
+or terminal timeout, silent terminal, detached output, or compacted response
+does not prove that the process exited.
+
+Poll the owned process and its log with bounded, one-shot status checks instead
+of starting another instance; avoid indefinite terminal polling or `sleep`
+loops. Before retrying, prove that the previous process exited, or terminate
+its exact process group and confirm termination. Never run concurrent retries
+of the same full test suite.
+
+Never infer pass or failure without a captured final exit code. If process
+ownership or exit evidence is lost, report the run as `unverifiable`. Clean
+temporary files only when they are confirmed inactive and scoped to the
+abandoned run. This is behavioral guidance: use durable logs and ownership
+evidence when appropriate for long-running commands, not mandatory
+infrastructure for every short command.
+
 ## Repo basics
 
 - Install: `python -m venv .venv && source .venv/bin/activate && pip install -e ".[test]"`
