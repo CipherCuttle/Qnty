@@ -10,18 +10,16 @@ Shared task-state rules live in the canonical contract, imported here:
 
 @docs/agent/START_HERE.md
 
-Before non-trivial work: run `.venv/bin/python -m quantbot.continuity verify`,
-then `show`. If `verify` fails, stop and report — do not reconstruct task state
-from chat or MemPalace. Then classify the task using the canonical contract:
+Classify the request under `START_HERE` before protocol bootstrap.
+`PROTOCOL_LANE` requires continuity `verify`, `show`, the validated
+`NEXT_ACTION`, and its append-only handoff; a verifier failure does not block
+unrelated `ADMIN_LANE` work.
 
-- `PROTOCOL_LANE` work must match the validated `NEXT_ACTION` and must complete
-  the required append-only handoff.
-- Explicitly requested bounded `ADMIN_LANE` maintenance may proceed outside
-  `NEXT_ACTION` only when it cannot alter protocol, scientific, data-access, or
-  runtime authority and does not touch active control records.
-- `PROHIBITED` actions remain absolute in both lanes.
-
-Do not append a handoff receipt for `ADMIN_LANE` work.
+Permanent safety constraints limit scientific/runtime actions; they do not
+globally block bounded `ADMIN_LANE` work. Do not return a generic blocked
+verdict unless the requested action itself is prohibited, integrity-invalid,
+directly prevented, or the lane is genuinely ambiguous. Do not append a
+handoff receipt for `ADMIN_LANE` work.
 
 ## Stack & layout
 - Python >=3.10; deps: numpy, pandas, requests; tests: pytest. No TS/frontend, no CI,
@@ -101,9 +99,11 @@ If MemPalace conflicts with git/docs/verifier output, trust git/docs/verifier.
 
 Preserve work quality and safety, but avoid dragging unnecessary context.
 
-- At the start of a session, read this file, run the continuity verifier
-  (`.venv/bin/python -m quantbot.continuity show`) for the current task state, and
-  use MemPalace `qnty` recall only as a supplementary aid — not huge prior chat context.
+- At the start of a session, read this file and classify the request under
+  `START_HERE`. For `PROTOCOL_LANE` work, run continuity `verify` then `show`
+  for the current task state. `ADMIN_LANE` work does not require continuity
+  bootstrap. Use MemPalace `qnty` recall only as a supplementary aid — not
+  huge prior chat context.
 - Use `/compact` after completing a coherent phase, before switching from investigation
   to implementation, or when context is getting large. Before compacting, write a short
   checkpoint: current branch, open PR, changed files, key findings, commands run,
