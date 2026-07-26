@@ -34,16 +34,16 @@
     {
       "surface": "tests/control/",
       "path": "tests/control/test_legacy_adapter.py",
-      "max_additional_bytes": 34464,
-      "reason": "Adversarial coverage of receipt-index-34 PASS review-completion and authority boundaries.",
-      "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
+      "max_additional_bytes": 36674,
+      "reason": "Adversarial coverage of receipt-index-34 PASS review-completion and authority boundaries; v035 pins the active-task and effective-amendment fixtures to their frozen receipt-index-34 bytes instead of the live (now-advancing) repository state.",
+      "expires_in_pr": "chore/h001-remaining-execution-pipeline-scope-governance-v035"
     },
     {
       "surface": "tests/control/",
       "path": "tests/control/governance_baseline.json",
-      "max_additional_bytes": 5647,
-      "reason": "Exact-path exception metadata required for bounded v034 review-completion and Phase-A historical-test cleanup state.",
-      "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
+      "max_additional_bytes": 7354,
+      "reason": "Exact-path exception metadata required for bounded v034 review-completion, Phase-A historical-test cleanup state, and, cumulatively, the v035 remaining-execution-pipeline scope-governance transition.",
+      "expires_in_pr": "chore/h001-remaining-execution-pipeline-scope-governance-v035"
     },
     {
       "surface": "docs/control/",
@@ -62,9 +62,9 @@
     {
       "surface": "quantbot/continuity/",
       "path": "quantbot/continuity/context.py",
-      "max_additional_bytes": 14885,
-      "reason": "Continuity validation/dispatch support required for the v034 review-completion transition, with no authority expansion.",
-      "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
+      "max_additional_bytes": 18269,
+      "reason": "Continuity validation/dispatch support required for the v034 review-completion transition and, cumulatively, the v035 remaining-execution-pipeline scope-governance transition, with no authority expansion.",
+      "expires_in_pr": "chore/h001-remaining-execution-pipeline-scope-governance-v035"
     },
     {
       "surface": "quantbot/continuity/",
@@ -107,6 +107,27 @@
       "max_additional_bytes": 380,
       "reason": "Exact-path v034 governance growth closing the Git-history source-reconstruction bypass exposed by Phase-A historical fixture cleanup.",
       "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
+    },
+    {
+      "surface": "quantbot/continuity/",
+      "path": "quantbot/continuity/h001_synthetic_null_calibration_remaining_execution_pipeline_scope_governance_v035.py",
+      "max_additional_bytes": 16999,
+      "reason": "New additive v035 continuity transition module recording only the remaining-execution-pipeline scope decomposition, no implementation or execution authority.",
+      "expires_in_pr": "chore/h001-remaining-execution-pipeline-scope-governance-v035"
+    },
+    {
+      "surface": "docs/control/",
+      "path": "docs/control/amendments/candidate1_h001_synthetic_null_calibration_remaining_execution_pipeline_scope_governance_v001.json",
+      "max_additional_bytes": 7110,
+      "reason": "New additive v035 governance amendment recording the remaining-execution-pipeline component inventory and classification; authorizes no implementation or execution.",
+      "expires_in_pr": "chore/h001-remaining-execution-pipeline-scope-governance-v035"
+    },
+    {
+      "surface": "docs/control/",
+      "path": "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v035.json",
+      "max_additional_bytes": 21375,
+      "reason": "Append-only v035 handoff binding the scope-governance decomposition and the deny-only next action.",
+      "expires_in_pr": "chore/h001-remaining-execution-pipeline-scope-governance-v035"
     }
   ],
   "governed_basenames": [
