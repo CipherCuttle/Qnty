@@ -19,10 +19,41 @@ ROOT = Path(__file__).resolve().parents[2]
 ACTIVE_PATH = "docs/control/active_task.json"
 RECEIPT_PATH = "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v034.json"
 HEAD = "0bd455ed236fe69ecca6484e3c9318070db889f0"
+# `legacy_adapter` is a pure projection of one frozen historical packet
+# (receipt index 34): its docstring is explicit that it "does not inspect
+# the repository ... state". This test module therefore pins the exact
+# active-task pointer bytes that were live when receipt index 34 was the
+# active task, rather than reading the live (and, from v035 onward,
+# advancing) `docs/control/active_task.json` off disk -- reading the live
+# file would silently break every test in this module the moment the
+# continuity pointer legitimately advances past receipt 34, even though the
+# frozen adapter under test has not changed at all.
+_PINNED_V034_ACTIVE_TASK_BYTES = (
+    b'{"control_kind":"qnty_active_task_pointer",'
+    b'"handoff_receipt_path":"docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v034.json",'
+    b'"handoff_receipt_sha256":"c1187bc4387bd299bdf975c411620aefb09a9b7db8040f4456f5c811b8f72037",'
+    b'"phase":"candidate1_h001_synthetic_null_calibration_execution_engine_implementation_review_completed",'
+    b'"protocol_id":"real_btc_candidate1_train_mechanism_decomposition_v0",'
+    b'"schema_version":"0.1.0",'
+    b'"task_id":"RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT"}'
+)
+# Similarly, the seven currently-effective amendments are a frozen set as of
+# receipt index 34; a live glob over `docs/control/amendments/` would pick up
+# any later, unrelated governance document marked `effective` for reasons
+# outside this frozen adapter's scope. Pin the exact seven paths instead.
+_PINNED_V034_EFFECTIVE_BASENAMES = (
+    "candidate1_h001_synthetic_null_calibration_execution_governance_v001.json",
+    "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_governance_v001.json",
+    "candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_activation_v001.json",
+    "candidate1_h001_synthetic_null_calibration_rng_runtime_specification_amendment_governance_v001.json",
+    "candidate1_h001_synthetic_null_calibration_numerical_conventions_amendment_activation_v001.json",
+    "candidate1_h001_temporal_causality_activation_v001.json",
+    "candidate1_h001_synthetic_null_calibration_spec_freeze_activation_v001.json",
+)
 EFFECTIVE = tuple(
     sorted(
-        path for path in (ROOT / "docs/control/amendments").glob("*.json")
-        if json.loads(path.read_text()).get("effective") is True
+        ROOT / "docs/control/amendments" / basename
+        for basename in _PINNED_V034_EFFECTIVE_BASENAMES
     )
 )
 RUNTIME_ENTRYPOINTS = (
@@ -46,7 +77,7 @@ def _doc(path):
 
 
 def _inputs():
-    return dict(active_task=_doc(ROOT / ACTIVE_PATH), source_receipt=_doc(ROOT / RECEIPT_PATH), amendments=tuple(_doc(path) for path in EFFECTIVE), source_head_commit=HEAD)
+    return dict(active_task=LegacyDocument(ACTIVE_PATH, _PINNED_V034_ACTIVE_TASK_BYTES), source_receipt=_doc(ROOT / RECEIPT_PATH), amendments=tuple(_doc(path) for path in EFFECTIVE), source_head_commit=HEAD)
 
 
 def _canonical(value):
