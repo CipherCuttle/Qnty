@@ -160,6 +160,64 @@ abandoned run. This is behavioral guidance: use durable logs and ownership
 evidence when appropriate for long-running commands, not mandatory
 infrastructure for every short command.
 
+## Pytest temp-root hygiene
+
+Manual, full-suite, and audit pytest runs must use pytest's default,
+system-`/tmp`-backed `tmp_path` (plain `pytest ...`, no `TMPDIR=` and no
+`--basetemp=`). This is required, not just conventional: some tests are
+path-sensitive to a prohibited-prefix check keyed on `/tmp`, and pointing
+`--basetemp` outside `/tmp` has been shown to flip their outcome (see
+`tests/control/test_basetemp_path_sensitivity_debt.py`). Pytest also
+self-manages retention of its own `/tmp`-backed basetemp; a hand-rolled
+persistent temp root does not get that cleanup.
+
+A persistent cache-backed root (anything under `~/.cache/` or similar,
+reused across runs) is forbidden for pytest temp state at any scope. If a
+task genuinely needs an explicit, owned temp root outside pytest's default
+(e.g. a one-off review export or scope diff), create it fresh under `/tmp`
+with `mktemp -d /tmp/qnty-<purpose>.XXXXXX`, use a `trap ... EXIT INT TERM`
+cleanup that removes only that path, and never redirect it under `~/.cache`
+or any other durable location.
+
+Heavy suites (e.g. the continuity/control tests) can leave several GiB of
+scratch under `/tmp` for the run's duration. Before a full-suite or heavy
+audit run, verify the host has adequate free `/tmp` capacity; if capacity is
+tight, treat that as an operational concern to resolve by freeing space or
+scheduling the run elsewhere — never by redirecting pytest's temp root to a
+persistent `~/.cache` path, and not by broadly deleting `/tmp` contents you
+do not own.
+
+## Review/task worktree lifecycle
+
+Ad hoc review, rereview, or audit worktrees (typically created under `/tmp`
+via `git worktree add --detach`) are scratch, not durable state, and are not
+cleaned up automatically. Before removing one, independently prove all of
+the following:
+
+- the relevant task or PR is complete/merged;
+- the worktree's HEAD is safely preserved/reachable as required (e.g. an
+  ancestor of the merged commit);
+- `git status --short` in the worktree is empty;
+- there are zero untracked files in the worktree;
+- no process is actively using the checkout.
+
+Only once all of those hold, remove it with the plain form:
+
+```bash
+git worktree remove <worktree-path>
+```
+
+If plain `git worktree remove` refuses, **stop** — do not fall back to
+`--force` merely to make cleanup succeed. `--force` discards the normal
+safety checks (dirty state, untracked files) and is not a routine cleanup
+step; treat a refusal as a signal to investigate, not an obstacle to
+override.
+
+Never remove a worktree you did not create, and never remove one that has
+not been proven merged and clean by that verification. Do not run
+`git worktree prune` or otherwise batch-remove worktrees you have not
+individually verified.
+
 ## Repo basics
 
 - Install: `python -m venv .venv && source .venv/bin/activate && pip install -e ".[test]"`
