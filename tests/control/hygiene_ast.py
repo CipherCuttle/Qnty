@@ -184,7 +184,16 @@ def find_source_reconstruction_functions(root: Path, include_dirs: list[str] | N
             if node.name.startswith("test_"):
                 continue
             calls = {_call_signature(c) for c in ast.walk(node) if isinstance(c, ast.Call)}
-            if not {"read_bytes", "write_bytes", "sha256"} <= calls:
+            is_git_show = (
+                "check_output" in calls
+                and any(
+                    isinstance(n, ast.Constant)
+                    and n.value in {"git", "show"}
+                    for n in ast.walk(node)
+                )
+            )
+            reads_source_bytes = "read_bytes" in calls or is_git_show
+            if not (reads_source_bytes and {"write_bytes", "sha256"} <= calls):
                 continue
             has_py_source_literal = any(
                 isinstance(n, ast.Constant) and isinstance(n.value, str) and _PY_SOURCE_PATH_RE.match(n.value)
@@ -200,6 +209,7 @@ def find_source_reconstruction_functions(root: Path, include_dirs: list[str] | N
             # current files verbatim and only rehashes unrelated JSON evidence.
             has_byte_manipulation = (
                 "b64decode" in calls
+                or is_git_show
                 or "replace" in calls
                 or (
                     ("index" in calls or "count" in calls)

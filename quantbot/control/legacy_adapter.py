@@ -60,7 +60,7 @@ _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _TASK_ID = "RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT"
 _PROTOCOL_ID = "real_btc_candidate1_train_mechanism_decomposition_v0"
 _GOVERNED_H001_PROTOCOL_ID = "real_btc_h001_funding_crowding_reversal_falsification_v0"
-_CURRENT_RECEIPT_INDEX = 33
+_CURRENT_RECEIPT_INDEX = 34
 
 # The smallest finite adapter-local semantic-role mapping supported by the six
 # currently effective amendments' own explicit `amendment_kind` fields.  Each
@@ -444,7 +444,7 @@ def project_legacy_control_state(*, active_task: LegacyDocument, source_receipt:
         _fail("LEGACY_IDENTITY_MISMATCH", "source_receipt", "wrong task or protocol")
     index = _required(receipt, "receipt_index", "source_receipt", int)
     if index != _CURRENT_RECEIPT_INDEX:
-        _fail("LEGACY_REVISION_MISMATCH", "source_receipt.receipt_index", "current mapping requires receipt index 33")
+        _fail("LEGACY_REVISION_MISMATCH", "source_receipt.receipt_index", "current mapping requires receipt index 34")
     _require_safety(receipt)
     _validate_amendments(amendments, receipt)
     binding = _required(receipt, "engine_implementation_binding", "source_receipt", dict)
@@ -453,13 +453,13 @@ def project_legacy_control_state(*, active_task: LegacyDocument, source_receipt:
         _fail("LEGACY_AUTHORITY_ESCALATION", "source_receipt.engine_implementation_binding.engine_implementation_status", "not the exact frozen implemented-for-review-only marker")
     if binding.get("engine_implemented") is not True:
         _fail("LEGACY_REQUIRED_EVIDENCE_MISSING", "source_receipt.engine_implementation_binding", "current packet must record the engine as implemented for independent review")
-    if binding.get("engine_executed") is not False or binding.get("engine_reviewed") is not False or binding.get("engine_wired_into_execute_calibration") is not False:
-        _fail("LEGACY_AUTHORITY_ESCALATION", "source_receipt.engine_implementation_binding", "engine implementation binding claims more than implemented-for-review-only")
+    if binding.get("engine_executed") is not False or binding.get("engine_reviewed") is not True or binding.get("engine_review_verdict") != "PASS" or binding.get("engine_wired_into_execute_calibration") is not False:
+        _fail("LEGACY_AUTHORITY_ESCALATION", "source_receipt.engine_implementation_binding", "engine review-completion binding claims execution or an invalid review verdict")
     projected = {
         "control_kind": "qnty_control_state", "schema_version": "1.0.0", "state_revision": index + 1,
         "protocol_id": _PROTOCOL_ID,
         "scientific_state": {"hypothesis_id": "H001", "edge_status": "EDGE_UNPROVEN", "live_status": "BLOCK_LIVE_INTEGRATION", "real_data_access": "FORBIDDEN", "synthetic_calibration_execution": "NOT_AUTHORIZED", "execution_count": 0, "execution_budget": 0},
-        "administrative_state": {"workflow_status": "UNDER_REVIEW", "proposal_ref": proposal_ref, "superseded_by": None},
+        "administrative_state": {"workflow_status": "REVIEW_COMPLETED", "proposal_ref": proposal_ref, "superseded_by": None},
         "runtime_authorization": {"public_data_fetch": "DENIED", "h001_real_data_fetch": "DENIED", "synthetic_calibration": "DENIED", "paper_execution": "DENIED", "shadow_execution": "DENIED", "live_execution": "DENIED"},
         "provenance": {"source_receipt_path": source_receipt.path, "source_receipt_sha256": actual_hash, "source_head_commit": source_head_commit},
     }
