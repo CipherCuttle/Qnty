@@ -15,71 +15,79 @@ contract elsewhere.
 Chat history, MemPalace, and local untracked notes are recall aids only and are
 **never** source of truth. If they conflict with the verifier, trust the verifier.
 
-## Mandatory bootstrap (before any non-trivial work)
+## Work-lane classification (before bootstrap)
+
+Classify the requested work before invoking the continuity bootstrap. Chat
+history is not authoritative for protocol state, but it can identify the
+requested work for this classification.
+
+### `ADMIN_LANE`
+
+Ordinary code review, tests, documentation, CI repair, bounded refactoring, and
+repository hygiene default to `ADMIN_LANE` when they do not mutate protocol
+authority or execute protected operations. Bounded implementation also belongs
+here when it cannot mutate protocol authority or access protected data.
+`ADMIN_LANE` work:
+
+- does not require a valid protocol `NEXT_ACTION`;
+- must not rewrite `docs/control/active_task.json`, handoff receipts,
+  amendments, scientific state, execution budgets/counts, or artifact
+  availability;
+- must not change real-data, paper, shadow, or live authorization, or runtime
+  guards;
+- must not access protected data or enable, invoke, or weaken paper, shadow, or
+  live execution guards; and
+- remains subject to every `PROHIBITED` action and scientific safety constraint.
+
+Report the lane, exact changed paths, and proof that protocol/scientific/runtime
+state remained unchanged. Do not append a handoff receipt for `ADMIN_LANE` work.
+
+### `PROTOCOL_LANE`
+
+Work is in `PROTOCOL_LANE` if it advances or mutates protocol authority or
+state, including protocol execution, protected-data access, changes to control
+records or transition logic, scientific state, execution authorization, or
+paper/shadow/live behavior.
+
+## Protocol bootstrap
 
 ```bash
 .venv/bin/python -m quantbot.continuity verify
 .venv/bin/python -m quantbot.continuity show
 ```
 
-- If `verify` fails, **stop**. Do not act, do not repair state by guessing.
-  Report the exact failure to the operator.
+- For `PROTOCOL_LANE`, if `verify` fails, **stop**. Do not act or repair state
+  by guessing; report the exact failure to the operator. A failed verifier
+  blocks protocol work, not unrelated `ADMIN_LANE` work.
 - If `verify` passes, `show` prints the validated context packet: current task,
   protocol, phase, safety state, latest handoff receipt, blockers, required
   artifacts, exactly one next action, and prohibited actions.
-- `PROHIBITED` actions are absolute in every work lane.
-- Classify the requested work under the lane rules below before acting.
+- `PROHIBITED` actions are absolute in every work lane. `EDGE_UNPROVEN`,
+  `BLOCK_LIVE_INTEGRATION`, and other persistent scientific safety constraints
+  limit permissible actions, but do not by themselves mean all repository work
+  is blocked.
+- In `PROTOCOL_LANE`, execute only the validated `NEXT_ACTION`, never perform a
+  `PROHIBITED` action, and append the required immutable handoff receipt and
+  update the active-task pointer before claiming completion.
 
-## Work lanes and authority
+## Safety constraints and verdicts
 
-### `PROTOCOL_LANE`
+The following are `SAFETY_CONSTRAINTS`, not universal workflow blockers:
+`EDGE_UNPROVEN`, `BLOCK_LIVE_INTEGRATION`, real-data or quarantine prohibition,
+scientific/paper/live authorization false, execution unauthorized, durable
+stores unconfigured, and V0 unavailable. They remain absolute boundaries for
+the actions they describe; they do not globally block bounded `ADMIN_LANE`
+work.
 
-Work is in `PROTOCOL_LANE` if it advances or mutates protocol authority or state,
-including any action that:
+Do not return generic `VERDICT_BLOCKED` merely because a context packet includes
+one of those constraints. Report work blocked only when the requested action is
+explicitly prohibited, a requested protocol transition fails integrity
+verification, a condition directly prevents that requested action, or lane
+classification is genuinely ambiguous.
 
-- executes Candidate 1 or another scientific protocol;
-- accesses real, quarantined, production, or otherwise protected data;
-- changes scientific state, execution count/budget, or runtime authorization;
-- changes `docs/control/active_task.json`, a handoff receipt, an amendment, or
-  continuity transition logic;
-- enables or modifies paper, shadow, or live execution behavior.
-
-In `PROTOCOL_LANE`:
-
-- execute only the validated `NEXT_ACTION`;
-- never perform anything listed under `PROHIBITED`;
-- append the required immutable handoff receipt and update the active-task pointer
-  before claiming completion.
-
-### `ADMIN_LANE`
-
-An explicitly requested, bounded administrative-maintenance task may proceed in
-`ADMIN_LANE` even when it is not the validated `NEXT_ACTION`, but only when all of
-the following are true:
-
-- it does not execute the protocol or access protected data;
-- it does not alter scientific state, execution counts/budgets, or runtime
-  authorization;
-- it does not modify active control records, handoff receipts, amendments, or
-  continuity transition logic;
-- it does not enable, invoke, or weaken guards around paper, shadow, or live
-  execution;
-- it does not perform anything listed under `PROHIBITED`;
-- its exact files and intended effects are stated before mutation.
-
-Examples include read-only PR review, CI/test/hygiene repair, repair of an
-existing bounded PR, agent-contract maintenance, and additive replacement-control
-tooling that remains unreachable from runtime.
-
-`NEXT_ACTION` is evidence about the next permitted protocol-state transition; it
-is not a universal scheduler for unrelated administrative maintenance.
-
-`ADMIN_LANE` work must not append a handoff receipt or rewrite
-`docs/control/active_task.json`. Report the lane, exact changed paths, and proof
-that protocol/scientific/runtime state remained unchanged.
-
-If lane classification is ambiguous, stop and report the ambiguity rather than
-assuming `ADMIN_LANE`.
+Use exactly one final verdict: `READY_TO_WORK`, `READY_FOR_REVIEW`,
+`BLOCKED_BY_INTEGRITY_ERROR`, `BLOCKED_BY_ACTION_SPECIFIC_CONDITION`,
+`PROHIBITED_ACTION`, or `AMBIGUOUS_LANE`.
 
 ## Control state contract
 
@@ -130,6 +138,27 @@ existing V0 recovery/retirement prohibition remains active.
   is `VERIFIED_AVAILABLE` without two independently restored durable copies.
 - Agents resolve artifact identity through Git-owned artifact records under
   `docs/artifacts/`, never from a local path or chat history.
+
+## Long-running command ownership
+
+Start only one instance of a logical long-running command. Record enough
+ownership evidence to identify it: PID or process group, command, working
+directory, a durable output log when needed, and its final exit status. A tool
+or terminal timeout, silent terminal, detached output, or compacted response
+does not prove that the process exited.
+
+Poll the owned process and its log with bounded, one-shot status checks instead
+of starting another instance; avoid indefinite terminal polling or `sleep`
+loops. Before retrying, prove that the previous process exited, or terminate
+its exact process group and confirm termination. Never run concurrent retries
+of the same full test suite.
+
+Never infer pass or failure without a captured final exit code. If process
+ownership or exit evidence is lost, report the run as `unverifiable`. Clean
+temporary files only when they are confirmed inactive and scoped to the
+abandoned run. This is behavioral guidance: use durable logs and ownership
+evidence when appropriate for long-running commands, not mandatory
+infrastructure for every short command.
 
 ## Repo basics
 
