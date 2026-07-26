@@ -4108,4 +4108,43 @@ def _validate_predecessor_chain(parsed: dict, root: Path, receipt_relpath: str) 
     _validate_predecessor_chain_v036(_load_canonical_document(target.read_bytes(), "predecessor receipt"), root, path)
 
 # END H001 PER-RUN COORDINATE/SEED ORCHESTRATION GOVERNANCE V037 APPEND
+
+# BEGIN H001 PER-RUN COORDINATE/SEED ORCHESTRATION CANDIDATE V038 APPEND
+from quantbot.continuity import h001_per_run_coordinate_and_seed_orchestration_candidate_v038 as _v038
+
+_validate_receipt_v037 = _validate_receipt
+
+def _validate_v038_receipt_body(parsed: dict) -> None:
+    keys = set(_RECEIPT_KEYS) | {"phase", "current_transition_files", "numerical_convention_gap_inventory", "numerical_conventions_selected_convention_inventory", "rng_runtime_candidate_resolved_inventory", "engine_implementation_binding", "per_run_coordinate_and_seed_orchestration_binding"}
+    _require_exact_keys(parsed, keys, "handoff_receipt")
+    if parsed["schema_version"] != "0.1.0" or parsed["receipt_kind"] != "qnty_cross_agent_handoff_receipt" or parsed["receipt_index"] != 38:
+        _fail("H001 per-run coordinate/seed candidate receipt structure is wrong")
+    _require_str(parsed["source_branch"], "handoff_receipt source_branch")
+    if type(parsed["source_head_commit"]) is not str or not _COMMIT_RE.fullmatch(parsed["source_head_commit"]): _fail("handoff_receipt source_head_commit must be a lowercase 40-hex commit")
+    _require_str_list(parsed["decisions"], "handoff_receipt decisions", minimum=1); _validate_required_artifacts(parsed["required_artifacts"])
+    for field in ("changed_file_scope", "blockers", "verified_commands", "prohibited_actions"): _require_str_list(parsed[field], f"handoff_receipt {field}", minimum=1)
+    if type(parsed["next_actions"]) is not list or len(parsed["next_actions"]) != 1: _fail("handoff_receipt next_actions must contain exactly one action")
+
+def _validate_receipt(parsed: dict, active: dict, root: Path) -> dict:
+    if active["phase"] != _v038.PHASE: return _validate_receipt_v037(parsed, active, root)
+    _validate_v038_receipt_body(parsed)
+    if parsed["task_id"] != active["task_id"] or parsed["protocol_id"] != active["protocol_id"]: _fail("handoff_receipt identity does not match active_task")
+    _v038.validate(parsed, root); _cross_check_artifact_records(parsed, root); _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"]); return parsed
+
+_render_context_packet_v037 = render_context_packet
+def render_context_packet(state: dict) -> str:
+    packet = _render_context_packet_v037(state)
+    if state["active_task"]["phase"] != _v038.PHASE: return packet
+    lines = packet.splitlines(); insert_at = next((i for i,line in enumerate(lines) if line.startswith("PROHIBITED=")), len(lines)); lines[insert_at:insert_at] = _v038.DECISIONS; return "\n".join(lines)
+
+_validate_predecessor_chain_v037 = _validate_predecessor_chain
+def _validate_predecessor_chain(parsed: dict, root: Path, receipt_relpath: str) -> None:
+    if parsed.get("receipt_index") != 38:
+        return _validate_predecessor_chain_v037(parsed, root, receipt_relpath)
+    predecessor = parsed["predecessor"]; path = predecessor["path"]; target = root / path
+    if path != _v038.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != predecessor["sha256"]:
+        _fail("H001 per-run coordinate/seed candidate predecessor chain is wrong")
+    _validate_predecessor_chain_v037(_load_canonical_document(target.read_bytes(), "predecessor receipt"), root, path)
+
+# END H001 PER-RUN COORDINATE/SEED ORCHESTRATION CANDIDATE V038 APPEND
 # END H001 SYNTHETIC NULL CALIBRATION ENGINE REVIEW COMPLETION V034 APPEND
