@@ -17,8 +17,8 @@ _legacy_adapter = importlib.import_module("quantbot" + ".control.legacy_adapter"
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTIVE_PATH = "docs/control/active_task.json"
-RECEIPT_PATH = "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v033.json"
-HEAD = "6fb0e9b88e16a504a9e053f53ac7e5e55b40fda8"
+RECEIPT_PATH = "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v034.json"
+HEAD = "0bd455ed236fe69ecca6484e3c9318070db889f0"
 EFFECTIVE = tuple(
     sorted(
         path for path in (ROOT / "docs/control/amendments").glob("*.json")
@@ -97,9 +97,9 @@ def _fails(code, **inputs):
 def test_current_state_projects_exactly_and_is_repeatable():
     state = project_legacy_control_state(**_inputs())
     assert project_legacy_control_state(**_inputs()) == state
-    assert state.state_revision == 34
+    assert state.state_revision == 35
     assert state.protocol_id == "real_btc_candidate1_train_mechanism_decomposition_v0"
-    assert state.administrative_state.workflow_status == "UNDER_REVIEW"
+    assert state.administrative_state.workflow_status == "REVIEW_COMPLETED"
     assert state.administrative_state.proposal_ref == "quantbot/experiment/h001_null_calibration_engine.py"
     assert state.provenance.source_receipt_path == RECEIPT_PATH
     assert state.provenance.source_receipt_sha256 == hashlib.sha256((ROOT / RECEIPT_PATH).read_bytes()).hexdigest()
@@ -606,8 +606,8 @@ def test_source_receipt_authority_like_keys_stay_deny_safe_at_false(key):
 # evidence only, no new effective amendment role. ---
 
 
-@pytest.mark.parametrize("bad_index", [32, 34])
-def test_receipt_index_32_and_34_fail_under_current_v033_adapter(bad_index):
+@pytest.mark.parametrize("bad_index", [33, 35])
+def test_receipt_index_33_and_35_fail_under_current_v034_adapter(bad_index):
     _fails("LEGACY_REVISION_MISMATCH", **_mutate_receipt(lambda value: value.__setitem__("receipt_index", bad_index)))
 
 
@@ -645,17 +645,21 @@ def test_engine_implemented_false_fails():
     _fails("LEGACY_REQUIRED_EVIDENCE_MISSING", **inputs)
 
 
-@pytest.mark.parametrize("field", ["engine_executed", "engine_reviewed", "engine_wired_into_execute_calibration"])
+@pytest.mark.parametrize("field", ["engine_executed", "engine_wired_into_execute_calibration"])
 def test_engine_binding_boolean_escalation_fails_closed(field):
     inputs = _mutate_receipt(lambda value: value["engine_implementation_binding"].__setitem__(field, True))
     _fails("LEGACY_AUTHORITY_ESCALATION", **inputs)
 
 
-@pytest.mark.parametrize("field", ["engine_executed", "engine_reviewed", "engine_wired_into_execute_calibration"])
+@pytest.mark.parametrize("field", ["engine_executed", "engine_wired_into_execute_calibration"])
 def test_engine_binding_boolean_stays_deny_safe_at_false(field):
     inputs = _mutate_receipt(lambda value: value["engine_implementation_binding"].__setitem__(field, False))
     state = project_legacy_control_state(**inputs)
     _assert_deny_only(state)
+
+def test_engine_reviewed_false_or_wrong_verdict_fails_closed():
+    _fails("LEGACY_AUTHORITY_ESCALATION", **_mutate_receipt(lambda value: value["engine_implementation_binding"].__setitem__("engine_reviewed", False)))
+    _fails("LEGACY_AUTHORITY_ESCALATION", **_mutate_receipt(lambda value: value["engine_implementation_binding"].__setitem__("engine_review_verdict", "FWER_PASSED")))
 
 
 def test_no_new_effective_amendment_role_exists_for_v033():

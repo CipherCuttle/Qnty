@@ -20,9 +20,9 @@
     {
       "surface": "quantbot/control/",
       "path": "quantbot/control/legacy_adapter.py",
-      "max_additional_bytes": 26420,
-      "reason": "Updated for v033: adapter now recognizes the exact receipt-index-33 engine-implementation-for-review marker (no new effective amendment role).",
-      "expires_in_pr": "feat/h001-null-calibration-engine-v033"
+      "max_additional_bytes": 26477,
+      "reason": "Receipt-index-34 PASS review-completion recognition while preserving deny-only/no-execution authority.",
+      "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
     },
     {
       "surface": "tests/control/",
@@ -34,16 +34,16 @@
     {
       "surface": "tests/control/",
       "path": "tests/control/test_legacy_adapter.py",
-      "max_additional_bytes": 34113,
-      "reason": "Updated for v033: adversarial coverage for the receipt-index-33 engine-implementation-for-review marker and receipt-index 32/34 rejection.",
-      "expires_in_pr": "feat/h001-null-calibration-engine-v033"
+      "max_additional_bytes": 34464,
+      "reason": "Adversarial coverage of receipt-index-34 PASS review-completion and authority boundaries.",
+      "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
     },
     {
       "surface": "tests/control/",
       "path": "tests/control/governance_baseline.json",
-      "max_additional_bytes": 4922,
-      "reason": "Temporary additive replacement-control work: exact-path exception metadata recording bounded governance growth for v033.",
-      "expires_in_pr": "feat/h001-null-calibration-engine-v033"
+      "max_additional_bytes": 5647,
+      "reason": "Exact-path exception metadata required for bounded v034 review-completion and Phase-A historical-test cleanup state.",
+      "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
     },
     {
       "surface": "docs/control/",
@@ -62,9 +62,9 @@
     {
       "surface": "quantbot/continuity/",
       "path": "quantbot/continuity/context.py",
-      "max_additional_bytes": 11604,
-      "reason": "Temporary exact-path continuity validation growth required to recognize and verify the authorized v033 engine-implementation transition.",
-      "expires_in_pr": "feat/h001-null-calibration-engine-v033"
+      "max_additional_bytes": 14885,
+      "reason": "Continuity validation/dispatch support required for the v034 review-completion transition, with no authority expansion.",
+      "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
     },
     {
       "surface": "quantbot/continuity/",
@@ -72,13 +72,6 @@
       "max_additional_bytes": 10669,
       "reason": "Temporary exact-path continuity transition module for independently reviewed H001 numerical-conventions activation.",
       "expires_in_pr": "fix/continuity-entropy-brake-v032"
-    },
-    {
-      "surface": "tests/continuity/",
-      "path": "tests/continuity/test_cross_agent_continuity.py",
-      "max_additional_bytes": 24036,
-      "reason": "Temporary exact-path deterministic transition coverage for v033 engine-implementation review-required state and authority non-effects.",
-      "expires_in_pr": "feat/h001-null-calibration-engine-v033"
     },
     {
       "surface": "quantbot/continuity/",
@@ -93,6 +86,27 @@
       "max_additional_bytes": 20205,
       "reason": "Temporary exact-path continuity transition growth: v033 receipt binding the reviewed engine-implementation-required next action.",
       "expires_in_pr": "feat/h001-null-calibration-engine-v033"
+    },
+    {
+      "surface": "quantbot/continuity/",
+      "path": "quantbot/continuity/h001_synthetic_null_calibration_execution_engine_implementation_review_completion_v034.py",
+      "max_additional_bytes": 8553,
+      "reason": "Append-only v034 exact-head engine review-completion validator with no execution authority.",
+      "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
+    },
+    {
+      "surface": "docs/control/",
+      "path": "docs/control/tasks/RECOVER_OR_RETIRE_CANDIDATE1_V0_FROZEN_INPUT/handoff_v034.json",
+      "max_additional_bytes": 24315,
+      "reason": "Append-only v034 handoff binding PASS exact-head review and the deny-only scope-governance next action.",
+      "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
+    },
+    {
+      "surface": "tests/control/",
+      "path": "tests/control/hygiene_ast.py",
+      "max_additional_bytes": 380,
+      "reason": "Exact-path v034 governance growth closing the Git-history source-reconstruction bypass exposed by Phase-A historical fixture cleanup.",
+      "expires_in_pr": "chore/h001-calibration-engine-review-completion-v034"
     }
   ],
   "governed_basenames": [

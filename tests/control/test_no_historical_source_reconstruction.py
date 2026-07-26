@@ -45,23 +45,19 @@ def test_detector_fires_on_seeded_truncation_restore(tmp_path):
     assert violations[0]["function"] == "_restore_v099_sources"
 
 
-def test_detector_fires_on_seeded_base64_blob_restore(tmp_path):
-    bad_file = tmp_path / "bad_module2.py"
+def test_detector_fires_on_seeded_git_show_restore(tmp_path):
+    bad_file = tmp_path / "bad_module_git_show.py"
     bad_file.write_text(
-        "import base64\n"
         "import hashlib\n"
+        "import subprocess\n"
         "\n"
-        "_BLOBS = {'quantbot/some_module.py': 'ZGVhZGJlZWY='}\n"
         "_HASHES = {'quantbot/some_module.py': 'deadbeef' * 8}\n"
         "\n"
         "def _restore_historical_tree(destination):\n"
         "    for path, expected in _HASHES.items():\n"
-        "        target = destination / path\n"
-        "        if hashlib.sha256(target.read_bytes()).hexdigest() == expected:\n"
-        "            continue\n"
-        "        historical = base64.b64decode(_BLOBS[path])\n"
+        "        historical = subprocess.check_output(['git', 'show', f'HEAD:{path}'])\n"
         "        assert hashlib.sha256(historical).hexdigest() == expected\n"
-        "        target.write_bytes(historical)\n",
+        "        (destination / path).write_bytes(historical)\n",
         encoding="utf-8",
     )
     violations = find_source_reconstruction_functions(tmp_path)
