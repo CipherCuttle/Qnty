@@ -4201,4 +4201,18 @@ def _validate_predecessor_chain(parsed:dict,root:Path,receipt_relpath:str)->None
     if p["path"]!=_v040.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=p["sha256"]:_fail("H001 checkout-path repair predecessor chain is wrong")
     _validate_predecessor_chain_v039(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
 # END H001 PER-RUN COORDINATE/SEED CHECKOUT-PATH REPAIR V040 APPEND
+from quantbot.continuity import h001_per_run_coordinate_and_seed_orchestration_checkout_path_repair_review_completion_v041 as _v041
+_validate_receipt_v040=_validate_receipt
+def _validate_v041_receipt_body(parsed):
+ keys=set(_RECEIPT_KEYS)|{"phase","current_transition_files","numerical_convention_gap_inventory","numerical_conventions_selected_convention_inventory","rng_runtime_candidate_resolved_inventory","engine_implementation_binding","per_run_coordinate_and_seed_orchestration_binding","v039_checkout_path_repair","v040_review_binding"}; _require_exact_keys(parsed,keys,"handoff_receipt")
+ if parsed["receipt_index"]!=41:_fail("H001 repair review-completion receipt structure is wrong")
+def _validate_receipt(parsed,active,root):
+ if active["phase"]!=_v041.PHASE:return _validate_receipt_v040(parsed,active,root)
+ _validate_v041_receipt_body(parsed); _v041.validate(parsed,root); _cross_check_artifact_records(parsed,root); _validate_predecessor_chain(parsed,root,active["handoff_receipt_path"]); return parsed
+_validate_predecessor_chain_v040=_validate_predecessor_chain
+def _validate_predecessor_chain(parsed,root,receipt_relpath):
+ if parsed.get("receipt_index")!=41:return _validate_predecessor_chain_v040(parsed,root,receipt_relpath)
+ p=parsed["predecessor"]; target=root/p["path"]
+ if p["path"]!=_v041.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=p["sha256"]:_fail("H001 repair review-completion predecessor chain is wrong")
+ _validate_predecessor_chain_v040(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
 # END H001 SYNTHETIC NULL CALIBRATION ENGINE REVIEW COMPLETION V034 APPEND
