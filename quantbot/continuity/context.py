@@ -4216,3 +4216,19 @@ def _validate_predecessor_chain(parsed,root,receipt_relpath):
  if p["path"]!=_v041.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=p["sha256"]:_fail("H001 repair review-completion predecessor chain is wrong")
  _validate_predecessor_chain_v040(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
 # END H001 SYNTHETIC NULL CALIBRATION ENGINE REVIEW COMPLETION V034 APPEND
+# BEGIN H001 C1 DIRECTIONALITY ATOMIC REPAIR CANDIDATE V043 APPEND
+from quantbot.continuity import h001_c1_directionality_atomic_repair_candidate_v043 as _v043
+def _validate_v043_receipt_body(parsed):
+ keys=set(_RECEIPT_KEYS)|{"phase","current_transition_files","numerical_convention_gap_inventory","numerical_conventions_selected_convention_inventory","rng_runtime_candidate_resolved_inventory","engine_implementation_binding","per_run_coordinate_and_seed_orchestration_binding","v039_checkout_path_repair","v040_review_binding"};_require_exact_keys(parsed,keys,"handoff_receipt")
+ if parsed["receipt_index"]!=43:_fail("H001 C1 directionality atomic repair candidate receipt structure is wrong")
+_validate_receipt_v041_c1 = _validate_receipt
+def _validate_receipt(parsed, active, root):
+ if active["phase"] != _v043.PHASE:return _validate_receipt_v041_c1(parsed,active,root)
+ _validate_v043_receipt_body(parsed);_v043.validate(parsed,root);_cross_check_artifact_records(parsed,root);_validate_predecessor_chain(parsed,root,active["handoff_receipt_path"]);return parsed
+_validate_predecessor_chain_v041_c1 = _validate_predecessor_chain
+def _validate_predecessor_chain(parsed,root,receipt_relpath):
+ if parsed.get("receipt_index") != 43:return _validate_predecessor_chain_v041_c1(parsed,root,receipt_relpath)
+ p=parsed["predecessor"];target=root/p["path"]
+ if p["path"] != _v043.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != p["sha256"]:_fail("H001 C1 directionality atomic repair candidate predecessor chain is wrong")
+ _validate_predecessor_chain_v041_c1(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
+# END H001 C1 DIRECTIONALITY ATOMIC REPAIR CANDIDATE V043 APPEND
