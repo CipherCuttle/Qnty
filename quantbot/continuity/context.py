@@ -3989,7 +3989,6 @@ def _validate_predecessor_chain(parsed: dict, root: Path, receipt_relpath: str) 
     _validate_predecessor_chain_v033(_load_canonical_document(target.read_bytes(), "predecessor receipt"), root, path)
 
 # END H001 SYNTHETIC NULL CALIBRATION ENGINE REVIEW COMPLETION V034 APPEND
-
 # BEGIN H001 REMAINING EXECUTION PIPELINE SCOPE GOVERNANCE V035 APPEND
 from quantbot.continuity import h001_synthetic_null_calibration_remaining_execution_pipeline_scope_governance_v035 as _v035
 
@@ -4216,3 +4215,19 @@ def _validate_predecessor_chain(parsed,root,receipt_relpath):
  if p["path"]!=_v041.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=p["sha256"]:_fail("H001 repair review-completion predecessor chain is wrong")
  _validate_predecessor_chain_v040(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
 # END H001 SYNTHETIC NULL CALIBRATION ENGINE REVIEW COMPLETION V034 APPEND
+# BEGIN H001 SCIENTIFIC-CONTRACT RECONCILIATION CANDIDATE V042 EOF ROUTING
+from quantbot.continuity import h001_scientific_contract_reconciliation_candidate_v042 as _v042
+def _validate_v042_receipt_body(parsed):
+ keys=set(_RECEIPT_KEYS)|{"phase","current_transition_files","numerical_convention_gap_inventory","numerical_conventions_selected_convention_inventory","rng_runtime_candidate_resolved_inventory","engine_implementation_binding","per_run_coordinate_and_seed_orchestration_binding","v039_checkout_path_repair","v040_review_binding"};_require_exact_keys(parsed,keys,"handoff_receipt")
+ if parsed["receipt_index"]!=42:_fail("H001 scientific-contract reconciliation candidate receipt structure is wrong")
+_validate_receipt_v041_eof = _validate_receipt
+def _validate_receipt(parsed, active, root):
+ if active["phase"] != _v042.PHASE:return _validate_receipt_v041_eof(parsed,active,root)
+ _validate_v042_receipt_body(parsed);_v042.validate(parsed,root);_cross_check_artifact_records(parsed,root);_validate_predecessor_chain(parsed,root,active["handoff_receipt_path"]);return parsed
+_validate_predecessor_chain_v041_eof = _validate_predecessor_chain
+def _validate_predecessor_chain(parsed,root,receipt_relpath):
+ if parsed.get("receipt_index") != 42:return _validate_predecessor_chain_v041_eof(parsed,root,receipt_relpath)
+ p=parsed["predecessor"];target=root/p["path"]
+ if p["path"] != _v042.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != p["sha256"]:_fail("H001 scientific-contract reconciliation candidate predecessor chain is wrong")
+ _validate_predecessor_chain_v041_eof(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
+# END H001 SCIENTIFIC-CONTRACT RECONCILIATION CANDIDATE V042 EOF ROUTING
