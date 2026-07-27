@@ -10,6 +10,10 @@ def write(root,r):
 def fail(root):
  with pytest.raises(ValueError): context.load_and_verify_continuity_state(root)
 def test_v039_baseline(tmp_path): context.load_and_verify_continuity_state(tree(tmp_path))
+@pytest.mark.parametrize("checkout_root",["/tmp/qnty-v039/repo","/tmp/random-worktree-name/repo","/home/runner/work/Qnty/Qnty"])
+def test_v039_transition_path_is_checkout_name_invariant(checkout_root):
+ module_rel=__import__('pathlib').Path(v039.__file__).resolve().relative_to(ROOT.resolve()).as_posix()
+ assert v039._repo_relative_path(__import__('pathlib').Path(checkout_root)/module_rel,__import__('pathlib').Path(checkout_root))==module_rel
 @pytest.mark.parametrize('field',['orchestration_effective','orchestration_activated','orchestration_executed','orchestration_wired_into_execute_calibration'])
 def test_v039_rejects_authority(tmp_path,field):
  root=tree(tmp_path); r=json.loads((root/v039.HANDOFF_RELPATH).read_bytes()); r['per_run_coordinate_and_seed_orchestration_binding'][field]=True; write(root,r); fail(root)

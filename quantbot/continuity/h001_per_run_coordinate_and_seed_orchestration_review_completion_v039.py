@@ -1,5 +1,6 @@
 """v039 review completion; reviewed only, never effective or activated."""
 import hashlib
+from pathlib import Path
 from . import context as c
 from . import h001_per_run_coordinate_and_seed_orchestration_candidate_v038 as previous
 
@@ -11,7 +12,13 @@ BRANCH="chore/h001-per-run-coordinate-seed-orchestration-review-completion-v039"
 BASE_SHA="dc9289bab786b53047038021f409a610d6e6c845"
 V038_SHA="91470a63f99522f0c83cd693059014441884ca254b7f0074fc17387ac53a8aff"
 REVIEW_SHA="9197e96582ffb04cb3c7f2a8b766a57809bd7c0f1378abb15c6f20d09784d81d"
-CURRENT_FILES=["quantbot/continuity/context.py",__file__.split("/qnty-v039/")[-1],"tests/continuity/test_h001_per_run_coordinate_and_seed_orchestration_review_completion_v039.py","tests/control/governance_baseline.json"]
+def _repo_relative_path(path: Path, root: Path) -> str:
+ return Path(path).resolve().relative_to(Path(root).resolve()).as_posix()
+
+def current_files(root: Path) -> list[str]:
+ return ["quantbot/continuity/context.py",_repo_relative_path(__file__,root),"tests/continuity/test_h001_per_run_coordinate_and_seed_orchestration_review_completion_v039.py","tests/control/governance_baseline.json"]
+
+CURRENT_FILES=current_files(Path(__file__).parents[2])
 SCOPE=[REVIEW_RELPATH,HANDOFF_RELPATH,c.ACTIVE_TASK_RELPATH,*CURRENT_FILES]
 PROTECTED={**previous.PROTECTED,previous.HANDOFF_RELPATH:V038_SHA,previous.ORCH_RELPATH:hashlib.sha256(__import__('pathlib').Path(__file__).parents[2].joinpath(previous.ORCH_RELPATH).read_bytes()).hexdigest(),previous.ORCH_TEST_RELPATH:hashlib.sha256(__import__('pathlib').Path(__file__).parents[2].joinpath(previous.ORCH_TEST_RELPATH).read_bytes()).hexdigest()}
 BINDING={**previous.PER_RUN_COORDINATE_AND_SEED_ORCHESTRATION_BINDING,"orchestration_reviewed":True,"orchestration_review_verdict":"PASS","orchestration_effective":False,"orchestration_activated":False,"review_record_path":REVIEW_RELPATH,"implementation_status":"ADMINISTRATIVE_REVIEW_COMPLETED_NOT_EFFECTIVE_NOT_ACTIVATED"}
@@ -33,5 +40,5 @@ def validate(receipt,root):
  if review.get("review_verdict")!="PASS" or any(review.get(k)!=0 for k in ("blocker_count","major_count","minor_count")) or review.get("reviewed_head_sha")!="1bbeadb4c30cae19db1644bb54178f79536c168e" or review.get("reviewed_tree_sha")!="57107e3f12899474973bee6cad2a79c6acd0015f" or review.get("reviewed_pr")!=322 or review.get("merge_commit_sha")!="77208b58d1bd086f9bbb917eca91cc57148c4b8e":c._fail("H001 per-run review record binding is wrong")
  expected=[{"path":p,"sha256":h} for p,h in PROTECTED.items()]+[{"path":REVIEW_RELPATH,"sha256":REVIEW_SHA}]
  if receipt["evidence"]!=expected:c._fail("H001 per-run review-completion evidence is wrong")
- if receipt["current_transition_files"]!=[{"path":p,"sha256":hashlib.sha256((root/p).read_bytes()).hexdigest()} for p in CURRENT_FILES]:c._fail("H001 per-run review-completion transition files drifted")
+ if receipt["current_transition_files"]!=[{"path":p,"sha256":hashlib.sha256((root/p).read_bytes()).hexdigest()} for p in current_files(root)]:c._fail("H001 per-run review-completion transition files drifted")
  if any(receipt["per_run_coordinate_and_seed_orchestration_binding"][x] for x in ("orchestration_effective","orchestration_activated","orchestration_executed","orchestration_wired_into_execute_calibration")):c._fail("H001 per-run review completion cannot activate or execute")
