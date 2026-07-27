@@ -4147,4 +4147,72 @@ def _validate_predecessor_chain(parsed: dict, root: Path, receipt_relpath: str) 
     _validate_predecessor_chain_v037(_load_canonical_document(target.read_bytes(), "predecessor receipt"), root, path)
 
 # END H001 PER-RUN COORDINATE/SEED ORCHESTRATION CANDIDATE V038 APPEND
+# BEGIN H001 PER-RUN COORDINATE/SEED REVIEW COMPLETION V039 APPEND
+from quantbot.continuity import h001_per_run_coordinate_and_seed_orchestration_review_completion_v039 as _v039
+_validate_receipt_v038 = _validate_receipt
+def _validate_v039_receipt_body(parsed: dict) -> None:
+    keys=set(_RECEIPT_KEYS)|{"phase","current_transition_files","numerical_convention_gap_inventory","numerical_conventions_selected_convention_inventory","rng_runtime_candidate_resolved_inventory","engine_implementation_binding","per_run_coordinate_and_seed_orchestration_binding"}
+    _require_exact_keys(parsed,keys,"handoff_receipt")
+    if parsed["schema_version"]!="0.1.0" or parsed["receipt_kind"]!="qnty_cross_agent_handoff_receipt" or parsed["receipt_index"]!=39:_fail("H001 per-run review-completion receipt structure is wrong")
+    _require_str(parsed["source_branch"],"handoff_receipt source_branch"); _require_str_list(parsed["decisions"],"handoff_receipt decisions",minimum=1); _validate_required_artifacts(parsed["required_artifacts"])
+    for field in ("changed_file_scope","blockers","verified_commands","prohibited_actions"): _require_str_list(parsed[field],f"handoff_receipt {field}",minimum=1)
+    if type(parsed["next_actions"]) is not list or len(parsed["next_actions"])!=1:_fail("handoff_receipt next_actions must contain exactly one action")
+def _validate_receipt(parsed: dict,active: dict,root: Path)->dict:
+    if active["phase"]!=_v039.PHASE:return _validate_receipt_v038(parsed,active,root)
+    _validate_v039_receipt_body(parsed)
+    if parsed["task_id"]!=active["task_id"] or parsed["protocol_id"]!=active["protocol_id"]:_fail("handoff_receipt identity does not match active_task")
+    _v039.validate(parsed,root); _cross_check_artifact_records(parsed,root); _validate_predecessor_chain(parsed,root,active["handoff_receipt_path"]); return parsed
+_render_context_packet_v038=render_context_packet
+def render_context_packet(state:dict)->str:
+    packet=_render_context_packet_v038(state)
+    if state["active_task"]["phase"]!=_v039.PHASE:return packet
+    lines=packet.splitlines(); i=next((i for i,x in enumerate(lines) if x.startswith("PROHIBITED=")),len(lines)); lines[i:i]=_v039.DECISIONS; return "\n".join(lines)
+_validate_predecessor_chain_v038=_validate_predecessor_chain
+def _validate_predecessor_chain(parsed:dict,root:Path,receipt_relpath:str)->None:
+    if parsed.get("receipt_index")!=39:return _validate_predecessor_chain_v038(parsed,root,receipt_relpath)
+    p=parsed["predecessor"]; target=root/p["path"]
+    if p["path"]!=_v039.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=p["sha256"]:_fail("H001 per-run review-completion predecessor chain is wrong")
+    _validate_predecessor_chain_v038(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
+# END H001 PER-RUN COORDINATE/SEED REVIEW COMPLETION V039 APPEND
+# BEGIN H001 PER-RUN COORDINATE/SEED CHECKOUT-PATH REPAIR V040 APPEND
+from quantbot.continuity import h001_per_run_coordinate_and_seed_orchestration_checkout_path_repair_v040 as _v040
+_validate_receipt_v039 = _validate_receipt
+def _validate_v040_receipt_body(parsed: dict) -> None:
+    keys=set(_RECEIPT_KEYS)|{"phase","current_transition_files","numerical_convention_gap_inventory","numerical_conventions_selected_convention_inventory","rng_runtime_candidate_resolved_inventory","engine_implementation_binding","per_run_coordinate_and_seed_orchestration_binding","v039_checkout_path_repair"}
+    _require_exact_keys(parsed,keys,"handoff_receipt")
+    if parsed["schema_version"]!="0.1.0" or parsed["receipt_kind"]!="qnty_cross_agent_handoff_receipt" or parsed["receipt_index"]!=40:_fail("H001 checkout-path repair receipt structure is wrong")
+    _require_str(parsed["source_branch"],"handoff_receipt source_branch"); _require_str_list(parsed["decisions"],"handoff_receipt decisions",minimum=1); _validate_required_artifacts(parsed["required_artifacts"])
+    for field in ("changed_file_scope","blockers","verified_commands","prohibited_actions"):_require_str_list(parsed[field],f"handoff_receipt {field}",minimum=1)
+    if type(parsed["next_actions"]) is not list or len(parsed["next_actions"])!=1:_fail("handoff_receipt next_actions must contain exactly one action")
+def _validate_receipt(parsed: dict,active: dict,root: Path)->dict:
+    if active["phase"]!=_v040.PHASE:return _validate_receipt_v039(parsed,active,root)
+    _validate_v040_receipt_body(parsed)
+    if parsed["task_id"]!=active["task_id"] or parsed["protocol_id"]!=active["protocol_id"]:_fail("handoff_receipt identity does not match active_task")
+    _v040.validate(parsed,root); _cross_check_artifact_records(parsed,root); _validate_predecessor_chain(parsed,root,active["handoff_receipt_path"]); return parsed
+_render_context_packet_v039=render_context_packet
+def render_context_packet(state:dict)->str:
+    packet=_render_context_packet_v039(state)
+    if state["active_task"]["phase"]!=_v040.PHASE:return packet
+    lines=packet.splitlines(); i=next((i for i,x in enumerate(lines) if x.startswith("PROHIBITED=")),len(lines)); lines[i:i]=_v040.DECISIONS; return "\n".join(lines)
+_validate_predecessor_chain_v039=_validate_predecessor_chain
+def _validate_predecessor_chain(parsed:dict,root:Path,receipt_relpath:str)->None:
+    if parsed.get("receipt_index")!=40:return _validate_predecessor_chain_v039(parsed,root,receipt_relpath)
+    p=parsed["predecessor"]; target=root/p["path"]
+    if p["path"]!=_v040.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=p["sha256"]:_fail("H001 checkout-path repair predecessor chain is wrong")
+    _validate_predecessor_chain_v039(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
+# END H001 PER-RUN COORDINATE/SEED CHECKOUT-PATH REPAIR V040 APPEND
+from quantbot.continuity import h001_per_run_coordinate_and_seed_orchestration_checkout_path_repair_review_completion_v041 as _v041
+_validate_receipt_v040=_validate_receipt
+def _validate_v041_receipt_body(parsed):
+ keys=set(_RECEIPT_KEYS)|{"phase","current_transition_files","numerical_convention_gap_inventory","numerical_conventions_selected_convention_inventory","rng_runtime_candidate_resolved_inventory","engine_implementation_binding","per_run_coordinate_and_seed_orchestration_binding","v039_checkout_path_repair","v040_review_binding"}; _require_exact_keys(parsed,keys,"handoff_receipt")
+ if parsed["receipt_index"]!=41:_fail("H001 repair review-completion receipt structure is wrong")
+def _validate_receipt(parsed,active,root):
+ if active["phase"]!=_v041.PHASE:return _validate_receipt_v040(parsed,active,root)
+ _validate_v041_receipt_body(parsed); _v041.validate(parsed,root); _cross_check_artifact_records(parsed,root); _validate_predecessor_chain(parsed,root,active["handoff_receipt_path"]); return parsed
+_validate_predecessor_chain_v040=_validate_predecessor_chain
+def _validate_predecessor_chain(parsed,root,receipt_relpath):
+ if parsed.get("receipt_index")!=41:return _validate_predecessor_chain_v040(parsed,root,receipt_relpath)
+ p=parsed["predecessor"]; target=root/p["path"]
+ if p["path"]!=_v041.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=p["sha256"]:_fail("H001 repair review-completion predecessor chain is wrong")
+ _validate_predecessor_chain_v040(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
 # END H001 SYNTHETIC NULL CALIBRATION ENGINE REVIEW COMPLETION V034 APPEND
