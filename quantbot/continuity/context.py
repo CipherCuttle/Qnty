@@ -4216,3 +4216,28 @@ def _validate_predecessor_chain(parsed,root,receipt_relpath):
  if p["path"]!=_v041.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=p["sha256"]:_fail("H001 repair review-completion predecessor chain is wrong")
  _validate_predecessor_chain_v040(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
 # END H001 SYNTHETIC NULL CALIBRATION ENGINE REVIEW COMPLETION V034 APPEND
+# BEGIN EXTERNAL TRUST-ROOT DISPATCHER REPAIR CANDIDATE V046 APPEND
+from quantbot.continuity import external_trust_root_dispatcher_repair_candidate_v046 as _v046
+_validate_receipt_v041 = _validate_receipt
+def _validate_v046_receipt_body(parsed):
+    keys=set(_RECEIPT_KEYS)|{"phase","current_transition_files","numerical_convention_gap_inventory","numerical_conventions_selected_convention_inventory","rng_runtime_candidate_resolved_inventory","engine_implementation_binding","per_run_coordinate_and_seed_orchestration_binding","v039_checkout_path_repair","v040_review_binding","v045_failed_review_binding","construction_lineage","authority_state"}; _require_exact_keys(parsed,keys,"handoff_receipt")
+    if parsed["receipt_index"]!=46 or parsed["receipt_kind"]!="qnty_cross_agent_handoff_receipt" or parsed["schema_version"]!="0.1.0":_fail("v046 dispatcher repair receipt structure is wrong")
+    _require_str_list(parsed["changed_file_scope"],"handoff_receipt changed_file_scope",minimum=1); _require_str_list(parsed["next_actions"],"handoff_receipt next_actions",minimum=1)
+    if len(parsed["next_actions"])!=1:_fail("v046 dispatcher repair needs exactly one next action")
+def _validate_receipt(parsed,active,root):
+    if active["phase"]!=_v046.PHASE:return _validate_receipt_v041(parsed,active,root)
+    _validate_v046_receipt_body(parsed)
+    if parsed["task_id"]!=active["task_id"] or parsed["protocol_id"]!=active["protocol_id"]:_fail("handoff_receipt identity does not match active_task")
+    _v046.validate(parsed,root); _cross_check_artifact_records(parsed,root); _validate_predecessor_chain(parsed,root,active["handoff_receipt_path"]); return parsed
+_render_context_packet_v041=render_context_packet
+def render_context_packet(state):
+    packet=_render_context_packet_v041(state)
+    if state["active_task"]["phase"]!=_v046.PHASE:return packet
+    lines=packet.splitlines(); i=next((i for i,line in enumerate(lines) if line.startswith("PROHIBITED=")),len(lines)); lines[i:i]=["EXTERNAL_TRUST_ROOT_DISPATCHER_V1_REPAIR=CANDIDATE_FOR_INDEPENDENT_REVIEW_ONLY"]; return "\n".join(lines)
+_validate_predecessor_chain_v041=_validate_predecessor_chain
+def _validate_predecessor_chain(parsed,root,receipt_relpath):
+    if parsed.get("receipt_index")!=46:return _validate_predecessor_chain_v041(parsed,root,receipt_relpath)
+    p=parsed["predecessor"]; target=root/p["path"]
+    if p["path"]!=_v046.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=p["sha256"]:_fail("v046 dispatcher repair predecessor chain is wrong")
+    _validate_predecessor_chain_v041(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
+# END EXTERNAL TRUST-ROOT DISPATCHER REPAIR CANDIDATE V046 APPEND
