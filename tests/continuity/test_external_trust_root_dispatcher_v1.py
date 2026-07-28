@@ -1,6 +1,7 @@
 import hashlib,json,os,subprocess
 import pytest
-from quantbot.continuity.external_trust_root_dispatcher_v1 import DispatchError,VERSION,run_verifier_from_exact_trust_root,verify_registered_candidate
+from quantbot.continuity import external_trust_root_dispatcher_v1 as dispatcher
+from quantbot.continuity.external_trust_root_dispatcher_v1 import DispatchError,VERSION,run_verifier_from_exact_trust_root,verify_authoritative_candidate,verify_registered_candidate
 from quantbot.continuity import context
 from quantbot.continuity import external_trust_root_dispatcher_repair_candidate_v046 as v046
 import shutil
@@ -28,8 +29,33 @@ def test_full_sha_descriptor_and_git_environment_are_strict(tmp_path,monkeypatch
 def test_registered_mapping_derives_t_and_candidate_cannot_supply_it(tmp_path):
  r,t,c=fixture(tmp_path)
  state=commit(r,{"docs/control/external_trust_root_registry_v1.json":json.dumps({"dispatcher_version":VERSION,"registry_version":"1","lanes":{"generic":t}}).encode()})
- assert verify_registered_candidate(r,"generic",c,state)["trust_root_identity"]==t
+ result=verify_registered_candidate(r,"generic",c,state)
+ assert result["trust_root_identity"]==t and result["authoritative"] is False
  with pytest.raises(DispatchError): verify_registered_candidate(r,"other",c,state)
+
+def test_v046_hostile_universe_can_only_pass_mechanically(tmp_path):
+ r,t,c=fixture(tmp_path)
+ state=commit(r,{"docs/control/external_trust_root_registry_v1.json":json.dumps({"dispatcher_version":VERSION,"registry_version":"1","lanes":{"generic":t}}).encode(),"candidate_authority_manifest.json":b'hostile'})
+ assert verify_registered_candidate(r,"generic",c,state)["authoritative"] is False
+ with pytest.raises(DispatchError): verify_authoritative_candidate("generic",c)
+
+def test_authoritative_route_uses_only_dispatcher_owned_root(tmp_path,monkeypatch):
+ r,t,c=fixture(tmp_path); state=commit(r,{"docs/control/external_trust_root_registry_v1.json":json.dumps({"dispatcher_version":VERSION,"registry_version":"1","lanes":{"generic":t}}).encode()})
+ monkeypatch.setattr(dispatcher,"_trusted_repository_root",lambda:r); monkeypatch.setattr(dispatcher,"AUTHORITY_STATE_COMMIT",state)
+ assert verify_authoritative_candidate("generic",c)["authoritative"] is True
+ monkeypatch.setenv("GIT_DIR",str(r/".git")); monkeypatch.setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES",str(r/".git"/"objects"))
+ assert verify_authoritative_candidate("generic",c)["authority_state_identity"]==state
+
+def test_authority_anchor_absent_malformed_or_mutated_fails_closed(tmp_path,monkeypatch):
+ r,t,c=fixture(tmp_path); state=commit(r,{"docs/control/external_trust_root_registry_v1.json":json.dumps({"dispatcher_version":VERSION,"registry_version":"1","lanes":{"generic":t}}).encode()})
+ monkeypatch.setattr(dispatcher,"_trusted_repository_root",lambda:r)
+ for anchor in ("0"*40,"not-a-commit",c):
+  monkeypatch.setattr(dispatcher,"AUTHORITY_STATE_COMMIT",anchor)
+  with pytest.raises(DispatchError): verify_authoritative_candidate("generic",c)
+ monkeypatch.setattr(dispatcher,"AUTHORITY_STATE_COMMIT",state)
+ hostile=commit(r,{"docs/control/external_trust_root_registry_v1.json":json.dumps({"dispatcher_version":VERSION,"registry_version":"1","lanes":{}}).encode()})
+ replace=r/".git"/"refs"/"replace"/state; replace.parent.mkdir(parents=True,exist_ok=True); replace.write_text(hostile)
+ assert verify_authoritative_candidate("generic",c)["trust_root_identity"]==t
 
 ROOT = __import__("pathlib").Path(__file__).parents[2]
 def _tree(tmp_path):

@@ -4,6 +4,10 @@ import hashlib, json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path, PurePosixPath
 
 VERSION="EXTERNAL_TRUST_ROOT_DISPATCHER_V1"; API="1"; REGISTRY_PATH="docs/control/external_trust_root_registry_v1.json"
+# This is the immutable v047 failure-record state from which this candidate was
+# constructed.  A released successor must deliberately change this binding as
+# part of its own reviewed release; callers never supply its repository or SHA.
+AUTHORITY_STATE_COMMIT="459d68c88f1a1ea71a6099f17a50ffbd860868e5"
 class DispatchError(ValueError): pass
 
 def _json(raw, label):
@@ -16,11 +20,11 @@ def _json(raw, label):
     try: return json.loads(raw, object_pairs_hook=reject)
     except (json.JSONDecodeError, DispatchError) as e: raise DispatchError(f"malformed {label}") from e
 
-def _git_env(): return {"PATH":os.defpath,"GIT_CONFIG_NOSYSTEM":"1","HOME":tempfile.gettempdir()}
+def _git_env(): return {"PATH":os.defpath,"GIT_CONFIG_NOSYSTEM":"1","GIT_CONFIG_GLOBAL":os.devnull,"GIT_CONFIG_SYSTEM":os.devnull,"GIT_NO_REPLACE_OBJECTS":"1","HOME":tempfile.gettempdir()}
 def _git(repo,*args, binary=False):
     git=shutil.which("git",path=os.defpath)
     if not git: raise DispatchError("trusted git unavailable")
-    try: return subprocess.check_output([git,*args],cwd=repo,env=_git_env(),stderr=subprocess.DEVNULL,text=not binary)
+    try: return subprocess.check_output([git,"--no-replace-objects",*args],cwd=repo,env=_git_env(),stderr=subprocess.DEVNULL,text=not binary)
     except subprocess.CalledProcessError as e: raise DispatchError("git object lookup failed") from e
 def _full_commit(repo, value):
     if type(value) is not str or len(value)!=40 or any(c not in "0123456789abcdef" for c in value): raise DispatchError("full lowercase commit SHA required")
@@ -61,10 +65,26 @@ def run_verifier_from_exact_trust_root(repo, trust_root_commit, candidate_commit
         result=_json(run.stdout,"result")
         if set(result)!={"status","findings"} or result["status"] not in {"VERIFIER_PASS","VERIFIER_REJECT"} or type(result["findings"]) is not list or any(type(x) is not dict for x in result["findings"]): raise DispatchError("result schema mismatch")
         return {"dispatcher_identity":VERSION,"trust_root_identity":t,"candidate_identity":c,"authoritative":False,**result}
-def verify_registered_candidate(repo, lane, candidate_commit, authority_state_commit):
+def _registered_mechanical_result(repo, lane, candidate_commit, authority_state_commit):
     repo=Path(repo).resolve(); state=_full_commit(repo,authority_state_commit); c=_full_commit(repo,candidate_commit)
     registry=_json(_blob(repo,state,REGISTRY_PATH),"registry")
     if set(registry)!={"dispatcher_version","registry_version","lanes"} or registry["dispatcher_version"]!=VERSION or registry["registry_version"]!="1" or type(registry["lanes"]) is not dict or type(lane) is not str or not lane: raise DispatchError("registry schema mismatch")
     if lane not in registry["lanes"]: raise DispatchError("no authoritative trust root for lane")
     result=run_verifier_from_exact_trust_root(repo,registry["lanes"][lane],c)
-    return {**result,"authoritative":True,"authority_state_identity":state,"lane":lane}
+    return {**result,"authority_state_identity":state,"lane":lane}
+
+def verify_registered_candidate(repo, lane, candidate_commit, authority_state_commit):
+    """Caller-selected registry execution, permanently mechanical-only."""
+    return _registered_mechanical_result(repo, lane, candidate_commit, authority_state_commit)
+
+def _trusted_repository_root():
+    root=Path(__file__).resolve().parents[2]
+    if _git(root,"rev-parse","--show-toplevel").strip()!=str(root):
+        raise DispatchError("dispatcher is not installed in its trusted repository")
+    return root
+
+def verify_authoritative_candidate(lane, candidate_commit):
+    """The sole authoritative route: released D -> pinned released state -> R -> T -> C."""
+    repo=_trusted_repository_root()
+    result=_registered_mechanical_result(repo,lane,candidate_commit,AUTHORITY_STATE_COMMIT)
+    return {**result,"authoritative":True}
