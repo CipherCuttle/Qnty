@@ -22,3 +22,8 @@ def test_full_sha_descriptor_and_git_environment_are_strict(tmp_path,monkeypatch
  monkeypatch.undo()
  bad=commit(r,{"trust_root_descriptor.json":json.dumps({"dispatcher_version":VERSION,"api_version":"999","entrypoint":"verify.py","files":[]}).encode()})
  with pytest.raises(DispatchError): run_verifier_from_exact_trust_root(r,bad,c)
+def test_registered_mapping_derives_t_and_candidate_cannot_supply_it(tmp_path):
+ r,t,c=fixture(tmp_path)
+ state=commit(r,{"docs/control/external_trust_root_registry_v1.json":json.dumps({"dispatcher_version":VERSION,"registry_version":"1","lanes":{"generic":t}}).encode()})
+ assert verify_registered_candidate(r,"generic",c,state)["trust_root_identity"]==t
+ with pytest.raises(DispatchError): verify_registered_candidate(r,"other",c,state)
