@@ -1,0 +1,24 @@
+import hashlib,json,os,subprocess
+import pytest
+from quantbot.continuity.external_trust_root_dispatcher_v1 import DispatchError,VERSION,run_verifier_from_exact_trust_root,verify_registered_candidate
+def sh(r,*a): return subprocess.check_output(a,cwd=r,text=True).strip()
+def commit(r,files):
+ for p,b in files.items(): x=r/p;x.parent.mkdir(parents=True,exist_ok=True);x.write_bytes(b)
+ sh(r,"git","add",".");sh(r,"git","-c","user.email=a@b","-c","user.name=a","commit","-m","x");return sh(r,"git","rev-parse","HEAD")
+def fixture(tmp_path, code=b'import json;print(json.dumps({"status":"VERIFIER_PASS","findings":[]}))'):
+ r=tmp_path/str(len(list(tmp_path.iterdir())));sh(tmp_path,'git','init',str(r)); d={"dispatcher_version":VERSION,"api_version":"1","entrypoint":"verify.py","files":[{"path":"verify.py","sha256":hashlib.sha256(code).hexdigest()}]};t=commit(r,{"trust_root_descriptor.json":json.dumps(d).encode(),"verify.py":code});c=commit(r,{"candidate.json":b'{}'});return r,t,c
+def test_mechanical_is_not_authoritative_and_empty_registry_fails_closed(tmp_path):
+ r,t,c=fixture(tmp_path);assert run_verifier_from_exact_trust_root(r,t,c)['authoritative'] is False
+ reg=commit(r,{"docs/control/external_trust_root_registry_v1.json":json.dumps({"dispatcher_version":VERSION,"registry_version":"1","lanes":{}}).encode()})
+ with pytest.raises(DispatchError): verify_registered_candidate(r,'any',c,reg)
+def test_nonzero_duplicate_and_bad_result_reject(tmp_path):
+ for code in (b'import json;print(json.dumps({"status":"VERIFIER_PASS","findings":[]}));raise SystemExit(1)',b'print("{\\"status\\":\\"VERIFIER_REJECT\\",\\"status\\":\\"VERIFIER_PASS\\",\\"findings\\":[]}")',b'import json;print(json.dumps({"status":"VERIFIER_PASS","findings":"x"}))'):
+  r,t,c=fixture(tmp_path,code)
+  with pytest.raises(DispatchError): run_verifier_from_exact_trust_root(r,t,c)
+def test_full_sha_descriptor_and_git_environment_are_strict(tmp_path,monkeypatch):
+ r,t,c=fixture(tmp_path); monkeypatch.setenv('GIT_DIR','/nope'); monkeypatch.setenv('PATH','/nope')
+ assert run_verifier_from_exact_trust_root(r,t,c)['status']=='VERIFIER_PASS'
+ with pytest.raises(DispatchError): run_verifier_from_exact_trust_root(r,t[:8],c)
+ monkeypatch.undo()
+ bad=commit(r,{"trust_root_descriptor.json":json.dumps({"dispatcher_version":VERSION,"api_version":"999","entrypoint":"verify.py","files":[]}).encode()})
+ with pytest.raises(DispatchError): run_verifier_from_exact_trust_root(r,bad,c)
