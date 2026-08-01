@@ -61,8 +61,8 @@ def test_v045_review_pass_record_binds_candidate_and_evidence(tmp_path):
     record = _record(root)
     receipt = _receipt(root)
 
-    assert state["active_task"]["phase"] == context._H001_OPERATOR_EXPOSURE_DISCLOSURE_RECORDED_PHASE
-    assert state["handoff_receipt"]["next_actions"] == ["FRESH_HOSTILE_REVIEW_OF_OPERATOR_EXPOSURE_DISCLOSURE"]
+    assert state["active_task"]["phase"] == context._H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PASSED_PHASE
+    assert state["handoff_receipt"]["next_actions"] == ["H001_OPERATOR_GOVERNANCE_DECISION_V1"]
     assert record["candidate_binding"] == {
         "candidate_commit": "7d2644bff33865c0b2a6ed6e1a0c27686c0f47ec",
         "candidate_parent": "cd82a7dc0ba29a02845a764c249ae6154dc4475b",
@@ -198,6 +198,8 @@ def test_historical_v044_review_record_phase_remains_valid(tmp_path):
     active["review_record_sha256"] = context._V044_REVIEW_RECORD_SHA256
     active.pop("operator_disclosure_record_path", None)
     active.pop("operator_disclosure_record_sha256", None)
+    active.pop("operator_exposure_disclosure_review_record_path", None)
+    active.pop("operator_exposure_disclosure_review_record_sha256", None)
     _write_json(active_path, active)
 
     state = context.load_and_verify_continuity_state(root)

@@ -362,6 +362,8 @@ def _drop_review_record_active_fields(active):
     active.pop("review_record_sha256", None)
     active.pop("operator_disclosure_record_path", None)
     active.pop("operator_disclosure_record_sha256", None)
+    active.pop("operator_exposure_disclosure_review_record_path", None)
+    active.pop("operator_exposure_disclosure_review_record_sha256", None)
 
 
 def test_synthetic_tree_verifies_and_renders(tmp_path):

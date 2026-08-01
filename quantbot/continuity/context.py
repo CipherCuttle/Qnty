@@ -70,6 +70,10 @@ _OPERATOR_DISCLOSURE_ACTIVE_KEYS = _V044_REVIEW_RECORDED_ACTIVE_KEYS | {
     "operator_disclosure_record_path",
     "operator_disclosure_record_sha256",
 }
+_OPERATOR_DISCLOSURE_REVIEW_ACTIVE_KEYS = _OPERATOR_DISCLOSURE_ACTIVE_KEYS | {
+    "operator_exposure_disclosure_review_record_path",
+    "operator_exposure_disclosure_review_record_sha256",
+}
 _ACTIVE_KEYS = _BASE_ACTIVE_KEYS
 _RECEIPT_KEYS = {
     "blockers",
@@ -1113,6 +1117,8 @@ def _active_keys_for_phase(phase: str) -> set:
         return _V044_REVIEW_RECORDED_ACTIVE_KEYS
     if phase == _H001_OPERATOR_EXPOSURE_DISCLOSURE_RECORDED_PHASE:
         return _OPERATOR_DISCLOSURE_ACTIVE_KEYS
+    if phase == _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PASSED_PHASE:
+        return _OPERATOR_DISCLOSURE_REVIEW_ACTIVE_KEYS
     return _BASE_ACTIVE_KEYS
 
 
@@ -4825,3 +4831,315 @@ def _validate_predecessor_chain(parsed, root, receipt_relpath):
         _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
     )
 # END H001 OPERATOR EXPOSURE DISCLOSURE V046 APPEND
+
+# BEGIN H001 OPERATOR EXPOSURE DISCLOSURE HOSTILE REVIEW PASS V047 APPEND
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PASSED_PHASE = (
+    "candidate1_h001_operator_exposure_disclosure_review_passed_operator_governance_decision_required"
+)
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_NEXT_ACTION = "H001_OPERATOR_GOVERNANCE_DECISION_V1"
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_RELPATH = (
+    "docs/assurance/reviews/candidate1_h001_operator_exposure_disclosure_hostile_review_v001.json"
+)
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256 = (
+    "3d54af162be4f7a18fd88a871fc1771514dbbb832bc8e145f50544916f041ee6"
+)
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HANDOFF_RELPATH = (
+    f"docs/control/tasks/{TASK_ID}/handoff_v047.json"
+)
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_VERDICT = "PASS_OPERATOR_EXPOSURE_DISCLOSURE_SAFE_FOR_DECISION"
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEWED_COMMIT = "24ecd2b182cf1ae5d6ee57221f47698b72391597"
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEWED_TREE = "ce9b8a84c7e6d6b4fbf2b160d7f72df7d19e420c"
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEWED_PARENT = "22aa96c43a0689be6e505de6f1c8a1c91e474ab3"
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_CHANGED_FILES = [
+    _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    _H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH,
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+    "tests/continuity/test_h001_c1_v044_continuity_repair_review_record.py",
+    "tests/continuity/test_h001_c1_v044_review_record_phase_repair.py",
+    "tests/continuity/test_h001_operator_exposure_disclosure_v046.py",
+]
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PROTECTED_HASHES = {
+    **_H001_OPERATOR_EXPOSURE_DISCLOSURE_PROTECTED_HASHES,
+    "v046_disclosure": _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+    "v046_handoff": "13ed0644ca3f43fc9e1223627f8cb67518602d94c5bb0e9cbaa57125db9a340f",
+}
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_STATE = {
+    "operator_decision_state": "PENDING",
+    "operator_exposure_disclosure_recorded": True,
+    "operator_exposure_disclosure_review_completed": True,
+    "operator_exposure_disclosure_review_passed": True,
+}
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_CURRENT_FILES = [
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+    "tests/continuity/test_h001_c1_v044_continuity_repair_review_record.py",
+    "tests/continuity/test_h001_c1_v044_review_record_phase_repair.py",
+    "tests/continuity/test_h001_operator_exposure_disclosure_v046.py",
+    "tests/continuity/test_h001_operator_exposure_disclosure_review_record_v047.py",
+]
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_SCOPE = [
+    _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_RELPATH,
+    _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    *_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_CURRENT_FILES,
+]
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HOSTILE_ATTACKS = [
+    "UNCERTAIN_TO_KNOWN_NO",
+    "UNCERTAIN_TO_KNOWN_YES",
+    "CONFIDENCE_VALUE_CHANGED",
+    "EXPOSURE_QUESTION_REMOVED",
+    "UNAUTHORIZED_ANSWER_STATE_ADDED",
+    "ESTABLISHED_BLINDNESS_CLAIM_INSERTED",
+    "CONFIRMED_CONTAMINATION_CLAIM_INSERTED",
+    "UNKNOWN_AGENT_OR_ARTIFACT_EXPOSURE_REMOVED",
+    "OPERATOR_DECISION_SELECTED",
+    "CANDIDATE_EFFECTIVE_TRUE",
+    "CONSEQUENTIAL_AUTHORITY_ENABLED",
+    "EXECUTION_BUDGET_INCREASED",
+    "C2_RESOLVED_TRUE",
+    "DISCLOSURE_PATH_OR_DIGEST_SUBSTITUTED",
+    "HANDOFF_PATH_OR_DIGEST_SUBSTITUTED",
+    "OPERATOR_OR_DISCLOSURE_DATE_CHANGED",
+    "PROTECTED_PRIOR_ARTIFACT_CHANGED",
+    "V046_FIELDS_ADDED_TO_HISTORICAL_PHASE",
+    "PRODUCTION_REGRESSION_HIDDEN_THROUGH_FIXTURES",
+    "UNKNOWN_EXTRA_KEYS_ADDED",
+]
+
+def _validate_h001_operator_exposure_disclosure_review_record(active: dict, root: Path) -> dict:
+    if active["review_record_path"] != _V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH:
+        _fail("H001 operator disclosure review-pass v045 review-record path is wrong")
+    if active["review_record_sha256"] != _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256:
+        _fail("H001 operator disclosure review-pass v045 review-record sha256 is wrong")
+    if active["operator_disclosure_record_path"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH:
+        _fail("H001 operator disclosure review-pass disclosure path is wrong")
+    if active["operator_disclosure_record_sha256"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256:
+        _fail("H001 operator disclosure review-pass disclosure sha256 is wrong")
+    if active["operator_exposure_disclosure_review_record_path"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_RELPATH:
+        _fail("H001 operator disclosure hostile-review record path is wrong")
+    if active["operator_exposure_disclosure_review_record_sha256"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256:
+        _fail("H001 operator disclosure hostile-review record sha256 is wrong")
+    _validate_h001_operator_exposure_disclosure(active, root)
+    path = root / active["operator_exposure_disclosure_review_record_path"]
+    if not path.is_file():
+        _fail("H001 operator disclosure hostile-review record is missing")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != active["operator_exposure_disclosure_review_record_sha256"]:
+        _fail("H001 operator disclosure hostile-review record bytes drifted")
+    record = _load_canonical_document(raw, "H001 operator disclosure hostile-review record")
+    _require_exact_keys(record, {
+        "authority_state",
+        "candidate_binding",
+        "continuity_verifier",
+        "disclosure_binding",
+        "document_kind",
+        "explicit_limitations",
+        "git_diff_check",
+        "hostile_mutation_evidence",
+        "independence",
+        "operator_decision_state",
+        "operator_exposure_disclosure_recorded",
+        "operator_exposure_disclosure_review_completed",
+        "operator_exposure_disclosure_review_passed",
+        "protected_hashes",
+        "review_conclusions",
+        "review_id",
+        "review_kind",
+        "review_scope",
+        "review_verdict",
+        "schema_version",
+        "status",
+        "test_evidence",
+    }, "H001 operator disclosure hostile-review record")
+    if record["schema_version"] != "0.1.0":
+        _fail("H001 operator disclosure hostile-review schema version is wrong")
+    if record["document_kind"] != "qnty_h001_operator_exposure_disclosure_hostile_review_record":
+        _fail("H001 operator disclosure hostile-review document kind is wrong")
+    if record["review_kind"] != "OPERATOR_EXPOSURE_DISCLOSURE_HOSTILE_REVIEW":
+        _fail("H001 operator disclosure hostile-review kind is wrong")
+    if record["review_verdict"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_VERDICT:
+        _fail("H001 operator disclosure hostile-review verdict drifted")
+    if record["operator_exposure_disclosure_review_completed"] is not True or record["operator_exposure_disclosure_review_passed"] is not True:
+        _fail("H001 operator disclosure hostile-review pass is not recorded")
+    if record["operator_exposure_disclosure_recorded"] is not True or record["operator_decision_state"] != "PENDING":
+        _fail("H001 operator disclosure hostile-review operator state drifted")
+    binding = _require_exact_keys(record["candidate_binding"], {
+        "changed_files", "reviewed_commit", "reviewed_parent", "reviewed_tree",
+    }, "H001 operator disclosure hostile-review candidate binding")
+    if binding != {
+        "changed_files": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_CHANGED_FILES,
+        "reviewed_commit": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEWED_COMMIT,
+        "reviewed_parent": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEWED_PARENT,
+        "reviewed_tree": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEWED_TREE,
+    }:
+        _fail("H001 operator disclosure hostile-review candidate binding drifted")
+    disclosure = _require_exact_keys(record["disclosure_binding"], {
+        "answer_count",
+        "answer_state",
+        "confidence_by_question",
+        "conclusions",
+        "reviewed_disclosure_path",
+        "reviewed_disclosure_sha256",
+        "reviewed_handoff_path",
+        "reviewed_handoff_sha256",
+        "uncertainty_collapse",
+    }, "H001 operator disclosure hostile-review disclosure binding")
+    if disclosure != {
+        "answer_count": 7,
+        "answer_state": "ALL_UNCERTAIN",
+        "confidence_by_question": {question_id: confidence for question_id, _answer, confidence in _H001_OPERATOR_EXPOSURE_DISCLOSURE_EXPECTED_ANSWERS},
+        "conclusions": _H001_OPERATOR_EXPOSURE_DISCLOSURE_CONCLUSIONS,
+        "reviewed_disclosure_path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH,
+        "reviewed_disclosure_sha256": _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+        "reviewed_handoff_path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH,
+        "reviewed_handoff_sha256": "13ed0644ca3f43fc9e1223627f8cb67518602d94c5bb0e9cbaa57125db9a340f",
+        "uncertainty_collapse": "NOT_OBSERVED",
+    }:
+        _fail("H001 operator disclosure hostile-review disclosure binding drifted")
+    if record["authority_state"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_AUTHORITY:
+        _fail("H001 operator disclosure hostile-review authority drifted")
+    if record["protected_hashes"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PROTECTED_HASHES:
+        _fail("H001 operator disclosure hostile-review protected hashes drifted")
+    if record["continuity_verifier"] != {
+        "digest": "13ed0644ca3f43fc9e1223627f8cb67518602d94c5bb0e9cbaa57125db9a340f",
+        "result": "CONTINUITY_VERIFY_OK",
+        "return_code": 0,
+    }:
+        _fail("H001 operator disclosure hostile-review verifier evidence drifted")
+    if record["test_evidence"] != {
+        "focused_suites": {"failed": 0, "passed": 100, "return_code": 0},
+        "full_continuity_collection": {"collected": 962, "return_code": 0},
+        "full_continuity_suite": {"failed": 0, "passed": 962, "skipped": 0, "return_code": 0},
+        "git_diff_check": {"return_code": 0},
+    }:
+        _fail("H001 operator disclosure hostile-review test evidence drifted")
+    if record["git_diff_check"] != {"return_code": 0}:
+        _fail("H001 operator disclosure hostile-review diff-check evidence drifted")
+    if record["independence"] != {
+        "checkout_mutation_during_review": "NONE",
+        "protected_outcome_inspection": "NONE",
+        "repository_mutation_during_review": "NONE",
+        "review_session": "SEPARATE_FRESH_READ_ONLY_CODEX_SESSION",
+        "reviewer_independence": "EXTERNAL_TO_RECORDING_SESSION",
+    }:
+        _fail("H001 operator disclosure hostile-review independence evidence drifted")
+    hostile = record["hostile_mutation_evidence"]
+    if type(hostile) is not list or hostile != [{"attack": attack, "result": "FAIL_CLOSED"} for attack in _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HOSTILE_ATTACKS]:
+        _fail("H001 operator disclosure hostile-review mutation evidence drifted")
+    required_limitations = {
+        "DOES_NOT_SELECT_OPERATOR_DECISION",
+        "DOES_NOT_MAKE_CANDIDATE_EFFECTIVE",
+        "DOES_NOT_RESOLVE_C2",
+        "DOES_NOT_AUTHORIZE_SCIENCE",
+        "DOES_NOT_AUTHORIZE_ACTIVATION",
+        "DOES_NOT_AUTHORIZE_IMPLEMENTATION",
+        "DOES_NOT_AUTHORIZE_DATA_ACCESS",
+        "DOES_NOT_AUTHORIZE_EXECUTION",
+        "DOES_NOT_CLAIM_OUTCOME_BLINDNESS",
+        "DOES_NOT_CLAIM_CONFIRMED_CONTAMINATION",
+        "DOES_NOT_CLAIM_PROVEN_NON_EXPOSURE",
+        "DOES_NOT_CLAIM_ECONOMIC_EDGE",
+    }
+    if not required_limitations.issubset(set(record["explicit_limitations"])):
+        _fail("H001 operator disclosure hostile-review limitations drifted")
+    if "UNKNOWN_AGENT_OR_ARTIFACT_EXPOSURE_REMAINS_ACKNOWLEDGED" not in record["review_conclusions"]:
+        _fail("H001 operator disclosure hostile-review lost unknown exposure conclusion")
+    return record
+
+_validate_receipt_h001_operator_exposure_disclosure_review_passed = _validate_receipt
+def _validate_receipt(parsed, active, root):
+    if active["phase"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PASSED_PHASE:
+        return _validate_receipt_h001_operator_exposure_disclosure_review_passed(parsed, active, root)
+    keys = set(_RECEIPT_KEYS) | {
+        "phase",
+        "current_transition_files",
+        "engine_implementation_binding",
+        "h001_c1_v044_continuity_repair_review_binding",
+        "h001_operator_exposure_disclosure_binding",
+        "h001_operator_exposure_disclosure_review_binding",
+        "numerical_convention_gap_inventory",
+        "numerical_conventions_selected_convention_inventory",
+        "operator_exposure_disclosure_state",
+        "per_run_coordinate_and_seed_orchestration_binding",
+        "rng_runtime_candidate_resolved_inventory",
+        "v039_checkout_path_repair",
+        "v040_review_binding",
+    }
+    _require_exact_keys(parsed, keys, "handoff_receipt")
+    if parsed["receipt_index"] != 47:
+        _fail("H001 operator disclosure hostile-review receipt index is wrong")
+    if parsed["phase"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PASSED_PHASE:
+        _fail("H001 operator disclosure hostile-review receipt phase is wrong")
+    if parsed["next_actions"] != [_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_NEXT_ACTION]:
+        _fail("H001 operator disclosure hostile-review next action is wrong")
+    if parsed["predecessor"] != {
+        "path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH,
+        "sha256": "13ed0644ca3f43fc9e1223627f8cb67518602d94c5bb0e9cbaa57125db9a340f",
+    }:
+        _fail("H001 operator disclosure hostile-review predecessor is wrong")
+    if parsed["changed_file_scope"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_SCOPE:
+        _fail("H001 operator disclosure hostile-review changed-file scope drifted")
+    if parsed["current_transition_files"] != [
+        {"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()}
+        for path in _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_CURRENT_FILES
+    ]:
+        _fail("H001 operator disclosure hostile-review current transition files drifted")
+    if parsed["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 operator disclosure hostile-review safety state drifted")
+    _validate_evidence(parsed["evidence"], root, verify_files=True)
+    record = _validate_h001_operator_exposure_disclosure_review_record(active, root)
+    if parsed["h001_operator_exposure_disclosure_review_binding"] != {
+        "authority_state": _H001_OPERATOR_EXPOSURE_DISCLOSURE_AUTHORITY,
+        "disclosure_record_path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH,
+        "disclosure_record_sha256": _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+        "operator_decision_state": "PENDING",
+        "operator_exposure_disclosure_recorded": True,
+        "review_completed": True,
+        "review_passed": True,
+        "review_record_path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_RELPATH,
+        "review_record_sha256": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256,
+        "review_verdict": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_VERDICT,
+        "required_next_action": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_NEXT_ACTION,
+    }:
+        _fail("H001 operator disclosure hostile-review binding drifted")
+    if parsed["operator_exposure_disclosure_state"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_STATE:
+        _fail("H001 operator disclosure hostile-review operator state drifted")
+    if record["authority_state"] != parsed["h001_operator_exposure_disclosure_review_binding"]["authority_state"]:
+        _fail("H001 operator disclosure hostile-review authority binding mismatch")
+    evidence = {item["path"]: item["sha256"] for item in parsed["evidence"]}
+    protected = {
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_RELPATH: _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256,
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH: _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH: "13ed0644ca3f43fc9e1223627f8cb67518602d94c5bb0e9cbaa57125db9a340f",
+        _V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH: _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256,
+        _V044_CONTINUITY_REPAIR_REVIEW_HANDOFF_RELPATH: "64e73fa56ed831dcf7a2c1a450dafa2f66258790261f47e50793ac4a2a968a3c",
+        _V044_REVIEW_RECORD_RELPATH: _V044_REVIEW_RECORD_SHA256,
+        (_v044.AMENDMENT_RELPATH): _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PROTECTED_HASHES["v044_amendment"],
+        "quantbot/continuity/h001_c1_directionality_atomic_repair_candidate_v044.py": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PROTECTED_HASHES["v044_validator"],
+        "tests/continuity/test_h001_c1_directionality_atomic_repair_candidate_v044.py": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PROTECTED_HASHES["v044_test"],
+        "tests/assurance/test_h001_c1_directionality_atomic_repair_candidate_review_record.py": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PROTECTED_HASHES["focused_review_test"],
+    }
+    for path, expected in protected.items():
+        if evidence.get(path) != expected:
+            _fail(f"H001 operator disclosure hostile-review receipt must evidence {path!r}")
+        target = root / path
+        if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+            _fail(f"H001 operator disclosure hostile-review protected file {path!r} drifted")
+    _cross_check_artifact_records(parsed, root)
+    _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
+    return parsed
+
+_validate_predecessor_chain_h001_operator_exposure_disclosure_review_passed = _validate_predecessor_chain
+def _validate_predecessor_chain(parsed, root, receipt_relpath):
+    if parsed.get("receipt_index") != 47:
+        return _validate_predecessor_chain_h001_operator_exposure_disclosure_review_passed(parsed, root, receipt_relpath)
+    p = parsed["predecessor"]
+    target = root / p["path"]
+    if p["path"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != p["sha256"]:
+        _fail("H001 operator disclosure hostile-review predecessor chain is wrong")
+    _validate_predecessor_chain_h001_operator_exposure_disclosure_review_passed(
+        _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
+    )
+# END H001 OPERATOR EXPOSURE DISCLOSURE HOSTILE REVIEW PASS V047 APPEND

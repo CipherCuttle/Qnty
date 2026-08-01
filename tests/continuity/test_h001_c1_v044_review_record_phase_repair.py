@@ -102,6 +102,8 @@ def _point_to_v044_review_record_phase(root):
     active["review_record_sha256"] = REVIEW_RECORD_SHA256
     active.pop("operator_disclosure_record_path", None)
     active.pop("operator_disclosure_record_sha256", None)
+    active.pop("operator_exposure_disclosure_review_record_path", None)
+    active.pop("operator_exposure_disclosure_review_record_sha256", None)
     _write_json(active_path, active)
 
 

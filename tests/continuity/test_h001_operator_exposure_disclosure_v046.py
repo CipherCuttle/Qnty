@@ -60,8 +60,8 @@ def test_v046_disclosure_records_all_answers_as_uncertain(tmp_path):
     disclosure = _disclosure(root)
     answers = disclosure["answers"]
 
-    assert state["active_task"]["phase"] == context._H001_OPERATOR_EXPOSURE_DISCLOSURE_RECORDED_PHASE
-    assert state["handoff_receipt"]["next_actions"] == ["FRESH_HOSTILE_REVIEW_OF_OPERATOR_EXPOSURE_DISCLOSURE"]
+    assert state["active_task"]["phase"] == context._H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PASSED_PHASE
+    assert state["handoff_receipt"]["next_actions"] == ["H001_OPERATOR_GOVERNANCE_DECISION_V1"]
     assert disclosure["allowed_answer_states"] == ["KNOWN_NO", "KNOWN_YES", "UNCERTAIN"]
     assert [item["answer"] for item in answers] == ["UNCERTAIN"] * 7
     assert [item["confidence"] for item in answers] == ["LOW", "LOW", "LOW", "LOW", "LOW", "MEDIUM", "MEDIUM"]
@@ -228,6 +228,8 @@ def test_v046_historical_v044_review_phase_remains_valid(tmp_path):
     active["review_record_sha256"] = context._V044_REVIEW_RECORD_SHA256
     active.pop("operator_disclosure_record_path")
     active.pop("operator_disclosure_record_sha256")
+    active.pop("operator_exposure_disclosure_review_record_path", None)
+    active.pop("operator_exposure_disclosure_review_record_sha256", None)
     _write_json(active_path, active)
 
     state = context.load_and_verify_continuity_state(root)
