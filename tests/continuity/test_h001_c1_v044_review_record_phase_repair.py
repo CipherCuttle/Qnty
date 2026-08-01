@@ -92,6 +92,17 @@ def _fail(root):
         context.load_and_verify_continuity_state(root)
 
 
+def _point_to_v044_review_record_phase(root):
+    active_path = root / context.ACTIVE_TASK_RELPATH
+    active = _load_json(active_path)
+    active["phase"] = context._V044_REVIEW_RECORDED_PHASE
+    active["handoff_receipt_path"] = v044.HANDOFF_RELPATH
+    active["handoff_receipt_sha256"] = "e7cbfa8659319e32a2ba233f22d9035ff0d9d85cef99d81015e4182988af31f7"
+    active["review_record_path"] = REVIEW_RECORD_PATH
+    active["review_record_sha256"] = REVIEW_RECORD_SHA256
+    _write_json(active_path, active)
+
+
 def test_historical_active_task_schema_without_review_fields_still_verifies(tmp_path):
     root = _historical_v024_tree(tmp_path)
 
@@ -126,6 +137,7 @@ def test_historical_active_task_unknown_extra_key_fails_closed(tmp_path):
 
 def test_review_record_phase_verifies_v044_handoff_without_mutating_review_record(tmp_path):
     root = _tree(tmp_path)
+    _point_to_v044_review_record_phase(root)
 
     state = _verify(root)
 
@@ -136,6 +148,7 @@ def test_review_record_phase_verifies_v044_handoff_without_mutating_review_recor
 
 def test_review_record_phase_reuses_exact_v044_handoff_schema(tmp_path):
     root = _tree(tmp_path)
+    _point_to_v044_review_record_phase(root)
     receipt_path = root / v044.HANDOFF_RELPATH
     receipt = _load_json(receipt_path)
     receipt["unauthorized_extra_key"] = True
@@ -232,6 +245,7 @@ def test_review_record_phase_rejects_review_record_authority_escalation(tmp_path
 
 def test_review_record_phase_preserves_c1_and_c2_authority_bindings(tmp_path):
     root = _tree(tmp_path)
+    _point_to_v044_review_record_phase(root)
     state = _verify(root)
     review = _load_json(root / REVIEW_RECORD_PATH)
     authority = review["authorization_state"]

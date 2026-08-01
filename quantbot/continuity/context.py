@@ -1105,7 +1105,7 @@ def _load_canonical_document(data: bytes, label: str) -> dict:
 
 
 def _active_keys_for_phase(phase: str) -> set:
-    if phase == _V044_REVIEW_RECORDED_PHASE:
+    if phase in (_V044_REVIEW_RECORDED_PHASE, _V044_CONTINUITY_REPAIR_REVIEW_PASSED_PHASE):
         return _V044_REVIEW_RECORDED_ACTIVE_KEYS
     return _BASE_ACTIVE_KEYS
 
@@ -4345,3 +4345,239 @@ def _validate_receipt(parsed, active, root):
     _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
     return parsed
 # END H001 C1 V044 INDEPENDENT REVIEW RECORD PHASE REPAIR APPEND
+# BEGIN H001 C1 V044 CONTINUITY REPAIR REVIEW PASS RECORD APPEND
+_V044_CONTINUITY_REPAIR_REVIEW_PASSED_PHASE = (
+    "candidate1_h001_c1_v044_continuity_repair_review_passed_operator_disclosure_required"
+)
+_V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH = (
+    "docs/assurance/reviews/"
+    "candidate1_h001_c1_v044_continuity_repair_adversarial_review_v001.json"
+)
+_V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256 = (
+    "b2fdb537fd60ecbfc87966fc369439392c8ad303b61b89ea10fa5ba0d5183042"
+)
+_V044_CONTINUITY_REPAIR_REVIEW_HANDOFF_RELPATH = (
+    f"docs/control/tasks/{TASK_ID}/handoff_v045.json"
+)
+_V044_CONTINUITY_REPAIR_NEXT_ACTION = "H001_OPERATOR_EXPOSURE_DISCLOSURE_V1"
+_V044_CONTINUITY_REPAIR_CANDIDATE_COMMIT = "7d2644bff33865c0b2a6ed6e1a0c27686c0f47ec"
+_V044_CONTINUITY_REPAIR_CANDIDATE_TREE = "3032fecba8ba1a58835728b2543e8f7b683a56cb"
+_V044_CONTINUITY_REPAIR_CANDIDATE_PARENT = "cd82a7dc0ba29a02845a764c249ae6154dc4475b"
+_V044_CONTINUITY_REPAIR_CHANGED_FILES = [
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+    "tests/continuity/test_h001_c1_v044_review_record_phase_repair.py",
+]
+_V044_CONTINUITY_REPAIR_PROTECTED_HASHES = {
+    "review_record": _V044_REVIEW_RECORD_SHA256,
+    "focused_review_test": "df26801684def7723787e2ac59866cdb90607eedf53303a664b37b586d9315cb",
+    "v044_amendment": "2bcfaa1f10cfebb6ab7ead9b29bf4a5b4c8f38187ce37af21b32dad99064f98b",
+    "v044_validator": "3ce96c305bc948a31f2e73c04933e7151cff162a44ccd9b7bb8c5519d7a112d1",
+    "v044_test": "bb3e13f5000ac8fe449a78d02ba6f2b236b776ac49a031e14478e53a9719f415",
+}
+_V044_CONTINUITY_REPAIR_VERIFIER_DIGEST = "e7cbfa8659319e32a2ba233f22d9035ff0d9d85cef99d81015e4182988af31f7"
+_V044_CONTINUITY_REPAIR_CURRENT_FILES = [
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_h001_c1_v044_continuity_repair_review_record.py",
+]
+_V044_CONTINUITY_REPAIR_SCOPE = [
+    _V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH,
+    _V044_CONTINUITY_REPAIR_REVIEW_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    *_V044_CONTINUITY_REPAIR_CURRENT_FILES,
+]
+_V044_CONTINUITY_REPAIR_AUTHORITY = {
+    "candidate_review_completed": True,
+    "candidate_review_passed": True,
+    "candidate_effective": False,
+    "scientific_authorized": False,
+    "activation_authorized": False,
+    "implementation_authorized": False,
+    "real_data_access_authorized": False,
+    "execution_authorized": False,
+    "execution_budget": 0,
+    "execution_count": 0,
+    "holdout_authorized": False,
+    "paper_trade_authorized": False,
+    "live_authorized": False,
+    "dispatcher_released": False,
+    "trust_root_registered": False,
+    "C2_resolved": False,
+}
+_V044_CONTINUITY_REPAIR_OPERATOR_STATE = {
+    "operator_decision_state": "PENDING",
+    "operator_exposure_disclosure_recorded": False,
+}
+
+def _validate_v044_continuity_repair_review_record(active: dict, root: Path) -> dict:
+    if active["review_record_path"] != _V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH:
+        _fail("H001 C1 v044 continuity-repair review-record path is wrong")
+    if active["review_record_sha256"] != _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256:
+        _fail("H001 C1 v044 continuity-repair review-record sha256 is wrong")
+    record_path = root / active["review_record_path"]
+    if not record_path.is_file():
+        _fail("H001 C1 v044 continuity-repair review record is missing")
+    record_bytes = record_path.read_bytes()
+    if hashlib.sha256(record_bytes).hexdigest() != active["review_record_sha256"]:
+        _fail("H001 C1 v044 continuity-repair review-record bytes drifted")
+    record = _load_canonical_document(record_bytes, "H001 C1 v044 continuity-repair review record")
+    _require_exact_keys(record, {
+        "authorization_state",
+        "candidate_binding",
+        "continuity_verifier",
+        "document_kind",
+        "explicit_limitations",
+        "focused_collection",
+        "git_diff_check",
+        "independence",
+        "operator_decision_state",
+        "operator_exposure_disclosure_recorded",
+        "protected_hashes",
+        "review_conclusions",
+        "review_id",
+        "review_scope",
+        "review_verdict",
+        "schema_version",
+        "status",
+        "test_evidence",
+    }, "H001 C1 v044 continuity-repair review record")
+    if record["schema_version"] != "0.1.0":
+        _fail("H001 C1 v044 continuity-repair review schema version is wrong")
+    if record["document_kind"] != "qnty_h001_c1_v044_continuity_repair_adversarial_review_record":
+        _fail("H001 C1 v044 continuity-repair review document kind is wrong")
+    if record["review_verdict"] != "PASS_ACTIVE_TASK_PHASE_SCHEMA_REPAIR_SAFE":
+        _fail("H001 C1 v044 continuity-repair review verdict drifted")
+    binding = _require_exact_keys(record["candidate_binding"], {
+        "candidate_commit", "candidate_parent", "candidate_tree", "changed_files",
+    }, "H001 C1 v044 continuity-repair candidate binding")
+    if binding != {
+        "candidate_commit": _V044_CONTINUITY_REPAIR_CANDIDATE_COMMIT,
+        "candidate_parent": _V044_CONTINUITY_REPAIR_CANDIDATE_PARENT,
+        "candidate_tree": _V044_CONTINUITY_REPAIR_CANDIDATE_TREE,
+        "changed_files": _V044_CONTINUITY_REPAIR_CHANGED_FILES,
+    }:
+        _fail("H001 C1 v044 continuity-repair candidate binding drifted")
+    if record["protected_hashes"] != _V044_CONTINUITY_REPAIR_PROTECTED_HASHES:
+        _fail("H001 C1 v044 continuity-repair protected hashes drifted")
+    if record["authorization_state"] != _V044_CONTINUITY_REPAIR_AUTHORITY:
+        _fail("H001 C1 v044 continuity-repair authority drifted")
+    if {
+        "operator_decision_state": record["operator_decision_state"],
+        "operator_exposure_disclosure_recorded": record["operator_exposure_disclosure_recorded"],
+    } != _V044_CONTINUITY_REPAIR_OPERATOR_STATE:
+        _fail("H001 C1 v044 continuity-repair operator state drifted")
+    if record["continuity_verifier"] != {
+        "digest": _V044_CONTINUITY_REPAIR_VERIFIER_DIGEST,
+        "result": "CONTINUITY_VERIFY_OK",
+        "return_code": 0,
+    }:
+        _fail("H001 C1 v044 continuity-repair verifier evidence drifted")
+    evidence = record["test_evidence"]
+    _require_exact_keys(evidence, {
+        "focused_collection",
+        "full_continuity_collection",
+        "full_continuity_suite",
+        "repair_suite",
+        "review_record_assurance_suite",
+        "v044_continuity_suite",
+    }, "H001 C1 v044 continuity-repair test evidence")
+    if evidence["full_continuity_suite"] != {"failed": 0, "passed": 903, "return_code": 0}:
+        _fail("H001 C1 v044 continuity-repair full continuity evidence drifted")
+    if evidence["full_continuity_collection"] != {"collected": 903, "return_code": 0}:
+        _fail("H001 C1 v044 continuity-repair full continuity collection drifted")
+    if evidence["v044_continuity_suite"] != {"failed": 0, "passed": 60, "return_code": 0}:
+        _fail("H001 C1 v044 continuity-repair v044 suite evidence drifted")
+    if evidence["review_record_assurance_suite"] != {"failed": 0, "passed": 26, "return_code": 0}:
+        _fail("H001 C1 v044 continuity-repair assurance evidence drifted")
+    if evidence["repair_suite"] != {"failed": 0, "passed": 15, "return_code": 0}:
+        _fail("H001 C1 v044 continuity-repair repair suite evidence drifted")
+    if record["independence"] != {
+        "checkout_mutation_during_review": "NONE",
+        "protected_outcome_inspection": "NONE",
+        "review_session": "SEPARATE_FRESH_READ_ONLY_CODEX_SESSION",
+        "reviewer_independence": "EXTERNAL_TO_RECORDING_SESSION",
+    }:
+        _fail("H001 C1 v044 continuity-repair independence evidence drifted")
+    return record
+
+_validate_receipt_v044_continuity_repair_review_passed = _validate_receipt
+def _validate_receipt(parsed, active, root):
+    if active["phase"] != _V044_CONTINUITY_REPAIR_REVIEW_PASSED_PHASE:
+        return _validate_receipt_v044_continuity_repair_review_passed(parsed, active, root)
+    keys = set(_RECEIPT_KEYS) | {
+        "phase",
+        "current_transition_files",
+        "engine_implementation_binding",
+        "h001_c1_v044_continuity_repair_review_binding",
+        "numerical_convention_gap_inventory",
+        "numerical_conventions_selected_convention_inventory",
+        "operator_exposure_disclosure_state",
+        "per_run_coordinate_and_seed_orchestration_binding",
+        "rng_runtime_candidate_resolved_inventory",
+        "v039_checkout_path_repair",
+        "v040_review_binding",
+    }
+    _require_exact_keys(parsed, keys, "handoff_receipt")
+    if parsed["receipt_index"] != 45:
+        _fail("H001 C1 v044 continuity-repair review-pass receipt index is wrong")
+    if parsed["phase"] != _V044_CONTINUITY_REPAIR_REVIEW_PASSED_PHASE:
+        _fail("H001 C1 v044 continuity-repair review-pass receipt phase is wrong")
+    if parsed["next_actions"] != [_V044_CONTINUITY_REPAIR_NEXT_ACTION]:
+        _fail("H001 C1 v044 continuity-repair review-pass next action is wrong")
+    if parsed["predecessor"] != {"path": _v044.HANDOFF_RELPATH, "sha256": "e7cbfa8659319e32a2ba233f22d9035ff0d9d85cef99d81015e4182988af31f7"}:
+        _fail("H001 C1 v044 continuity-repair review-pass predecessor is wrong")
+    if parsed["changed_file_scope"] != _V044_CONTINUITY_REPAIR_SCOPE:
+        _fail("H001 C1 v044 continuity-repair review-pass changed-file scope drifted")
+    if parsed["current_transition_files"] != [
+        {"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()}
+        for path in _V044_CONTINUITY_REPAIR_CURRENT_FILES
+    ]:
+        _fail("H001 C1 v044 continuity-repair current transition files drifted")
+    if parsed["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 C1 v044 continuity-repair review-pass safety state drifted")
+    _validate_evidence(parsed["evidence"], root, verify_files=True)
+    record = _validate_v044_continuity_repair_review_record(active, root)
+    binding = parsed["h001_c1_v044_continuity_repair_review_binding"]
+    if binding != {
+        "candidate_binding": record["candidate_binding"],
+        "review_record_path": _V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH,
+        "review_record_sha256": _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256,
+        "review_verdict": "PASS_ACTIVE_TASK_PHASE_SCHEMA_REPAIR_SAFE",
+        "review_completed": True,
+        "review_passed": True,
+        "authority_state": _V044_CONTINUITY_REPAIR_AUTHORITY,
+    }:
+        _fail("H001 C1 v044 continuity-repair review binding drifted")
+    if parsed["operator_exposure_disclosure_state"] != _V044_CONTINUITY_REPAIR_OPERATOR_STATE:
+        _fail("H001 C1 v044 continuity-repair operator-disclosure state drifted")
+    evidence = {item["path"]: item["sha256"] for item in parsed["evidence"]}
+    for path, expected in (
+        (_V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH, _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256),
+        (_V044_REVIEW_RECORD_RELPATH, _V044_REVIEW_RECORD_SHA256),
+        (_v044.AMENDMENT_RELPATH, _V044_CONTINUITY_REPAIR_PROTECTED_HASHES["v044_amendment"]),
+        ("quantbot/continuity/h001_c1_directionality_atomic_repair_candidate_v044.py", _V044_CONTINUITY_REPAIR_PROTECTED_HASHES["v044_validator"]),
+        ("tests/continuity/test_h001_c1_directionality_atomic_repair_candidate_v044.py", _V044_CONTINUITY_REPAIR_PROTECTED_HASHES["v044_test"]),
+        ("tests/assurance/test_h001_c1_directionality_atomic_repair_candidate_review_record.py", _V044_CONTINUITY_REPAIR_PROTECTED_HASHES["focused_review_test"]),
+        (_v044.HANDOFF_RELPATH, "e7cbfa8659319e32a2ba233f22d9035ff0d9d85cef99d81015e4182988af31f7"),
+    ):
+        if evidence.get(path) != expected:
+            _fail(f"H001 C1 v044 continuity-repair receipt must evidence {path!r}")
+        target = root / path
+        if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+            _fail(f"H001 C1 v044 continuity-repair protected file {path!r} drifted")
+    _cross_check_artifact_records(parsed, root)
+    _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
+    return parsed
+
+_validate_predecessor_chain_v044_continuity_repair_review_passed = _validate_predecessor_chain
+def _validate_predecessor_chain(parsed, root, receipt_relpath):
+    if parsed.get("receipt_index") != 45:
+        return _validate_predecessor_chain_v044_continuity_repair_review_passed(parsed, root, receipt_relpath)
+    p = parsed["predecessor"]
+    target = root / p["path"]
+    if p["path"] != _v044.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != p["sha256"]:
+        _fail("H001 C1 v044 continuity-repair review-pass predecessor chain is wrong")
+    _validate_predecessor_chain_v044_continuity_repair_review_passed(
+        _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
+    )
+# END H001 C1 V044 CONTINUITY REPAIR REVIEW PASS RECORD APPEND
