@@ -72,8 +72,8 @@ def test_v048_operator_decision_records_combined_conservative_decision(tmp_path)
     decision = _decision(root)
     receipt = _receipt(root)
 
-    assert state["active_task"]["phase"] == context._H001_OPERATOR_GOVERNANCE_DECISION_RECORDED_PHASE
-    assert state["handoff_receipt"]["next_actions"] == ["FRESH_HOSTILE_REVIEW_OF_H001_OPERATOR_GOVERNANCE_DECISION"]
+    assert state["active_task"]["phase"] == context._H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PASSED_PHASE
+    assert state["handoff_receipt"]["next_actions"] == ["CONSTRUCT_PROSPECTIVE_H001_C2_RESOLUTION_CANDIDATE_FOR_REVIEW"]
     assert decision["operator_decision_recorded"] is True
     assert decision["operator_decision_state"] == context._H001_OPERATOR_GOVERNANCE_DECISION_STATE
     assert decision["decision_components"] == [
@@ -245,6 +245,8 @@ def test_v048_historical_phases_and_protected_hashes_remain_valid(tmp_path):
     active["handoff_receipt_sha256"] = "e82eefad6e05c0ef1487c36cf4a8c4976de6c9025c87ff3728ba9bd490f2209d"
     active.pop("operator_governance_decision_record_path")
     active.pop("operator_governance_decision_record_sha256")
+    active.pop("operator_governance_decision_review_record_path", None)
+    active.pop("operator_governance_decision_review_record_sha256", None)
     receipt_path = root / context._H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HANDOFF_RELPATH
     receipt = _load_json(receipt_path)
     receipt["current_transition_files"] = [

@@ -78,6 +78,10 @@ _OPERATOR_GOVERNANCE_DECISION_ACTIVE_KEYS = _OPERATOR_DISCLOSURE_REVIEW_ACTIVE_K
     "operator_governance_decision_record_path",
     "operator_governance_decision_record_sha256",
 }
+_OPERATOR_GOVERNANCE_DECISION_REVIEW_ACTIVE_KEYS = _OPERATOR_GOVERNANCE_DECISION_ACTIVE_KEYS | {
+    "operator_governance_decision_review_record_path",
+    "operator_governance_decision_review_record_sha256",
+}
 _ACTIVE_KEYS = _BASE_ACTIVE_KEYS
 _RECEIPT_KEYS = {
     "blockers",
@@ -1125,6 +1129,8 @@ def _active_keys_for_phase(phase: str) -> set:
         return _OPERATOR_DISCLOSURE_REVIEW_ACTIVE_KEYS
     if phase == _H001_OPERATOR_GOVERNANCE_DECISION_RECORDED_PHASE:
         return _OPERATOR_GOVERNANCE_DECISION_ACTIVE_KEYS
+    if phase == _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PASSED_PHASE:
+        return _OPERATOR_GOVERNANCE_DECISION_REVIEW_ACTIVE_KEYS
     return _BASE_ACTIVE_KEYS
 
 
@@ -5567,3 +5573,356 @@ def _validate_predecessor_chain(parsed, root, receipt_relpath):
         _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
     )
 # END H001 OPERATOR GOVERNANCE DECISION V048 APPEND
+
+# BEGIN H001 OPERATOR GOVERNANCE DECISION HOSTILE REVIEW PASS V049 APPEND
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PASSED_PHASE = (
+    "candidate1_h001_operator_governance_decision_review_passed_prospective_c2_resolution_required"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_NEXT_ACTION = (
+    "CONSTRUCT_PROSPECTIVE_H001_C2_RESOLUTION_CANDIDATE_FOR_REVIEW"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_RELPATH = (
+    "docs/assurance/reviews/candidate1_h001_operator_governance_decision_hostile_review_v001.json"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_SHA256 = (
+    "e58da9eac18af31e9dd436d3d601dcccb5d456371018a75f512e5757347533cf"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_HANDOFF_RELPATH = (
+    f"docs/control/tasks/{TASK_ID}/handoff_v049.json"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_VERDICT = "PASS_H001_OPERATOR_GOVERNANCE_DECISION_SAFE"
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEWED_COMMIT = "76216e0d6cf22101a6c1318cd9e02ba0beda61d3"
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEWED_TREE = "d562d5ea22509c34cc7981f23ff3183051e9eae6"
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEWED_PARENT = "6be95460735718eaf28d7d3e775baf2db98ecc6c"
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PROTECTED_HASHES = {
+    **_H001_OPERATOR_GOVERNANCE_DECISION_PROTECTED_HASHES,
+    "operator_decision": _H001_OPERATOR_GOVERNANCE_DECISION_SHA256,
+    "v048_handoff": "4c5a192fb5f393891ea53482624a45b2a7461bb7e82331476a049226ed97ae1e",
+}
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_AUTHORITY = {
+    **_H001_OPERATOR_GOVERNANCE_DECISION_AUTHORITY,
+    "operator_decision_review_completed": True,
+    "operator_decision_review_passed": True,
+}
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_CURRENT_FILES = [
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+    "tests/continuity/test_h001_c1_v044_continuity_repair_review_record.py",
+    "tests/continuity/test_h001_c1_v044_review_record_phase_repair.py",
+    "tests/continuity/test_h001_operator_exposure_disclosure_v046.py",
+    "tests/continuity/test_h001_operator_exposure_disclosure_review_record_v047.py",
+    "tests/continuity/test_h001_operator_governance_decision_v048.py",
+    "tests/continuity/test_h001_operator_governance_decision_review_record_v049.py",
+]
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_SCOPE = [
+    _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_RELPATH,
+    _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    *_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_CURRENT_FILES,
+]
+_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_HOSTILE_ATTACKS = [
+    "DECISION_COMPONENT_REMOVED",
+    "HISTORICAL_EVIDENCE_PROMOTED_TO_CONFIRMATORY_OR_PRISTINE",
+    "HISTORICAL_EVIDENCE_DEMOTED_TO_INVALID_WORTHLESS_CONTAMINATED_REJECTED_OR_RETIRED",
+    "FRESH_CONFIRMATION_DISABLED",
+    "CANDIDATE_EFFECTIVE_TRUE",
+    "CANDIDATE_REJECTED_OR_RETIRED",
+    "C2_RESOLVED_OR_BOUNDARY_SELECTED",
+    "AUTHORITY_ENABLED_OR_EXECUTION_LIMIT_INCREASED",
+    "ECONOMIC_EDGE_OR_PROFITABILITY_CLAIM_ADDED",
+    "CONTAMINATION_PROVEN_CLAIM_ADDED",
+    "BLINDNESS_OR_NON_EXPOSURE_PROVEN_CLAIM_ADDED",
+    "PREDECESSOR_PATH_HASH_OPERATOR_DATE_COMMIT_TREE_OR_PARENT_SUBSTITUTED",
+    "UNKNOWN_EXTRA_KEYS_ADDED",
+    "HISTORICAL_V044_V047_CONTINUITY_BROKEN",
+    "ASSERTION_LAUNDERED_THROUGH_HISTORICAL_FIXTURE",
+]
+
+def _validate_h001_operator_governance_decision_review_record(active: dict, root: Path) -> dict:
+    _validate_h001_operator_governance_decision(active, root)
+    if active["operator_governance_decision_review_record_path"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_RELPATH:
+        _fail("H001 operator governance decision hostile-review record path is wrong")
+    if active["operator_governance_decision_review_record_sha256"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_SHA256:
+        _fail("H001 operator governance decision hostile-review record sha256 is wrong")
+    path = root / active["operator_governance_decision_review_record_path"]
+    if not path.is_file():
+        _fail("H001 operator governance decision hostile-review record is missing")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != active["operator_governance_decision_review_record_sha256"]:
+        _fail("H001 operator governance decision hostile-review record bytes drifted")
+    record = _load_canonical_document(raw, "H001 operator governance decision hostile-review record")
+    _require_exact_keys(record, {
+        "C2_state",
+        "authority_state",
+        "candidate_binding",
+        "candidate_effectiveness",
+        "continuity_verifier",
+        "decision_binding",
+        "decision_components",
+        "decision_semantics",
+        "document_kind",
+        "evidentiary_classification",
+        "explicit_limitations",
+        "fresh_confirmation_requirement",
+        "git_diff_check",
+        "handoff_binding",
+        "hostile_mutation_evidence",
+        "independence",
+        "non_effects",
+        "operator_decision_recorded",
+        "operator_decision_review_completed",
+        "operator_decision_review_passed",
+        "operator_decision_state",
+        "protected_hashes",
+        "review_conclusions",
+        "review_id",
+        "review_kind",
+        "review_scope",
+        "review_verdict",
+        "schema_version",
+        "status",
+        "test_evidence",
+    }, "H001 operator governance decision hostile-review record")
+    if record["schema_version"] != "0.1.0":
+        _fail("H001 operator governance decision hostile-review schema version is wrong")
+    if record["document_kind"] != "qnty_h001_operator_governance_decision_hostile_review_record":
+        _fail("H001 operator governance decision hostile-review document kind is wrong")
+    if record["review_kind"] != "H001_OPERATOR_GOVERNANCE_DECISION_HOSTILE_REVIEW":
+        _fail("H001 operator governance decision hostile-review kind is wrong")
+    if record["review_verdict"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_VERDICT:
+        _fail("H001 operator governance decision hostile-review verdict drifted")
+    if record["operator_decision_review_completed"] is not True or record["operator_decision_review_passed"] is not True:
+        _fail("H001 operator governance decision hostile-review pass is not recorded")
+    if record["operator_decision_recorded"] is not True or record["operator_decision_state"] != _H001_OPERATOR_GOVERNANCE_DECISION_STATE:
+        _fail("H001 operator governance decision hostile-review operator state drifted")
+    if record["candidate_binding"] != {
+        "reviewed_commit": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEWED_COMMIT,
+        "reviewed_parent": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEWED_PARENT,
+        "reviewed_tree": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEWED_TREE,
+    }:
+        _fail("H001 operator governance decision hostile-review candidate binding drifted")
+    if record["decision_binding"] != {
+        "reviewed_decision_path": _H001_OPERATOR_GOVERNANCE_DECISION_RELPATH,
+        "reviewed_decision_sha256": _H001_OPERATOR_GOVERNANCE_DECISION_SHA256,
+    }:
+        _fail("H001 operator governance decision hostile-review decision binding drifted")
+    if record["handoff_binding"] != {
+        "reviewed_handoff_path": _H001_OPERATOR_GOVERNANCE_DECISION_HANDOFF_RELPATH,
+        "reviewed_handoff_sha256": "4c5a192fb5f393891ea53482624a45b2a7461bb7e82331476a049226ed97ae1e",
+    }:
+        _fail("H001 operator governance decision hostile-review handoff binding drifted")
+    if record["decision_components"] != _H001_OPERATOR_GOVERNANCE_DECISION_COMPONENTS:
+        _fail("H001 operator governance decision hostile-review components drifted")
+    if record["authority_state"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_AUTHORITY:
+        _fail("H001 operator governance decision hostile-review authority drifted")
+    if record["protected_hashes"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PROTECTED_HASHES:
+        _fail("H001 operator governance decision hostile-review protected hashes drifted")
+    decision = _validate_h001_operator_governance_decision(active, root)
+    for key in ("evidentiary_classification", "fresh_confirmation_requirement", "candidate_effectiveness", "C2_state", "decision_semantics", "non_effects"):
+        if record[key] != decision[key]:
+            _fail(f"H001 operator governance decision hostile-review {key} drifted")
+    if record["continuity_verifier"] != {
+        "digest": "4c5a192fb5f393891ea53482624a45b2a7461bb7e82331476a049226ed97ae1e",
+        "result": "CONTINUITY_VERIFY_OK",
+        "return_code": 0,
+    }:
+        _fail("H001 operator governance decision hostile-review verifier evidence drifted")
+    if record["test_evidence"] != {
+        "focused_decision_suite": {"collected": 42, "failed": 0, "passed": 42, "return_code": 0},
+        "full_continuity_collection": {"collected": 1040, "return_code": 0},
+        "full_continuity_suite": {"failed": 0, "passed": 1040, "return_code": 0, "skipped": 0},
+        "git_diff_check": {"return_code": 0},
+        "predecessor_and_historical_focused_suites": {"collected": 196, "failed": 0, "passed": 196, "return_code": 0},
+    }:
+        _fail("H001 operator governance decision hostile-review test evidence drifted")
+    if record["git_diff_check"] != {"return_code": 0}:
+        _fail("H001 operator governance decision hostile-review diff-check evidence drifted")
+    if record["independence"] != {
+        "branch_matched": True,
+        "checkout_mutation_during_review": "NONE",
+        "protected_outcome_inspection": "NONE",
+        "repository_mutation_during_review": "NONE",
+        "review_session": "SEPARATE_FRESH_READ_ONLY_CODEX_SESSION",
+        "reviewer_independence": "EXTERNAL_TO_RECORDING_SESSION",
+        "worktree_matched": True,
+    }:
+        _fail("H001 operator governance decision hostile-review independence evidence drifted")
+    hostile = record["hostile_mutation_evidence"]
+    if type(hostile) is not list or hostile != [{"attack": attack, "result": "FAIL_CLOSED"} for attack in _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_HOSTILE_ATTACKS]:
+        _fail("H001 operator governance decision hostile-review mutation evidence drifted")
+    required_limitations = {
+        "DOES_NOT_REPEAT_OR_MODIFY_OPERATOR_DECISION",
+        "DOES_NOT_RESOLVE_C2",
+        "DOES_NOT_SELECT_BOUNDARY",
+        "DOES_NOT_CONSTRUCT_FORWARD_CONFIRMATION_PROTOCOL",
+        "DOES_NOT_INSPECT_H001_OUTCOMES",
+        "DOES_NOT_ACCESS_MARKET_DATA",
+        "DOES_NOT_AUTHORIZE_SCIENCE",
+        "DOES_NOT_AUTHORIZE_ACTIVATION",
+        "DOES_NOT_AUTHORIZE_IMPLEMENTATION",
+        "DOES_NOT_AUTHORIZE_DATA_ACCESS",
+        "DOES_NOT_AUTHORIZE_EXECUTION",
+        "DOES_NOT_AUTHORIZE_HOLDOUT",
+        "DOES_NOT_AUTHORIZE_PAPER_TRADING",
+        "DOES_NOT_AUTHORIZE_LIVE_TRADING",
+        "DOES_NOT_RELEASE_DISPATCHER",
+        "DOES_NOT_REGISTER_TRUST_ROOT",
+    }
+    if not required_limitations.issubset(set(record["explicit_limitations"])):
+        _fail("H001 operator governance decision hostile-review limitations drifted")
+    for required in (
+        "CANDIDATE_COMMIT_TREE_AND_PARENT_MATCHED",
+        "DECISION_RECORD_AND_HANDOFF_HASHES_MATCHED",
+        "DECISION_COMPONENTS_PRESERVED_EXACTLY",
+        "HISTORICAL_EVIDENCE_CLASSIFICATION_REMAINS_EXPLORATORY",
+        "FRESH_FORWARD_CONFIRMATION_REMAINS_REQUIRED",
+        "C2_REMAINS_UNRESOLVED_WITH_NO_BOUNDARY_SELECTED",
+        "ALL_CONSEQUENTIAL_AUTHORITIES_REMAIN_FALSE",
+        "EXECUTION_BUDGET_AND_COUNT_REMAIN_ZERO",
+        "NO_PROTECTED_H001_OUTCOMES_INSPECTED",
+        "NO_REPOSITORY_MUTATION_OCCURRED_DURING_REVIEW",
+    ):
+        if required not in record["review_conclusions"]:
+            _fail("H001 operator governance decision hostile-review conclusions drifted")
+    return record
+
+_validate_receipt_h001_operator_governance_decision_review_passed = _validate_receipt
+def _validate_receipt(parsed, active, root):
+    if active["phase"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PASSED_PHASE:
+        return _validate_receipt_h001_operator_governance_decision_review_passed(parsed, active, root)
+    keys = set(_RECEIPT_KEYS) | {
+        "phase",
+        "current_transition_files",
+        "engine_implementation_binding",
+        "h001_c1_v044_continuity_repair_review_binding",
+        "h001_operator_exposure_disclosure_binding",
+        "h001_operator_exposure_disclosure_review_binding",
+        "h001_operator_governance_decision_binding",
+        "h001_operator_governance_decision_review_binding",
+        "numerical_convention_gap_inventory",
+        "numerical_conventions_selected_convention_inventory",
+        "operator_exposure_disclosure_state",
+        "operator_governance_decision_state",
+        "operator_governance_decision_review_state",
+        "per_run_coordinate_and_seed_orchestration_binding",
+        "rng_runtime_candidate_resolved_inventory",
+        "v039_checkout_path_repair",
+        "v040_review_binding",
+    }
+    _require_exact_keys(parsed, keys, "handoff_receipt")
+    if parsed["receipt_index"] != 49:
+        _fail("H001 operator governance decision hostile-review receipt index is wrong")
+    if parsed["phase"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PASSED_PHASE:
+        _fail("H001 operator governance decision hostile-review receipt phase is wrong")
+    if parsed["next_actions"] != [_H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_NEXT_ACTION]:
+        _fail("H001 operator governance decision hostile-review next action is wrong")
+    if parsed["predecessor"] != {
+        "path": _H001_OPERATOR_GOVERNANCE_DECISION_HANDOFF_RELPATH,
+        "sha256": "4c5a192fb5f393891ea53482624a45b2a7461bb7e82331476a049226ed97ae1e",
+    }:
+        _fail("H001 operator governance decision hostile-review predecessor is wrong")
+    if parsed["changed_file_scope"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_SCOPE:
+        _fail("H001 operator governance decision hostile-review changed-file scope drifted")
+    if parsed["current_transition_files"] != [
+        {"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()}
+        for path in _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_CURRENT_FILES
+    ]:
+        _fail("H001 operator governance decision hostile-review current transition files drifted")
+    if parsed["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 operator governance decision hostile-review safety state drifted")
+    _validate_evidence(parsed["evidence"], root, verify_files=True)
+    record = _validate_h001_operator_governance_decision_review_record(active, root)
+    if parsed["h001_operator_governance_decision_review_binding"] != {
+        "C2_resolved": False,
+        "authority_state": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_AUTHORITY,
+        "candidate_effective": False,
+        "decision_record_path": _H001_OPERATOR_GOVERNANCE_DECISION_RELPATH,
+        "decision_record_sha256": _H001_OPERATOR_GOVERNANCE_DECISION_SHA256,
+        "fresh_forward_confirmation_required": True,
+        "historical_h001_evidence_classification": _H001_OPERATOR_GOVERNANCE_HISTORICAL_CLASSIFICATION,
+        "operator_decision_recorded": True,
+        "operator_decision_review_completed": True,
+        "operator_decision_review_passed": True,
+        "review_completed": True,
+        "review_passed": True,
+        "review_record_path": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_RELPATH,
+        "review_record_sha256": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_SHA256,
+        "review_verdict": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_VERDICT,
+        "selected_C2_boundary_rule": "NONE_SELECTED",
+    }:
+        _fail("H001 operator governance decision hostile-review binding drifted")
+    if parsed["operator_governance_decision_review_state"] != {
+        "C2_resolved": False,
+        "candidate_effective": False,
+        "fresh_forward_confirmation_required": True,
+        "historical_h001_evidence_classification": _H001_OPERATOR_GOVERNANCE_HISTORICAL_CLASSIFICATION,
+        "operator_decision_recorded": True,
+        "operator_decision_review_completed": True,
+        "operator_decision_review_passed": True,
+        "operator_decision_state": _H001_OPERATOR_GOVERNANCE_DECISION_STATE,
+        "selected_boundary_rule": "NONE_SELECTED",
+    }:
+        _fail("H001 operator governance decision hostile-review state drifted")
+    if record["authority_state"] != parsed["h001_operator_governance_decision_review_binding"]["authority_state"]:
+        _fail("H001 operator governance decision hostile-review authority binding mismatch")
+    evidence = {item["path"]: item["sha256"] for item in parsed["evidence"]}
+    protected = {
+        _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_RELPATH: _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_SHA256,
+        _H001_OPERATOR_GOVERNANCE_DECISION_RELPATH: _H001_OPERATOR_GOVERNANCE_DECISION_SHA256,
+        _H001_OPERATOR_GOVERNANCE_DECISION_HANDOFF_RELPATH: "4c5a192fb5f393891ea53482624a45b2a7461bb7e82331476a049226ed97ae1e",
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_RELPATH: _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256,
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HANDOFF_RELPATH: "e82eefad6e05c0ef1487c36cf4a8c4976de6c9025c87ff3728ba9bd490f2209d",
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH: _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH: "13ed0644ca3f43fc9e1223627f8cb67518602d94c5bb0e9cbaa57125db9a340f",
+        _V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH: _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256,
+        _V044_CONTINUITY_REPAIR_REVIEW_HANDOFF_RELPATH: "64e73fa56ed831dcf7a2c1a450dafa2f66258790261f47e50793ac4a2a968a3c",
+        _V044_REVIEW_RECORD_RELPATH: _V044_REVIEW_RECORD_SHA256,
+        (_v044.AMENDMENT_RELPATH): _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PROTECTED_HASHES["v044_amendment"],
+        "quantbot/continuity/h001_c1_directionality_atomic_repair_candidate_v044.py": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PROTECTED_HASHES["v044_validator"],
+        "tests/continuity/test_h001_c1_directionality_atomic_repair_candidate_v044.py": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PROTECTED_HASHES["v044_test"],
+        "tests/assurance/test_h001_c1_directionality_atomic_repair_candidate_review_record.py": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PROTECTED_HASHES["focused_review_test"],
+    }
+    for path, expected in protected.items():
+        if evidence.get(path) != expected:
+            _fail(f"H001 operator governance decision hostile-review receipt must evidence {path!r}")
+        target = root / path
+        if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+            _fail(f"H001 operator governance decision hostile-review protected file {path!r} drifted")
+    for required in (
+        "H001_OPERATOR_GOVERNANCE_DECISION_HOSTILE_REVIEW=PASSED",
+        "H001_OPERATOR_GOVERNANCE_DECISION_HOSTILE_REVIEW_RECORD=RECORDED",
+        "H001_OPERATOR_GOVERNANCE_DECISION=RECORDED",
+        "H001_HISTORICAL_EVIDENCE_CLASSIFICATION=EXPLORATORY",
+        "H001_FRESH_FORWARD_CONFIRMATION_REQUIRED=TRUE",
+        "H001_CANDIDATE_EFFECTIVENESS=DEFERRED",
+        "H001_CANDIDATE_EFFECTIVE=FALSE",
+        "H001_CANDIDATE_REJECTED=FALSE",
+        "H001_CANDIDATE_RETIRED=FALSE",
+        "H001_C2_REMAINS_UNRESOLVED=TRUE",
+        "H001_C2_BOUNDARY_SELECTED=NONE",
+        "H001_EXECUTION_AUTHORIZATION=FALSE",
+        "H001_CURRENT_EXECUTION_BUDGET=0",
+        "H001_CURRENT_EXECUTION_COUNT=0",
+        "H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_NEXT_ACTION=CONSTRUCT_PROSPECTIVE_H001_C2_RESOLUTION_CANDIDATE_FOR_REVIEW",
+    ):
+        if required not in parsed["decisions"]:
+            _fail("H001 operator governance decision hostile-review decisions drifted")
+    for attack in _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_HOSTILE_ATTACKS:
+        if f"H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_ATTACK:{attack}=FAIL_CLOSED" not in parsed["decisions"]:
+            _fail("H001 operator governance decision hostile-review attack evidence drifted")
+    _cross_check_artifact_records(parsed, root)
+    _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
+    return parsed
+
+_validate_predecessor_chain_h001_operator_governance_decision_review_passed = _validate_predecessor_chain
+def _validate_predecessor_chain(parsed, root, receipt_relpath):
+    if parsed.get("receipt_index") != 49:
+        return _validate_predecessor_chain_h001_operator_governance_decision_review_passed(parsed, root, receipt_relpath)
+    p = parsed["predecessor"]
+    target = root / p["path"]
+    if p["path"] != _H001_OPERATOR_GOVERNANCE_DECISION_HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != p["sha256"]:
+        _fail("H001 operator governance decision hostile-review predecessor chain is wrong")
+    _validate_predecessor_chain_h001_operator_governance_decision_review_passed(
+        _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
+    )
+# END H001 OPERATOR GOVERNANCE DECISION HOSTILE REVIEW PASS V049 APPEND
