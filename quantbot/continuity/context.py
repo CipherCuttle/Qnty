@@ -4234,3 +4234,101 @@ def _validate_predecessor_chain(parsed,root,receipt_relpath):
  if p["path"] != _v044.previous.HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != p["sha256"]:_fail("H001 C1 traceability repair candidate predecessor chain is wrong")
  _validate_predecessor_chain_v041_c1_v044(_load_canonical_document(target.read_bytes(),"predecessor receipt"),root,p["path"])
 # END H001 C1 TRACEABILITY REPAIR CANDIDATE V044 APPEND
+# BEGIN H001 C1 V044 INDEPENDENT REVIEW RECORD PHASE REPAIR APPEND
+_V044_REVIEW_RECORDED_PHASE = "candidate1_h001_c1_directionality_atomic_repair_candidate_v044_review_recorded_operator_disclosure_required"
+_V044_REVIEW_RECORD_RELPATH = "docs/assurance/reviews/candidate1_h001_c1_directionality_atomic_repair_candidate_review_v001.json"
+_V044_REVIEW_RECORD_SHA256 = "6773f7b69ae0c5c9093ed49eb3a7667ebc141df2f11ee0086b4b26d93ea452c6"
+_V044_REVIEWED_TRANSITION_FILES = [
+    {"path": "quantbot/continuity/context.py", "sha256": "1e1fb50a5dc2eb47863fca88b134e85876a3f1e19220e4e6cd5d388d266dcfd6"},
+    {"path": "quantbot/continuity/h001_c1_directionality_atomic_repair_candidate_v044.py", "sha256": "3ce96c305bc948a31f2e73c04933e7151cff162a44ccd9b7bb8c5519d7a112d1"},
+    {"path": "tests/continuity/test_h001_c1_directionality_atomic_repair_candidate_v044.py", "sha256": "bb3e13f5000ac8fe449a78d02ba6f2b236b776ac49a031e14478e53a9719f415"},
+    {"path": "tests/control/governance_baseline.json", "sha256": "9b68859ea7ee2acd258f9fb6d86329253cf72caa227415c1986136126f6747e8"},
+]
+
+def _validate_v044_review_record_phase(active: dict, root: Path) -> None:
+    if active["review_record_path"] != _V044_REVIEW_RECORD_RELPATH:
+        _fail("H001 C1 v044 review-record path is wrong")
+    if active["review_record_sha256"] != _V044_REVIEW_RECORD_SHA256:
+        _fail("H001 C1 v044 review-record sha256 is wrong")
+    record_path = root / active["review_record_path"]
+    if not record_path.is_file():
+        _fail("H001 C1 v044 review record is missing")
+    record_bytes = record_path.read_bytes()
+    if hashlib.sha256(record_bytes).hexdigest() != active["review_record_sha256"]:
+        _fail("H001 C1 v044 review-record bytes do not match active_task")
+    try:
+        record = json.loads(record_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        _fail("H001 C1 v044 review record is not strict UTF-8 JSON")
+    if type(record) is not dict:
+        _fail("H001 C1 v044 review record must be a JSON object")
+    state = _require_exact_keys(record["authorization_state"], {
+        "candidate_review_completed",
+        "candidate_review_passed",
+        "candidate_effective",
+        "scientific_authorized",
+        "activation_authorized",
+        "implementation_authorized",
+        "real_data_access_authorized",
+        "execution_authorized",
+        "execution_budget",
+        "execution_count",
+        "holdout_authorized",
+        "paper_trade_authorized",
+        "live_authorized",
+        "dispatcher_released",
+        "trust_root_registered",
+        "C2_resolved",
+    }, "H001 C1 v044 review authorization_state")
+    if state["candidate_review_completed"] is not True or state["candidate_review_passed"] is not True:
+        _fail("H001 C1 v044 review pass is not recorded")
+    for key in (
+        "candidate_effective",
+        "scientific_authorized",
+        "activation_authorized",
+        "implementation_authorized",
+        "real_data_access_authorized",
+        "execution_authorized",
+        "holdout_authorized",
+        "paper_trade_authorized",
+        "live_authorized",
+        "dispatcher_released",
+        "trust_root_registered",
+        "C2_resolved",
+    ):
+        if state[key] is not False:
+            _fail(f"H001 C1 v044 review record escalates {key}")
+    if state["execution_budget"] != 0 or state["execution_count"] != 0:
+        _fail("H001 C1 v044 review record grants execution budget or count")
+    if record["reviewed_head_sha"] != "c062356c1a2ffa11edba281776888af7ab37cab7":
+        _fail("H001 C1 v044 review record head binding drifted")
+    if record["reviewed_handoff_sha256"] != active["handoff_receipt_sha256"]:
+        _fail("H001 C1 v044 review record handoff binding drifted")
+    for key in ("reviewed_candidate", "reviewed_validator", "reviewed_test"):
+        path = record[f"{key}_path"]
+        expected = record[f"{key}_sha256"]
+        if not (root / path).is_file() or hashlib.sha256((root / path).read_bytes()).hexdigest() != expected:
+            _fail(f"H001 C1 v044 review record {key} binding drifted")
+    if record["next_required_action"] != "RECORD_OPERATOR_EXPOSURE_DISCLOSURE_BEFORE_CONFIRMATORY_IDENTITY_DECISION":
+        _fail("H001 C1 v044 review record next action drifted")
+
+_validate_receipt_v044_review_recorded = _validate_receipt
+def _validate_receipt(parsed, active, root):
+    if active["phase"] != _V044_REVIEW_RECORDED_PHASE:
+        return _validate_receipt_v044_review_recorded(parsed, active, root)
+    _validate_v044_receipt_body(parsed)
+    if parsed["current_transition_files"] != _V044_REVIEWED_TRANSITION_FILES:
+        _fail("H001 C1 v044 reviewed transition-file binding drifted")
+    v044_receipt = dict(parsed)
+    v044_receipt["current_transition_files"] = []
+    original_current_files = _v044.CURRENT_FILES
+    try:
+        _v044.CURRENT_FILES = []
+        _v044.validate(v044_receipt, root)
+    finally:
+        _v044.CURRENT_FILES = original_current_files
+    _validate_v044_review_record_phase(active, root)
+    _cross_check_artifact_records(parsed, root)
+    _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
+    return parsed
+# END H001 C1 V044 INDEPENDENT REVIEW RECORD PHASE REPAIR APPEND
