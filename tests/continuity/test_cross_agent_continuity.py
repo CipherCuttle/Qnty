@@ -357,6 +357,11 @@ def write_durable_artifact_tree(root, *, verified=False):
     return write_tree(root, receipt, receipt_name="handoff_v002.json", extra_receipts=[("handoff_v001.json", first)], phase="durable_artifact_store_configuration")
 
 
+def _drop_review_record_active_fields(active):
+    active.pop("review_record_path", None)
+    active.pop("review_record_sha256", None)
+
+
 def test_synthetic_tree_verifies_and_renders(tmp_path):
     write_tree(tmp_path, base_receipt())
     state = load_and_verify_continuity_state(tmp_path)
@@ -975,6 +980,7 @@ def _sandbox_fixture(tmp_path):
     v003_path.write_bytes(canonical_json_bytes(v003))
     active_path = tmp_path / "docs/control/active_task.json"
     active = json.loads(active_path.read_bytes())
+    _drop_review_record_active_fields(active)
     active["phase"] = "candidate1_v1_synthetic_sandbox_governance"
     active["handoff_receipt_path"] = f"{TASK_DIR}/handoff_v003.json"
     active["handoff_receipt_sha256"] = hashlib.sha256(v003_path.read_bytes()).hexdigest()
@@ -997,6 +1003,7 @@ def _rewrite_receipt(root, mutate, receipt_name="handoff_v003.json"):
 def _rewrite_active_phase_only(root, phase):
     active_path = root / "docs/control/active_task.json"
     active = json.loads(active_path.read_bytes())
+    _drop_review_record_active_fields(active)
     receipt_sha = active["handoff_receipt_sha256"]
     active["phase"] = phase
     active_path.write_bytes(canonical_json_bytes(active))
@@ -1494,6 +1501,7 @@ def _pre_data_fixture(tmp_path):
     restore_historical_h001_inputs(tmp_path)
     active_path = tmp_path / "docs/control/active_task.json"
     active = json.loads(active_path.read_bytes())
+    _drop_review_record_active_fields(active)
     receipt_path = tmp_path / TASK_DIR / "handoff_v013.json"
     active.update(
         phase=context._H001_PRE_DATA_PHASE,

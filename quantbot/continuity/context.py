@@ -53,17 +53,20 @@ VERIFY_COMMAND = "python -m quantbot.continuity verify"
 
 _PROHIBITED_CANONICAL_PATH_PREFIXES = ("/tmp", "/srv/qnty")
 
-_ACTIVE_KEYS = {
+_BASE_ACTIVE_KEYS = {
     "control_kind",
     "handoff_receipt_path",
     "handoff_receipt_sha256",
     "phase",
     "protocol_id",
-    "review_record_path",
-    "review_record_sha256",
     "schema_version",
     "task_id",
 }
+_V044_REVIEW_RECORDED_ACTIVE_KEYS = _BASE_ACTIVE_KEYS | {
+    "review_record_path",
+    "review_record_sha256",
+}
+_ACTIVE_KEYS = _BASE_ACTIVE_KEYS
 _RECEIPT_KEYS = {
     "blockers",
     "changed_file_scope",
@@ -1101,8 +1104,19 @@ def _load_canonical_document(data: bytes, label: str) -> dict:
     return parsed
 
 
+def _active_keys_for_phase(phase: str) -> set:
+    if phase == _V044_REVIEW_RECORDED_PHASE:
+        return _V044_REVIEW_RECORDED_ACTIVE_KEYS
+    return _BASE_ACTIVE_KEYS
+
+
 def _validate_active_task(parsed: dict) -> dict:
-    _require_exact_keys(parsed, _ACTIVE_KEYS, "active_task")
+    if type(parsed) is not dict:
+        _fail("active_task must be a JSON object")
+    if "phase" not in parsed:
+        _fail("active_task phase is missing")
+    _require_str(parsed["phase"], "active_task phase")
+    _require_exact_keys(parsed, _active_keys_for_phase(parsed["phase"]), "active_task")
     if parsed["schema_version"] != "0.1.0":
         _fail("active_task schema_version is not 0.1.0")
     if parsed["control_kind"] != "qnty_active_task_pointer":
@@ -1111,7 +1125,6 @@ def _validate_active_task(parsed: dict) -> dict:
         _fail("active_task task_id does not match the governed task")
     if parsed["protocol_id"] != PROTOCOL_ID:
         _fail("active_task protocol_id does not match the governed protocol")
-    _require_str(parsed["phase"], "active_task phase")
     receipt_path = _require_repo_relative(parsed["handoff_receipt_path"], "handoff_receipt_path")
     expected_dir = f"docs/control/tasks/{TASK_ID}/"
     if not receipt_path.startswith(expected_dir) or not _RECEIPT_BASENAME_RE.fullmatch(receipt_path[len(expected_dir):]):
