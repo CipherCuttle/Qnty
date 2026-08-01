@@ -59,6 +59,8 @@ _ACTIVE_KEYS = {
     "handoff_receipt_sha256",
     "phase",
     "protocol_id",
+    "review_record_path",
+    "review_record_sha256",
     "schema_version",
     "task_id",
 }
