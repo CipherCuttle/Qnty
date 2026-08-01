@@ -100,6 +100,8 @@ def _point_to_v044_review_record_phase(root):
     active["handoff_receipt_sha256"] = "e7cbfa8659319e32a2ba233f22d9035ff0d9d85cef99d81015e4182988af31f7"
     active["review_record_path"] = REVIEW_RECORD_PATH
     active["review_record_sha256"] = REVIEW_RECORD_SHA256
+    active.pop("operator_disclosure_record_path", None)
+    active.pop("operator_disclosure_record_sha256", None)
     _write_json(active_path, active)
 
 

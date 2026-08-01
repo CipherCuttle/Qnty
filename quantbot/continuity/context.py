@@ -66,6 +66,10 @@ _V044_REVIEW_RECORDED_ACTIVE_KEYS = _BASE_ACTIVE_KEYS | {
     "review_record_path",
     "review_record_sha256",
 }
+_OPERATOR_DISCLOSURE_ACTIVE_KEYS = _V044_REVIEW_RECORDED_ACTIVE_KEYS | {
+    "operator_disclosure_record_path",
+    "operator_disclosure_record_sha256",
+}
 _ACTIVE_KEYS = _BASE_ACTIVE_KEYS
 _RECEIPT_KEYS = {
     "blockers",
@@ -1107,6 +1111,8 @@ def _load_canonical_document(data: bytes, label: str) -> dict:
 def _active_keys_for_phase(phase: str) -> set:
     if phase in (_V044_REVIEW_RECORDED_PHASE, _V044_CONTINUITY_REPAIR_REVIEW_PASSED_PHASE):
         return _V044_REVIEW_RECORDED_ACTIVE_KEYS
+    if phase == _H001_OPERATOR_EXPOSURE_DISCLOSURE_RECORDED_PHASE:
+        return _OPERATOR_DISCLOSURE_ACTIVE_KEYS
     return _BASE_ACTIVE_KEYS
 
 
@@ -4581,3 +4587,241 @@ def _validate_predecessor_chain(parsed, root, receipt_relpath):
         _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
     )
 # END H001 C1 V044 CONTINUITY REPAIR REVIEW PASS RECORD APPEND
+# BEGIN H001 OPERATOR EXPOSURE DISCLOSURE V046 APPEND
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_RECORDED_PHASE = (
+    "candidate1_h001_operator_exposure_disclosure_recorded_pending_independent_review"
+)
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_NEXT_ACTION = "FRESH_HOSTILE_REVIEW_OF_OPERATOR_EXPOSURE_DISCLOSURE"
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH = (
+    "docs/assurance/operator_disclosures/candidate1_h001_operator_exposure_disclosure_v001.json"
+)
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256 = (
+    "edcd90cf43e860e6db998c6a45cd352b70071f3a795a53e04442b6d1a9b0932e"
+)
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH = (
+    f"docs/control/tasks/{TASK_ID}/handoff_v046.json"
+)
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_ALLOWED_STATES = ["KNOWN_NO", "KNOWN_YES", "UNCERTAIN"]
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_CONCLUSIONS = [
+    "STRICT_OUTCOME_BLINDNESS_NOT_ESTABLISHED",
+    "NO_KNOWN_DELIBERATE_OPERATOR_OUTCOME_TUNING",
+    "UNKNOWN_AGENT_OR_ARTIFACT_EXPOSURE_REMAINS",
+    "OUTCOME_CONTAMINATION_NOT_PROVEN",
+    "OUTCOME_NON_EXPOSURE_NOT_PROVEN",
+    "POTENTIALLY_EXPOSED_HISTORY_MUST_NOT_AUTOMATICALLY_BE_TREATED_AS_PRISTINE_CONFIRMATION",
+    "FRESH_FORWARD_OR_DEMONSTRABLY_UNTOUCHED_CONFIRMATION_MAY_BE_REQUIRED",
+    "C2_REMAINS_UNRESOLVED",
+    "NO_ECONOMIC_EDGE_ESTABLISHED",
+]
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_FUTURE_CHOICES = [
+    "APPROVE_NEXT_GOVERNANCE_STEP_WITH_EXPOSURE_LIMITATIONS",
+    "REQUIRE_FRESH_FORWARD_CONFIRMATION",
+    "RECLASSIFY_HISTORICAL_PERIOD_AS_EXPLORATORY",
+    "DEFER",
+    "REJECT_OR_RETIRE",
+]
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_EXPECTED_ANSWERS = [
+    ("Q1_2023_2024_RESULTS_VIEWED", "UNCERTAIN", "LOW"),
+    ("Q2_2025_2026_RESULTS_VIEWED", "UNCERTAIN", "LOW"),
+    ("Q3_CHOICES_INFLUENCED_BY_RESULTS", "UNCERTAIN", "LOW"),
+    ("Q4_OUT_OF_HISTORY_H001_LIKE_EXECUTION", "UNCERTAIN", "LOW"),
+    ("Q5_TEMPORARY_OR_DELETED_RESULT_ARTIFACTS", "UNCERTAIN", "LOW"),
+    ("Q6_SIGNED_UPPER_TAIL_SELECTION_INFLUENCE", "UNCERTAIN", "MEDIUM"),
+    ("Q7_TEMPORAL_BOUNDARY_RULE_INFLUENCE", "UNCERTAIN", "MEDIUM"),
+]
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_PROTECTED_HASHES = {
+    **_V044_CONTINUITY_REPAIR_PROTECTED_HASHES,
+    "v045_review_record": _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256,
+    "v045_handoff": "64e73fa56ed831dcf7a2c1a450dafa2f66258790261f47e50793ac4a2a968a3c",
+}
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_AUTHORITY = _V044_CONTINUITY_REPAIR_AUTHORITY
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_OPERATOR_STATE = {
+    "operator_decision_state": "PENDING",
+    "operator_exposure_disclosure_recorded": True,
+}
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_CURRENT_FILES = [
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+    "tests/continuity/test_h001_c1_v044_continuity_repair_review_record.py",
+    "tests/continuity/test_h001_c1_v044_review_record_phase_repair.py",
+    "tests/continuity/test_h001_operator_exposure_disclosure_v046.py",
+]
+_H001_OPERATOR_EXPOSURE_DISCLOSURE_SCOPE = [
+    _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH,
+    _H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    *_H001_OPERATOR_EXPOSURE_DISCLOSURE_CURRENT_FILES,
+]
+
+def _validate_h001_operator_exposure_disclosure(active: dict, root: Path) -> dict:
+    if active["review_record_path"] != _V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH:
+        _fail("H001 operator disclosure review-record path is wrong")
+    if active["review_record_sha256"] != _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256:
+        _fail("H001 operator disclosure review-record sha256 is wrong")
+    if active["operator_disclosure_record_path"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH:
+        _fail("H001 operator disclosure path is wrong")
+    if active["operator_disclosure_record_sha256"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256:
+        _fail("H001 operator disclosure sha256 is wrong")
+    path = root / active["operator_disclosure_record_path"]
+    if not path.is_file():
+        _fail("H001 operator disclosure record is missing")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != active["operator_disclosure_record_sha256"]:
+        _fail("H001 operator disclosure bytes drifted")
+    record = _load_canonical_document(raw, "H001 operator exposure disclosure")
+    _require_exact_keys(record, {
+        "allowed_answer_states",
+        "answers",
+        "authority_state",
+        "conclusions",
+        "development_context",
+        "disclosure_date",
+        "disclosure_id",
+        "document_kind",
+        "future_operator_choices",
+        "non_effects",
+        "operator",
+        "operator_decision_state",
+        "operator_exposure_disclosure_recorded",
+        "protected_hashes",
+        "schema_version",
+        "semantics",
+        "status",
+    }, "H001 operator exposure disclosure")
+    if record["schema_version"] != "0.1.0":
+        _fail("H001 operator disclosure schema version is wrong")
+    if record["document_kind"] != "qnty_h001_operator_exposure_disclosure_record":
+        _fail("H001 operator disclosure document kind is wrong")
+    if record["disclosure_id"] != "candidate1-h001-operator-exposure-disclosure-v001":
+        _fail("H001 operator disclosure id is wrong")
+    if record["operator"] != "Viktor" or record["disclosure_date"] != "2026-08-01":
+        _fail("H001 operator identity or disclosure date drifted")
+    if record["allowed_answer_states"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_ALLOWED_STATES:
+        _fail("H001 operator disclosure allowed answer states drifted")
+    answers = record["answers"]
+    if type(answers) is not list or len(answers) != 7:
+        _fail("H001 operator disclosure must record exactly seven answers")
+    for item, expected in zip(answers, _H001_OPERATOR_EXPOSURE_DISCLOSURE_EXPECTED_ANSWERS):
+        _require_exact_keys(item, {"answer", "confidence", "details", "question", "question_id"}, "H001 operator disclosure answer")
+        question_id, answer, confidence = expected
+        if item["question_id"] != question_id or item["answer"] != answer or item["confidence"] != confidence:
+            _fail("H001 operator disclosure answer matrix drifted")
+        if item["answer"] in (False, True, "false", "no", "clean", "blind", "unexposed", "passed"):
+            _fail("H001 operator disclosure collapsed uncertainty")
+        _require_str(item["question"], "H001 operator disclosure question")
+        _require_str_list(item["details"], "H001 operator disclosure details", minimum=1)
+    if record["conclusions"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_CONCLUSIONS:
+        _fail("H001 operator disclosure conclusions drifted")
+    for forbidden in ("OUTCOME_CONTAMINATION_PROVEN", "STRICT_OUTCOME_BLINDNESS_ESTABLISHED"):
+        if forbidden in record["conclusions"]:
+            _fail("H001 operator disclosure makes a forbidden conclusion")
+    if "NO_KNOWN_DELIBERATE_OPERATOR_OUTCOME_TUNING" not in record["conclusions"]:
+        _fail("H001 operator disclosure lost deliberate-operator-tuning distinction")
+    if "UNKNOWN_AGENT_OR_ARTIFACT_EXPOSURE_REMAINS" not in record["conclusions"]:
+        _fail("H001 operator disclosure lost unknown agent/artifact exposure distinction")
+    if record["operator_decision_state"] != "PENDING" or record["operator_exposure_disclosure_recorded"] is not True:
+        _fail("H001 operator disclosure state drifted")
+    if record["future_operator_choices"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_FUTURE_CHOICES:
+        _fail("H001 operator disclosure future choices drifted")
+    if record["authority_state"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_AUTHORITY:
+        _fail("H001 operator disclosure authority drifted")
+    if record["protected_hashes"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_PROTECTED_HASHES:
+        _fail("H001 operator disclosure protected hashes drifted")
+    semantics = _require_exact_keys(record["semantics"], {"KNOWN_NO", "KNOWN_YES", "UNCERTAIN"}, "H001 operator disclosure semantics")
+    if "does not prove contamination occurred" not in semantics["UNCERTAIN"]:
+        _fail("H001 operator disclosure uncertainty semantics drifted")
+    if "false/no/clean/blind/unexposed/passed" not in semantics["UNCERTAIN"]:
+        _fail("H001 operator disclosure uncertainty collapse guard drifted")
+    return record
+
+_validate_receipt_h001_operator_exposure_disclosure = _validate_receipt
+def _validate_receipt(parsed, active, root):
+    if active["phase"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_RECORDED_PHASE:
+        return _validate_receipt_h001_operator_exposure_disclosure(parsed, active, root)
+    keys = set(_RECEIPT_KEYS) | {
+        "phase",
+        "current_transition_files",
+        "engine_implementation_binding",
+        "h001_c1_v044_continuity_repair_review_binding",
+        "h001_operator_exposure_disclosure_binding",
+        "numerical_convention_gap_inventory",
+        "numerical_conventions_selected_convention_inventory",
+        "operator_exposure_disclosure_state",
+        "per_run_coordinate_and_seed_orchestration_binding",
+        "rng_runtime_candidate_resolved_inventory",
+        "v039_checkout_path_repair",
+        "v040_review_binding",
+    }
+    _require_exact_keys(parsed, keys, "handoff_receipt")
+    if parsed["receipt_index"] != 46:
+        _fail("H001 operator disclosure receipt index is wrong")
+    if parsed["phase"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_RECORDED_PHASE:
+        _fail("H001 operator disclosure receipt phase is wrong")
+    if parsed["next_actions"] != [_H001_OPERATOR_EXPOSURE_DISCLOSURE_NEXT_ACTION]:
+        _fail("H001 operator disclosure next action is wrong")
+    if parsed["predecessor"] != {
+        "path": _V044_CONTINUITY_REPAIR_REVIEW_HANDOFF_RELPATH,
+        "sha256": "64e73fa56ed831dcf7a2c1a450dafa2f66258790261f47e50793ac4a2a968a3c",
+    }:
+        _fail("H001 operator disclosure predecessor is wrong")
+    if parsed["changed_file_scope"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_SCOPE:
+        _fail("H001 operator disclosure changed-file scope drifted")
+    if parsed["current_transition_files"] != [
+        {"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()}
+        for path in _H001_OPERATOR_EXPOSURE_DISCLOSURE_CURRENT_FILES
+    ]:
+        _fail("H001 operator disclosure current transition files drifted")
+    if parsed["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 operator disclosure safety state drifted")
+    _validate_evidence(parsed["evidence"], root, verify_files=True)
+    record = _validate_h001_operator_exposure_disclosure(active, root)
+    binding = parsed["h001_operator_exposure_disclosure_binding"]
+    if binding != {
+        "answer_count": 7,
+        "answer_state": "ALL_UNCERTAIN",
+        "authority_state": _H001_OPERATOR_EXPOSURE_DISCLOSURE_AUTHORITY,
+        "conclusions": _H001_OPERATOR_EXPOSURE_DISCLOSURE_CONCLUSIONS,
+        "disclosure_record_path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH,
+        "disclosure_record_sha256": _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+        "operator": "Viktor",
+        "operator_decision_state": "PENDING",
+        "operator_exposure_disclosure_recorded": True,
+    }:
+        _fail("H001 operator disclosure binding drifted")
+    if parsed["operator_exposure_disclosure_state"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_OPERATOR_STATE:
+        _fail("H001 operator disclosure receipt state drifted")
+    if record["authority_state"] != parsed["h001_operator_exposure_disclosure_binding"]["authority_state"]:
+        _fail("H001 operator disclosure authority binding mismatch")
+    evidence = {item["path"]: item["sha256"] for item in parsed["evidence"]}
+    protected = {
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH: _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+        _V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH: _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256,
+        _V044_CONTINUITY_REPAIR_REVIEW_HANDOFF_RELPATH: "64e73fa56ed831dcf7a2c1a450dafa2f66258790261f47e50793ac4a2a968a3c",
+        _V044_REVIEW_RECORD_RELPATH: _V044_REVIEW_RECORD_SHA256,
+        (_v044.AMENDMENT_RELPATH): _H001_OPERATOR_EXPOSURE_DISCLOSURE_PROTECTED_HASHES["v044_amendment"],
+        "quantbot/continuity/h001_c1_directionality_atomic_repair_candidate_v044.py": _H001_OPERATOR_EXPOSURE_DISCLOSURE_PROTECTED_HASHES["v044_validator"],
+        "tests/continuity/test_h001_c1_directionality_atomic_repair_candidate_v044.py": _H001_OPERATOR_EXPOSURE_DISCLOSURE_PROTECTED_HASHES["v044_test"],
+        "tests/assurance/test_h001_c1_directionality_atomic_repair_candidate_review_record.py": _H001_OPERATOR_EXPOSURE_DISCLOSURE_PROTECTED_HASHES["focused_review_test"],
+    }
+    for path, expected in protected.items():
+        if evidence.get(path) != expected:
+            _fail(f"H001 operator disclosure receipt must evidence {path!r}")
+        target = root / path
+        if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+            _fail(f"H001 operator disclosure protected file {path!r} drifted")
+    _cross_check_artifact_records(parsed, root)
+    _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
+    return parsed
+
+_validate_predecessor_chain_h001_operator_exposure_disclosure = _validate_predecessor_chain
+def _validate_predecessor_chain(parsed, root, receipt_relpath):
+    if parsed.get("receipt_index") != 46:
+        return _validate_predecessor_chain_h001_operator_exposure_disclosure(parsed, root, receipt_relpath)
+    p = parsed["predecessor"]
+    target = root / p["path"]
+    if p["path"] != _V044_CONTINUITY_REPAIR_REVIEW_HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != p["sha256"]:
+        _fail("H001 operator disclosure predecessor chain is wrong")
+    _validate_predecessor_chain_h001_operator_exposure_disclosure(
+        _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
+    )
+# END H001 OPERATOR EXPOSURE DISCLOSURE V046 APPEND
