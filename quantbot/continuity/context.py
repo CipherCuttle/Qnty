@@ -74,6 +74,10 @@ _OPERATOR_DISCLOSURE_REVIEW_ACTIVE_KEYS = _OPERATOR_DISCLOSURE_ACTIVE_KEYS | {
     "operator_exposure_disclosure_review_record_path",
     "operator_exposure_disclosure_review_record_sha256",
 }
+_OPERATOR_GOVERNANCE_DECISION_ACTIVE_KEYS = _OPERATOR_DISCLOSURE_REVIEW_ACTIVE_KEYS | {
+    "operator_governance_decision_record_path",
+    "operator_governance_decision_record_sha256",
+}
 _ACTIVE_KEYS = _BASE_ACTIVE_KEYS
 _RECEIPT_KEYS = {
     "blockers",
@@ -1119,6 +1123,8 @@ def _active_keys_for_phase(phase: str) -> set:
         return _OPERATOR_DISCLOSURE_ACTIVE_KEYS
     if phase == _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PASSED_PHASE:
         return _OPERATOR_DISCLOSURE_REVIEW_ACTIVE_KEYS
+    if phase == _H001_OPERATOR_GOVERNANCE_DECISION_RECORDED_PHASE:
+        return _OPERATOR_GOVERNANCE_DECISION_ACTIVE_KEYS
     return _BASE_ACTIVE_KEYS
 
 
@@ -5143,3 +5149,421 @@ def _validate_predecessor_chain(parsed, root, receipt_relpath):
         _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
     )
 # END H001 OPERATOR EXPOSURE DISCLOSURE HOSTILE REVIEW PASS V047 APPEND
+
+# BEGIN H001 OPERATOR GOVERNANCE DECISION V048 APPEND
+_H001_OPERATOR_GOVERNANCE_DECISION_RECORDED_PHASE = (
+    "candidate1_h001_operator_governance_decision_recorded_pending_independent_review"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_NEXT_ACTION = (
+    "FRESH_HOSTILE_REVIEW_OF_H001_OPERATOR_GOVERNANCE_DECISION"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_RELPATH = (
+    "docs/assurance/operator_decisions/candidate1_h001_operator_governance_decision_v001.json"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_SHA256 = (
+    "ef3d26eff6adf684d33591af15c0cc8488ddc2f5dac6b94b08d39d5ee7aa5e8e"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_HANDOFF_RELPATH = (
+    f"docs/control/tasks/{TASK_ID}/handoff_v048.json"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_STATE = (
+    "RECORDED_RECLASSIFY_HISTORICAL_AS_EXPLORATORY_REQUIRE_FRESH_FORWARD_CONFIRMATION_DEFER_EFFECTIVENESS"
+)
+_H001_OPERATOR_GOVERNANCE_DECISION_COMPONENTS = [
+    "RECLASSIFY_HISTORICAL_PERIOD_AS_EXPLORATORY",
+    "REQUIRE_FRESH_FORWARD_CONFIRMATION",
+    "DEFER_CANDIDATE_EFFECTIVENESS",
+]
+_H001_OPERATOR_GOVERNANCE_HISTORICAL_CLASSIFICATION = "EXPLORATORY"
+_H001_OPERATOR_GOVERNANCE_CONFIRMATION_REQUIREMENT = {
+    "data_access_boundary": "EXACT_DATA_ACCESS_BOUNDARY",
+    "deadbands": "EXACT_DEADBANDS",
+    "evaluation_window": "EXACT_EVALUATION_WINDOW",
+    "execution_prohibition_or_budget": "EXACT_EXECUTION_PROHIBITION_OR_BUDGET",
+    "failure_conditions": "EXACT_FAILURE_CONDITIONS",
+    "funding_attribution_convention": "EXACT_FUNDING_ATTRIBUTION_CONVENTION",
+    "hypothesis": "EXACT_HYPOTHESIS",
+    "lookbacks": "EXACT_LOOKBACKS",
+    "maximum_t_convention": "EXACT_MAXIMUM_T_CONVENTION",
+    "missing_data_behavior": "EXACT_MISSING_DATA_BEHAVIOR",
+    "multiple_testing_accounting": "EXACT_MULTIPLE_TESTING_ACCOUNTING",
+    "no_post_outcome_parameter_changes": True,
+    "signal_definition": "EXACT_SIGNAL_DEFINITION",
+    "success_criteria": "EXACT_SUCCESS_CRITERIA",
+    "timing": "EXACT_TIMING",
+    "trading_cost_assumptions": "EXACT_COST_ASSUMPTIONS",
+    "universe": "EXACT_UNIVERSE",
+}
+_H001_OPERATOR_GOVERNANCE_DECISION_AUTHORITY = {
+    "C2_resolved": False,
+    "activation_authorized": False,
+    "candidate_effective": False,
+    "candidate_review_completed": True,
+    "candidate_review_passed": True,
+    "dispatcher_released": False,
+    "execution_authorized": False,
+    "execution_budget": 0,
+    "execution_count": 0,
+    "holdout_authorized": False,
+    "implementation_authorized": False,
+    "live_authorized": False,
+    "operator_decision_recorded": True,
+    "operator_exposure_disclosure_recorded": True,
+    "operator_exposure_disclosure_review_completed": True,
+    "operator_exposure_disclosure_review_passed": True,
+    "paper_trade_authorized": False,
+    "real_data_access_authorized": False,
+    "scientific_authorized": False,
+    "trust_root_registered": False,
+}
+_H001_OPERATOR_GOVERNANCE_DECISION_PROTECTED_HASHES = {
+    **_H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PROTECTED_HASHES,
+    "v046_disclosure": _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+    "v046_handoff": "13ed0644ca3f43fc9e1223627f8cb67518602d94c5bb0e9cbaa57125db9a340f",
+    "v047_disclosure_review": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256,
+    "v047_handoff": "e82eefad6e05c0ef1487c36cf4a8c4976de6c9025c87ff3728ba9bd490f2209d",
+}
+_H001_OPERATOR_GOVERNANCE_DECISION_CURRENT_FILES = [
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+    "tests/continuity/test_h001_c1_v044_continuity_repair_review_record.py",
+    "tests/continuity/test_h001_c1_v044_review_record_phase_repair.py",
+    "tests/continuity/test_h001_operator_exposure_disclosure_v046.py",
+    "tests/continuity/test_h001_operator_exposure_disclosure_review_record_v047.py",
+    "tests/continuity/test_h001_operator_governance_decision_v048.py",
+]
+_H001_OPERATOR_GOVERNANCE_DECISION_SCOPE = [
+    _H001_OPERATOR_GOVERNANCE_DECISION_RELPATH,
+    _H001_OPERATOR_GOVERNANCE_DECISION_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    *_H001_OPERATOR_GOVERNANCE_DECISION_CURRENT_FILES,
+]
+_H001_OPERATOR_GOVERNANCE_DECISION_HOSTILE_ATTACKS = [
+    "WRONG_DECISION_STATE",
+    "MISSING_DECISION_COMPONENT",
+    "UNAUTHORIZED_ACTIVATION_DECISION",
+    "REJECTION_OR_RETIREMENT_SUBSTITUTION",
+    "PRISTINE_CONFIRMATION_SUBSTITUTION",
+    "NO_FRESH_CONFIRMATION_SUBSTITUTION",
+    "C2_RESOLUTION_SUBSTITUTION",
+    "AUTHORITY_ESCALATION",
+    "DECISION_RECORD_PATH_OR_DIGEST_SUBSTITUTION",
+    "PREDECESSOR_DISCLOSURE_REVIEW_HANDOFF_MUTATION",
+    "UNKNOWN_EXTRA_KEYS_ADDED",
+]
+
+def _validate_h001_operator_governance_decision(active: dict, root: Path) -> dict:
+    if active["review_record_path"] != _V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH:
+        _fail("H001 operator governance decision v045 review-record path is wrong")
+    if active["review_record_sha256"] != _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256:
+        _fail("H001 operator governance decision v045 review-record sha256 is wrong")
+    if active["operator_disclosure_record_path"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH:
+        _fail("H001 operator governance decision disclosure path is wrong")
+    if active["operator_disclosure_record_sha256"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256:
+        _fail("H001 operator governance decision disclosure sha256 is wrong")
+    if active["operator_exposure_disclosure_review_record_path"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_RELPATH:
+        _fail("H001 operator governance decision disclosure-review path is wrong")
+    if active["operator_exposure_disclosure_review_record_sha256"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256:
+        _fail("H001 operator governance decision disclosure-review sha256 is wrong")
+    if active["operator_governance_decision_record_path"] != _H001_OPERATOR_GOVERNANCE_DECISION_RELPATH:
+        _fail("H001 operator governance decision record path is wrong")
+    if active["operator_governance_decision_record_sha256"] != _H001_OPERATOR_GOVERNANCE_DECISION_SHA256:
+        _fail("H001 operator governance decision record sha256 is wrong")
+    _validate_h001_operator_exposure_disclosure_review_record(active, root)
+    path = root / active["operator_governance_decision_record_path"]
+    if not path.is_file():
+        _fail("H001 operator governance decision record is missing")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != active["operator_governance_decision_record_sha256"]:
+        _fail("H001 operator governance decision record bytes drifted")
+    record = _load_canonical_document(raw, "H001 operator governance decision record")
+    _require_exact_keys(record, {
+        "C2_state",
+        "authority_state",
+        "candidate_effectiveness",
+        "decision_components",
+        "decision_date",
+        "decision_id",
+        "decision_semantics",
+        "document_kind",
+        "evidentiary_classification",
+        "expected_next_action",
+        "fresh_confirmation_requirement",
+        "non_effects",
+        "operator",
+        "operator_decision_recorded",
+        "operator_decision_state",
+        "predecessor_bindings",
+        "protected_hashes",
+        "schema_version",
+        "status",
+    }, "H001 operator governance decision record")
+    if record["schema_version"] != "0.1.0":
+        _fail("H001 operator governance decision schema version is wrong")
+    if record["document_kind"] != "qnty_h001_operator_governance_decision_record":
+        _fail("H001 operator governance decision document kind is wrong")
+    if record["decision_id"] != "candidate1-h001-operator-governance-decision-v001":
+        _fail("H001 operator governance decision id is wrong")
+    if record["operator"] != "Viktor" or record["decision_date"] != "2026-08-01":
+        _fail("H001 operator governance decision identity or date drifted")
+    if record["operator_decision_recorded"] is not True:
+        _fail("H001 operator governance decision is not recorded")
+    if record["operator_decision_state"] != _H001_OPERATOR_GOVERNANCE_DECISION_STATE:
+        _fail("H001 operator governance decision state drifted")
+    if record["decision_components"] != _H001_OPERATOR_GOVERNANCE_DECISION_COMPONENTS:
+        _fail("H001 operator governance decision components drifted")
+    if record["expected_next_action"] != _H001_OPERATOR_GOVERNANCE_DECISION_NEXT_ACTION:
+        _fail("H001 operator governance decision next action drifted")
+    if record["authority_state"] != _H001_OPERATOR_GOVERNANCE_DECISION_AUTHORITY:
+        _fail("H001 operator governance decision authority drifted")
+    if record["protected_hashes"] != _H001_OPERATOR_GOVERNANCE_DECISION_PROTECTED_HASHES:
+        _fail("H001 operator governance decision protected hashes drifted")
+    predecessors = _require_exact_keys(record["predecessor_bindings"], {
+        "current_handoff",
+        "operator_exposure_disclosure",
+        "operator_exposure_disclosure_hostile_review",
+    }, "H001 operator governance decision predecessor bindings")
+    if predecessors != {
+        "current_handoff": {
+            "path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HANDOFF_RELPATH,
+            "sha256": "e82eefad6e05c0ef1487c36cf4a8c4976de6c9025c87ff3728ba9bd490f2209d",
+        },
+        "operator_exposure_disclosure": {
+            "path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH,
+            "sha256": _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+        },
+        "operator_exposure_disclosure_hostile_review": {
+            "path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_RELPATH,
+            "sha256": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256,
+        },
+    }:
+        _fail("H001 operator governance decision predecessor bindings drifted")
+    evidence = _require_exact_keys(record["evidentiary_classification"], {
+        "classification_reason",
+        "contamination_proven",
+        "historical_h001_evidence_classification",
+        "historical_h001_evidence_invalid_or_useless",
+        "historical_h001_evidence_pristine_confirmatory",
+        "non_exposure_proven",
+        "permitted_uses",
+        "prohibited_claims",
+    }, "H001 operator governance decision evidentiary classification")
+    if evidence["historical_h001_evidence_classification"] != _H001_OPERATOR_GOVERNANCE_HISTORICAL_CLASSIFICATION:
+        _fail("H001 historical evidence classification drifted")
+    if evidence["classification_reason"] != "STRICT_OUTCOME_BLINDNESS_NOT_ESTABLISHED":
+        _fail("H001 historical evidence classification reason drifted")
+    if evidence["historical_h001_evidence_pristine_confirmatory"] is not False:
+        _fail("H001 historical evidence was promoted to pristine confirmation")
+    if evidence["historical_h001_evidence_invalid_or_useless"] is not False:
+        _fail("H001 historical evidence was invalidated or made useless")
+    if evidence["contamination_proven"] is not False or evidence["non_exposure_proven"] is not False:
+        _fail("H001 historical exposure proof state drifted")
+    for item in ("debugging", "engineering_verification", "hypothesis_development", "explanatory_analysis", "reproducibility", "exploratory_evidence", "operational_defect_identification", "future_confirmation_planning"):
+        if item not in evidence["permitted_uses"]:
+            _fail("H001 exploratory evidence permitted-use inventory drifted")
+    for item in ("economic_edge", "confirmatory_success", "candidate_effectiveness", "scientific_authorization", "implementation_authorization", "execution_authorization"):
+        if item not in evidence["prohibited_claims"]:
+            _fail("H001 exploratory evidence prohibited-claim inventory drifted")
+    confirmation = _require_exact_keys(record["fresh_confirmation_requirement"], {
+        "confirmation_must_be_governed_by_frozen_specification_before_outcomes",
+        "fresh_forward_confirmation_required",
+        "minimum_future_bindings",
+        "required_confirmation_source",
+    }, "H001 operator governance decision fresh confirmation requirement")
+    if confirmation["fresh_forward_confirmation_required"] is not True:
+        _fail("H001 fresh forward confirmation is not required")
+    if confirmation["confirmation_must_be_governed_by_frozen_specification_before_outcomes"] is not True:
+        _fail("H001 future confirmation is not bound before outcomes")
+    if confirmation["required_confirmation_source"] != "GENUINELY_FRESH_PROSPECTIVE_EVALUATION_OR_DEMONSTRABLY_UNEXPOSED_RESERVOIR":
+        _fail("H001 future confirmation source drifted")
+    if confirmation["minimum_future_bindings"] != _H001_OPERATOR_GOVERNANCE_CONFIRMATION_REQUIREMENT:
+        _fail("H001 future confirmation minimum bindings drifted")
+    candidate = _require_exact_keys(record["candidate_effectiveness"], {
+        "candidate_effective",
+        "candidate_preserved",
+        "effectiveness_state",
+        "rejected",
+        "retired",
+    }, "H001 operator governance decision candidate effectiveness")
+    if candidate != {
+        "candidate_effective": False,
+        "candidate_preserved": True,
+        "effectiveness_state": "DEFERRED",
+        "rejected": False,
+        "retired": False,
+    }:
+        _fail("H001 candidate effectiveness decision drifted")
+    c2 = _require_exact_keys(record["C2_state"], {
+        "C2_resolved",
+        "candidate_boundary_rules_under_consideration",
+        "prohibited_resolution_bases",
+        "prospective_resolution_required_before_confirmation",
+        "required_resolution_bases",
+        "selected_boundary_rule",
+    }, "H001 operator governance decision C2 state")
+    if c2["C2_resolved"] is not False or c2["prospective_resolution_required_before_confirmation"] is not True:
+        _fail("H001 C2 resolution state drifted")
+    if c2["selected_boundary_rule"] != "NONE_SELECTED":
+        _fail("H001 C2 boundary was selected")
+    if c2["candidate_boundary_rules_under_consideration"] != [
+        "funding_time_utc < bar_open",
+        "funding_time_utc <= bar_open",
+    ]:
+        _fail("H001 C2 candidate boundary inventory drifted")
+    for forbidden in ("PnL", "returns", "Sharpe ratio", "activation counts selected for attractiveness", "funding attribution selected for attractiveness", "which choice makes H001 perform better", "protected H001 outcomes"):
+        if forbidden not in c2["prohibited_resolution_bases"]:
+            _fail("H001 C2 prohibited resolution basis drifted")
+    for required in ("causal/event-time semantics", "source timestamps", "exchange mechanics", "predeclared treatment of equal timestamps"):
+        if required not in c2["required_resolution_bases"]:
+            _fail("H001 C2 required resolution basis drifted")
+    semantics = _require_exact_keys(record["decision_semantics"], {
+        "does_mean",
+        "does_not_mean",
+    }, "H001 operator governance decision semantics")
+    for required in ("candidate_preserved", "historical_evidentiary_status_downgraded_to_exploratory", "fresh_confirmation_required", "effectiveness_deferred"):
+        if required not in semantics["does_mean"]:
+            _fail("H001 decision positive semantics drifted")
+    for forbidden in ("candidate_rejected", "candidate_retired", "candidate_effective", "economic_edge_established"):
+        if forbidden not in semantics["does_not_mean"]:
+            _fail("H001 decision negative semantics drifted")
+    for required in (
+        "DOES_NOT_CLAIM_ECONOMIC_EDGE",
+        "DOES_NOT_CLAIM_CONTAMINATION_PROVEN",
+        "DOES_NOT_CLAIM_NON_EXPOSURE_PROVEN",
+        "DOES_NOT_REJECT_OR_RETIRE_H001",
+        "DOES_NOT_RESOLVE_C2",
+        "DOES_NOT_AUTHORIZE_SCIENCE_ACTIVATION_IMPLEMENTATION_DATA_OR_EXECUTION",
+    ):
+        if required not in record["non_effects"]:
+            _fail("H001 operator governance decision non-effects drifted")
+    return record
+
+_validate_receipt_h001_operator_governance_decision_recorded = _validate_receipt
+def _validate_receipt(parsed, active, root):
+    if active["phase"] != _H001_OPERATOR_GOVERNANCE_DECISION_RECORDED_PHASE:
+        return _validate_receipt_h001_operator_governance_decision_recorded(parsed, active, root)
+    keys = set(_RECEIPT_KEYS) | {
+        "phase",
+        "current_transition_files",
+        "engine_implementation_binding",
+        "h001_c1_v044_continuity_repair_review_binding",
+        "h001_operator_exposure_disclosure_binding",
+        "h001_operator_exposure_disclosure_review_binding",
+        "h001_operator_governance_decision_binding",
+        "numerical_convention_gap_inventory",
+        "numerical_conventions_selected_convention_inventory",
+        "operator_exposure_disclosure_state",
+        "operator_governance_decision_state",
+        "per_run_coordinate_and_seed_orchestration_binding",
+        "rng_runtime_candidate_resolved_inventory",
+        "v039_checkout_path_repair",
+        "v040_review_binding",
+    }
+    _require_exact_keys(parsed, keys, "handoff_receipt")
+    if parsed["receipt_index"] != 48:
+        _fail("H001 operator governance decision receipt index is wrong")
+    if parsed["phase"] != _H001_OPERATOR_GOVERNANCE_DECISION_RECORDED_PHASE:
+        _fail("H001 operator governance decision receipt phase is wrong")
+    if parsed["next_actions"] != [_H001_OPERATOR_GOVERNANCE_DECISION_NEXT_ACTION]:
+        _fail("H001 operator governance decision next action is wrong")
+    if parsed["predecessor"] != {
+        "path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HANDOFF_RELPATH,
+        "sha256": "e82eefad6e05c0ef1487c36cf4a8c4976de6c9025c87ff3728ba9bd490f2209d",
+    }:
+        _fail("H001 operator governance decision predecessor is wrong")
+    if parsed["changed_file_scope"] != _H001_OPERATOR_GOVERNANCE_DECISION_SCOPE:
+        _fail("H001 operator governance decision changed-file scope drifted")
+    if parsed["current_transition_files"] != [
+        {"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()}
+        for path in _H001_OPERATOR_GOVERNANCE_DECISION_CURRENT_FILES
+    ]:
+        _fail("H001 operator governance decision current transition files drifted")
+    if parsed["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 operator governance decision safety state drifted")
+    _validate_evidence(parsed["evidence"], root, verify_files=True)
+    record = _validate_h001_operator_governance_decision(active, root)
+    binding = parsed["h001_operator_governance_decision_binding"]
+    if binding != {
+        "C2_resolved": False,
+        "authority_state": _H001_OPERATOR_GOVERNANCE_DECISION_AUTHORITY,
+        "candidate_effective": False,
+        "candidate_effectiveness_state": "DEFERRED",
+        "candidate_preserved": True,
+        "decision_components": _H001_OPERATOR_GOVERNANCE_DECISION_COMPONENTS,
+        "decision_record_path": _H001_OPERATOR_GOVERNANCE_DECISION_RELPATH,
+        "decision_record_sha256": _H001_OPERATOR_GOVERNANCE_DECISION_SHA256,
+        "expected_next_action": _H001_OPERATOR_GOVERNANCE_DECISION_NEXT_ACTION,
+        "fresh_forward_confirmation_required": True,
+        "historical_h001_evidence_classification": _H001_OPERATOR_GOVERNANCE_HISTORICAL_CLASSIFICATION,
+        "operator": "Viktor",
+        "operator_decision_recorded": True,
+        "operator_decision_state": _H001_OPERATOR_GOVERNANCE_DECISION_STATE,
+        "rejected": False,
+        "retired": False,
+        "selected_C2_boundary_rule": "NONE_SELECTED",
+    }:
+        _fail("H001 operator governance decision binding drifted")
+    if parsed["operator_governance_decision_state"] != {
+        "C2_resolved": False,
+        "candidate_effective": False,
+        "fresh_forward_confirmation_required": True,
+        "historical_h001_evidence_classification": _H001_OPERATOR_GOVERNANCE_HISTORICAL_CLASSIFICATION,
+        "operator_decision_recorded": True,
+        "operator_decision_state": _H001_OPERATOR_GOVERNANCE_DECISION_STATE,
+    }:
+        _fail("H001 operator governance decision receipt state drifted")
+    if record["authority_state"] != parsed["h001_operator_governance_decision_binding"]["authority_state"]:
+        _fail("H001 operator governance decision authority binding mismatch")
+    evidence = {item["path"]: item["sha256"] for item in parsed["evidence"]}
+    protected = {
+        _H001_OPERATOR_GOVERNANCE_DECISION_RELPATH: _H001_OPERATOR_GOVERNANCE_DECISION_SHA256,
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_RELPATH: _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256,
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH: _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HANDOFF_RELPATH: "e82eefad6e05c0ef1487c36cf4a8c4976de6c9025c87ff3728ba9bd490f2209d",
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH: "13ed0644ca3f43fc9e1223627f8cb67518602d94c5bb0e9cbaa57125db9a340f",
+        _V044_CONTINUITY_REPAIR_REVIEW_RECORD_RELPATH: _V044_CONTINUITY_REPAIR_REVIEW_RECORD_SHA256,
+        _V044_CONTINUITY_REPAIR_REVIEW_HANDOFF_RELPATH: "64e73fa56ed831dcf7a2c1a450dafa2f66258790261f47e50793ac4a2a968a3c",
+        _V044_REVIEW_RECORD_RELPATH: _V044_REVIEW_RECORD_SHA256,
+        (_v044.AMENDMENT_RELPATH): _H001_OPERATOR_GOVERNANCE_DECISION_PROTECTED_HASHES["v044_amendment"],
+        "quantbot/continuity/h001_c1_directionality_atomic_repair_candidate_v044.py": _H001_OPERATOR_GOVERNANCE_DECISION_PROTECTED_HASHES["v044_validator"],
+        "tests/continuity/test_h001_c1_directionality_atomic_repair_candidate_v044.py": _H001_OPERATOR_GOVERNANCE_DECISION_PROTECTED_HASHES["v044_test"],
+        "tests/assurance/test_h001_c1_directionality_atomic_repair_candidate_review_record.py": _H001_OPERATOR_GOVERNANCE_DECISION_PROTECTED_HASHES["focused_review_test"],
+    }
+    for path, expected in protected.items():
+        if evidence.get(path) != expected:
+            _fail(f"H001 operator governance decision receipt must evidence {path!r}")
+        target = root / path
+        if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+            _fail(f"H001 operator governance decision protected file {path!r} drifted")
+    for required in (
+        "H001_OPERATOR_GOVERNANCE_DECISION=RECORDED",
+        "H001_HISTORICAL_EVIDENCE_CLASSIFICATION=EXPLORATORY",
+        "H001_FRESH_FORWARD_CONFIRMATION_REQUIRED=TRUE",
+        "H001_CANDIDATE_EFFECTIVENESS=DEFERRED",
+        "H001_C2_REMAINS_UNRESOLVED=TRUE",
+        "H001_C2_BOUNDARY_SELECTED=NONE",
+        "H001_CANDIDATE_REJECTED=FALSE",
+        "H001_CANDIDATE_RETIRED=FALSE",
+        "H001_ECONOMIC_EDGE_ESTABLISHED=FALSE",
+    ):
+        if required not in parsed["decisions"]:
+            _fail("H001 operator governance decision receipt decisions drifted")
+    for attack in _H001_OPERATOR_GOVERNANCE_DECISION_HOSTILE_ATTACKS:
+        if f"H001_OPERATOR_GOVERNANCE_DECISION_HOSTILE_ATTACK:{attack}=FAIL_CLOSED" not in parsed["decisions"]:
+            _fail("H001 operator governance decision hostile evidence drifted")
+    _cross_check_artifact_records(parsed, root)
+    _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
+    return parsed
+
+_validate_predecessor_chain_h001_operator_governance_decision_recorded = _validate_predecessor_chain
+def _validate_predecessor_chain(parsed, root, receipt_relpath):
+    if parsed.get("receipt_index") != 48:
+        return _validate_predecessor_chain_h001_operator_governance_decision_recorded(parsed, root, receipt_relpath)
+    p = parsed["predecessor"]
+    target = root / p["path"]
+    if p["path"] != _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != p["sha256"]:
+        _fail("H001 operator governance decision predecessor chain is wrong")
+    _validate_predecessor_chain_h001_operator_governance_decision_recorded(
+        _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
+    )
+# END H001 OPERATOR GOVERNANCE DECISION V048 APPEND

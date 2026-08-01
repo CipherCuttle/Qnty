@@ -77,8 +77,9 @@ def test_v047_review_pass_record_binds_candidate_disclosure_handoff_and_evidence
     receipt = _receipt(root)
     disclosure = _disclosure(root)
 
-    assert state["active_task"]["phase"] == context._H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_PASSED_PHASE
-    assert state["handoff_receipt"]["next_actions"] == ["H001_OPERATOR_GOVERNANCE_DECISION_V1"]
+    assert state["active_task"]["phase"] == context._H001_OPERATOR_GOVERNANCE_DECISION_RECORDED_PHASE
+    assert state["handoff_receipt"]["next_actions"] == ["FRESH_HOSTILE_REVIEW_OF_H001_OPERATOR_GOVERNANCE_DECISION"]
+    assert receipt["next_actions"] == ["H001_OPERATOR_GOVERNANCE_DECISION_V1"]
     assert record["review_verdict"] == "PASS_OPERATOR_EXPOSURE_DISCLOSURE_SAFE_FOR_DECISION"
     assert record["candidate_binding"] == {
         "changed_files": context._H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_CHANGED_FILES,
@@ -234,6 +235,8 @@ def test_v047_historical_v044_and_v046_phases_remain_valid(tmp_path):
     active.pop("operator_disclosure_record_sha256")
     active.pop("operator_exposure_disclosure_review_record_path")
     active.pop("operator_exposure_disclosure_review_record_sha256")
+    active.pop("operator_governance_decision_record_path")
+    active.pop("operator_governance_decision_record_sha256")
     _write_json(active_path, active)
 
     state = context.load_and_verify_continuity_state(root)
@@ -247,6 +250,8 @@ def test_v047_historical_v044_and_v046_phases_remain_valid(tmp_path):
     active["handoff_receipt_path"] = context._H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH
     active.pop("operator_exposure_disclosure_review_record_path")
     active.pop("operator_exposure_disclosure_review_record_sha256")
+    active.pop("operator_governance_decision_record_path")
+    active.pop("operator_governance_decision_record_sha256")
     receipt_path = root / context._H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH
     receipt = _load_json(receipt_path)
     receipt["current_transition_files"] = [
