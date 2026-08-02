@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation, localcontext
+from decimal import Decimal, DecimalException, InvalidOperation, localcontext
 from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -21,6 +22,8 @@ RECEIPT_VERSION = "PUBLIC_ECONOMIC_RECONSTRUCTION_RECEIPT_V0"
 FORMULA_VERSION = "PUBLIC_FUNDING_ECONOMIC_FORMULA_V0"
 CLAIM_VERDICT = "PROVEN_FOR_PINNED_FIXTURE"
 SUCCESS_VERDICT = "PUBLIC_ECONOMIC_FIXTURE_V0_VERIFIED"
+DECIMAL_LEXICAL_POLICY = "CANONICAL_PLAIN_DECIMAL_V1"
+DECIMAL_LEXICAL_MAX_LENGTH = 128
 
 CLAIM_SCOPE = "HYPOTHETICAL_PUBLIC_FUNDING_ECONOMIC_RECONSTRUCTION_ONLY"
 EVIDENCE_LEVEL = "AUTHORITATIVE_PUBLIC_EVENT_PLUS_SYNTHETIC_POSITION"
@@ -79,6 +82,7 @@ class PublicEconomicFixtureReason(str, Enum):
     NUMERIC_POLICY_VIOLATION = "NUMERIC_POLICY_VIOLATION"
     DUPLICATE_APPLICATION = "DUPLICATE_APPLICATION"
     RECEIPT_IDENTITY_MISMATCH = "RECEIPT_IDENTITY_MISMATCH"
+    VERIFICATION_METADATA_MISMATCH = "VERIFICATION_METADATA_MISMATCH"
     CALCULATED_NOTIONAL_MISMATCH = "CALCULATED_NOTIONAL_MISMATCH"
     CALCULATED_TRANSFER_MISMATCH = "CALCULATED_TRANSFER_MISMATCH"
     QNTY_EXTENSION_BOUNDARY_UNSAFE = "QNTY_EXTENSION_BOUNDARY_UNSAFE"
@@ -234,19 +238,19 @@ def reconstruct_transfer(
     _validate_fixture(fixture)
     with localcontext() as ctx:
         ctx.prec = 50
-        quantity = _decimal_from_string(
+        quantity = _canonical_decimal_from_string(
             fixture.position.signed_position_quantity,
             PublicEconomicFixtureReason.QUANTITY_INVALID,
         )
-        mark = _decimal_from_string(
+        mark = _source_decimal_from_string(
             fixture.event.funding_mark_price,
             PublicEconomicFixtureReason.MARK_PRICE_MISSING,
         )
-        rate = _decimal_from_string(
+        rate = _source_decimal_from_string(
             fixture.event.funding_rate,
             PublicEconomicFixtureReason.FUNDING_RATE_INVALID,
         )
-        multiplier = _decimal_from_string(
+        multiplier = _canonical_decimal_from_string(
             fixture.position.contract_multiplier,
             PublicEconomicFixtureReason.CONTRACT_MULTIPLIER_UNRESOLVED,
         )
@@ -298,15 +302,7 @@ def reconstruct_transfer(
         "implementation_owner": IMPLEMENTATION_OWNER,
         "research_state_policy": RESEARCH_STATE_POLICY,
         "non_claims": list(fixture.required_non_claims),
-        "verification": {
-            "claim_scope": fixture.claim_scope,
-            "claim_verdict": CLAIM_VERDICT,
-            "reason_codes": [],
-            "source_hashes_verified": True,
-            "source_event_identity_verified": True,
-            "arithmetic_verified": True,
-            "account_posting": "NOT_APPLICABLE",
-        },
+        "verification": _expected_verification_metadata(fixture),
     }
     verify_receipt(fixture, receipt)
     return receipt
@@ -325,19 +321,19 @@ def verify_receipt(
 
     with localcontext() as ctx:
         ctx.prec = 50
-        quantity = _decimal_from_string(
+        quantity = _canonical_decimal_from_string(
             fixture.position.signed_position_quantity,
             PublicEconomicFixtureReason.QUANTITY_INVALID,
         )
-        mark = _decimal_from_string(
+        mark = _source_decimal_from_string(
             fixture.event.funding_mark_price,
             PublicEconomicFixtureReason.MARK_PRICE_MISSING,
         )
-        rate = _decimal_from_string(
+        rate = _source_decimal_from_string(
             fixture.event.funding_rate,
             PublicEconomicFixtureReason.FUNDING_RATE_INVALID,
         )
-        multiplier = _decimal_from_string(
+        multiplier = _canonical_decimal_from_string(
             fixture.position.contract_multiplier,
             PublicEconomicFixtureReason.CONTRACT_MULTIPLIER_UNRESOLVED,
         )
@@ -369,20 +365,11 @@ def verify_receipt(
             PublicEconomicFixtureReason.CALCULATED_TRANSFER_MISMATCH
         )
     verification = receipt.get("verification")
-    if not isinstance(verification, Mapping):
+    expected_verification = _expected_verification_metadata(fixture)
+    if not isinstance(verification, Mapping) or dict(verification) != expected_verification:
         raise PublicEconomicFixtureError(
-            PublicEconomicFixtureReason.RECEIPT_IDENTITY_MISMATCH,
-            "verification missing",
-        )
-    if verification.get("claim_scope") != CLAIM_SCOPE:
-        raise PublicEconomicFixtureError(
-            PublicEconomicFixtureReason.RECEIPT_IDENTITY_MISMATCH,
-            "verification claim scope mismatch",
-        )
-    if verification.get("claim_verdict") != CLAIM_VERDICT:
-        raise PublicEconomicFixtureError(
-            PublicEconomicFixtureReason.RECEIPT_IDENTITY_MISMATCH,
-            "verification claim verdict mismatch",
+            PublicEconomicFixtureReason.VERIFICATION_METADATA_MISMATCH,
+            "verification metadata differs from derived object",
         )
     return {"claim_scope": CLAIM_SCOPE, "claim_verdict": CLAIM_VERDICT}
 
@@ -516,19 +503,19 @@ def _validate_fixture(fixture: ParsedPublicEconomicFixture) -> None:
             )
     with localcontext() as ctx:
         ctx.prec = 50
-        _decimal_from_string(
+        _canonical_decimal_from_string(
             fixture.position.signed_position_quantity,
             PublicEconomicFixtureReason.QUANTITY_INVALID,
         )
-        mark = _decimal_from_string(
+        mark = _source_decimal_from_string(
             fixture.event.funding_mark_price,
             PublicEconomicFixtureReason.MARK_PRICE_MISSING,
         )
-        _decimal_from_string(
+        _source_decimal_from_string(
             fixture.event.funding_rate,
             PublicEconomicFixtureReason.FUNDING_RATE_INVALID,
         )
-        _decimal_from_string(
+        _canonical_decimal_from_string(
             fixture.position.contract_multiplier,
             PublicEconomicFixtureReason.CONTRACT_MULTIPLIER_UNRESOLVED,
         )
@@ -646,7 +633,37 @@ def _identity_payload(
     }
 
 
+def _expected_verification_metadata(fixture: ParsedPublicEconomicFixture) -> dict[str, Any]:
+    return {
+        "claim_scope": fixture.claim_scope,
+        "claim_verdict": CLAIM_VERDICT,
+        "reason_codes": [],
+        "source_hashes_verified": True,
+        "source_event_identity_verified": True,
+        "arithmetic_verified": True,
+        "account_posting": "NOT_APPLICABLE",
+    }
+
+
 def _decimal_from_string(value: Any, reason: PublicEconomicFixtureReason) -> Decimal:
+    return _parse_plain_decimal(value, reason, canonical=False)
+
+
+def _source_decimal_from_string(
+    value: Any, reason: PublicEconomicFixtureReason
+) -> Decimal:
+    return _parse_plain_decimal(value, reason, canonical=False)
+
+
+def _canonical_decimal_from_string(
+    value: Any, reason: PublicEconomicFixtureReason
+) -> Decimal:
+    return _parse_plain_decimal(value, reason, canonical=True)
+
+
+def _parse_plain_decimal(
+    value: Any, reason: PublicEconomicFixtureReason, *, canonical: bool
+) -> Decimal:
     if isinstance(value, float):
         raise PublicEconomicFixtureError(
             PublicEconomicFixtureReason.NUMERIC_POLICY_VIOLATION,
@@ -654,19 +671,52 @@ def _decimal_from_string(value: Any, reason: PublicEconomicFixtureReason) -> Dec
         )
     if not isinstance(value, str):
         raise PublicEconomicFixtureError(reason, "decimal input must be string")
+    if len(value) > DECIMAL_LEXICAL_MAX_LENGTH:
+        raise PublicEconomicFixtureError(reason, "decimal string too long")
+    if not _is_plain_decimal_lexeme(value):
+        raise PublicEconomicFixtureError(reason, repr(value))
     try:
         parsed = Decimal(value)
-    except InvalidOperation as exc:
+    except (InvalidOperation, DecimalException) as exc:
         raise PublicEconomicFixtureError(reason, repr(value)) from exc
     if not parsed.is_finite():
         raise PublicEconomicFixtureError(reason, repr(value))
+    if canonical:
+        if parsed.is_zero() and parsed.is_signed():
+            raise PublicEconomicFixtureError(reason, repr(value))
+        if _canonical_plain_decimal_string(parsed) != value:
+            raise PublicEconomicFixtureError(reason, repr(value))
     return parsed
+
+
+def _is_plain_decimal_lexeme(value: str) -> bool:
+    if not value:
+        return False
+    if value[0] == "+" or value != value.strip():
+        return False
+    if any(ch.isspace() for ch in value):
+        return False
+    if "e" in value.lower():
+        return False
+    signed = value[1:] if value.startswith("-") else value
+    if not signed:
+        return False
+    parts = signed.split(".")
+    if len(parts) > 2 or not parts[0] or not parts[0].isdigit():
+        return False
+    return len(parts) == 1 or bool(parts[1] and parts[1].isdigit())
 
 
 def _decimal_to_string(value: Decimal) -> str:
     if value.is_zero():
         return "0"
     return format(value, "f")
+
+
+def _canonical_plain_decimal_string(value: Decimal) -> str:
+    if value.is_zero():
+        return "0"
+    return format(value.normalize(), "f")
 
 
 def _transfer_direction(value: Decimal) -> str:
@@ -800,30 +850,48 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args(argv)
 
-    fixture = parse_fixture(args.fixture, source_root=args.source_root, verify_source=True)
-    receipt = reconstruct_transfer(fixture)
-    expected_path = args.expected_receipt
-    if expected_path is None:
-        expected_path = args.fixture.with_name("expected_receipt.json")
-    if args.verify:
-        expected = _load_json(expected_path)
-        if canonical_receipt_bytes(receipt) != canonical_receipt_bytes(expected):
-            raise PublicEconomicFixtureError(
-                PublicEconomicFixtureReason.RECEIPT_IDENTITY_MISMATCH,
-                "expected receipt bytes differ",
-            )
-        verify_receipt(fixture, expected)
-    print(
-        canonical_json_dumps(
-            {
-                "verdict": SUCCESS_VERDICT,
-                "claim_scope": CLAIM_SCOPE,
-                "claim_verdict": CLAIM_VERDICT,
-                "receipt_id": receipt["receipt_id"],
-                "receipt_sha256": receipt_sha256(receipt),
-            }
+    try:
+        fixture = parse_fixture(
+            args.fixture, source_root=args.source_root, verify_source=True
         )
-    )
+        receipt = reconstruct_transfer(fixture)
+        expected_path = args.expected_receipt
+        if expected_path is None:
+            expected_path = args.fixture.with_name("expected_receipt.json")
+        if args.verify:
+            expected = _load_json(expected_path)
+            if canonical_receipt_bytes(receipt) != canonical_receipt_bytes(expected):
+                raise PublicEconomicFixtureError(
+                    PublicEconomicFixtureReason.RECEIPT_IDENTITY_MISMATCH,
+                    "expected receipt bytes differ",
+                )
+            verify_receipt(fixture, expected)
+        print(
+            canonical_json_dumps(
+                {
+                    "verdict": SUCCESS_VERDICT,
+                    "claim_scope": CLAIM_SCOPE,
+                    "claim_verdict": CLAIM_VERDICT,
+                    "receipt_id": receipt["receipt_id"],
+                    "receipt_sha256": receipt_sha256(receipt),
+                }
+            )
+        )
+    except (PublicEconomicFixtureError, json.JSONDecodeError) as exc:
+        reason = getattr(exc, "reason", "JSON_DECODE_ERROR")
+        if isinstance(reason, PublicEconomicFixtureReason):
+            reason = reason.value
+        print(
+            canonical_json_dumps(
+                {
+                    "verdict": "PUBLIC_ECONOMIC_FIXTURE_V0_REJECTED",
+                    "reason": reason,
+                    "detail": str(exc),
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

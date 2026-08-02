@@ -5,7 +5,8 @@ import shutil
 import subprocess
 import sys
 from dataclasses import replace
-from decimal import getcontext
+from decimal import Decimal, getcontext
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ import pytest
 from quantbot.paper.public_funding_economic_fixture import (
     ACCOUNT_POSTING_STATUS,
     CLAIM_SCOPE,
+    DECIMAL_LEXICAL_MAX_LENGTH,
+    DECIMAL_LEXICAL_POLICY,
     PublicEconomicFixtureError,
     PublicEconomicFixtureReason,
     canonical_receipt_bytes,
@@ -69,6 +72,47 @@ def _write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
 
 
+def _independent_canonical_json_bytes(value) -> bytes:
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+
+
+def _independent_expected_verification() -> dict[str, object]:
+    return {
+        "claim_scope": "HYPOTHETICAL_PUBLIC_FUNDING_ECONOMIC_RECONSTRUCTION_ONLY",
+        "claim_verdict": "PROVEN_FOR_PINNED_FIXTURE",
+        "reason_codes": [],
+        "source_hashes_verified": True,
+        "source_event_identity_verified": True,
+        "arithmetic_verified": True,
+        "account_posting": "NOT_APPLICABLE",
+    }
+
+
+def test_independent_arithmetic_oracle_vectors_are_exact() -> None:
+    mark = Decimal("73653.56663043")
+    rate = Decimal("0.00005703")
+    multiplier = Decimal("1")
+    vectors = [
+        (Decimal("0.001"), "73.65356663043", "-0.0042004629049334229", "PAYS"),
+        (Decimal("-0.001"), "73.65356663043", "0.0042004629049334229", "RECEIVES"),
+        (Decimal("0"), "0", "0", "ZERO"),
+    ]
+
+    fixture = _fixture()
+    for quantity, expected_notional, expected_transfer, expected_direction in vectors:
+        notional = abs(quantity) * mark * multiplier
+        transfer = -quantity * mark * rate * multiplier
+        assert ("0" if notional.is_zero() else format(notional, "f")) == expected_notional
+        assert ("0" if transfer.is_zero() else format(transfer, "f")) == expected_transfer
+
+        receipt = reconstruct_transfer(fixture_with_quantity(fixture, format(quantity, "f")))
+        assert receipt["calculated_notional"] == expected_notional
+        assert receipt["calculated_transfer"] == expected_transfer
+        assert receipt["transfer_direction"] == expected_direction
+
+
 def test_golden_arithmetic_vectors_are_exact() -> None:
     fixture = _fixture()
 
@@ -90,6 +134,47 @@ def test_golden_arithmetic_vectors_are_exact() -> None:
     ].removeprefix("-")
 
 
+def test_independent_identity_oracle_binds_load_bearing_payload() -> None:
+    fixture_json = json.loads(FIXTURE_PATH.read_text())
+    identity_payload = {
+        "contract_id": fixture_json["contract_id"],
+        "contract_version": fixture_json["contract_version"],
+        "claim_scope": fixture_json["claim_scope"],
+        "source_raw_sha256": fixture_json["source_raw_sha256"],
+        "source_selected_event_sha256": fixture_json["source_selected_event_sha256"],
+        "source_event_identity": fixture_json["source_event_identity"],
+        "symbol": fixture_json["symbol"],
+        "funding_time": fixture_json["funding_time"],
+        "funding_rate": fixture_json["funding_rate"],
+        "funding_mark_price": fixture_json["funding_mark_price"],
+        "rate_type": fixture_json["rate_type"],
+        "signed_position_quantity": fixture_json["signed_position_quantity"],
+        "quantity_unit": fixture_json["quantity_unit"],
+        "contract_multiplier": fixture_json["contract_multiplier"],
+        "formula_version": "PUBLIC_FUNDING_ECONOMIC_FORMULA_V0",
+        "numeric_policy": fixture_json["numeric_policy"],
+    }
+    receipt = _receipt()
+
+    digest = sha256(_independent_canonical_json_bytes(identity_payload)).hexdigest()
+    assert digest == "3833f2fb83a0c59031236cf5bb29b2de0ad2122765f03074f219a2c24bf5bd9b"
+    assert receipt["receipt_id"] == digest
+
+
+def test_independent_verification_metadata_oracle() -> None:
+    receipt = _receipt()
+    expected = _independent_expected_verification()
+
+    assert receipt["verification"] == expected
+    assert type(receipt["verification"]["reason_codes"]) is list
+    for key in (
+        "source_hashes_verified",
+        "source_event_identity_verified",
+        "arithmetic_verified",
+    ):
+        assert type(receipt["verification"][key]) is bool
+
+
 @pytest.mark.parametrize(
     ("updates", "reason"),
     [
@@ -105,6 +190,71 @@ def test_golden_arithmetic_vectors_are_exact() -> None:
 def test_numeric_safety_rejects_invalid_inputs(tmp_path: Path, updates, reason) -> None:
     with pytest.raises(PublicEconomicFixtureError) as exc:
         parse_fixture(_mutated_fixture(tmp_path, **updates), verify_source=False)
+    _assert_reason(exc, reason)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["0", "0.001", "-0.001", "1", "73653.56663043"],
+)
+def test_canonical_plain_decimal_v1_accepts_synthetic_examples(
+    tmp_path: Path, value: str
+) -> None:
+    assert DECIMAL_LEXICAL_POLICY == "CANONICAL_PLAIN_DECIMAL_V1"
+    assert DECIMAL_LEXICAL_MAX_LENGTH == 128
+    parse_fixture(
+        _mutated_fixture(tmp_path, signed_position_quantity=value),
+        verify_source=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "+0.001",
+        "0.0010",
+        "1E-3",
+        "1e-3",
+        " 0.001",
+        "0.001 ",
+        "00.001",
+        "01",
+        "1.",
+        ".001",
+        "-0",
+        "-0.0",
+        "0.0",
+        "1e1000000",
+    ],
+)
+def test_canonical_plain_decimal_v1_rejects_synthetic_aliases(
+    tmp_path: Path, value: str
+) -> None:
+    with pytest.raises(PublicEconomicFixtureError) as exc:
+        parse_fixture(
+            _mutated_fixture(tmp_path, signed_position_quantity=value),
+            verify_source=False,
+        )
+    _assert_reason(exc, PublicEconomicFixtureReason.QUANTITY_INVALID)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("funding_rate", "0.0010", PublicEconomicFixtureReason.FUNDING_RATE_INVALID),
+        (
+            "funding_mark_price",
+            "73653.5666304300",
+            PublicEconomicFixtureReason.MARK_PRICE_MISSING,
+        ),
+    ],
+)
+def test_source_decimal_plain_policy_preserves_fractional_zeros(
+    tmp_path: Path, field: str, value: str, reason: PublicEconomicFixtureReason
+) -> None:
+    parse_fixture(_mutated_fixture(tmp_path, **{field: value}), verify_source=False)
+    with pytest.raises(PublicEconomicFixtureError) as exc:
+        parse_fixture(_mutated_fixture(tmp_path, **{field: "1e1000000"}), verify_source=False)
     _assert_reason(exc, reason)
 
 
@@ -187,7 +337,9 @@ def test_same_inputs_produce_identical_bytes_and_receipt_id() -> None:
     assert first["receipt_id"] == second["receipt_id"]
 
 
-@pytest.mark.parametrize("field", ["signed_position_quantity", "funding_rate", "funding_mark_price"])
+@pytest.mark.parametrize(
+    "field", ["signed_position_quantity", "funding_rate", "funding_mark_price"]
+)
 def test_load_bearing_mutation_changes_identity(field: str) -> None:
     fixture = _fixture()
     if field == "signed_position_quantity":
@@ -228,6 +380,50 @@ def test_receipt_tampering_detected(field: str, value: str, reason) -> None:
     _assert_reason(exc, reason)
 
 
+def test_verification_metadata_tampering_is_rejected() -> None:
+    fixture = _fixture()
+    receipt = reconstruct_transfer(fixture)
+    assert list(receipt["verification"]) == [
+        "claim_scope",
+        "claim_verdict",
+        "reason_codes",
+        "source_hashes_verified",
+        "source_event_identity_verified",
+        "arithmetic_verified",
+        "account_posting",
+    ]
+    mutations = []
+    for key, value in receipt["verification"].items():
+        removed = json.loads(json.dumps(receipt))
+        removed["verification"].pop(key)
+        mutations.append((f"{key} removed", removed))
+
+        changed = json.loads(json.dumps(receipt))
+        if isinstance(value, bool):
+            changed["verification"][key] = not value
+        elif isinstance(value, str):
+            changed["verification"][key] = f"{value}_TAMPERED"
+        elif isinstance(value, list):
+            changed["verification"][key] = ["TAMPERED"]
+        mutations.append((f"{key} changed", changed))
+
+        wrong_type = json.loads(json.dumps(receipt))
+        wrong_type["verification"][key] = {"wrong": "type"}
+        mutations.append((f"{key} wrong type", wrong_type))
+
+    unexpected = json.loads(json.dumps(receipt))
+    unexpected["verification"]["unexpected_key"] = True
+    mutations.append(("unexpected key", unexpected))
+    missing = json.loads(json.dumps(receipt))
+    missing.pop("verification")
+    mutations.append(("verification missing", missing))
+
+    for _label, mutated in mutations:
+        with pytest.raises(PublicEconomicFixtureError) as exc:
+            verify_receipt(fixture, mutated)
+        _assert_reason(exc, PublicEconomicFixtureReason.VERIFICATION_METADATA_MISMATCH)
+
+
 def test_idempotency_repeat_same_receipt_and_duplicate_batch_rejected() -> None:
     fixture = _fixture()
     first = reconstruct_transfer(fixture)
@@ -263,6 +459,48 @@ def test_committed_fixture_matches_committed_expected_receipt() -> None:
     receipt = _receipt()
     assert canonical_receipt_bytes(receipt) == canonical_receipt_bytes(expected)
     assert receipt["claim_scope"] == CLAIM_SCOPE
+    assert (
+        receipt["receipt_id"]
+        == "3833f2fb83a0c59031236cf5bb29b2de0ad2122765f03074f219a2c24bf5bd9b"
+    )
+    assert (
+        receipt_sha256(receipt)
+        == "d7a8827d8054ac2a843baf25dcc9dd547f4235ef10571e30d43cb69ef20b294f"
+    )
+
+
+def test_rejected_decimal_aliases_cannot_create_alternate_receipt_ids(tmp_path: Path) -> None:
+    original = _receipt()
+    aliases = ["+0.001", "0.0010", "1E-3", "1e-3", " 0.001 ", "00.001"]
+    for value in aliases:
+        with pytest.raises(PublicEconomicFixtureError):
+            parse_fixture(
+                _mutated_fixture(tmp_path, signed_position_quantity=value),
+                verify_source=False,
+            )
+    assert _receipt()["receipt_id"] == original["receipt_id"]
+
+
+def test_cli_reports_typed_decimal_failure_without_traceback(tmp_path: Path) -> None:
+    bad_fixture = _mutated_fixture(tmp_path, signed_position_quantity="1e1000000")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "quantbot.paper.public_funding_economic_fixture",
+            "--fixture",
+            str(bad_fixture),
+            "--verify",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "Traceback" not in result.stderr
+    payload = json.loads(result.stderr)
+    assert payload["reason"] == "QUANTITY_INVALID"
 
 
 def test_runnable_module_returns_bounded_verdict() -> None:
