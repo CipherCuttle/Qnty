@@ -1,0 +1,51 @@
+{
+  "claim_scope": "HYPOTHETICAL_PUBLIC_FUNDING_ECONOMIC_RECONSTRUCTION_ONLY",
+  "contract_id": "PUBLIC_ECONOMIC_FIXTURE_CONTRACT_V0",
+  "contract_multiplier": "1",
+  "contract_version": "0.1.0",
+  "funding_mark_price": "73653.56663043",
+  "funding_rate": "0.00005703",
+  "funding_time": 1780272000001,
+  "funding_time_utc": "2026-06-01T00:00:00.001Z",
+  "market": "USD-M Futures",
+  "numeric_policy": "Decimal strings, context precision 50, no binary float",
+  "quantity_unit": "BTC",
+  "rate_type": "Regular",
+  "required_non_claims": [
+    "not an account receipt",
+    "not a real wallet posting",
+    "not a real position",
+    "not a real trade",
+    "not evidence of execution",
+    "not evidence of a spot hedge",
+    "not evidence of capital efficiency",
+    "not evidence of margin survival",
+    "not evidence of liquidation survival",
+    "not evidence about ADL",
+    "not evidence of profitability",
+    "not evidence of alpha",
+    "not a strategy trial",
+    "not a research candidate"
+  ],
+  "sign_convention": "positive signed quantity is long; negative signed quantity is short; positive transfer receives; negative transfer pays",
+  "signed_position_quantity": "0.001",
+  "source_artifacts": {
+    "raw": "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.raw.json",
+    "selected_event": "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.selected-event.json",
+    "source_receipt": "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.receipt.json"
+  },
+  "source_event_identity": {
+    "fundingTime": 1780272000001,
+    "fundingTimeUtc": "2026-06-01T00:00:00.001Z",
+    "market": "USD-M Futures",
+    "selected_event_sha256": "fcc0682d5a30976d860fbbefaf415b0e0c0d0585835a4a8ef089acd9c5376b59",
+    "source_array_index": 0,
+    "symbol": "BTCUSDT",
+    "venue": "Binance"
+  },
+  "source_raw_sha256": "01d38d5b8c8581388621015a2bc618673cac1ff51ff88672aea52f9bdb31bafd",
+  "source_receipt_sha256": "456e7918e3d9c7caeee67a8bde729867cbe0143f2002e7496ef5234382278c1c",
+  "source_selected_event_sha256": "fcc0682d5a30976d860fbbefaf415b0e0c0d0585835a4a8ef089acd9c5376b59",
+  "symbol": "BTCUSDT",
+  "venue": "Binance"
+}

@@ -1,0 +1,634 @@
+{
+  "archive_comparison": {
+    "archive_bytes": 964,
+    "archive_http_status": 200,
+    "archive_sha256": "cff97ce688329592bccbbf5873b5c7021649e093f5f5806e332c5b4fb7fd6a00",
+    "archive_url": "https://data.binance.vision/data/futures/um/monthly/fundingRate/BTCUSDT/BTCUSDT-fundingRate-2026-06.zip",
+    "checksum_bytes": 98,
+    "checksum_file_sha256": "b16df2145a1acd03de19335dcd416e3f9dd85d4dd252ce8a60b205668d23f4a4",
+    "checksum_http_status": 200,
+    "checksum_text": "cff97ce688329592bccbbf5873b5c7021649e093f5f5806e332c5b4fb7fd6a00  BTCUSDT-fundingRate-2026-06.zip\n",
+    "checksum_url": "https://data.binance.vision/data/futures/um/monthly/fundingRate/BTCUSDT/BTCUSDT-fundingRate-2026-06.zip.CHECKSUM",
+    "checksum_verified": true,
+    "classification": "ARCHIVE_MATCHES_RATE_AND_TIME_ONLY",
+    "comparison": {
+      "archive_count": 90,
+      "common_count": 90,
+      "extra_in_archive": [],
+      "missing_from_archive": [],
+      "rate_conflicts": [],
+      "rest_count": 90
+    },
+    "csv_header": [
+      "calc_time",
+      "funding_interval_hours",
+      "last_funding_rate"
+    ],
+    "csv_row_count": 90,
+    "official_sha256": "cff97ce688329592bccbbf5873b5c7021649e093f5f5806e332c5b4fb7fd6a00",
+    "timestamp_units": "milliseconds",
+    "zip_member_names": [
+      "BTCUSDT-fundingRate-2026-06.csv"
+    ]
+  },
+  "artifact_hashes": {
+    "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.archive.CHECKSUM": "b16df2145a1acd03de19335dcd416e3f9dd85d4dd252ce8a60b205668d23f4a4",
+    "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.raw.json": "01d38d5b8c8581388621015a2bc618673cac1ff51ff88672aea52f9bdb31bafd",
+    "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.selected-event.json": "fcc0682d5a30976d860fbbefaf415b0e0c0d0585835a4a8ef089acd9c5376b59"
+  },
+  "claim_scope": "PUBLIC_FINALIZED_FUNDING_EVENT_ONLY",
+  "frozen_scope": {
+    "market": "USD-M perpetual futures",
+    "period_end": "2026-06-30T23:59:59.999Z",
+    "period_start": "2026-06-01T00:00:00.000Z",
+    "selection_rationale": [
+      "complete historical UTC calendar month",
+      "selected before observing funding values",
+      "not selected by return, rate sign or magnitude",
+      "old enough for monthly public archive to be expected",
+      "bounded below REST endpoint limit"
+    ],
+    "symbol": "BTCUSDT",
+    "venue": "Binance"
+  },
+  "generated_at_utc": "2026-08-02T18:15:02.733Z",
+  "local_capability_comparison": {
+    "adds_new_evidence": [
+      "associated nonzero markPrice",
+      "rateType",
+      "raw official response bytes",
+      "request provenance",
+      "archive comparison"
+    ],
+    "overall_classification": "NORMALIZED_RATE_AND_TIME_ONLY",
+    "repositories": {
+      "QNTY": {
+        "classification": "NO_MATCHING_LOCAL_EVENT",
+        "funding_file_count": 22,
+        "matches": [
+          {
+            "exact_value_hits": {
+              "fundingRate": false,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": true
+            },
+            "path": "data/BTCUSDT_8h_funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": false,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": true
+            },
+            "path": "tests/fixtures/edge_validation_golden/data_quality_funding_missing_funding_time.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": false,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": true
+            },
+            "path": "tests/fixtures/edge_validation_golden/data_quality_funding_duplicate_timestamp.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": false,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": true
+            },
+            "path": "tests/fixtures/edge_validation_golden/data_quality_funding_non_monotonic.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": false,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": true
+            },
+            "path": "tests/fixtures/edge_validation_golden/data_quality_funding_null_funding_rate.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": false,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": true
+            },
+            "path": "tests/fixtures/edge_validation_golden/data_quality_funding_null_mark_price.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": false,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": true
+            },
+            "path": "tests/fixtures/edge_validation_golden/data_quality_funding_clean.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": false,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": true
+            },
+            "path": "tests/fixtures/funding_coverage_missing_sol.jsonl",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": false,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": true
+            },
+            "path": "tests/fixtures/funding_coverage_partial_sol.jsonl",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": false,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": true
+            },
+            "path": "tests/fixtures/funding_coverage_complete.jsonl",
+            "row_matches": []
+          }
+        ]
+      },
+      "QntyLab": {
+        "classification": "NORMALIZED_RATE_AND_TIME_ONLY",
+        "funding_file_count": 183,
+        "matches": [
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/PENGUUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/VETUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/BIOUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/BATUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/ONEUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/POPCATUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/SANDUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/LDOUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/JASMYUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/RSRUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/LTCUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/BTCUSDT-funding.csv",
+            "row_matches": [
+              {
+                "kind": "symbol_rate",
+                "line": 7031,
+                "row": {
+                  "funding_interval_hours": "8",
+                  "funding_rate": "0.00005703",
+                  "timestamp": "2026-06-01T00:00:00.001000Z"
+                }
+              }
+            ]
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/1000RATSUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/KSMUSDT-funding.csv",
+            "row_matches": []
+          },
+          {
+            "exact_value_hits": {
+              "fundingRate": true,
+              "fundingTime": false,
+              "markPrice": false,
+              "rateType": false,
+              "symbol": false
+            },
+            "path": "data/raw/SOLUSDT-funding.csv",
+            "row_matches": []
+          }
+        ]
+      }
+    }
+  },
+  "next_action": "REVIEW_PUBLIC_ECONOMIC_FIXTURE_CONTRACT_V0",
+  "non_claims": [
+    "not an account receipt",
+    "not evidence of a real position",
+    "not evidence of wallet posting",
+    "not a strategy result",
+    "not evidence of execution",
+    "not evidence of solvency",
+    "not evidence of profitability"
+  ],
+  "observed_event_intervals": {
+    "hours_counts": {
+      "7.999996388888888888888888889": 2,
+      "7.999996666666666666666666667": 1,
+      "7.9999975": 7,
+      "7.999997777777777777777777778": 1,
+      "7.999998611111111111111111111": 1,
+      "7.999998888888888888888888889": 5,
+      "7.999999166666666666666666667": 3,
+      "7.999999444444444444444444444": 4,
+      "7.999999722222222222222222222": 5,
+      "8": 29,
+      "8.000000277777777777777777778": 7,
+      "8.000000555555555555555555556": 3,
+      "8.000000833333333333333333333": 3,
+      "8.000001111111111111111111111": 4,
+      "8.000001388888888888888888889": 3,
+      "8.000001666666666666666666667": 1,
+      "8.000001944444444444444444444": 2,
+      "8.000002222222222222222222222": 1,
+      "8.0000025": 1,
+      "8.000002777777777777777777778": 2,
+      "8.000003055555555555555555556": 1,
+      "8.000003611111111111111111111": 3
+    },
+    "milliseconds_counts": {
+      "28799987": 2,
+      "28799988": 1,
+      "28799991": 7,
+      "28799992": 1,
+      "28799995": 1,
+      "28799996": 5,
+      "28799997": 3,
+      "28799998": 4,
+      "28799999": 5,
+      "28800000": 29,
+      "28800001": 7,
+      "28800002": 3,
+      "28800003": 3,
+      "28800004": 4,
+      "28800005": 3,
+      "28800006": 1,
+      "28800007": 2,
+      "28800008": 1,
+      "28800009": 1,
+      "28800010": 2,
+      "28800011": 1,
+      "28800013": 3
+    },
+    "sequence": [
+      28800000,
+      28799999,
+      28800000,
+      28800000,
+      28800000,
+      28800013,
+      28799987,
+      28800001,
+      28800008,
+      28799991,
+      28800003,
+      28799997,
+      28800004,
+      28800005,
+      28799991,
+      28800000,
+      28800000,
+      28800001,
+      28799999,
+      28800000,
+      28800000,
+      28800005,
+      28799999,
+      28799996,
+      28800000,
+      28800001,
+      28800000,
+      28800010,
+      28799998,
+      28799991,
+      28800004,
+      28799996,
+      28800000,
+      28800000,
+      28800000,
+      28800000,
+      28800007,
+      28799995,
+      28800003,
+      28800004,
+      28799991,
+      28800013,
+      28800000,
+      28799991,
+      28799996,
+      28800000,
+      28800001,
+      28800011,
+      28799988,
+      28800000,
+      28800002,
+      28799998,
+      28800001,
+      28800004,
+      28799996,
+      28800000,
+      28800000,
+      28799999,
+      28800001,
+      28799999,
+      28800000,
+      28800000,
+      28800000,
+      28800000,
+      28800002,
+      28800001,
+      28800002,
+      28799997,
+      28800003,
+      28800000,
+      28799998,
+      28799997,
+      28800000,
+      28800000,
+      28800010,
+      28799992,
+      28799998,
+      28800000,
+      28800000,
+      28800009,
+      28799991,
+      28800013,
+      28799987,
+      28800006,
+      28800007,
+      28799991,
+      28799996,
+      28800000,
+      28800005
+    ]
+  },
+  "receipt_id": "BINANCE_PUBLIC_FUNDING_EVENT_FIXTURE_V0_RECEIPT_BTCUSDT_2026_06",
+  "repository_identity": {
+    "QNTY_read_only": {
+      "branch": "chore/external-trust-root-dispatcher-repair-v046",
+      "head": "8ebe61bdecd2d72239cf8d0618df87d6e1171c5a",
+      "root": "/home/swirky/DevHub/repos/Qnty",
+      "status_short_branch": "## chore/external-trust-root-dispatcher-repair-v046\n?? plans/\n?? qnty_ruleset_rollout.sh"
+    },
+    "QntyLab": {
+      "branch": "master",
+      "head": "dc0b6cf4f51f44c30025685818a0e0c5f29dc688",
+      "remote": "origin\thttps://github.com/CipherCuttle/QntyLab.git (fetch)\norigin\thttps://github.com/CipherCuttle/QntyLab.git (push)",
+      "root": "/home/swirky/DevHub/repos/QntyLab",
+      "status_short_branch_at_acquisition": "## master...origin/master [ahead 19]\n M data/manifests/BTCUSDT-perp-1h.json\n M data/manifests/ETHUSDT-perp-1h.json\n M data/manifests/SOLUSDT-perp-1h.json\n?? data/manifests/1000BONKUSDT-perp-1h.json\n?? data/manifests/1000FLOKIUSDT-perp-1h.json\n?? data/manifests/1000LUNCUSDT-perp-1h.json\n?? data/manifests/1000PEPEUSDT-perp-1h.json\n?? data/manifests/1000RATSUSDT-perp-1h.json\n?? data/manifests/1000SATSUSDT-perp-1h.json\n?? data/manifests/1000SHIBUSDT-perp-1h.json\n?? data/manifests/AAVEUSDT-perp-1h.json\n?? data/manifests/ADAUSDT-perp-1h.json\n?? data/manifests/AGIXUSDT-perp-1h.json\n?? data/manifests/AGLDUSDT-perp-1h.json\n?? data/manifests/ALGOUSDT-perp-1h.json\n?? data/manifests/ALICEUSDT-perp-1h.json\n?? data/manifests/ALPHAUSDT-perp-1h.json\n?? data/manifests/APEUSDT-perp-1h.json\n?? data/manifests/API3USDT-perp-1h.json\n?? data/manifests/APTUSDT-perp-1h.json\n?? data/manifests/ARBUSDT-perp-1h.json\n?? data/manifests/ARIAUSDT-perp-1h.json\n?? data/manifests/ARPAUSDT-perp-1h.json\n?? data/manifests/ASTERUSDT-perp-1h.json\n?? data/manifests/ATOMUSDT-perp-1h.json\n?? data/manifests/AUCTIONUSDT-perp-1h.json\n?? data/manifests/AVAXUSDT-perp-1h.json\n?? data/manifests/AXSUSDT-perp-1h.json\n?? data/manifests/BAKEUSDT-perp-1h.json\n?? data/manifests/BANANAS31USDT-perp-1h.json\n?? data/manifests/BANDUSDT-perp-1h.json\n?? data/manifests/BATUSDT-perp-1h.json\n?? data/manifests/BCHUSDT-perp-1h.json\n?? data/manifests/BEATUSDT-perp-1h.json\n?? data/manifests/BELUSDT-perp-1h.json\n?? data/manifests/BIGTIMEUSDT-perp-1h.json\n?? data/manifests/BIOUSDT-perp-1h.json\n?? data/manifests/BLURUSDT-perp-1h.json\n?? data/manifests/BLZUSDT-perp-1h.json\n?? data/manifests/BNBUSDT-perp-1h.json\n?? data/manifests/BNXUSDT-perp-1h.json\n?? data/manifests/BOMEUSDT-perp-1h.json\n?? data/manifests/BZUSDT-perp-1h.json\n?? data/manifests/CFXUSDT-perp-1h.json\n?? data/manifests/CHRUSDT-perp-1h.json\n?? data/manifests/CHZUSDT-perp-1h.json\n?? data/manifests/CLUSDT-perp-1h.json\n?? data/manifests/COMPUSDT-perp-1h.json\n?? data/manifests/CRCLUSDT-perp-1h.json\n?? data/manifests/CRVUSDT-perp-1h.json\n?? data/manifests/CTSIUSDT-perp-1h.json\n?? data/manifests/DASHUSDT-perp-1h.json\n?? data/manifests/DOGEUSDT-perp-1h.json\n?? data/manifests/DOTUSDT-perp-1h.json\n?? data/manifests/DYDXUSDT-perp-1h.json\n?? data/manifests/EGLDUSDT-perp-1h.json\n?? data/manifests/ENAUSDT-perp-1h.json\n?? data/manifests/ENJUSDT-perp-1h.json\n?? data/manifests/ENSUSDT-perp-1h.json\n?? data/manifests/EOSUSDT-perp-1h.json\n?? data/manifests/ESPORTSUSDT-perp-1h.json\n?? data/manifests/ETCUSDT-perp-1h.json\n?? data/manifests/ETHFIUSDT-perp-1h.json\n?? data/manifests/FARTCOINUSDT-perp-1h.json\n?? data/manifests/FETUSDT-perp-1h.json\n?? data/manifests/FILUSDT-perp-1h.json\n?? data/manifests/FTMUSDT-perp-1h.json\n?? data/manifests/FUNUSDT-perp-1h.json\n?? data/manifests/GALAUSDT-perp-1h.json\n?? data/manifests/GMTUSDT-perp-1h.json\n?? data/manifests/GRTUSDT-perp-1h.json\n?? data/manifests/HBARUSDT-perp-1h.json\n?? data/manifests/HUSDT-perp-1h.json\n?? data/manifests/HYPEUSDT-perp-1h.json\n?? data/manifests/ICPUSDT-perp-1h.json\n?? data/manifests/INJUSDT-perp-1h.json\n?? data/manifests/INTCUSDT-perp-1h.json\n?? data/manifests/IOSTUSDT-perp-1h.json\n?? data/manifests/IOTAUSDT-perp-1h.json\n?? data/manifests/JASMYUSDT-perp-1h.json\n?? data/manifests/JTOUSDT-perp-1h.json\n?? data/manifests/JUPUSDT-perp-1h.json\n?? data/manifests/KAITOUSDT-perp-1h.json\n?? data/manifests/KAVAUSDT-perp-1h.json\n?? data/manifests/KITEUSDT-perp-1h.json\n?? data/manifests/KNCUSDT-perp-1h.json\n?? data/manifests/KSMUSDT-perp-1h.json\n?? data/manifests/LABUSDT-perp-1h.json\n?? data/manifests/LAYERUSDT-perp-1h.json\n?? data/manifests/LDOUSDT-perp-1h.json\n?? data/manifests/LENDUSDT-perp-1h.json\n?? data/manifests/LEVERUSDT-perp-1h.json\n?? data/manifests/LIGHTUSDT-perp-1h.json\n?? data/manifests/LINAUSDT-perp-1h.json\n?? data/manifests/LINKUSDT-perp-1h.json\n?? data/manifests/LPTUSDT-perp-1h.json\n?? data/manifests/LQTYUSDT-perp-1h.json\n?? data/manifests/LRCUSDT-perp-1h.json\n?? data/manifests/LTCUSDT-perp-1h.json\n?? data/manifests/LUNAUSDT-perp-1h.json\n?? data/manifests/MANAUSDT-perp-1h.json\n?? data/manifests/MASKUSDT-perp-1h.json\n?? data/manifests/MATICUSDT-perp-1h.json\n?? data/manifests/MEWUSDT-perp-1h.json\n?? data/manifests/MKRUSDT-perp-1h.json\n?? data/manifests/MOODENGUSDT-perp-1h.json\n?? data/manifests/MTLUSDT-perp-1h.json\n?? data/manifests/MYXUSDT-perp-1h.json\n?? data/manifests/NEARUSDT-perp-1h.json\n?? data/manifests/NEIROUSDT-perp-1h.json\n?? data/manifests/NEOUSDT-perp-1h.json\n?? data/manifests/NOTUSDT-perp-1h.json\n?? data/manifests/OCEANUSDT-perp-1h.json\n?? data/manifests/OMGUSDT-perp-1h.json\n?? data/manifests/OMUSDT-perp-1h.json\n?? data/manifests/ONDOUSDT-perp-1h.json\n?? data/manifests/ONEUSDT-perp-1h.json\n?? data/manifests/ONGUSDT-perp-1h.json\n?? data/manifests/ONTUSDT-perp-1h.json\n?? data/manifests/OPUSDT-perp-1h.json\n?? data/manifests/ORDIUSDT-perp-1h.json\n?? data/manifests/PAXGUSDT-perp-1h.json\n?? data/manifests/PENGUUSDT-perp-1h.json\n?? data/manifests/PEOPLEUSDT-perp-1h.json\n?? data/manifests/PERPUSDT-perp-1h.json\n?? data/manifests/PIPPINUSDT-perp-1h.json\n?? data/manifests/PNUTUSDT-perp-1h.json\n?? data/manifests/POLYXUSDT-perp-1h.json\n?? data/manifests/POPCATUSDT-perp-1h.json\n?? data/manifests/POWERUSDT-perp-1h.json\n?? data/manifests/PUMPUSDT-perp-1h.json\n?? data/manifests/QTUMUSDT-perp-1h.json\n?? data/manifests/RAVEUSDT-perp-1h.json\n?? data/manifests/REEFUSDT-perp-1h.json\n?? data/manifests/RIVERUSDT-perp-1h.json\n?? data/manifests/RLCUSDT-perp-1h.json\n?? data/manifests/RNDRUSDT-perp-1h.json\n?? data/manifests/RSRUSDT-perp-1h.json\n?? data/manifests/RUNEUSDT-perp-1h.json\n?? data/manifests/RVNUSDT-perp-1h.json\n?? data/manifests/SAGAUSDT-perp-1h.json\n?? data/manifests/SANDUSDT-perp-1h.json\n?? data/manifests/SEIUSDT-perp-1h.json\n?? data/manifests/SIRENUSDT-perp-1h.json\n?? data/manifests/SKYAIUSDT-perp-1h.json\n?? data/manifests/SNXUSDT-perp-1h.json\n?? data/manifests/STMXUSDT-perp-1h.json\n?? data/manifests/STORJUSDT-perp-1h.json\n?? data/manifests/STXUSDT-perp-1h.json\n?? data/manifests/SUIUSDT-perp-1h.json\n?? data/manifests/SUSHIUSDT-perp-1h.json\n?? data/manifests/SXPUSDT-perp-1h.json\n?? data/manifests/TAOUSDT-perp-1h.json\n?? data/manifests/THETAUSDT-perp-1h.json\n?? data/manifests/TIAUSDT-perp-1h.json\n?? data/manifests/TOMOUSDT-perp-1h.json\n?? data/manifests/TONUSDT-perp-1h.json\n?? data/manifests/TRBUSDT-perp-1h.json\n?? data/manifests/TRUMPUSDT-perp-1h.json\n?? data/manifests/TRXUSDT-perp-1h.json\n?? data/manifests/TURBOUSDT-perp-1h.json\n?? data/manifests/UNFIUSDT-perp-1h.json\n?? data/manifests/UNIUSDT-perp-1h.json\n?? data/manifests/UXLINKUSDT-perp-1h.json\n?? data/manifests/VETUSDT-perp-1h.json\n?? data/manifests/VIRTUALUSDT-perp-1h.json\n?? data/manifests/WAVESUSDT-perp-1h.json\n?? data/manifests/WIFUSDT-perp-1h.json\n?? data/manifests/WLDUSDT-perp-1h.json\n?? data/manifests/WLFIUSDT-perp-1h.json\n?? data/manifests/XLMUSDT-perp-1h.json\n?? data/manifests/XMRUSDT-perp-1h.json\n?? data/manifests/XPLUSDT-perp-1h.json\n?? data/manifests/XRPUSDT-perp-1h.json\n?? data/manifests/XTZUSDT-perp-1h.json\n?? data/manifests/YFIIUSDT-perp-1h.json\n?? data/manifests/YFIUSDT-perp-1h.json\n?? data/manifests/ZECUSDT-perp-1h.json\n?? data/manifests/ZILUSDT-perp-1h.json\n?? data/manifests/ZROUSDT-perp-1h.json\n?? docs/forensics/evidence/\n?? experiments/results/sprint_v2_results.json\n?? experiments/runs/accounting_sanity_h002_btcusdt_20210101_20210115/\n?? experiments/runs/first_batch/\n?? experiments/runs/first_batch_summary.csv\n?? experiments/runs/h002_h003_followup_v1/\n?? experiments/runs/h002_h003_followup_v1_summary.csv\n?? experiments/runs/h002_momentum_btcusdt_20210101_20210115/\n?? logs/"
+    }
+  },
+  "request": {
+    "base_url": "https://fapi.binance.com",
+    "endTime": 1782863999999,
+    "exact_url": "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&startTime=1780272000000&endTime=1782863999999&limit=1000",
+    "limit": 1000,
+    "period_end_utc": "2026-06-30T23:59:59.999Z",
+    "period_start_utc": "2026-06-01T00:00:00.000Z",
+    "query_parameters": {
+      "endTime": "1782863999999",
+      "limit": "1000",
+      "startTime": "1780272000000",
+      "symbol": "BTCUSDT"
+    },
+    "startTime": 1780272000000,
+    "symbol": "BTCUSDT"
+  },
+  "response": {
+    "acquisition_utc_timestamp": "2026-08-02T18:11:49.888Z",
+    "content_type": "application/json;charset=UTF-8",
+    "extra_fields_observed": [],
+    "fields_observed": [
+      "fundingRate",
+      "fundingTime",
+      "markPrice",
+      "rateType",
+      "symbol"
+    ],
+    "first_funding_time": 1780272000001,
+    "http_status": 200,
+    "last_funding_time": 1782835200005,
+    "raw_bytes": 11362,
+    "raw_sha256": "01d38d5b8c8581388621015a2bc618673cac1ff51ff88672aea52f9bdb31bafd",
+    "row_count": 90,
+    "safe_headers": {
+      "content-length": "11362",
+      "content-type": "application/json;charset=UTF-8",
+      "date": "Sun, 02 Aug 2026 18:11:50 GMT",
+      "server": "Tengine"
+    }
+  },
+  "selected_event": {
+    "claim_scope": "PUBLIC_FINALIZED_FUNDING_EVENT_ONLY",
+    "fixture_id": "BINANCE_PUBLIC_FUNDING_EVENT_FIXTURE_V0_BTCUSDT_2026_06_INDEX_0",
+    "fundingRate": "0.00005703",
+    "fundingTime": 1780272000001,
+    "fundingTimeUtc": "2026-06-01T00:00:00.001Z",
+    "markPrice": "73653.56663043",
+    "non_claims": [
+      "not an account receipt",
+      "not evidence of a real position",
+      "not evidence of wallet posting",
+      "not a strategy result",
+      "not evidence of execution",
+      "not evidence of solvency",
+      "not evidence of profitability"
+    ],
+    "rateType": "Regular",
+    "raw_response_sha256": "01d38d5b8c8581388621015a2bc618673cac1ff51ff88672aea52f9bdb31bafd",
+    "source_array_index": 0,
+    "symbol": "BTCUSDT"
+  },
+  "selection_rule": "Select the earliest row in ascending fundingTime order where symbol == BTCUSDT, rateType == Regular, markPrice > 0, and all required fields validate.",
+  "server_time": {
+    "acquired_at_utc": "2026-08-02T18:11:41.426Z",
+    "headers": {
+      "content-length": "28",
+      "content-type": "application/json",
+      "date": "Sun, 02 Aug 2026 18:11:41 GMT",
+      "server": "Tengine",
+      "x-mbx-used-weight-1m": "1",
+      "x-response-time": "0ms"
+    },
+    "raw_bytes": 28,
+    "raw_sha256": "8f5ae7814d9ee0577f192701ee458fe143585980c5d0b77f285f6ba5a42a7005",
+    "serverTime": 1785694301592,
+    "serverTimeUtc": "2026-08-02T18:11:41.592Z"
+  },
+  "source": {
+    "authentication": "NONE_PUBLIC_ENDPOINT",
+    "endpoint": "GET /fapi/v1/fundingRate",
+    "market": "USD-M Futures",
+    "provider": "Binance"
+  },
+  "task_id": "ACQUIRE_BINANCE_PUBLIC_FUNDING_EVENT_FIXTURE_V0",
+  "validation": {
+    "checks": [
+      "top-level JSON array",
+      "non-empty",
+      "row count <= 1000",
+      "required fields present",
+      "Decimal strings validated",
+      "UTC period bounds enforced",
+      "markPrice > 0",
+      "rateType Regular or Special",
+      "ascending fundingTime",
+      "no duplicate fundingTime",
+      "no duplicate complete event identity",
+      "events before Binance server time"
+    ],
+    "required_schema_valid": true,
+    "status": "REST_SCHEMA_VALID"
+  },
+  "verdict": "READY_FOR_PUBLIC_ECONOMIC_FIXTURE"
+}

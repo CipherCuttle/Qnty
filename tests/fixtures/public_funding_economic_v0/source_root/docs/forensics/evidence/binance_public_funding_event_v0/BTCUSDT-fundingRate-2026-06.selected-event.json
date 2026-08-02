@@ -1,0 +1,21 @@
+{
+  "claim_scope": "PUBLIC_FINALIZED_FUNDING_EVENT_ONLY",
+  "fixture_id": "BINANCE_PUBLIC_FUNDING_EVENT_FIXTURE_V0_BTCUSDT_2026_06_INDEX_0",
+  "fundingRate": "0.00005703",
+  "fundingTime": 1780272000001,
+  "fundingTimeUtc": "2026-06-01T00:00:00.001Z",
+  "markPrice": "73653.56663043",
+  "non_claims": [
+    "not an account receipt",
+    "not evidence of a real position",
+    "not evidence of wallet posting",
+    "not a strategy result",
+    "not evidence of execution",
+    "not evidence of solvency",
+    "not evidence of profitability"
+  ],
+  "rateType": "Regular",
+  "raw_response_sha256": "01d38d5b8c8581388621015a2bc618673cac1ff51ff88672aea52f9bdb31bafd",
+  "source_array_index": 0,
+  "symbol": "BTCUSDT"
+}

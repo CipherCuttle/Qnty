@@ -1,0 +1,506 @@
+{
+  "report_id": "REVIEW_PUBLIC_ECONOMIC_FIXTURE_CONTRACT_V0",
+  "generated_at_utc": "2026-08-02T18:30:27Z",
+  "repositories": {
+    "QntyLab": {
+      "root": "/home/swirky/DevHub/repos/QntyLab",
+      "branch": "master",
+      "starting_head": "72835944af9fb00b9729e9528adb3e949b77adda",
+      "remote": "origin https://github.com/CipherCuttle/QntyLab.git",
+      "pre_existing_tracked_wip": [
+        "data/manifests/BTCUSDT-perp-1h.json",
+        "data/manifests/ETHUSDT-perp-1h.json",
+        "data/manifests/SOLUSDT-perp-1h.json"
+      ],
+      "pre_existing_untracked_scope": "data/manifests/*.json, experiments/results/sprint_v2_results.json, experiments/runs/*, logs/"
+    },
+    "QNTY": {
+      "root": "/home/swirky/DevHub/repos/Qnty",
+      "branch": "chore/external-trust-root-dispatcher-repair-v046",
+      "head": "8ebe61bdecd2d72239cf8d0618df87d6e1171c5a",
+      "pre_existing_untracked": [
+        "plans/",
+        "qnty_ruleset_rollout.sh"
+      ],
+      "write_policy": "READ_ONLY_UNCHANGED"
+    }
+  },
+  "source_fixture": {
+    "directory": "docs/forensics/evidence/binance_public_funding_event_v0",
+    "raw_path": "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.raw.json",
+    "selected_event_path": "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.selected-event.json",
+    "receipt_path": "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.receipt.json",
+    "archive_checksum_path": "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.archive.CHECKSUM",
+    "raw_sha256": "01d38d5b8c8581388621015a2bc618673cac1ff51ff88672aea52f9bdb31bafd",
+    "selected_event_sha256": "fcc0682d5a30976d860fbbefaf415b0e0c0d0585835a4a8ef089acd9c5376b59",
+    "receipt_sha256": "456e7918e3d9c7caeee67a8bde729867cbe0143f2002e7496ef5234382278c1c",
+    "archive_checksum_sha256": "b16df2145a1acd03de19335dcd416e3f9dd85d4dd252ce8a60b205668d23f4a4",
+    "selected_event": {
+      "symbol": "BTCUSDT",
+      "fundingTime": 1780272000001,
+      "fundingTimeUtc": "2026-06-01T00:00:00.001Z",
+      "fundingRate": "0.00005703",
+      "markPrice": "73653.56663043",
+      "rateType": "Regular",
+      "source_array_index": 0
+    },
+    "integrity_status": "VERIFIED"
+  },
+  "official_semantics": {
+    "sources": [
+      "https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data",
+      "https://www.binance.com/en/support/faq/detail/360033525031",
+      "https://developers.binance.com/en/docs/products/derivatives-trading-portfolio-margin/common-definition",
+      "https://fapi.binance.com/fapi/v1/exchangeInfo?symbol=BTCUSDT",
+      "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&startTime=1780272000001&endTime=1780272000001&limit=1"
+    ],
+    "rules": [
+      {
+        "rule": "fundingRate is the public funding rate field returned by USD-M futures funding-rate history",
+        "classification": "OFFICIAL_AND_LOAD_BEARING"
+      },
+      {
+        "rule": "fundingTime is the funding event timestamp returned by the public funding-rate endpoint",
+        "classification": "OFFICIAL_AND_LOAD_BEARING"
+      },
+      {
+        "rule": "markPrice is the mark price associated with the funding fee charge in the public funding-rate response",
+        "classification": "OFFICIAL_AND_LOAD_BEARING"
+      },
+      {
+        "rule": "funding amount equals nominal value of position multiplied by funding rate",
+        "classification": "OFFICIAL_AND_LOAD_BEARING"
+      },
+      {
+        "rule": "nominal value equals mark price multiplied by contract size",
+        "classification": "OFFICIAL_AND_LOAD_BEARING"
+      },
+      {
+        "rule": "positive funding rate means long-position holders pay short-position holders; negative reverses direction",
+        "classification": "OFFICIAL_AND_LOAD_BEARING"
+      },
+      {
+        "rule": "rateType is preserved as an identity and validation field; no separate Regular arithmetic branch is established by the public fixture",
+        "classification": "PROPOSED_CONTRACT_RULE"
+      },
+      {
+        "rule": "account posting precision, wallet rounding, real position snapshot timing, and account income reconciliation require private/account evidence",
+        "classification": "UNRESOLVED"
+      }
+    ]
+  },
+  "product_semantics": {
+    "venue": {
+      "value": "Binance",
+      "classification": "HISTORICALLY_PINNED_FOR_EVENT"
+    },
+    "market_type": {
+      "value": "USD-M Futures",
+      "classification": "HISTORICALLY_PINNED_FOR_EVENT"
+    },
+    "contract_type": {
+      "value": "PERPETUAL",
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "symbol": {
+      "value": "BTCUSDT",
+      "classification": "HISTORICALLY_PINNED_FOR_EVENT"
+    },
+    "base_asset": {
+      "value": "BTC",
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "quote_asset": {
+      "value": "USDT",
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "margin_asset": {
+      "value": "USDT",
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "settlement_asset": {
+      "value": "USDT",
+      "classification": "INFERRED"
+    },
+    "quantity_unit": {
+      "value": "BTC base asset units",
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "price_unit": {
+      "value": "USDT per BTC",
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "notional_unit": {
+      "value": "USDT",
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "contract_multiplier": {
+      "value": "1",
+      "classification": "INFERRED"
+    },
+    "quantity_precision": {
+      "value": 3,
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "price_precision": {
+      "value": 2,
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "settlement_amount_precision": {
+      "value": null,
+      "classification": "UNRESOLVED"
+    },
+    "minimum_quantity": {
+      "value": "0.001",
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "step_size": {
+      "value": "0.001",
+      "classification": "CURRENT_OFFICIAL_ONLY"
+    },
+    "historical_trade_eligibility_required": false
+  },
+  "qnty_existing_capacity": {
+    "summary": "QNTY has reusable receipt, hashing, funding-source snapshot, append-only SQLite writer, and verifier patterns, but current paper accounting is long-only, fixed-notional, REAL/float based, and not a Decimal arithmetic authority for this fixture.",
+    "answers": [
+      {
+        "question": "position_sign_convention",
+        "file_path": "quantbot/paper/engine.py",
+        "symbol": "run_engine open_positions qty",
+        "test_path": "tests/test_paper_pnl.py::test_long_only_invariant",
+        "current_behavior": "Entries are BUY, exits are SELL, open qty is positive, and short positions are absent in the v1 paper path.",
+        "limitation": "No native signed quantity for public long/short reconstruction.",
+        "classification": "ADAPT_WITH_WRAPPER",
+        "confidence": "HIGH"
+      },
+      {
+        "question": "signed_quantity_vs_absolute_notional",
+        "file_path": "quantbot/paper/engine.py",
+        "symbol": "notional_at = pos['qty'] * mark",
+        "test_path": "tests/test_paper_pnl.py::test_round_trip_fill_and_pnl",
+        "current_behavior": "QNTY stores positive qty and calculates absolute notional for long-only paper positions.",
+        "limitation": "Signed quantity must be added as a separate fixture input, not inferred from existing paper qty.",
+        "classification": "NEW_ADDITIVE_CONTRACT",
+        "confidence": "HIGH"
+      },
+      {
+        "question": "paper_funding_calculation",
+        "file_path": "quantbot/paper/engine.py",
+        "symbol": "amount = notional_at * rate",
+        "test_path": "tests/test_paper_pnl.py::test_funding_gap_flagged_not_silently_zeroed",
+        "current_behavior": "Funding rates in the held interval are summed; amount is notional times summed rate; positive values increase funding_cum and are subtracted from equity.",
+        "limitation": "This is a v1 simulation convention using OHLCV close marks, not the public funding-event markPrice field.",
+        "classification": "ADAPT_WITH_WRAPPER",
+        "confidence": "HIGH"
+      },
+      {
+        "question": "numeric_representation",
+        "file_path": "quantbot/paper/engine.py",
+        "symbol": "_round8, float(row['fundingRate'])",
+        "test_path": "tests/test_paper_netpnl_canonicalization.py",
+        "current_behavior": "Current paper ledgers use Python float and SQLite REAL with rounded persisted money fields.",
+        "limitation": "Cannot be the deterministic Decimal authority for exact source-string reconstruction.",
+        "classification": "NEW_ADDITIVE_CONTRACT",
+        "confidence": "HIGH"
+      },
+      {
+        "question": "rounding_or_quantization",
+        "file_path": "quantbot/paper/engine.py",
+        "symbol": "round(amount, 8)",
+        "test_path": "tests/test_paper_pnl.py",
+        "current_behavior": "Paper funding_amount is rounded to 8 decimals; funding_rate is rounded to 12 decimals.",
+        "limitation": "The public fixture supports exact unrounded Decimal economics only, not Binance account-posted rounding.",
+        "classification": "DO_NOT_REUSE",
+        "confidence": "HIGH"
+      },
+      {
+        "question": "account_balance_posting",
+        "file_path": "quantbot/paper/db.py",
+        "symbol": "ledger_state funding_cum, equity_snapshots equity",
+        "test_path": "tests/test_paper_sqlite.py; tests/test_paper_sqlite_writer.py",
+        "current_behavior": "Paper funding is accumulated and subtracted from simulated equity.",
+        "limitation": "No real wallet balance or Binance income posting is represented.",
+        "classification": "DO_NOT_REUSE",
+        "confidence": "HIGH"
+      },
+      {
+        "question": "duplicate_prevention",
+        "file_path": "quantbot/paper/db.py",
+        "symbol": "UNIQUE(event_type, event_key)",
+        "test_path": "tests/test_paper_pnl.py::test_idempotent_rerun_identical_digests",
+        "current_behavior": "Append-only ledger events enforce unique event identity; JSONL path also derives stable ids.",
+        "limitation": "A fixture-specific idempotency identity must include event hash plus synthetic signed quantity and contract id.",
+        "classification": "EXTEND_EXISTING",
+        "confidence": "HIGH"
+      },
+      {
+        "question": "row_or_receipt_reuse",
+        "file_path": "quantbot/core/receipts.py; quantbot/paper/funding_source_snapshot.py",
+        "symbol": "TrialReceipt; canonical_json; sha256_text",
+        "test_path": "tests/test_receipt_schema.py; tests/test_funding_source_snapshot_schema.py",
+        "current_behavior": "QNTY has simple receipt models and canonical JSON/hash helpers for additive evidence.",
+        "limitation": "Existing TrialReceipt is strategy-trial shaped and should not be reused as the economic fixture receipt type.",
+        "classification": "EXTEND_EXISTING",
+        "confidence": "MEDIUM"
+      },
+      {
+        "question": "meaning_of_existing_paper_results",
+        "file_path": "docs/paper_pnl_v1_schema.md; docs/ADR/0001-paper-sqlite-ledger.md",
+        "symbol": "paper_pnl_v1",
+        "test_path": "tests/test_paper_pnl.py; tests/test_paper_sqlite_verify.py",
+        "current_behavior": "Existing paper results remain fixed-notional active-symbol simulations with explicit non-live claims.",
+        "limitation": "The new fixture must be one additive artifact and must not reinterpret existing paper runs.",
+        "classification": "REUSE_UNCHANGED",
+        "confidence": "HIGH"
+      },
+      {
+        "question": "extension_safety",
+        "file_path": "quantbot/paper/db.py; quantbot/paper/sqlite_writer.py; quantbot/paper/sqlite_verify.py",
+        "symbol": "append-only ledgers; read-only verifier",
+        "test_path": "tests/test_paper_sqlite_verify.py; tests/test_paper_sqlite_writer.py",
+        "current_behavior": "QNTY already has a transactional/additive evidence architecture and read-only verifier pattern.",
+        "limitation": "Implement as a separate Decimal fixture receipt, not as mutation of paper funding tables.",
+        "classification": "EXTEND_EXISTING",
+        "confidence": "HIGH"
+      }
+    ]
+  },
+  "duplicate_build_analysis": {
+    "classification": "ONE_ADDITIVE_QNTY_FIXTURE",
+    "reuse": [
+      "canonical JSON hashing patterns",
+      "append-only identity discipline",
+      "read-only verifier pattern",
+      "funding-source snapshot provenance conventions"
+    ],
+    "reject": [
+      "new repository",
+      "shared executable package",
+      "new general ledger",
+      "spot leg",
+      "two-leg execution engine",
+      "capital ledger",
+      "SOFR adapter",
+      "margin engine",
+      "liquidation engine",
+      "ADL model",
+      "historical rule registry",
+      "carry candidate",
+      "carry backtest"
+    ]
+  },
+  "quantity_policy": {
+    "selected": "B_EXACTLY_0.001_BTC",
+    "signed_position_quantity": "0.001",
+    "quantity_unit": "BTC",
+    "rationale": "BTCUSDT quantity is currently documented in BTC base units; 0.001 is exactly representable under Decimal and current quantityPrecision/stepSize; no historical executability claim is made.",
+    "alternatives": {
+      "A_EXACTLY_1_BTC": "Clear but too easily mistaken as a large real position.",
+      "C_SMALLEST_CURRENT_INCREMENT": "Matches current step size but would overemphasize current executable-order metadata.",
+      "D_SYMBOLIC_Q_ONLY": "Avoids eligibility ambiguity but weakens deterministic golden-vector readability."
+    }
+  },
+  "sign_convention": {
+    "status": "SIGN_CONVENTION_CONFIRMED",
+    "signed_position_quantity_positive": "LONG",
+    "signed_position_quantity_negative": "SHORT",
+    "positive_funding_rate": "LONG_PAYS_SHORT_RECEIVES",
+    "negative_funding_rate": "SHORT_PAYS_LONG_RECEIVES",
+    "transfer_formula": "-signed_position_quantity * funding_mark_price * finalized_funding_rate * contract_multiplier",
+    "positive_transfer": "hypothetical account receives funding",
+    "negative_transfer": "hypothetical account pays funding"
+  },
+  "numeric_policy": {
+    "representation": "Python decimal.Decimal from source decimal strings",
+    "context_precision": 50,
+    "binary_float_allowed": false,
+    "scientific_notation_conversion_allowed": false,
+    "status": "EXACT_DECIMAL_ECONOMIC_AMOUNT",
+    "qnty_current_numeric_model": "float/SQLite REAL in paper path; viable only with a new additive Decimal fixture path"
+  },
+  "precision_policy": {
+    "exact_mathematical_economic_amount": "SUPPORTED",
+    "hypothetical_quantized_amount": "UNRESOLVED_NOT_INCLUDED",
+    "authentic_binance_account_posted_amount": "ACCOUNT_POSTING_NOT_APPLICABLE_NO_REAL_POSITION",
+    "statuses": [
+      "EXACT_DECIMAL_ECONOMIC_AMOUNT",
+      "QUANTIZED_HYPOTHETICAL_AMOUNT_UNRESOLVED",
+      "ACCOUNT_POSTING_NOT_APPLICABLE"
+    ]
+  },
+  "golden_vectors": [
+    {
+      "vector_id": "VECTOR_LONG_POSITIVE_RATE",
+      "signed_position_quantity": "0.001",
+      "funding_mark_price": "73653.56663043",
+      "funding_rate": "0.00005703",
+      "contract_multiplier": "1",
+      "calculated_notional": "73.65356663043",
+      "calculated_transfer": "-0.0042004629049334229",
+      "expected_direction": "PAYS"
+    },
+    {
+      "vector_id": "VECTOR_SHORT_POSITIVE_RATE",
+      "signed_position_quantity": "-0.001",
+      "funding_mark_price": "73653.56663043",
+      "funding_rate": "0.00005703",
+      "contract_multiplier": "1",
+      "calculated_notional": "73.65356663043",
+      "calculated_transfer": "0.0042004629049334229",
+      "expected_direction": "RECEIVES"
+    },
+    {
+      "vector_id": "VECTOR_ZERO_QUANTITY",
+      "signed_position_quantity": "0",
+      "funding_mark_price": "73653.56663043",
+      "funding_rate": "0.00005703",
+      "contract_multiplier": "1",
+      "calculated_notional": "0",
+      "calculated_transfer": "0",
+      "expected_direction": "NONE"
+    }
+  ],
+  "failure_states": {
+    "SOURCE_FIXTURE_MISSING": "REFUTED",
+    "SOURCE_HASH_MISMATCH": "REFUTED",
+    "SOURCE_EVENT_NOT_FOUND": "REFUTED",
+    "EVENT_IDENTITY_MISMATCH": "REFUTED",
+    "SYMBOL_MISMATCH": "REFUTED",
+    "MARK_PRICE_MISSING": "REFUTED",
+    "MARK_PRICE_NON_POSITIVE": "REFUTED",
+    "FUNDING_RATE_INVALID": "REFUTED",
+    "FUNDING_TIME_INVALID": "REFUTED",
+    "RATE_TYPE_INVALID": "REFUTED",
+    "QUANTITY_INVALID": "REFUTED",
+    "QUANTITY_UNIT_UNRESOLVED": "REFUTED",
+    "CONTRACT_MULTIPLIER_UNRESOLVED": "REFUTED",
+    "SIGN_CONVENTION_UNRESOLVED": "REFUTED",
+    "NUMERIC_POLICY_VIOLATION": "REFUTED",
+    "PRECISION_RULE_UNRESOLVED": "UNRESOLVED_FOR_QUANTIZED_OR_ACCOUNT_POSTING_ONLY",
+    "ACCOUNT_POSTING_NOT_APPLICABLE": "NOT_APPLICABLE_FOR_PUBLIC_ECONOMIC_RECONSTRUCTION",
+    "DUPLICATE_APPLICATION": "REFUTED_BY_REQUIRED_IDEMPOTENCY_IDENTITY",
+    "QNTY_EXTENSION_BOUNDARY_UNSAFE": "REFUTED"
+  },
+  "contract": {
+    "contract_id": "PUBLIC_ECONOMIC_FIXTURE_CONTRACT_V0",
+    "contract_version": "0.1.0",
+    "claim_scope": "HYPOTHETICAL_PUBLIC_FUNDING_ECONOMIC_RECONSTRUCTION_ONLY",
+    "source_event_identity": {
+      "venue": "Binance",
+      "market": "USD-M Futures",
+      "symbol": "BTCUSDT",
+      "fundingTime": 1780272000001,
+      "fundingTimeUtc": "2026-06-01T00:00:00.001Z",
+      "source_array_index": 0,
+      "selected_event_sha256": "fcc0682d5a30976d860fbbefaf415b0e0c0d0585835a4a8ef089acd9c5376b59"
+    },
+    "source_raw_sha256": "01d38d5b8c8581388621015a2bc618673cac1ff51ff88672aea52f9bdb31bafd",
+    "source_receipt_sha256": "456e7918e3d9c7caeee67a8bde729867cbe0143f2002e7496ef5234382278c1c",
+    "venue": "Binance",
+    "market": "USD-M Futures",
+    "symbol": "BTCUSDT",
+    "funding_time": 1780272000001,
+    "funding_time_utc": "2026-06-01T00:00:00.001Z",
+    "funding_rate": "0.00005703",
+    "funding_mark_price": "73653.56663043",
+    "rate_type": "Regular",
+    "quantity_policy": "SYNTHETIC_EXAMPLE_Q_0.001_BTC_NOT_EXECUTABILITY_CLAIM",
+    "signed_position_quantity": "0.001",
+    "quantity_unit": "BTC",
+    "contract_multiplier": "1",
+    "notional_formula": "abs(signed_position_quantity) * funding_mark_price * contract_multiplier",
+    "transfer_formula": "-signed_position_quantity * funding_mark_price * finalized_funding_rate * contract_multiplier",
+    "sign_convention": "positive signed quantity is long; negative signed quantity is short; positive transfer receives; negative transfer pays",
+    "numeric_policy": "Decimal strings, context precision 50, no binary float",
+    "precision_policy": "unrounded exact Decimal economic amount only; no Binance account rounding claim",
+    "calculated_notional": "73.65356663043",
+    "calculated_transfer": "-0.0042004629049334229",
+    "transfer_direction": "PAYS",
+    "evidence_level": "AUTHORITATIVE_PUBLIC_EVENT_PLUS_SYNTHETIC_POSITION",
+    "account_status": "ACCOUNT_POSTING_NOT_APPLICABLE_NO_REAL_POSITION",
+    "non_claims": [
+      "not an account receipt",
+      "not a real wallet posting",
+      "not a real position",
+      "not a real trade",
+      "not evidence of execution",
+      "not evidence of a spot hedge",
+      "not evidence of capital efficiency",
+      "not evidence of margin survival",
+      "not evidence of liquidation survival",
+      "not evidence about ADL",
+      "not evidence of profitability",
+      "not evidence of alpha",
+      "not a strategy trial",
+      "not a research candidate"
+    ],
+    "failure_reasons": [
+      "SOURCE_FIXTURE_MISSING",
+      "SOURCE_HASH_MISMATCH",
+      "SOURCE_EVENT_NOT_FOUND",
+      "EVENT_IDENTITY_MISMATCH",
+      "SYMBOL_MISMATCH",
+      "MARK_PRICE_MISSING",
+      "MARK_PRICE_NON_POSITIVE",
+      "FUNDING_RATE_INVALID",
+      "FUNDING_TIME_INVALID",
+      "RATE_TYPE_INVALID",
+      "QUANTITY_INVALID",
+      "QUANTITY_UNIT_UNRESOLVED",
+      "CONTRACT_MULTIPLIER_UNRESOLVED",
+      "SIGN_CONVENTION_UNRESOLVED",
+      "NUMERIC_POLICY_VIOLATION",
+      "PRECISION_RULE_UNRESOLVED",
+      "ACCOUNT_POSTING_NOT_APPLICABLE",
+      "DUPLICATE_APPLICATION",
+      "QNTY_EXTENSION_BOUNDARY_UNSAFE"
+    ],
+    "determinism_requirements": [
+      "verify raw, selected-event, and receipt SHA-256 before arithmetic",
+      "parse source decimal fields from strings into Decimal",
+      "use explicit Decimal context precision 50 or greater",
+      "reject binary float arithmetic",
+      "recompute golden vectors exactly",
+      "require exact idempotency identity before emitting any future receipt"
+    ],
+    "idempotency_identity": "sha256(contract_id|contract_version|source_raw_sha256|selected_event_sha256|symbol|fundingTime|rateType|signed_position_quantity|quantity_unit|contract_multiplier|numeric_policy)",
+    "implementation_owner": "QNTY",
+    "research_state_policy": "DO_NOT_REGISTER_AS_CANDIDATE_TRIAL_OR_DECISION"
+  },
+  "implementation_boundary": {
+    "status": "READY_FOR_ONE_ADDITIVE_QNTY_FIXTURE",
+    "classification": "ONE_ADDITIVE_QNTY_FIXTURE",
+    "QNTY": [
+      "consume or reference the existing public event fixture",
+      "accept a synthetic signed quantity",
+      "compute deterministic Decimal notional and transfer",
+      "emit one additive economic reconstruction receipt",
+      "verify source identity, sign, arithmetic, and idempotency"
+    ],
+    "QntyLab": [
+      "preserve the public source fixture",
+      "preserve these contract-review reports",
+      "perform no strategy or trial action"
+    ]
+  },
+  "falsification": {
+    "dimensional_attack": "REFUTED: BTC * USDT/BTC * dimensionless rate * 1 resolves to USDT settlement economics.",
+    "sign_attack": "REFUTED: positive rate makes +q transfer negative and -q transfer positive.",
+    "precision_attack": "REFUTED_FOR_EXACT_AMOUNT: Decimal string policy avoids binary float and no quantized/account amount is claimed.",
+    "product_attack": "REFUTED_WITH_BOUNDARY: quantity is BTC base units under current official metadata; no historical order eligibility claim.",
+    "historical_semantics_attack": "REFUTED_WITH_BOUNDARY: current exchangeInfo is explicitly current-official, not historically effective.",
+    "provenance_attack": "REFUTED: raw or selected-event hash mutation invalidates contract.",
+    "idempotency_attack": "REFUTED_BY_REQUIRED_IDENTITY",
+    "scope_attack": "REFUTED_BY_NON_CLAIMS",
+    "architecture_attack": "REFUTED_BY_ONE_ADDITIVE_QNTY_FIXTURE",
+    "research_governance_attack": "REFUTED_BY_RESEARCH_STATE_POLICY"
+  },
+  "unresolved_questions": [
+    "Historical BTCUSDT order filters exactly effective at 2026-06-01T00:00:00.001Z are not pinned and are not required for the bounded calculation.",
+    "Binance account-side funding posting precision and wallet rounding are unresolved and out of scope without authenticated account evidence.",
+    "Whether rateType has future non-Regular arithmetic branches is unresolved; this contract accepts only Regular for this fixture."
+  ],
+  "implementation_gate": "READY_FOR_ONE_ADDITIVE_QNTY_FIXTURE",
+  "verdict": "PUBLIC_ECONOMIC_FIXTURE_CONTRACT_V0_REVIEWED",
+  "next_action": "IMPLEMENT_PUBLIC_ECONOMIC_FIXTURE_V0"
+}
