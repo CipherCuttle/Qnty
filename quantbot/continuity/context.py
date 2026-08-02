@@ -1131,6 +1131,8 @@ def _active_keys_for_phase(phase: str) -> set:
         return _OPERATOR_GOVERNANCE_DECISION_ACTIVE_KEYS
     if phase == _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PASSED_PHASE:
         return _OPERATOR_GOVERNANCE_DECISION_REVIEW_ACTIVE_KEYS
+    if phase == _H001_C2_RESOLUTION_CANDIDATE_CONSTRUCTED_PHASE:
+        return _H001_C2_RESOLUTION_CANDIDATE_CONSTRUCTED_ACTIVE_KEYS
     return _BASE_ACTIVE_KEYS
 
 
@@ -5926,3 +5928,383 @@ def _validate_predecessor_chain(parsed, root, receipt_relpath):
         _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
     )
 # END H001 OPERATOR GOVERNANCE DECISION HOSTILE REVIEW PASS V049 APPEND
+
+# BEGIN H001 C2 RESOLUTION REQUIREMENTS CANDIDATE V050 APPEND
+_H001_C2_RESOLUTION_CANDIDATE_CONSTRUCTED_PHASE = (
+    "candidate1_h001_c2_resolution_candidate_constructed_pending_independent_review"
+)
+_H001_C2_RESOLUTION_CANDIDATE_NEXT_ACTION = "FRESH_HOSTILE_REVIEW_OF_H001_C2_RESOLUTION_CANDIDATE"
+_H001_C2_RESOLUTION_CANDIDATE_RELPATH = (
+    "docs/assurance/candidate1_h001_c2_resolution_requirements_candidate_v001.json"
+)
+_H001_C2_RESOLUTION_CANDIDATE_SHA256 = (
+    "0f8057c04fba0dd5b22c49f0bc992778dfe33ae003a470babd93da2e936d6f8f"
+)
+_H001_C2_RESOLUTION_CANDIDATE_HANDOFF_RELPATH = (
+    f"docs/control/tasks/{TASK_ID}/handoff_v050.json"
+)
+_H001_C2_RESOLUTION_CANDIDATE_CONSTRUCTED_ACTIVE_KEYS = _OPERATOR_GOVERNANCE_DECISION_REVIEW_ACTIVE_KEYS | {
+    "h001_c2_resolution_candidate_record_path",
+    "h001_c2_resolution_candidate_record_sha256",
+}
+_H001_C2_RESOLUTION_CANDIDATE_BOUNDARY_RULES = [
+    "funding_time_utc < bar_open",
+    "funding_time_utc <= bar_open",
+]
+_H001_C2_RESOLUTION_REQUIRED_ELEMENTS = [
+    "source_identity",
+    "artifact_identity",
+    "availability",
+    "independent_verification",
+    "authority_to_rely_on_provenance",
+]
+_H001_C2_RESOLUTION_CANDIDATE_PREDECESSOR_BINDINGS = {
+    "current_handoff": {
+        "path": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_HANDOFF_RELPATH,
+        "sha256": "f975a354ac6d3902a910e1053928089bc9b961b338b8ea1166d7254d9f4e3938",
+    },
+    "operator_governance_decision": {
+        "path": _H001_OPERATOR_GOVERNANCE_DECISION_RELPATH,
+        "sha256": _H001_OPERATOR_GOVERNANCE_DECISION_SHA256,
+    },
+    "operator_governance_decision_hostile_review": {
+        "path": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_RELPATH,
+        "sha256": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_SHA256,
+    },
+}
+_H001_C2_RESOLUTION_CANDIDATE_BOUNDARY = {
+    "candidate_boundary_rules_under_consideration": _H001_C2_RESOLUTION_CANDIDATE_BOUNDARY_RULES,
+    "prohibited_selection_bases": [
+        "PnL",
+        "returns",
+        "Sharpe ratio",
+        "activation counts selected for attractiveness",
+        "funding attribution selected for attractiveness",
+        "which choice makes H001 perform better",
+        "protected H001 outcomes",
+    ],
+    "required_selection_bases": [
+        "causal/event-time semantics",
+        "source timestamps",
+        "exchange mechanics",
+        "predeclared treatment of equal timestamps",
+    ],
+    "selected_boundary_rule": "NONE_SELECTED",
+    "selection_authority": "FUTURE_INDEPENDENTLY_REVIEWED_OPERATOR_AUTHORIZED_GOVERNANCE_TRANSITION_ONLY",
+    "selection_authority_excludes_this_candidate": True,
+}
+_H001_C2_RESOLUTION_CANDIDATE_REQUIREMENTS = {
+    "artifact_identity": {
+        "requirement": "Artifact identity must resolve through docs/artifacts/ Git-owned artifact records, never from a local path, a hash alone, or chat/session history.",
+        "bound_artifact_id": REQUIRED_ARTIFACT_ID,
+        "bound_expected_manifest_sha256": REQUIRED_ARTIFACT_MANIFEST_SHA256,
+        "hash_match_alone_is_insufficient": True,
+    },
+    "authority_to_rely_on_provenance": {
+        "requirement": "No agent, review pass, or continuity-verifier run may itself grant authority to rely on provenance; only a future explicit operator-authorized governance transition, occurring after independent verification, can.",
+        "granted_by_this_candidate": False,
+        "self_granting_forbidden": True,
+    },
+    "availability": {
+        "requirement": "VERIFIED_AVAILABLE requires at least two independently restored durable copies at unique canonical paths outside /tmp and /srv/qnty; a fingerprint does not prove a durable copy exists.",
+        "current_state": "UNAVAILABLE",
+        "current_verified_copy_count": 0,
+    },
+    "contamination_risk": {
+        "current_state": "NOT_PROVEN_NOT_DISPROVEN",
+        "prohibited_treatment": [
+            "TREAT_CONTAMINATION_AS_PROVEN",
+            "TREAT_NON_EXPOSURE_AS_PROVEN",
+            "TREAT_ABSENCE_OF_PROOF_OF_CONTAMINATION_AS_PROOF_OF_NON_EXPOSURE",
+        ],
+    },
+    "historical_provenance_claims": {
+        "current_status": "UNVERIFIABLE_WHILE_V0_UNAVAILABLE",
+        "definition": "Claims about how the frozen candidate1-real-input-v0 historical funding/bar data was originally sourced, timestamped, and attributed.",
+        "prohibited_treatment": [
+            "TREAT_UNAVAILABILITY_AS_CONTAMINATION_PROOF",
+            "TREAT_UNAVAILABILITY_AS_NON_EXPOSURE_PROOF",
+            "TREAT_HISTORICAL_CLAIM_AS_PROSPECTIVE_REQUIREMENT_SUBSTITUTE",
+            "TREAT_HISTORICAL_CLAIM_AS_C2_RESOLUTION",
+        ],
+    },
+    "independent_verification": {
+        "candidate_local_digest_or_canonicalization_is_not_verification": True,
+        "requirement": "A reviewer external to the session that constructed the candidate or the artifact must independently confirm source identity, artifact identity, and availability against docs/artifacts/ records.",
+        "reviewer_independence_required": "EXTERNAL_TO_RECORDING_SESSION",
+    },
+    "operator_disclosure": {
+        "bound_disclosure_record": {
+            "path": _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH,
+            "sha256": _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+        },
+        "prohibited_treatment": [
+            "TREAT_OPERATOR_DISCLOSURE_AS_C2_RESOLUTION",
+            "TREAT_OPERATOR_DISCLOSURE_AS_BLINDNESS_PROOF",
+            "TREAT_OPERATOR_DISCLOSURE_AS_CONTAMINATION_PROOF",
+        ],
+        "role": "GOVERNANCE_INPUT_ONLY_NOT_A_PROVENANCE_FINDING",
+    },
+    "prospective_provenance_requirements": {
+        "definition": "What any future recovered-V0 copy or genuinely fresh forward data acquisition must independently demonstrate before it may be treated as C2-resolving.",
+        "must_be_satisfied_before_confirmation": True,
+        "required_elements": _H001_C2_RESOLUTION_REQUIRED_ELEMENTS,
+    },
+    "source_identity": {
+        "requirement": "The exchange/venue/feed identity of the funding and bar data must be independently named and traceable, not merely asserted by whoever constructs or reviews a candidate.",
+        "self_assertion_by_candidate_author_forbidden": True,
+    },
+}
+_H001_C2_RESOLUTION_CANDIDATE_AUTHORITY = dict(
+    _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_AUTHORITY,
+    operator_decision_review_completed=True,
+    operator_decision_review_passed=True,
+)
+_H001_C2_RESOLUTION_CANDIDATE_NON_EFFECTS = [
+    "DOES_NOT_RESOLVE_C2",
+    "DOES_NOT_SELECT_BOUNDARY",
+    "DOES_NOT_MAKE_CANDIDATE_EFFECTIVE",
+    "DOES_NOT_AUTHORIZE_SCIENCE",
+    "DOES_NOT_AUTHORIZE_ACTIVATION",
+    "DOES_NOT_AUTHORIZE_IMPLEMENTATION",
+    "DOES_NOT_AUTHORIZE_DATA_ACCESS",
+    "DOES_NOT_AUTHORIZE_EXECUTION",
+    "DOES_NOT_AUTHORIZE_HOLDOUT",
+    "DOES_NOT_AUTHORIZE_PAPER_TRADING",
+    "DOES_NOT_AUTHORIZE_LIVE_TRADING",
+    "DOES_NOT_RELEASE_DISPATCHER",
+    "DOES_NOT_REGISTER_TRUST_ROOT",
+    "DOES_NOT_CLAIM_OUTCOME_BLINDNESS",
+    "DOES_NOT_CLAIM_CONFIRMED_CONTAMINATION",
+    "DOES_NOT_CLAIM_PROVEN_NON_EXPOSURE",
+    "DOES_NOT_CLAIM_ECONOMIC_EDGE",
+    "DOES_NOT_TREAT_V0_UNAVAILABILITY_AS_FAVORABLE_PROVENANCE_CONCLUSION",
+    "DOES_NOT_MARK_CANDIDATE1_REAL_INPUT_V0_AVAILABLE",
+    "DOES_NOT_MODIFY_H001_SOURCE_CONTRACT",
+    "DOES_NOT_MODIFY_TEMPORAL_JOIN_CONTRACT",
+    "DOES_NOT_ADOPT_THIRD_PARTY_PROVENANCE_SOURCE",
+    "DOES_NOT_TREAT_ITS_OWN_EXISTENCE_AS_EVIDENCE_OF_ANYTHING",
+    "DOES_NOT_TREAT_HISTORICAL_EXPLORATORY_MATERIAL_AS_FRESH_CONFIRMATORY_EVIDENCE",
+]
+_H001_C2_RESOLUTION_CANDIDATE_PROTECTED_HASHES = {
+    "v046_disclosure": _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+    "v046_handoff": "13ed0644ca3f43fc9e1223627f8cb67518602d94c5bb0e9cbaa57125db9a340f",
+    "v047_disclosure_review": _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256,
+    "v047_handoff": "e82eefad6e05c0ef1487c36cf4a8c4976de6c9025c87ff3728ba9bd490f2209d",
+    "v048_governance_decision": _H001_OPERATOR_GOVERNANCE_DECISION_SHA256,
+    "v048_handoff": "4c5a192fb5f393891ea53482624a45b2a7461bb7e82331476a049226ed97ae1e",
+    "v049_governance_decision_review": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_SHA256,
+    "v049_handoff": "f975a354ac6d3902a910e1053928089bc9b961b338b8ea1166d7254d9f4e3938",
+}
+_H001_C2_RESOLUTION_CANDIDATE_CURRENT_FILES = [
+    "quantbot/continuity/context.py",
+    "tests/continuity/test_cross_agent_continuity.py",
+    "tests/continuity/test_h001_c1_v044_continuity_repair_review_record.py",
+    "tests/continuity/test_h001_c1_v044_review_record_phase_repair.py",
+    "tests/continuity/test_h001_operator_exposure_disclosure_v046.py",
+    "tests/continuity/test_h001_operator_exposure_disclosure_review_record_v047.py",
+    "tests/continuity/test_h001_operator_governance_decision_v048.py",
+    "tests/continuity/test_h001_operator_governance_decision_review_record_v049.py",
+    "tests/continuity/test_h001_c2_resolution_candidate_v050.py",
+]
+_H001_C2_RESOLUTION_CANDIDATE_SCOPE = [
+    _H001_C2_RESOLUTION_CANDIDATE_RELPATH,
+    _H001_C2_RESOLUTION_CANDIDATE_HANDOFF_RELPATH,
+    ACTIVE_TASK_RELPATH,
+    *_H001_C2_RESOLUTION_CANDIDATE_CURRENT_FILES,
+]
+
+
+def _validate_h001_c2_resolution_candidate(active: dict, root: Path) -> dict:
+    if active["operator_governance_decision_review_record_path"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_RELPATH:
+        _fail("H001 C2 resolution candidate governance-decision-review path is wrong")
+    if active["operator_governance_decision_review_record_sha256"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_SHA256:
+        _fail("H001 C2 resolution candidate governance-decision-review sha256 is wrong")
+    if active["h001_c2_resolution_candidate_record_path"] != _H001_C2_RESOLUTION_CANDIDATE_RELPATH:
+        _fail("H001 C2 resolution candidate record path is wrong")
+    if active["h001_c2_resolution_candidate_record_sha256"] != _H001_C2_RESOLUTION_CANDIDATE_SHA256:
+        _fail("H001 C2 resolution candidate record sha256 is wrong")
+    _validate_h001_operator_governance_decision_review_record(active, root)
+    path = root / active["h001_c2_resolution_candidate_record_path"]
+    if not path.is_file():
+        _fail("H001 C2 resolution candidate record is missing")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != active["h001_c2_resolution_candidate_record_sha256"]:
+        _fail("H001 C2 resolution candidate record bytes drifted")
+    record = _load_canonical_document(raw, "H001 C2 resolution candidate record")
+    _require_exact_keys(record, {
+        "authority_state",
+        "boundary_rule",
+        "c2_resolution_requirements",
+        "constructed_date",
+        "document_id",
+        "document_kind",
+        "governed_h001_protocol_id",
+        "non_effects",
+        "operator",
+        "predecessor_bindings",
+        "protected_hashes",
+        "schema_version",
+        "status",
+    }, "H001 C2 resolution candidate record")
+    if record["schema_version"] != "0.1.0":
+        _fail("H001 C2 resolution candidate schema version is wrong")
+    if record["document_kind"] != "qnty_h001_c2_resolution_requirements_candidate_v001":
+        _fail("H001 C2 resolution candidate document kind is wrong")
+    if record["document_id"] != "candidate1-h001-c2-resolution-requirements-candidate-v001":
+        _fail("H001 C2 resolution candidate document id is wrong")
+    if record["status"] != "CANDIDATE_REVIEW_REQUIRED_NOT_EFFECTIVE_NOT_RESOLVING_C2":
+        _fail("H001 C2 resolution candidate status is wrong")
+    if record["governed_h001_protocol_id"] != "real_btc_h001_funding_crowding_reversal_falsification_v0":
+        _fail("H001 C2 resolution candidate governed protocol id is wrong")
+    if record["operator"] != "Viktor" or record["constructed_date"] != "2026-08-02":
+        _fail("H001 C2 resolution candidate identity or date drifted")
+    if record["predecessor_bindings"] != _H001_C2_RESOLUTION_CANDIDATE_PREDECESSOR_BINDINGS:
+        _fail("H001 C2 resolution candidate predecessor bindings drifted")
+    if record["boundary_rule"] != _H001_C2_RESOLUTION_CANDIDATE_BOUNDARY:
+        _fail("H001 C2 resolution candidate boundary rule drifted")
+    if record["boundary_rule"]["selected_boundary_rule"] != "NONE_SELECTED":
+        _fail("H001 C2 resolution candidate selected a boundary rule")
+    if record["c2_resolution_requirements"] != _H001_C2_RESOLUTION_CANDIDATE_REQUIREMENTS:
+        _fail("H001 C2 resolution candidate requirements drifted")
+    if record["c2_resolution_requirements"]["authority_to_rely_on_provenance"]["granted_by_this_candidate"] is not False:
+        _fail("H001 C2 resolution candidate granted authority to rely on provenance")
+    if record["c2_resolution_requirements"]["availability"]["current_state"] != "UNAVAILABLE":
+        _fail("H001 C2 resolution candidate treated V0 as available")
+    if record["authority_state"] != _H001_C2_RESOLUTION_CANDIDATE_AUTHORITY:
+        _fail("H001 C2 resolution candidate authority state drifted")
+    for key in (
+        "C2_resolved",
+        "activation_authorized",
+        "candidate_effective",
+        "dispatcher_released",
+        "execution_authorized",
+        "holdout_authorized",
+        "implementation_authorized",
+        "live_authorized",
+        "paper_trade_authorized",
+        "real_data_access_authorized",
+        "scientific_authorized",
+        "trust_root_registered",
+    ):
+        if record["authority_state"][key] is not False:
+            _fail("H001 C2 resolution candidate authority leaked a true value")
+    if record["authority_state"]["execution_budget"] != 0 or record["authority_state"]["execution_count"] != 0:
+        _fail("H001 C2 resolution candidate execution budget or count drifted")
+    if record["non_effects"] != _H001_C2_RESOLUTION_CANDIDATE_NON_EFFECTS:
+        _fail("H001 C2 resolution candidate non-effects drifted")
+    if record["protected_hashes"] != _H001_C2_RESOLUTION_CANDIDATE_PROTECTED_HASHES:
+        _fail("H001 C2 resolution candidate protected hashes drifted")
+    return record
+
+
+_validate_receipt_h001_c2_resolution_candidate_constructed = _validate_receipt
+def _validate_receipt(parsed, active, root):
+    if active["phase"] != _H001_C2_RESOLUTION_CANDIDATE_CONSTRUCTED_PHASE:
+        return _validate_receipt_h001_c2_resolution_candidate_constructed(parsed, active, root)
+    keys = set(_RECEIPT_KEYS) | {
+        "phase",
+        "current_transition_files",
+        "engine_implementation_binding",
+        "h001_c1_v044_continuity_repair_review_binding",
+        "h001_c2_resolution_candidate_binding",
+        "h001_operator_exposure_disclosure_binding",
+        "h001_operator_exposure_disclosure_review_binding",
+        "h001_operator_governance_decision_binding",
+        "h001_operator_governance_decision_review_binding",
+        "numerical_convention_gap_inventory",
+        "numerical_conventions_selected_convention_inventory",
+        "operator_exposure_disclosure_state",
+        "operator_governance_decision_state",
+        "operator_governance_decision_review_state",
+        "per_run_coordinate_and_seed_orchestration_binding",
+        "rng_runtime_candidate_resolved_inventory",
+        "v039_checkout_path_repair",
+        "v040_review_binding",
+    }
+    _require_exact_keys(parsed, keys, "handoff_receipt")
+    if parsed["receipt_index"] != 50:
+        _fail("H001 C2 resolution candidate receipt index is wrong")
+    if parsed["phase"] != _H001_C2_RESOLUTION_CANDIDATE_CONSTRUCTED_PHASE:
+        _fail("H001 C2 resolution candidate receipt phase is wrong")
+    if parsed["next_actions"] != [_H001_C2_RESOLUTION_CANDIDATE_NEXT_ACTION]:
+        _fail("H001 C2 resolution candidate next action is wrong")
+    if parsed["predecessor"] != {
+        "path": _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_HANDOFF_RELPATH,
+        "sha256": "f975a354ac6d3902a910e1053928089bc9b961b338b8ea1166d7254d9f4e3938",
+    }:
+        _fail("H001 C2 resolution candidate predecessor is wrong")
+    if parsed["changed_file_scope"] != _H001_C2_RESOLUTION_CANDIDATE_SCOPE:
+        _fail("H001 C2 resolution candidate changed-file scope drifted")
+    if parsed["current_transition_files"] != [
+        {"path": path, "sha256": hashlib.sha256((root / path).read_bytes()).hexdigest()}
+        for path in _H001_C2_RESOLUTION_CANDIDATE_CURRENT_FILES
+    ]:
+        _fail("H001 C2 resolution candidate current transition files drifted")
+    if parsed["safety_state"] != dict(_EXPECTED_SAFETY, real_data_execution_requested=False):
+        _fail("H001 C2 resolution candidate safety state drifted")
+    _validate_evidence(parsed["evidence"], root, verify_files=True)
+    record = _validate_h001_c2_resolution_candidate(active, root)
+    binding = parsed["h001_c2_resolution_candidate_binding"]
+    if binding != {
+        "authority_state": _H001_C2_RESOLUTION_CANDIDATE_AUTHORITY,
+        "boundary_rule": _H001_C2_RESOLUTION_CANDIDATE_BOUNDARY,
+        "candidate_record_path": _H001_C2_RESOLUTION_CANDIDATE_RELPATH,
+        "candidate_record_sha256": _H001_C2_RESOLUTION_CANDIDATE_SHA256,
+        "reviewed": False,
+        "review_completed": False,
+        "review_passed": False,
+        "status": "CANDIDATE_REVIEW_REQUIRED_NOT_EFFECTIVE_NOT_RESOLVING_C2",
+    }:
+        _fail("H001 C2 resolution candidate binding drifted")
+    if record["authority_state"] != parsed["h001_c2_resolution_candidate_binding"]["authority_state"]:
+        _fail("H001 C2 resolution candidate authority binding mismatch")
+    evidence = {item["path"]: item["sha256"] for item in parsed["evidence"]}
+    protected = {
+        _H001_C2_RESOLUTION_CANDIDATE_RELPATH: _H001_C2_RESOLUTION_CANDIDATE_SHA256,
+        _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_RELPATH: _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_RECORD_SHA256,
+        _H001_OPERATOR_GOVERNANCE_DECISION_RELPATH: _H001_OPERATOR_GOVERNANCE_DECISION_SHA256,
+        _H001_OPERATOR_GOVERNANCE_DECISION_HANDOFF_RELPATH: "4c5a192fb5f393891ea53482624a45b2a7461bb7e82331476a049226ed97ae1e",
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_RELPATH: _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_RECORD_SHA256,
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_REVIEW_HANDOFF_RELPATH: "e82eefad6e05c0ef1487c36cf4a8c4976de6c9025c87ff3728ba9bd490f2209d",
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_RELPATH: _H001_OPERATOR_EXPOSURE_DISCLOSURE_SHA256,
+        _H001_OPERATOR_EXPOSURE_DISCLOSURE_HANDOFF_RELPATH: "13ed0644ca3f43fc9e1223627f8cb67518602d94c5bb0e9cbaa57125db9a340f",
+    }
+    for path, expected in protected.items():
+        if evidence.get(path) != expected:
+            _fail(f"H001 C2 resolution candidate receipt must evidence {path!r}")
+        target = root / path
+        if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+            _fail(f"H001 C2 resolution candidate protected file {path!r} drifted")
+    for required in (
+        "H001_C2_RESOLUTION_CANDIDATE_CONSTRUCTED=TRUE",
+        "H001_C2_RESOLUTION_CANDIDATE_EFFECTIVE=FALSE",
+        "H001_C2_RESOLUTION_CANDIDATE_REVIEWED=FALSE",
+        "H001_C2_RESOLUTION_CANDIDATE_BOUNDARY_SELECTED=NONE",
+        "H001_C2_REMAINS_UNRESOLVED=TRUE",
+        "H001_C2_BOUNDARY_SELECTED=NONE",
+        "H001_CANDIDATE_EFFECTIVE=FALSE",
+        "H001_EXECUTION_AUTHORIZATION=FALSE",
+        "H001_CURRENT_EXECUTION_BUDGET=0",
+        "H001_CURRENT_EXECUTION_COUNT=0",
+        "H001_C2_RESOLUTION_CANDIDATE_NEXT_ACTION=FRESH_HOSTILE_REVIEW_OF_H001_C2_RESOLUTION_CANDIDATE",
+    ):
+        if required not in parsed["decisions"]:
+            _fail("H001 C2 resolution candidate decisions drifted")
+    _cross_check_artifact_records(parsed, root)
+    _validate_predecessor_chain(parsed, root, active["handoff_receipt_path"])
+    return parsed
+
+
+_validate_predecessor_chain_h001_c2_resolution_candidate_constructed = _validate_predecessor_chain
+def _validate_predecessor_chain(parsed, root, receipt_relpath):
+    if parsed.get("receipt_index") != 50:
+        return _validate_predecessor_chain_h001_c2_resolution_candidate_constructed(parsed, root, receipt_relpath)
+    p = parsed["predecessor"]
+    target = root / p["path"]
+    if p["path"] != _H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_HANDOFF_RELPATH or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != p["sha256"]:
+        _fail("H001 C2 resolution candidate predecessor chain is wrong")
+    _validate_predecessor_chain_h001_c2_resolution_candidate_constructed(
+        _load_canonical_document(target.read_bytes(), "predecessor receipt"), root, p["path"]
+    )
+# END H001 C2 RESOLUTION REQUIREMENTS CANDIDATE V050 APPEND

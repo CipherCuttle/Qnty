@@ -60,8 +60,8 @@ def test_v046_disclosure_records_all_answers_as_uncertain(tmp_path):
     disclosure = _disclosure(root)
     answers = disclosure["answers"]
 
-    assert state["active_task"]["phase"] == context._H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PASSED_PHASE
-    assert state["handoff_receipt"]["next_actions"] == ["CONSTRUCT_PROSPECTIVE_H001_C2_RESOLUTION_CANDIDATE_FOR_REVIEW"]
+    assert state["active_task"]["phase"] == context._H001_C2_RESOLUTION_CANDIDATE_CONSTRUCTED_PHASE
+    assert state["handoff_receipt"]["next_actions"] == ["FRESH_HOSTILE_REVIEW_OF_H001_C2_RESOLUTION_CANDIDATE"]
     assert disclosure["allowed_answer_states"] == ["KNOWN_NO", "KNOWN_YES", "UNCERTAIN"]
     assert [item["answer"] for item in answers] == ["UNCERTAIN"] * 7
     assert [item["confidence"] for item in answers] == ["LOW", "LOW", "LOW", "LOW", "LOW", "MEDIUM", "MEDIUM"]
@@ -234,6 +234,8 @@ def test_v046_historical_v044_review_phase_remains_valid(tmp_path):
     active.pop("operator_governance_decision_record_sha256")
     active.pop("operator_governance_decision_review_record_path", None)
     active.pop("operator_governance_decision_review_record_sha256", None)
+    active.pop("h001_c2_resolution_candidate_record_path", None)
+    active.pop("h001_c2_resolution_candidate_record_sha256", None)
     _write_json(active_path, active)
 
     state = context.load_and_verify_continuity_state(root)

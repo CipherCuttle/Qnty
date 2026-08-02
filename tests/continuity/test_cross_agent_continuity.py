@@ -368,6 +368,8 @@ def _drop_review_record_active_fields(active):
     active.pop("operator_governance_decision_record_sha256", None)
     active.pop("operator_governance_decision_review_record_path", None)
     active.pop("operator_governance_decision_review_record_sha256", None)
+    active.pop("h001_c2_resolution_candidate_record_path", None)
+    active.pop("h001_c2_resolution_candidate_record_sha256", None)
 
 
 def test_synthetic_tree_verifies_and_renders(tmp_path):

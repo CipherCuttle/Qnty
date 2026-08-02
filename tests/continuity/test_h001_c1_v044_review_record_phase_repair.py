@@ -108,6 +108,8 @@ def _point_to_v044_review_record_phase(root):
     active.pop("operator_governance_decision_record_sha256", None)
     active.pop("operator_governance_decision_review_record_path", None)
     active.pop("operator_governance_decision_review_record_sha256", None)
+    active.pop("h001_c2_resolution_candidate_record_path", None)
+    active.pop("h001_c2_resolution_candidate_record_sha256", None)
     _write_json(active_path, active)
 
 

@@ -76,9 +76,9 @@ def test_v049_review_pass_binds_candidate_decision_handoff_verdict_and_state(tmp
     record = _record(root)
     receipt = _receipt(root)
 
-    assert state["active_task"]["phase"] == context._H001_OPERATOR_GOVERNANCE_DECISION_REVIEW_PASSED_PHASE
+    assert state["active_task"]["phase"] == context._H001_C2_RESOLUTION_CANDIDATE_CONSTRUCTED_PHASE
     assert state["handoff_receipt"]["next_actions"] == [
-        "CONSTRUCT_PROSPECTIVE_H001_C2_RESOLUTION_CANDIDATE_FOR_REVIEW"
+        "FRESH_HOSTILE_REVIEW_OF_H001_C2_RESOLUTION_CANDIDATE"
     ]
     assert receipt["receipt_index"] == 49
     assert record["review_kind"] == "H001_OPERATOR_GOVERNANCE_DECISION_HOSTILE_REVIEW"
@@ -275,6 +275,8 @@ def test_v049_historical_continuity_phases_remain_valid(tmp_path):
     active["handoff_receipt_sha256"] = "4c5a192fb5f393891ea53482624a45b2a7461bb7e82331476a049226ed97ae1e"
     active.pop("operator_governance_decision_review_record_path")
     active.pop("operator_governance_decision_review_record_sha256")
+    active.pop("h001_c2_resolution_candidate_record_path", None)
+    active.pop("h001_c2_resolution_candidate_record_sha256", None)
     receipt_path = root / context._H001_OPERATOR_GOVERNANCE_DECISION_HANDOFF_RELPATH
     receipt = _load_json(receipt_path)
     receipt["current_transition_files"] = [
