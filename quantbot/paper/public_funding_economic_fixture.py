@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from dataclasses import dataclass
 from decimal import Decimal, DecimalException, InvalidOperation, localcontext
@@ -17,6 +19,9 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from quantbot.core.determinism import canonical_json_dumps, sha256_file
+
+QNTYLAB_ROOT_ENV_VAR = "QNTYLAB_ROOT"
+_GIT_COMMON_DIR_TIMEOUT_SECONDS = 5
 
 RECEIPT_VERSION = "PUBLIC_ECONOMIC_RECONSTRUCTION_RECEIPT_V0"
 FORMULA_VERSION = "PUBLIC_FUNDING_ECONOMIC_FORMULA_V0"
@@ -86,6 +91,8 @@ class PublicEconomicFixtureReason(str, Enum):
     CALCULATED_NOTIONAL_MISMATCH = "CALCULATED_NOTIONAL_MISMATCH"
     CALCULATED_TRANSFER_MISMATCH = "CALCULATED_TRANSFER_MISMATCH"
     QNTY_EXTENSION_BOUNDARY_UNSAFE = "QNTY_EXTENSION_BOUNDARY_UNSAFE"
+    QNTYLAB_ROOT_INVALID = "QNTYLAB_ROOT_INVALID"
+    QNTYLAB_ROOT_AMBIGUOUS = "QNTYLAB_ROOT_AMBIGUOUS"
 
 
 class PublicEconomicFixtureError(ValueError):
@@ -204,7 +211,7 @@ def verify_source_artifacts(
     *,
     source_root: str | Path | None = None,
 ) -> None:
-    root = _default_source_root() if source_root is None else Path(source_root)
+    root = resolve_source_root(source_root)
     artifacts = fixture.source_artifacts
     raw_path = root / _expect_artifact(artifacts, "raw")
     selected_path = root / _expect_artifact(artifacts, "selected_event")
@@ -836,8 +843,98 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _validated_root(candidate: Path, *, reason: PublicEconomicFixtureReason) -> Path:
+    resolved = candidate.expanduser().resolve()
+    if not resolved.is_dir():
+        raise PublicEconomicFixtureError(reason, str(resolved))
+    return resolved
+
+
+def _qntylab_root_from_env() -> Path | None:
+    value = os.environ.get(QNTYLAB_ROOT_ENV_VAR)
+    if not value:
+        return None
+    return _validated_root(
+        Path(value), reason=PublicEconomicFixtureReason.QNTYLAB_ROOT_INVALID
+    )
+
+
+def _git_common_dir(start: Path) -> Path | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=start,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_COMMON_DIR_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    output = result.stdout.strip()
+    if not output:
+        return None
+    common_dir = Path(output)
+    if not common_dir.is_absolute():
+        common_dir = (start / common_dir).resolve()
+    return common_dir
+
+
+def _worktree_aware_sibling_candidate() -> Path | None:
+    """Bounded fallback: sibling of the *original* checkout that owns this
+    worktree's shared Git object store, derived via ``--git-common-dir`` so
+    linked worktrees (which live under a different parent directory than the
+    main checkout) still resolve to the real QntyLab sibling."""
+    module_dir = Path(__file__).resolve().parent
+    common_dir = _git_common_dir(module_dir)
+    if common_dir is None:
+        return None
+    repo_root = common_dir.parent if common_dir.name == ".git" else common_dir
+    return repo_root.parent / "QntyLab"
+
+
+def _local_layout_sibling_candidate() -> Path:
+    """Bounded fallback: ordinary sibling-checkout guess relative to this
+    repository's own root, used only when Git is unavailable."""
+    module_dir = Path(__file__).resolve().parent
+    repo_root = module_dir.parents[1]
+    return repo_root.parent / "QntyLab"
+
+
 def _default_source_root() -> Path:
-    return Path(__file__).resolve().parents[3] / "QntyLab"
+    worktree_candidate = _worktree_aware_sibling_candidate()
+    layout_candidate = _local_layout_sibling_candidate()
+    raw_candidates = [c for c in (worktree_candidate, layout_candidate) if c is not None]
+
+    existing = {c.resolve() for c in raw_candidates if c.is_dir()}
+    if len(existing) > 1:
+        raise PublicEconomicFixtureError(
+            PublicEconomicFixtureReason.QNTYLAB_ROOT_AMBIGUOUS,
+            ",".join(sorted(str(c) for c in existing)),
+        )
+    if existing:
+        return next(iter(existing))
+    return raw_candidates[0] if raw_candidates else layout_candidate
+
+
+def resolve_source_root(source_root: str | Path | None = None) -> Path:
+    """Resolve the QntyLab evidence root.
+
+    Precedence: explicit ``source_root`` argument (bound to the CLI's
+    ``--source-root``), then ``QNTYLAB_ROOT_ENV_VAR``, then a bounded,
+    worktree-aware sibling-checkout fallback. The resolved root is never
+    bound into receipt identity.
+    """
+    if source_root is not None:
+        return _validated_root(
+            Path(source_root), reason=PublicEconomicFixtureReason.QNTYLAB_ROOT_INVALID
+        )
+    env_root = _qntylab_root_from_env()
+    if env_root is not None:
+        return env_root
+    return _default_source_root()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -846,7 +943,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--fixture", required=True, type=Path)
     parser.add_argument("--expected-receipt", type=Path)
-    parser.add_argument("--source-root", type=Path)
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        help=(
+            "Explicit QntyLab evidence root. Highest precedence; overrides "
+            f"the {QNTYLAB_ROOT_ENV_VAR} environment variable and the "
+            "worktree-aware sibling-checkout fallback."
+        ),
+    )
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args(argv)
 

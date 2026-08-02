@@ -11,11 +11,13 @@ from pathlib import Path
 
 import pytest
 
+import quantbot.paper.public_funding_economic_fixture as public_funding_economic_fixture
 from quantbot.paper.public_funding_economic_fixture import (
     ACCOUNT_POSTING_STATUS,
     CLAIM_SCOPE,
     DECIMAL_LEXICAL_MAX_LENGTH,
     DECIMAL_LEXICAL_POLICY,
+    QNTYLAB_ROOT_ENV_VAR,
     PublicEconomicFixtureError,
     PublicEconomicFixtureReason,
     canonical_receipt_bytes,
@@ -23,6 +25,7 @@ from quantbot.paper.public_funding_economic_fixture import (
     parse_fixture,
     receipt_sha256,
     reconstruct_transfer,
+    resolve_source_root,
     verify_receipt,
     verify_receipt_batch,
     verify_source_artifacts,
@@ -32,7 +35,12 @@ FIXTURE_PATH = Path("tests/fixtures/public_funding_economic_v0/input.json")
 EXPECTED_RECEIPT_PATH = Path(
     "tests/fixtures/public_funding_economic_v0/expected_receipt.json"
 )
-QNTYLAB_ROOT = Path("/home/swirky/DevHub/repos/QntyLab")
+
+
+def _real_qntylab_root() -> Path:
+    """Resolve the actual local QntyLab checkout via the production resolver
+    instead of hardcoding an absolute path in committed test code."""
+    return resolve_source_root()
 
 
 def _fixture(*, verify_source: bool = False):
@@ -56,7 +64,9 @@ def _mutated_fixture(tmp_path: Path, **updates):
 
 
 def _source_copy(tmp_path: Path) -> Path:
-    source_dir = QNTYLAB_ROOT / "docs/forensics/evidence/binance_public_funding_event_v0"
+    source_dir = (
+        _real_qntylab_root() / "docs/forensics/evidence/binance_public_funding_event_v0"
+    )
     target = tmp_path / "docs/forensics/evidence/binance_public_funding_event_v0"
     target.mkdir(parents=True)
     for name in (
@@ -503,8 +513,8 @@ def test_cli_reports_typed_decimal_failure_without_traceback(tmp_path: Path) -> 
     assert payload["reason"] == "QUANTITY_INVALID"
 
 
-def test_runnable_module_returns_bounded_verdict() -> None:
-    result = subprocess.run(
+def _run_cli(*extra_args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(
         [
             sys.executable,
             "-m",
@@ -512,12 +522,119 @@ def test_runnable_module_returns_bounded_verdict() -> None:
             "--fixture",
             str(FIXTURE_PATH),
             "--verify",
+            *extra_args,
         ],
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
+
+
+def test_runnable_module_returns_bounded_verdict(tmp_path: Path) -> None:
+    # Hermetic: explicit --source-root, no dependence on absolute local paths.
+    source_root = _source_copy(tmp_path)
+    first = _run_cli("--source-root", str(source_root))
+    second = _run_cli("--source-root", str(source_root))
+    assert first.returncode == 0, first.stderr
+    assert first.stdout == second.stdout
+    payload = json.loads(first.stdout)
+    assert payload["verdict"] == "PUBLIC_ECONOMIC_FIXTURE_V0_VERIFIED"
+    assert payload["claim_scope"] == CLAIM_SCOPE
+
+
+def test_runnable_module_resolves_real_qntylab_checkout_from_worktree() -> None:
+    # Integration-level proof: default resolution (no --source-root, no env
+    # override) must find the actual local QntyLab checkout from this
+    # isolated worktree via the worktree-aware Git-common-dir fallback.
+    result = _run_cli()
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["verdict"] == "PUBLIC_ECONOMIC_FIXTURE_V0_VERIFIED"
-    assert payload["claim_scope"] == CLAIM_SCOPE
+
+
+def test_env_root_succeeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source_root = _source_copy(tmp_path)
+    monkeypatch.setenv(QNTYLAB_ROOT_ENV_VAR, str(source_root))
+    fixture = parse_fixture(FIXTURE_PATH, verify_source=True)
+    receipt = reconstruct_transfer(fixture)
+    assert receipt["receipt_id"] == "3833f2fb83a0c59031236cf5bb29b2de0ad2122765f03074f219a2c24bf5bd9b"
+
+
+def test_explicit_root_overrides_env_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    valid_root = _source_copy(tmp_path / "valid")
+    monkeypatch.setenv(QNTYLAB_ROOT_ENV_VAR, str(tmp_path / "does-not-exist"))
+    fixture = parse_fixture(FIXTURE_PATH, source_root=valid_root, verify_source=True)
+    assert reconstruct_transfer(fixture)["receipt_id"] == (
+        "3833f2fb83a0c59031236cf5bb29b2de0ad2122765f03074f219a2c24bf5bd9b"
+    )
+
+
+def test_invalid_explicit_root_fails(tmp_path: Path) -> None:
+    fixture = _fixture()
+    with pytest.raises(PublicEconomicFixtureError) as exc:
+        verify_source_artifacts(fixture, source_root=tmp_path / "missing")
+    _assert_reason(exc, PublicEconomicFixtureReason.QNTYLAB_ROOT_INVALID)
+
+
+def test_invalid_env_root_fails_without_fallthrough(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(QNTYLAB_ROOT_ENV_VAR, str(tmp_path / "missing"))
+    with pytest.raises(PublicEconomicFixtureError) as exc:
+        resolve_source_root()
+    _assert_reason(exc, PublicEconomicFixtureReason.QNTYLAB_ROOT_INVALID)
+
+
+def test_ambiguous_fallback_candidates_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    first = tmp_path / "candidate-a"
+    second = tmp_path / "candidate-b"
+    first.mkdir()
+    second.mkdir()
+    monkeypatch.setattr(
+        public_funding_economic_fixture,
+        "_worktree_aware_sibling_candidate",
+        lambda: first,
+    )
+    monkeypatch.setattr(
+        public_funding_economic_fixture,
+        "_local_layout_sibling_candidate",
+        lambda: second,
+    )
+    with pytest.raises(PublicEconomicFixtureError) as exc:
+        public_funding_economic_fixture._default_source_root()
+    _assert_reason(exc, PublicEconomicFixtureReason.QNTYLAB_ROOT_AMBIGUOUS)
+
+
+def test_layout_sibling_fallback_used_when_worktree_candidate_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    only_candidate = tmp_path / "only-candidate"
+    only_candidate.mkdir()
+    monkeypatch.setattr(
+        public_funding_economic_fixture,
+        "_worktree_aware_sibling_candidate",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        public_funding_economic_fixture,
+        "_local_layout_sibling_candidate",
+        lambda: only_candidate,
+    )
+    assert public_funding_economic_fixture._default_source_root() == only_candidate.resolve()
+
+
+def test_receipt_identity_independent_of_source_root_location(tmp_path: Path) -> None:
+    root_a = _source_copy(tmp_path / "location-a")
+    root_b = _source_copy(tmp_path / "location-b")
+    fixture_a = parse_fixture(FIXTURE_PATH, source_root=root_a, verify_source=True)
+    fixture_b = parse_fixture(FIXTURE_PATH, source_root=root_b, verify_source=True)
+    receipt_a = reconstruct_transfer(fixture_a)
+    receipt_b = reconstruct_transfer(fixture_b)
+    assert receipt_a["receipt_id"] == receipt_b["receipt_id"]
+    assert canonical_receipt_bytes(receipt_a) == canonical_receipt_bytes(receipt_b)
+    assert str(tmp_path) not in canonical_receipt_bytes(receipt_a).decode("utf-8")
