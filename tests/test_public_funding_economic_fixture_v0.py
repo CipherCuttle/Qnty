@@ -36,11 +36,28 @@ EXPECTED_RECEIPT_PATH = Path(
     "tests/fixtures/public_funding_economic_v0/expected_receipt.json"
 )
 
-
-def _real_qntylab_root() -> Path:
-    """Resolve the actual local QntyLab checkout via the production resolver
-    instead of hardcoding an absolute path in committed test code."""
-    return resolve_source_root()
+# Byte-exact, hash-pinned, test-only copy of the authenticated QntyLab
+# evidence chain. Committed so the suite is hermetic and never requires a
+# QntyLab checkout to exist beside this repository (see
+# tests/fixtures/public_funding_economic_v0/source_root/README.md).
+TEST_SOURCE_ROOT = (
+    Path(__file__).parent / "fixtures" / "public_funding_economic_v0" / "source_root"
+)
+_EVIDENCE_DIR = "docs/forensics/evidence/binance_public_funding_event_v0"
+_PINNED_EVIDENCE_HASHES = {
+    "BTCUSDT-fundingRate-2026-06.raw.json": (
+        "01d38d5b8c8581388621015a2bc618673cac1ff51ff88672aea52f9bdb31bafd"
+    ),
+    "BTCUSDT-fundingRate-2026-06.selected-event.json": (
+        "fcc0682d5a30976d860fbbefaf415b0e0c0d0585835a4a8ef089acd9c5376b59"
+    ),
+    "BTCUSDT-fundingRate-2026-06.receipt.json": (
+        "456e7918e3d9c7caeee67a8bde729867cbe0143f2002e7496ef5234382278c1c"
+    ),
+}
+_PINNED_CONTRACT_HASH = (
+    "b6c9ad8f3b21c983952820c6bb05d4ca6e8a8695cc3b5b57db34413e7391b5c3"
+)
 
 
 def _fixture(*, verify_source: bool = False):
@@ -63,18 +80,32 @@ def _mutated_fixture(tmp_path: Path, **updates):
     return path
 
 
+def _sha256_of(path: Path) -> str:
+    return sha256(path.read_bytes()).hexdigest()
+
+
 def _source_copy(tmp_path: Path) -> Path:
-    source_dir = (
-        _real_qntylab_root() / "docs/forensics/evidence/binance_public_funding_event_v0"
-    )
-    target = tmp_path / "docs/forensics/evidence/binance_public_funding_event_v0"
+    """Copy the committed, hash-pinned QNTY-local test evidence into a fresh
+    temporary root. Never touches a real QntyLab checkout, so this works
+    identically on a developer machine or a bare CI checkout."""
+    source_dir = TEST_SOURCE_ROOT / _EVIDENCE_DIR
+    target = tmp_path / _EVIDENCE_DIR
     target.mkdir(parents=True)
-    for name in (
-        "BTCUSDT-fundingRate-2026-06.raw.json",
-        "BTCUSDT-fundingRate-2026-06.selected-event.json",
-        "BTCUSDT-fundingRate-2026-06.receipt.json",
-    ):
-        shutil.copy2(source_dir / name, target / name)
+    for name, expected_hash in _PINNED_EVIDENCE_HASHES.items():
+        src = source_dir / name
+        if not src.is_file():
+            raise AssertionError(
+                f"committed test fixture missing: {src} "
+                "(tests/fixtures/public_funding_economic_v0/source_root/ "
+                "must be present and byte-exact)"
+            )
+        actual_hash = _sha256_of(src)
+        if actual_hash != expected_hash:
+            raise AssertionError(
+                f"committed test fixture hash mismatch for {src}: "
+                f"expected {expected_hash}, got {actual_hash}"
+            )
+        shutil.copy2(src, target / name)
     return tmp_path
 
 
@@ -543,14 +574,108 @@ def test_runnable_module_returns_bounded_verdict(tmp_path: Path) -> None:
     assert payload["claim_scope"] == CLAIM_SCOPE
 
 
-def test_runnable_module_resolves_real_qntylab_checkout_from_worktree() -> None:
-    # Integration-level proof: default resolution (no --source-root, no env
-    # override) must find the actual local QntyLab checkout from this
-    # isolated worktree via the worktree-aware Git-common-dir fallback.
-    result = _run_cli()
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    assert payload["verdict"] == "PUBLIC_ECONOMIC_FIXTURE_V0_VERIFIED"
+def test_worktree_fallback_resolver_derives_sibling_qntylab_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hermetic simulation of the worktree-aware Git-common-dir fallback.
+
+    A real second checkout is not required (and is unavailable on a bare CI
+    runner): this builds a fake ``repos/Qnty`` + ``repos/QntyLab`` layout,
+    injects the bounded ``git rev-parse --git-common-dir`` result the
+    resolver would see from a linked worktree, and proves the resolver
+    derives the sibling root and that the fixture verifies against it end to
+    end, with no absolute temporary path leaking into receipt identity."""
+    fake_repo_root = tmp_path / "repos" / "Qnty"
+    fake_git_common_dir = fake_repo_root / ".git"
+    fake_git_common_dir.mkdir(parents=True)
+    fake_qntylab_root = tmp_path / "repos" / "QntyLab"
+    _source_copy(fake_qntylab_root)
+    fake_worktree_dir = tmp_path / "worktrees" / "Qnty-feature"
+    fake_worktree_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        public_funding_economic_fixture,
+        "_git_common_dir",
+        lambda start: fake_git_common_dir,
+    )
+    monkeypatch.setattr(
+        public_funding_economic_fixture,
+        "_local_layout_sibling_candidate",
+        lambda: tmp_path / "does-not-exist",
+    )
+
+    derived_root = public_funding_economic_fixture._default_source_root()
+    assert derived_root == fake_qntylab_root.resolve()
+
+    fixture = parse_fixture(FIXTURE_PATH, source_root=derived_root, verify_source=True)
+    receipt = reconstruct_transfer(fixture)
+    assert receipt["receipt_id"] == (
+        "3833f2fb83a0c59031236cf5bb29b2de0ad2122765f03074f219a2c24bf5bd9b"
+    )
+    assert str(tmp_path) not in canonical_receipt_bytes(receipt).decode("utf-8")
+
+    # Same simulated layout, driven through resolve_source_root() with no
+    # explicit override, matching what the CLI does by default.
+    monkeypatch.delenv(QNTYLAB_ROOT_ENV_VAR, raising=False)
+    assert resolve_source_root() == fake_qntylab_root.resolve()
+
+
+def test_fixture_integrity_committed_test_evidence() -> None:
+    """Direct proof that the vendored test-only source tree is present,
+    byte-exact, and internally self-consistent -- independent of the
+    production verifier, which is exercised elsewhere."""
+    evidence_dir = TEST_SOURCE_ROOT / _EVIDENCE_DIR
+    contract_path = TEST_SOURCE_ROOT / "docs/forensics/PUBLIC_ECONOMIC_FIXTURE_CONTRACT_V0.json"
+
+    for name, expected_hash in _PINNED_EVIDENCE_HASHES.items():
+        path = evidence_dir / name
+        assert path.is_file(), path
+        assert _sha256_of(path) == expected_hash
+
+    assert contract_path.is_file()
+    assert _sha256_of(contract_path) == _PINNED_CONTRACT_HASH
+
+    raw = json.loads((evidence_dir / "BTCUSDT-fundingRate-2026-06.raw.json").read_text())
+    selected = json.loads(
+        (evidence_dir / "BTCUSDT-fundingRate-2026-06.selected-event.json").read_text()
+    )
+    source_receipt = json.loads(
+        (evidence_dir / "BTCUSDT-fundingRate-2026-06.receipt.json").read_text()
+    )
+    contract = json.loads(contract_path.read_text())
+
+    assert isinstance(raw, list) and raw
+    assert selected["source_array_index"] == 0
+    for key in ("symbol", "fundingTime", "fundingRate", "markPrice", "rateType"):
+        assert raw[0][key] == selected[key]
+    assert selected["raw_response_sha256"] == _PINNED_EVIDENCE_HASHES[
+        "BTCUSDT-fundingRate-2026-06.raw.json"
+    ]
+
+    raw_key = "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.raw.json"
+    selected_key = "docs/forensics/evidence/binance_public_funding_event_v0/BTCUSDT-fundingRate-2026-06.selected-event.json"
+    assert source_receipt["artifact_hashes"][raw_key] == _PINNED_EVIDENCE_HASHES[
+        "BTCUSDT-fundingRate-2026-06.raw.json"
+    ]
+    assert source_receipt["artifact_hashes"][selected_key] == (
+        _PINNED_EVIDENCE_HASHES["BTCUSDT-fundingRate-2026-06.selected-event.json"]
+    )
+    assert source_receipt["selected_event"]["fundingTime"] == selected["fundingTime"]
+
+    assert contract["source_fixture"]["raw_sha256"] == _PINNED_EVIDENCE_HASHES[
+        "BTCUSDT-fundingRate-2026-06.raw.json"
+    ]
+    assert contract["source_fixture"]["selected_event_sha256"] == (
+        _PINNED_EVIDENCE_HASHES["BTCUSDT-fundingRate-2026-06.selected-event.json"]
+    )
+    assert (
+        contract["source_fixture"]["selected_event"]["fundingTime"]
+        == selected["fundingTime"]
+    )
+    assert (
+        contract["contract"]["source_event_identity"]["selected_event_sha256"]
+        == _PINNED_EVIDENCE_HASHES["BTCUSDT-fundingRate-2026-06.selected-event.json"]
+    )
 
 
 def test_env_root_succeeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
