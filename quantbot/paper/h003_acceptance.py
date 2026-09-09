@@ -36,6 +36,12 @@ PHASE = "QNTY_H003_SOL_TO_QNTYSPOT_SHADOW_BRIDGE_V0"
 SCHEMA_NAME = "H003_SIGNAL_INTENT_V0"
 SCHEMA_VERSION = "V0"
 RECEIPT_SCHEMA_NAME = "H003_ACCEPTANCE_V0"
+QNTYLAB_REPOSITORY = "CipherCuttle/QntyLab"
+# Updated once, after the upstream handoff PR is merged canonically.
+CANONICAL_QNTYLAB_COMMIT = "d7ed51f02e2e9a0a5fde74b54f6b8b9174847c7c"
+QNTY_IMPLEMENTATION_VERSION = "H003_ACCEPTANCE_V0"
+ACCEPTANCE_DECISION = "ACCEPTED"
+ACCEPTANCE_REASON = "H003_SIGNAL_INTENT_V0_VALIDATED_FAIL_CLOSED"
 
 # The exact no-authority block the frozen artifact must carry. Any other value
 # or extra key rejects the artifact: this artifact exists to be READ, not obeyed.
@@ -49,6 +55,7 @@ REQUIRED_AUTHORITY = {
 # Receipt authority block: acceptance NEVER grants execution authority.
 RECEIPT_AUTHORITY = {
     "capital": "NONE",
+    "execution": "FORBIDDEN",
     "signing": "NONE",
     "submission": "NONE",
 }
@@ -65,6 +72,7 @@ REQUIRED_TOP_LEVEL = frozenset(
         "schema_name",
         "schema_version",
         "signal",
+        "transition",
         "upstream",
     }
 )
@@ -76,6 +84,8 @@ REQUIRED_UPSTREAM = frozenset(
         "strategy_version",
         "variant_id",
         "parameters",
+        "source_commit",
+        "source_repository",
         "source_semantic",
         "qntylab_head",
     }
@@ -95,10 +105,12 @@ REQUIRED_SIGNAL = frozenset(
         "ma192",
         "ma48",
         "raw_signal_at_t",
+        "source_bar_timestamp",
     }
 )
 
 REQUIRED_MA = frozenset({"numerator", "denominator"})
+REQUIRED_TRANSITION = frozenset({"action", "current_target", "previous_target"})
 
 _FULL_SHA_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 _FULL_GIT_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z")
@@ -319,6 +331,17 @@ def validate_h003_signal_intent(
     for field in ("candidate_id", "strategy_id", "strategy_version", "variant_id"):
         if not isinstance(upstream[field], str) or not upstream[field]:
             raise AcceptanceRejected("SCHEMA_INVALID", f"upstream.{field} must be a non-empty string")
+    if upstream["candidate_id"] != "CANDIDATE_H003_MA_48_192_LONG_FLAT":
+        raise AcceptanceRejected("PROVENANCE_MISMATCH", "upstream.candidate_id is not the frozen H003 candidate")
+    if upstream["strategy_id"] != "H003_moving_average":
+        raise AcceptanceRejected("PROVENANCE_MISMATCH", "upstream.strategy_id is not H003_moving_average")
+    if upstream["variant_id"] != "variant_00eb140f03a5f6ab40600160":
+        raise AcceptanceRejected("PROVENANCE_MISMATCH", "upstream.variant_id is not the frozen H003 variant")
+    if upstream["source_repository"] != QNTYLAB_REPOSITORY:
+        raise AcceptanceRejected(
+            "PROVENANCE_MISMATCH",
+            f"upstream.source_repository must be {QNTYLAB_REPOSITORY!r}",
+        )
     if upstream["source_semantic"] != "BINANCE_SPOT_SOLUSDT_1H":
         raise AcceptanceRejected(
             "SCHEMA_INVALID",
@@ -330,6 +353,15 @@ def validate_h003_signal_intent(
         raise AcceptanceRejected(
             "SCHEMA_INVALID", "upstream.qntylab_head must be a 40-char lowercase git sha"
         )
+    if upstream["source_commit"] != qntylab_head:
+        raise AcceptanceRejected(
+            "PROVENANCE_MISMATCH", "upstream.source_commit must equal upstream.qntylab_head"
+        )
+    if qntylab_head != CANONICAL_QNTYLAB_COMMIT:
+        raise AcceptanceRejected(
+            "UPSTREAM_COMMIT_NOT_CANONICAL",
+            f"upstream commit {qntylab_head} is not canonical QntyLab {CANONICAL_QNTYLAB_COMMIT}",
+        )
     parameters = upstream["parameters"]
     _require_exact_keys(parameters, frozenset({"fast", "slow", "mode"}), "upstream.parameters")
     for field in ("fast", "slow"):
@@ -338,6 +370,8 @@ def validate_h003_signal_intent(
             raise AcceptanceRejected(
                 "SCHEMA_INVALID", f"upstream.parameters.{field} must be a positive int"
             )
+    if parameters != {"fast": 48, "slow": 192, "mode": "long_flat"}:
+        raise AcceptanceRejected("PROVENANCE_MISMATCH", "upstream.parameters do not match frozen H003 parameters")
     if parameters["mode"] != "long_flat":
         raise AcceptanceRejected(
             "SCHEMA_INVALID",
@@ -409,17 +443,37 @@ def validate_h003_signal_intent(
     if not isinstance(signal["decision_rule"], str) or not signal["decision_rule"]:
         raise AcceptanceRejected("SCHEMA_INVALID", "signal.decision_rule must be a non-empty string")
     decision_bar = _parse_utc(signal["decision_bar_t_open"], "signal.decision_bar_t_open")
+    source_bar = _parse_utc(signal["source_bar_timestamp"], "signal.source_bar_timestamp")
     if decision_bar != last:
         raise AcceptanceRejected(
             "SCHEMA_INVALID",
             "signal.decision_bar_t_open must equal bar_window.last_bar_open",
+        )
+    if source_bar != decision_bar:
+        raise AcceptanceRejected(
+            "SCHEMA_INVALID", "signal.source_bar_timestamp must equal decision_bar_t_open"
+        )
+    transition = artifact["transition"]
+    _require_exact_keys(transition, REQUIRED_TRANSITION, "transition")
+    for field in ("previous_target", "current_target"):
+        if transition[field] not in ("LONG", "FLAT"):
+            raise AcceptanceRejected("SCHEMA_INVALID", f"transition.{field} must be LONG or FLAT")
+    if transition["current_target"] != signal["causal_target_t_plus_1"]:
+        raise AcceptanceRejected(
+            "PROVENANCE_MISMATCH", "transition.current_target must equal causal_target_t_plus_1"
+        )
+    expected_action = "NO_ACTION" if transition["previous_target"] == transition["current_target"] else "TARGET_CHANGE"
+    if transition["action"] != expected_action:
+        raise AcceptanceRejected(
+            "PROVENANCE_MISMATCH", f"transition.action must be {expected_action!r}"
         )
     validators["provenance"] = {
         "status": "PASS",
         "detail": (
             f"candidate_id={upstream['candidate_id']}; strategy_id={upstream['strategy_id']}; "
             f"variant_id={upstream['variant_id']}; parameters={parameters}; "
-            f"qntylab_head={qntylab_head}; bar window {bar_window['first_bar_open']}.."
+            f"source_repository={upstream['source_repository']}; source_commit={qntylab_head}; "
+            f"bar window {bar_window['first_bar_open']}.."
             f"{bar_window['last_bar_open']} strictly increasing 1h "
             f"(close_of_bar_t == last+1h, span {span_hours}h >= bar_count-1); "
             f"close_series sha256 present; decision_bar_t_open == last_bar_open"
@@ -484,7 +538,7 @@ def accept_h003_signal_intent(
                 "refusing to silently regenerate — investigate",
             )
         return {
-            "decision": "ACCEPT",
+            "decision": ACCEPTANCE_DECISION,
             "idempotent_no_op": True,
             "acceptance_id": record_id,
             "artifact_digest": artifact_digest,
@@ -498,13 +552,15 @@ def accept_h003_signal_intent(
         "acceptance_id": record_id,
         "schema_name": "H003_ACCEPTANCE_RECORD_V0",
         "phase": PHASE,
-        "decision": "ACCEPT",
+        "decision": ACCEPTANCE_DECISION,
         "artifact_schema": SCHEMA_NAME,
         "artifact_digest": artifact_digest,
         "artifact_file_sha256": file_sha256,
         "artifact_source_repo": ARTIFACT_SOURCE_REPO,
         "artifact_source_path": ARTIFACT_SOURCE_PATH,
         "upstream_qntylab_head": artifact["upstream"]["qntylab_head"],
+        "upstream_source_commit": artifact["upstream"]["source_commit"],
+        "acceptance_reason": ACCEPTANCE_REASON,
         "qnty_head_at_acceptance": resolved_head,
         "accepted_at_utc": accepted_at,
         "authority": dict(RECEIPT_AUTHORITY),
@@ -515,7 +571,7 @@ def accept_h003_signal_intent(
         "schema_name": RECEIPT_SCHEMA_NAME,
         "schema_version": SCHEMA_VERSION,
         "phase": PHASE,
-        "decision": "ACCEPT",
+        "decision": ACCEPTANCE_DECISION,
         "accepted_artifact": {
             "schema_name": SCHEMA_NAME,
             "artifact_digest": artifact_digest,
@@ -523,11 +579,20 @@ def accept_h003_signal_intent(
             "source_repo": ARTIFACT_SOURCE_REPO,
             "source_path": ARTIFACT_SOURCE_PATH,
             "upstream_qntylab_head": artifact["upstream"]["qntylab_head"],
+            "upstream_source_commit": artifact["upstream"]["source_commit"],
             "signal_causal_target_t_plus_1": artifact["signal"]["causal_target_t_plus_1"],
             "decision_bar_t_open": artifact["signal"]["decision_bar_t_open"],
+            "previous_target": artifact["transition"]["previous_target"],
+            "current_target": artifact["transition"]["current_target"],
         },
+        "acceptance_reason": ACCEPTANCE_REASON,
         "validators": validators,
         "qnty_head_at_acceptance": resolved_head,
+        "qnty_implementation": {
+            "repository": "CipherCuttle/Qnty",
+            "version": QNTY_IMPLEMENTATION_VERSION,
+            "commit": resolved_head,
+        },
         "ledger": {
             "path": LEDGER_FILENAME,
             "id_field": "acceptance_id",
@@ -550,7 +615,7 @@ def accept_h003_signal_intent(
         artifacts_dir / RECEIPT_SIDECAR_FILENAME, (digest + "\n").encode("utf-8")
     )
     return {
-        "decision": "ACCEPT",
+        "decision": ACCEPTANCE_DECISION,
         "idempotent_no_op": False,
         "acceptance_id": record_id,
         "artifact_digest": artifact_digest,
@@ -584,7 +649,7 @@ def main() -> int:
         result = accept_h003_signal_intent(args.artifact, args.sidecar, args.artifacts_dir)
     except AcceptanceRejected as exc:
         print(
-            json.dumps({"decision": "REJECT", "reason_code": exc.code, "detail": exc.detail}),
+            json.dumps({"decision": "REJECTED", "reason_code": exc.code, "detail": exc.detail}),
             flush=True,
         )
         return 2

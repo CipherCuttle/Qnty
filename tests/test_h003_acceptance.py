@@ -19,6 +19,7 @@ import pytest
 from quantbot.core.determinism import canonical_json_dumps
 from quantbot.paper.h003_acceptance import (
     AcceptanceRejected,
+    CANONICAL_QNTYLAB_COMMIT,
     accept_h003_signal_intent,
 )
 
@@ -38,7 +39,9 @@ def _valid_artifact() -> dict:
             "variant_id": "variant_00eb140f03a5f6ab40600160",
             "parameters": {"fast": 48, "slow": 192, "mode": "long_flat"},
             "source_semantic": "BINANCE_SPOT_SOLUSDT_1H",
-            "qntylab_head": "b" * 40,
+            "source_repository": "CipherCuttle/QntyLab",
+            "source_commit": CANONICAL_QNTYLAB_COMMIT,
+            "qntylab_head": CANONICAL_QNTYLAB_COMMIT,
         },
         "bar_window": {
             "first_bar_open": "2021-01-01T00:00:00Z",
@@ -58,6 +61,12 @@ def _valid_artifact() -> dict:
             "causal_target_t_plus_1": "LONG",
             "decision_bar_t_open": "2026-09-08T20:00:00Z",
             "decision_rule": "sign(ma48 - ma192) at close of bar t, clamped by long_flat",
+            "source_bar_timestamp": "2026-09-08T20:00:00Z",
+        },
+        "transition": {
+            "action": "NO_ACTION",
+            "current_target": "LONG",
+            "previous_target": "LONG",
         },
         "computed_at": "2026-09-08T21:03:17.228114Z",
         "computed_at_rule": "manifest retrieved_at (deterministic replay; no wall clock)",
@@ -105,7 +114,7 @@ def test_valid_acceptance(tmp_path: Path) -> None:
     artifact_path, sidecar_path = _make_valid_fixture(tmp_path)
     result = _accept(tmp_path, artifact_path, sidecar_path)
 
-    assert result["decision"] == "ACCEPT"
+    assert result["decision"] == "ACCEPTED"
     assert result["idempotent_no_op"] is False
     assert result["artifact_digest"] == _canonical_digest(_valid_artifact() | {"artifact_digest": ""})
 
@@ -119,18 +128,21 @@ def test_valid_acceptance(tmp_path: Path) -> None:
     rows = [json.loads(line) for line in ledger_path.read_text().splitlines() if line.strip()]
     assert len(rows) == 1
     assert rows[0]["acceptance_id"] == f"H003_ACCEPTANCE_V0:{result['artifact_digest']}"
-    assert rows[0]["decision"] == "ACCEPT"
-    assert rows[0]["authority"] == {"capital": "NONE", "signing": "NONE", "submission": "NONE"}
+    assert rows[0]["decision"] == "ACCEPTED"
+    assert rows[0]["authority"] == {"capital": "NONE", "execution": "FORBIDDEN", "signing": "NONE", "submission": "NONE"}
 
     # Receipt: canonical bytes, digest discipline identical to the upstream
     # artifact (sha256 over canonical JSON with receipt_digest=""), no floats.
     receipt = json.loads(receipt_path.read_text())
     assert receipt["schema_name"] == "H003_ACCEPTANCE_V0"
-    assert receipt["decision"] == "ACCEPT"
+    assert receipt["decision"] == "ACCEPTED"
     assert receipt["accepted_artifact"]["artifact_digest"] == result["artifact_digest"]
     assert receipt["qnty_head_at_acceptance"] == QNTY_HEAD
     assert receipt["ledger"]["record_id"] == rows[0]["acceptance_id"]
-    assert receipt["authority"] == {"capital": "NONE", "signing": "NONE", "submission": "NONE"}
+    assert receipt["authority"] == {"capital": "NONE", "execution": "FORBIDDEN", "signing": "NONE", "submission": "NONE"}
+    assert receipt["accepted_artifact"]["upstream_source_commit"] == CANONICAL_QNTYLAB_COMMIT
+    assert receipt["qnty_implementation"]["version"] == "H003_ACCEPTANCE_V0"
+    assert receipt["acceptance_reason"] == "H003_SIGNAL_INTENT_V0_VALIDATED_FAIL_CLOSED"
     assert all(v["status"] == "PASS" for v in receipt["validators"].values())
     probe = dict(receipt)
     probe["receipt_digest"] = ""
@@ -162,7 +174,7 @@ def test_idempotent_reacceptance_is_noop(tmp_path: Path) -> None:
     ledger_before = (artifacts_dir / "h003_acceptance_ledger.jsonl").read_bytes()
 
     second = _accept(tmp_path, artifact_path, sidecar_path)
-    assert second["decision"] == "ACCEPT"
+    assert second["decision"] == "ACCEPTED"
     assert second["idempotent_no_op"] is True
     assert second["acceptance_id"] == first["acceptance_id"]
 
@@ -244,3 +256,15 @@ def test_authority_escalation_rejected(tmp_path: Path) -> None:
     with pytest.raises(AcceptanceRejected) as excinfo:
         _accept(tmp_path, artifact_path, sidecar_path)
     assert excinfo.value.code == "AUTHORITY_BLOCK_INVALID"
+
+
+def test_noncanonical_upstream_commit_rejected(tmp_path: Path) -> None:
+    artifact = _valid_artifact()
+    artifact["upstream"]["source_commit"] = "b" * 40
+    artifact["upstream"]["qntylab_head"] = "b" * 40
+    artifact["artifact_digest"] = _canonical_digest(artifact)
+    artifact_path, sidecar_path = _write_artifact(tmp_path, artifact)
+
+    with pytest.raises(AcceptanceRejected) as excinfo:
+        _accept(tmp_path, artifact_path, sidecar_path)
+    assert excinfo.value.code == "UPSTREAM_COMMIT_NOT_CANONICAL"
