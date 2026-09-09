@@ -188,6 +188,20 @@ def test_idempotent_reacceptance_is_noop(tmp_path: Path) -> None:
     assert len(rows) == 1
 
 
+def test_existing_acceptance_state_is_verified_before_noop(tmp_path: Path) -> None:
+    artifact_path, sidecar_path = _make_valid_fixture(tmp_path)
+    _accept(tmp_path, artifact_path, sidecar_path)
+
+    receipt_path = tmp_path / "artifacts" / "h003_bridge_v0" / "H003_ACCEPTANCE_V0.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["decision"] = "REJECTED"
+    receipt_path.write_text(canonical_json_dumps(receipt) + "\n", encoding="utf-8")
+
+    with pytest.raises(AcceptanceRejected) as excinfo:
+        _accept(tmp_path, artifact_path, sidecar_path)
+    assert excinfo.value.code == "ACCEPTANCE_STATE_INVALID"
+
+
 def test_tampered_artifact_rejected_and_no_partial_writes(tmp_path: Path) -> None:
     artifact_path, sidecar_path = _make_valid_fixture(tmp_path)
     text = artifact_path.read_text()

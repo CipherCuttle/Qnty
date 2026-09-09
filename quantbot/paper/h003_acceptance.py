@@ -494,6 +494,63 @@ def _receipt_digest(receipt: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json_dumps(probe).encode("utf-8")).hexdigest()
 
 
+def _verify_existing_acceptance(
+    *,
+    receipt_path: Path,
+    receipt_sidecar_path: Path,
+    ledger_path: Path,
+    record_id: str,
+    artifact_digest: str,
+) -> None:
+    """Verify the persisted acceptance before treating a replay as a no-op."""
+    try:
+        receipt = load_strict_json_object(receipt_path)
+        sidecar = receipt_sidecar_path.read_text(encoding="utf-8").strip()
+        rows = ledger.read_jsonl(ledger_path)
+    except (OSError, UnicodeError, ledger.LedgerCorruptionError) as exc:
+        raise AcceptanceRejected(
+            "ACCEPTANCE_STATE_UNREADABLE", f"persisted acceptance state is unreadable: {exc}"
+        ) from exc
+
+    declared = receipt.get("receipt_digest")
+    if (
+        not isinstance(declared, str)
+        or not _FULL_SHA_RE.match(declared)
+        or sidecar != declared
+        or _receipt_digest(receipt) != declared
+        or receipt_path.read_bytes() != (canonical_json_dumps(receipt) + "\n").encode("utf-8")
+    ):
+        raise AcceptanceRejected(
+            "ACCEPTANCE_STATE_INVALID", "existing acceptance receipt or sidecar failed integrity checks"
+        )
+    if receipt.get("decision") != ACCEPTANCE_DECISION:
+        raise AcceptanceRejected("ACCEPTANCE_STATE_INVALID", "existing receipt decision is not ACCEPTED")
+    accepted = receipt.get("accepted_artifact")
+    if not isinstance(accepted, dict) or accepted.get("artifact_digest") != artifact_digest:
+        raise AcceptanceRejected(
+            "ACCEPTANCE_STATE_INVALID", "existing receipt is not bound to the replayed artifact digest"
+        )
+    if accepted.get("upstream_source_commit") != CANONICAL_QNTYLAB_COMMIT:
+        raise AcceptanceRejected(
+            "ACCEPTANCE_STATE_INVALID", "existing receipt is not bound to canonical QntyLab"
+        )
+    if receipt.get("acceptance_reason") != ACCEPTANCE_REASON:
+        raise AcceptanceRejected("ACCEPTANCE_STATE_INVALID", "existing receipt reason is not canonical")
+    matching = [row for row in rows if row.get("acceptance_id") == record_id]
+    if len(matching) != 1:
+        raise AcceptanceRejected(
+            "ACCEPTANCE_STATE_INVALID", "existing ledger does not contain exactly one matching acceptance row"
+        )
+    row = matching[0]
+    if (
+        row.get("decision") != ACCEPTANCE_DECISION
+        or row.get("artifact_digest") != artifact_digest
+        or row.get("upstream_source_commit") != CANONICAL_QNTYLAB_COMMIT
+        or row.get("acceptance_reason") != ACCEPTANCE_REASON
+    ):
+        raise AcceptanceRejected("ACCEPTANCE_STATE_INVALID", "existing ledger row is not bound to the receipt")
+
+
 def accept_h003_signal_intent(
     artifact_path: Path,
     sidecar_path: Path,
@@ -537,6 +594,13 @@ def accept_h003_signal_intent(
                 f"acceptance record {record_id} exists but {RECEIPT_FILENAME} is absent; "
                 "refusing to silently regenerate — investigate",
             )
+        _verify_existing_acceptance(
+            receipt_path=receipt_path,
+            receipt_sidecar_path=artifacts_dir / RECEIPT_SIDECAR_FILENAME,
+            ledger_path=ledger_path,
+            record_id=record_id,
+            artifact_digest=artifact_digest,
+        )
         return {
             "decision": ACCEPTANCE_DECISION,
             "idempotent_no_op": True,
