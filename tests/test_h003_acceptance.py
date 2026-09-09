@@ -50,7 +50,7 @@ def _valid_artifact() -> dict:
             "close_of_bar_t": "2026-09-08T21:00:00Z",
         },
         "close_series": {
-            "digest_rule": "sha256 of data/raw/SOLUSDT-1h.csv file bytes",
+            "digest_rule": "sha256 of data/raw/SOLUSDT-1h.csv file bytes (equals manifest sha256)",
             "path": "data/raw/SOLUSDT-1h.csv",
             "sha256": "c" * 64,
         },
@@ -282,3 +282,15 @@ def test_noncanonical_upstream_commit_rejected(tmp_path: Path) -> None:
     with pytest.raises(AcceptanceRejected) as excinfo:
         _accept(tmp_path, artifact_path, sidecar_path)
     assert excinfo.value.code == "UPSTREAM_COMMIT_NOT_CANONICAL"
+
+
+def test_inconsistent_target_state_rejected_without_strategy_recomputation(tmp_path: Path) -> None:
+    artifact = _valid_artifact()
+    artifact["signal"]["causal_target_t_plus_1"] = "FLAT"
+    artifact["transition"]["current_target"] = "FLAT"
+    artifact["artifact_digest"] = _canonical_digest(artifact)
+    artifact_path, sidecar_path = _write_artifact(tmp_path, artifact)
+
+    with pytest.raises(AcceptanceRejected) as excinfo:
+        _accept(tmp_path, artifact_path, sidecar_path)
+    assert excinfo.value.code == "PROVENANCE_MISMATCH"

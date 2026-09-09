@@ -416,6 +416,10 @@ def validate_h003_signal_intent(
         raise AcceptanceRejected("SCHEMA_INVALID", "close_series.path must be a non-empty string")
     if not isinstance(close_series["digest_rule"], str) or not close_series["digest_rule"]:
         raise AcceptanceRejected("SCHEMA_INVALID", "close_series.digest_rule must be a non-empty string")
+    if close_series["path"] != "data/raw/SOLUSDT-1h.csv":
+        raise AcceptanceRejected("PROVENANCE_MISMATCH", "close_series.path is not the frozen H003 input")
+    if close_series["digest_rule"] != "sha256 of data/raw/SOLUSDT-1h.csv file bytes (equals manifest sha256)":
+        raise AcceptanceRejected("PROVENANCE_MISMATCH", "close_series.digest_rule is not the frozen H003 rule")
 
     signal = artifact["signal"]
     _require_exact_keys(signal, REQUIRED_SIGNAL, "signal")
@@ -439,6 +443,11 @@ def validate_h003_signal_intent(
             "SCHEMA_INVALID",
             f"signal.causal_target_t_plus_1 must be LONG or FLAT "
             f"(got {signal['causal_target_t_plus_1']!r})",
+        )
+    expected_target = "LONG" if raw == 1 else "FLAT"
+    if signal["causal_target_t_plus_1"] != expected_target:
+        raise AcceptanceRejected(
+            "PROVENANCE_MISMATCH", "causal_target_t_plus_1 is inconsistent with raw_signal_at_t"
         )
     if not isinstance(signal["decision_rule"], str) or not signal["decision_rule"]:
         raise AcceptanceRejected("SCHEMA_INVALID", "signal.decision_rule must be a non-empty string")
@@ -525,6 +534,17 @@ def _verify_existing_acceptance(
         )
     if receipt.get("decision") != ACCEPTANCE_DECISION:
         raise AcceptanceRejected("ACCEPTANCE_STATE_INVALID", "existing receipt decision is not ACCEPTED")
+    if receipt.get("authority") != RECEIPT_AUTHORITY:
+        raise AcceptanceRejected("ACCEPTANCE_STATE_INVALID", "existing receipt grants nonzero authority")
+    implementation = receipt.get("qnty_implementation")
+    if (
+        not isinstance(implementation, dict)
+        or implementation.get("repository") != "CipherCuttle/Qnty"
+        or implementation.get("version") != QNTY_IMPLEMENTATION_VERSION
+        or not isinstance(implementation.get("commit"), str)
+        or not _FULL_GIT_SHA_RE.match(implementation["commit"])
+    ):
+        raise AcceptanceRejected("ACCEPTANCE_STATE_INVALID", "existing receipt implementation identity is invalid")
     accepted = receipt.get("accepted_artifact")
     if not isinstance(accepted, dict) or accepted.get("artifact_digest") != artifact_digest:
         raise AcceptanceRejected(
@@ -547,6 +567,7 @@ def _verify_existing_acceptance(
         or row.get("artifact_digest") != artifact_digest
         or row.get("upstream_source_commit") != CANONICAL_QNTYLAB_COMMIT
         or row.get("acceptance_reason") != ACCEPTANCE_REASON
+        or row.get("authority") != RECEIPT_AUTHORITY
     ):
         raise AcceptanceRejected("ACCEPTANCE_STATE_INVALID", "existing ledger row is not bound to the receipt")
 
