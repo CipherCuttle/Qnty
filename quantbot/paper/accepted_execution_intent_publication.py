@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -271,23 +272,56 @@ def publication_receipt_bytes_v0(receipt: Mapping[str, Any]) -> bytes:
 def write_publication_receipt_v0(
     receipt: Mapping[str, Any], receipt_path: Path, sidecar_path: Path
 ) -> None:
-    """Persist canonical receipt bytes and file-SHA sidecar, write-once."""
+    """Persist canonical receipt bytes and file-SHA sidecar, write-once.
+
+    A deterministic exclusive lock serializes writers for the receipt path.
+    Existing partial or conflicting output always fails closed rather than being
+    repaired or overwritten.
+    """
+    receipt_path = Path(receipt_path)
+    sidecar_path = Path(sidecar_path)
+    if receipt_path.resolve(strict=False) == sidecar_path.resolve(strict=False):
+        raise PublicationReceiptRejected(
+            "OUTPUT_PATH_ALIAS", "receipt and sidecar paths must be distinct"
+        )
+
     data = publication_receipt_bytes_v0(receipt)
     file_sha = hashlib.sha256(data).hexdigest()
     sidecar = (file_sha + "\n").encode("ascii")
-    if receipt_path.exists() or sidecar_path.exists():
-        if (
-            not receipt_path.exists()
-            or not sidecar_path.exists()
-            or receipt_path.read_bytes() != data
-            or sidecar_path.read_bytes() != sidecar
-        ):
-            raise PublicationReceiptRejected(
-                "OUTPUT_CONFLICT", "existing publication receipt is not byte-identical"
-            )
-        return
-    ledger.write_bytes_atomic(receipt_path, data)
-    ledger.write_bytes_atomic(sidecar_path, sidecar)
+    lock_path = receipt_path.with_name(receipt_path.name + ".publication.lock")
+    if lock_path.resolve(strict=False) == sidecar_path.resolve(strict=False):
+        raise PublicationReceiptRejected(
+            "OUTPUT_PATH_ALIAS", "sidecar path aliases the publication lock path"
+        )
+
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        raise PublicationReceiptRejected(
+            "OUTPUT_BUSY", "publication receipt path is locked by another writer"
+        ) from exc
+    try:
+        os.close(lock_fd)
+        if receipt_path.exists() or sidecar_path.exists():
+            if (
+                not receipt_path.exists()
+                or not sidecar_path.exists()
+                or receipt_path.read_bytes() != data
+                or sidecar_path.read_bytes() != sidecar
+            ):
+                raise PublicationReceiptRejected(
+                    "OUTPUT_CONFLICT", "existing publication receipt is not byte-identical"
+                )
+            return
+        ledger.write_bytes_atomic(receipt_path, data)
+        ledger.write_bytes_atomic(sidecar_path, sidecar)
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 __all__ = [
