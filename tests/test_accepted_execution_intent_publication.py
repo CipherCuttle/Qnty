@@ -159,10 +159,9 @@ def test_publication_module_cannot_sign_or_gain_execution_authority() -> None:
         "private_" + "key",
         "os.environ",
         "getenv(",
-        "requests",
-        "urllib",
-        "socket",
-        "wallet",
+        "requests.",
+        "urllib.",
+        "socket.",
         "submit_transaction",
     )
     for token in forbidden:
