@@ -37,6 +37,12 @@ def _body(intent: Path | bytes = INTENT) -> dict[str, object]:
     )
 
 
+def _receipt() -> dict[str, object]:
+    return subject.assemble_publication_receipt_v0(
+        _body(), signature=FIXED_EXTERNAL_SIGNATURE
+    )
+
+
 def _rehash_intent(intent: dict[str, object]) -> None:
     probe = copy.deepcopy(intent)
     probe["intent_digest"] = ""
@@ -68,9 +74,7 @@ def test_publication_body_binds_exact_published_v2_bytes_and_qnty_commit() -> No
 
 
 def test_external_signature_assembles_qntyspot_compatible_receipt_vector() -> None:
-    receipt = subject.assemble_publication_receipt_v0(
-        _body(), signature=FIXED_EXTERNAL_SIGNATURE
-    )
+    receipt = _receipt()
     assert receipt["receipt_id"] == EXPECTED_RECEIPT_ID
     assert receipt["signature"] == FIXED_EXTERNAL_SIGNATURE.hex()
     data = subject.publication_receipt_bytes_v0(receipt)
@@ -78,9 +82,7 @@ def test_external_signature_assembles_qntyspot_compatible_receipt_vector() -> No
 
 
 def test_receipt_writer_is_write_once_and_idempotent(tmp_path: Path) -> None:
-    receipt = subject.assemble_publication_receipt_v0(
-        _body(), signature=FIXED_EXTERNAL_SIGNATURE
-    )
+    receipt = _receipt()
     artifact = tmp_path / "publication_receipt.json"
     sidecar = tmp_path / "publication_receipt.sha256"
 
@@ -93,6 +95,26 @@ def test_receipt_writer_is_write_once_and_idempotent(tmp_path: Path) -> None:
     artifact.write_bytes(artifact.read_bytes() + b"\n")
     with pytest.raises(subject.PublicationReceiptRejected, match="OUTPUT_CONFLICT"):
         subject.write_publication_receipt_v0(receipt, artifact, sidecar)
+
+
+def test_receipt_writer_rejects_aliased_receipt_and_sidecar_paths(tmp_path: Path) -> None:
+    aliased = tmp_path / "publication.out"
+    with pytest.raises(subject.PublicationReceiptRejected, match="OUTPUT_PATH_ALIAS"):
+        subject.write_publication_receipt_v0(_receipt(), aliased, aliased)
+    assert not aliased.exists()
+
+
+def test_receipt_writer_fails_closed_when_another_writer_holds_lock(tmp_path: Path) -> None:
+    artifact = tmp_path / "publication_receipt.json"
+    sidecar = tmp_path / "publication_receipt.sha256"
+    lock = artifact.with_name(artifact.name + ".publication.lock")
+    lock.write_bytes(b"occupied")
+
+    with pytest.raises(subject.PublicationReceiptRejected, match="OUTPUT_BUSY"):
+        subject.write_publication_receipt_v0(_receipt(), artifact, sidecar)
+    assert not artifact.exists()
+    assert not sidecar.exists()
+    assert lock.read_bytes() == b"occupied"
 
 
 def test_byte_different_intent_is_not_silently_normalized() -> None:
@@ -139,9 +161,7 @@ def test_signature_shape_and_receipt_identity_fail_closed() -> None:
     with pytest.raises(subject.PublicationReceiptRejected, match="SIGNATURE_INVALID"):
         subject.assemble_publication_receipt_v0(_body(), signature=b"short")
 
-    receipt = subject.assemble_publication_receipt_v0(
-        _body(), signature=FIXED_EXTERNAL_SIGNATURE
-    )
+    receipt = _receipt()
     tampered = dict(receipt)
     tampered["receipt_id"] = "0" * 64
     with pytest.raises(subject.PublicationReceiptRejected, match="RECEIPT_ID_INVALID"):
