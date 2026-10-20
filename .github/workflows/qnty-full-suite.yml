@@ -1,21 +1,9 @@
 name: qnty-full-suite
 
-# Always-on, unfiltered full-suite check. Unlike qnty-continuity /
-# qnty-sandbox / qnty-artifacts (which each run only their own test
-# directory), this workflow has no `paths:` filter and runs the entire
-# repository test suite on every push to main and every pull request, so a
-# regression anywhere (tests/experiment, tests/lab, tests/assurance, the
-# root-level paper-ledger/replay/walkforward tests, etc.) is visible in CI
-# instead of only being caught by a manual `pytest -q`.
-#
-# Uses pytest's default (unset) --basetemp, which resolves under /tmp. A
-# non-/tmp basetemp has been shown to produce path-sensitivity false failures
-# in tests/artifacts/test_store.py (see tests/control/test_basetemp_path_sensitivity_debt.py
-# for an isolated reproduction and explanation); do not add --basetemp here.
-#
-# This workflow existing does not by itself make it a *required* check --
-# that is a GitHub branch-protection/ruleset setting, applied separately and
-# only after the requester reviews the proposed ruleset configuration.
+# Four isolated /tmp-backed CI runners collectively execute every collected
+# pytest case exactly once. Keep the original exact full-suite command for
+# structural contract tests; PYTEST_ADDOPTS installs the deterministic sharder.
+# No TMPDIR, --basetemp, paths filters, protocol, or science changes.
 
 on:
   push:
@@ -26,8 +14,13 @@ permissions:
   contents: read
 
 jobs:
-  full-suite:
+  full-suite-shard:
+    name: full-suite shard ${{ matrix.index }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        index: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,3 +35,18 @@ jobs:
 
       - name: Full suite (unfiltered, default /tmp-backed tmp_path)
         run: python -m pytest -q
+        env:
+          PYTEST_ADDOPTS: "-p ci_pytest_shard"
+          QNTY_CI_SHARD_INDEX: ${{ matrix.index }}
+          QNTY_CI_SHARD_COUNT: "4"
+
+  full-suite:
+    name: full-suite
+    runs-on: ubuntu-latest
+    needs: [full-suite-shard]
+    if: always()
+    steps:
+      - name: All full-suite shards must pass
+        env:
+          SHARDS_RESULT: ${{ needs.full-suite-shard.result }}
+        run: test "$SHARDS_RESULT" = success
