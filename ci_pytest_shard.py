@@ -6,6 +6,7 @@ No pytest temp-root overrides, test exclusions, or external plugins.
 from __future__ import annotations
 
 import argparse
+import os
 from collections import Counter
 from collections.abc import Iterable
 
@@ -41,6 +42,16 @@ class ShardPlugin:
             config.hook.pytest_deselected(items=deselected)
         items[:] = selected
         print(f"QNTY_SHARD={self.index}/{self.count}: selected {len(selected)} of {len(selected) + len(deselected)} tests across {sum(value == self.index for value in assignments.values())} modules", flush=True)
+
+
+def pytest_collection_modifyitems(session, config, items) -> None:
+    """Entry point when CI loads this module via PYTEST_ADDOPTS=-p."""
+    try:
+        index = int(os.environ["QNTY_CI_SHARD_INDEX"])
+        count = int(os.environ["QNTY_CI_SHARD_COUNT"])
+    except (KeyError, ValueError) as exc:
+        raise RuntimeError("missing or invalid QNTY CI shard environment") from exc
+    ShardPlugin(index, count).pytest_collection_modifyitems(session, config, items)
 
 
 def main() -> int:

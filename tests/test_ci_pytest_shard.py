@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ci_pytest_shard import ShardPlugin, module_to_shard
+from ci_pytest_shard import ShardPlugin, module_to_shard, pytest_collection_modifyitems
 
 
 def test_partitions_every_module_once_and_balances_by_test_count():
@@ -48,3 +48,22 @@ def test_empty_shard_fails_closed():
     config = SimpleNamespace(hook=hook)
     with pytest.raises(RuntimeError, match="selected no tests"):
         ShardPlugin(3, 4).pytest_collection_modifyitems(None, config, [SimpleNamespace(nodeid="tests/a.py::test_a")])
+
+
+def test_plugin_env_loading_routes_to_deterministic_assignment(monkeypatch):
+    monkeypatch.setenv("QNTY_CI_SHARD_INDEX", "1")
+    monkeypatch.setenv("QNTY_CI_SHARD_COUNT", "2")
+    ids = ["tests/a.py::test_a", "tests/b.py::test_b"]
+    items = [SimpleNamespace(nodeid=x) for x in ids]
+    dropped = []
+    config = SimpleNamespace(hook=SimpleNamespace(pytest_deselected=lambda items: dropped.extend(items)))
+    pytest_collection_modifyitems(None, config, items)
+    assert len(items) == len(dropped) == 1
+    assert {items[0].nodeid, dropped[0].nodeid} == set(ids)
+
+
+def test_plugin_env_without_contract_fails_closed(monkeypatch):
+    monkeypatch.delenv("QNTY_CI_SHARD_INDEX", raising=False)
+    monkeypatch.delenv("QNTY_CI_SHARD_COUNT", raising=False)
+    with pytest.raises(RuntimeError, match="missing or invalid"):
+        pytest_collection_modifyitems(None, SimpleNamespace(), [])
