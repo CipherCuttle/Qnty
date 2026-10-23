@@ -72,25 +72,40 @@ def upper_tail_exceedance_update(
     )
 
 
-def positive_mean_pvalues_and_rejections(
+def upper_tail_pvalues_and_rejections(
     counts: tuple[int, ...], observed_t: tuple[float, ...],
     *, total_bootstrap_repetitions: int = REGISTERED_BOOTSTRAP_REPETITIONS,
 ) -> tuple[tuple[int, int, bool], ...]:
-    """Adjusted upper-tail p-value triples and explicit positive-mean eligibility.
+    """Exact adjusted one-sided max-t p-values and unmodified rejection rule.
 
-    The sign guard is a conservative *proposed* decision, not yet an effective
-    amendment. It avoids reporting evidence for H1: mean>0 for negative t
-    even when a pathological bootstrap distribution lies entirely below it.
+    Statistical rejection is determined solely by adjusted p <= alpha.
+    It is NOT a finding of positive net returns or strategy eligibility.
+    A separate registered positive-net-mean gate must be applied before any
+    economic interpretation. A caller must also prove all B draws completed:
+    counts alone cannot establish completed-replication provenance.
     """
     total = _bootstrap_repetitions(total_bootstrap_repetitions)
     counts = _counts(counts, total)
-    observed_t = _vector(observed_t, "OBSERVED_T")
+    _vector(observed_t, "OBSERVED_T")
     denominator = total + 1
     return tuple(
         (1 + count, denominator,
-         (t > 0.0 and (1 + count) * ALPHA_DENOMINATOR <= denominator * ALPHA_NUMERATOR))
-        for count, t in zip(counts, observed_t)
+         (1 + count) * ALPHA_DENOMINATOR <= denominator * ALPHA_NUMERATOR)
+        for count in counts
     )
+
+
+def positive_net_means_gate(base_cost_net_mean: float, stress_1_net_mean: float) -> bool:
+    """Only the two registered positive-net-mean conditions, never a p-value.
+
+    This is a PARTIAL strategy eligibility predicate, not complete validation:
+    activity/entries, annual positivity, concentration and other frozen
+    acceptance rules must also hold. It makes no scientific inference.
+    """
+    for value in (base_cost_net_mean, stress_1_net_mean):
+        if type(value) is not float or not math.isfinite(value):
+            _failure("H001_CANDIDATE_INVALID_NET_MEAN")
+    return base_cost_net_mean > 0.0 and stress_1_net_mean > 0.0
 
 
 def validate_closed_rng_draw(
