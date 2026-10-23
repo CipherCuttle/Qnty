@@ -137,3 +137,41 @@ def test_mutated_coordinate_fields_fail_closed(monkeypatch):
         object.__setattr__(coord, field, invalid)
         with pytest.raises(H001RepairCandidateError, match='H001_CANDIDATE_INVALID_COORDINATE_DOMAIN'):
             validate_closed_rng_draw(coord, 'INITIAL_INDEX', 0, 0)
+
+
+def test_completed_run_rejects_missing_duplicate_and_wrong_order():
+    from quantbot.experiment.h001_signed_max_t_repair_candidate import CompletedBootstrapRun
+    ids = tuple(f"variant-{i}" for i in range(NINE))
+    run = CompletedBootstrapRun(vector(2.0), ids, total_bootstrap_repetitions=19)
+    with pytest.raises(H001RepairCandidateError, match="INCOMPLETE"):
+        run.finalize(vector(2.0), ids)
+    with pytest.raises(H001RepairCandidateError, match="ORDER_OR_COMPLETENESS"):
+        run.add_completed_replication(1, vector(0.5))
+    for i in range(19):
+        run.add_completed_replication(i, vector(0.5))
+    with pytest.raises(H001RepairCandidateError, match="ORDER_OR_COMPLETENESS"):
+        run.add_completed_replication(18, vector(0.5))
+    assert run.finalize(vector(2.0), ids)[0] == (1, 20, True)
+
+
+def test_completed_run_binds_observed_vector_and_variant_order():
+    from quantbot.experiment.h001_signed_max_t_repair_candidate import CompletedBootstrapRun
+    ids = tuple(f"variant-{i}" for i in range(NINE))
+    run = CompletedBootstrapRun(vector(2.0), ids, total_bootstrap_repetitions=19)
+    for i in range(19):
+        run.add_completed_replication(i, vector(0.5))
+    with pytest.raises(H001RepairCandidateError, match="MISMATCH"):
+        run.finalize(vector(-2.0), ids)
+    with pytest.raises(H001RepairCandidateError, match="MISMATCH"):
+        run.finalize(vector(2.0), ids[::-1])
+
+
+def test_completed_run_rejects_invalid_draw_without_advancing():
+    from quantbot.experiment.h001_signed_max_t_repair_candidate import CompletedBootstrapRun
+    ids = tuple(f"variant-{i}" for i in range(NINE))
+    run = CompletedBootstrapRun(vector(2.0), ids, total_bootstrap_repetitions=2)
+    with pytest.raises(H001RepairCandidateError):
+        run.add_completed_replication(0, vector(float('nan')))
+    run.add_completed_replication(0, vector(0.5))
+    run.add_completed_replication(1, vector(0.5))
+    assert run.finalize(vector(2.0), ids)[0] == (1, 3, False)
