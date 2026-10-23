@@ -1,0 +1,24 @@
+name: h001-repair-targeted
+
+on:
+  pull_request:
+    paths:
+      - "quantbot/experiment/h001_signed_max_t_repair_candidate.py"
+      - "tests/experiment/test_h001_signed_max_t_repair_candidate.py"
+      - ".github/workflows/h001-repair-targeted.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-review-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install -e ".[test]"
+      - name: Targeted synthetic review tests only
+        run: python -m pytest -q tests/experiment/test_h001_signed_max_t_repair_candidate.py
