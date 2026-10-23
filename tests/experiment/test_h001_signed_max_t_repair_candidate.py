@@ -6,7 +6,7 @@ import pytest
 
 from quantbot.experiment.h001_signed_max_t_repair_candidate import (
     H001RepairCandidateError, guarded_raw_word, positive_net_means_gate,
-    upper_tail_pvalues_and_rejections, upper_tail_exceedance_update,
+    upper_tail_pvalues_and_rejections, _unchecked_tail_pvalues_and_rejections, upper_tail_exceedance_update,
     validate_closed_rng_draw,
 )
 
@@ -23,7 +23,7 @@ def test_negative_t_never_becomes_profitable_signal():
     counts = (0,) * NINE
     for _ in range(19):
         counts = upper_tail_exceedance_update(counts, t, one, total_bootstrap_repetitions=19)
-    result = upper_tail_pvalues_and_rejections(counts, t, total_bootstrap_repetitions=19)
+    result = _unchecked_tail_pvalues_and_rejections(counts, t, total_bootstrap_repetitions=19)
     assert result[0] == (20, 20, False)
 
 
@@ -31,7 +31,7 @@ def test_positive_t_strictly_exceeding_bootstrap_max_rejects_at_alpha():
     counts = (0,) * NINE
     for _ in range(19):
         counts = upper_tail_exceedance_update(counts, vector(2.0), vector(0.5), total_bootstrap_repetitions=19)
-    result = upper_tail_pvalues_and_rejections(counts, vector(2.0), total_bootstrap_repetitions=19)
+    result = _unchecked_tail_pvalues_and_rejections(counts, vector(2.0), total_bootstrap_repetitions=19)
     assert result[0] == (1, 20, True)
 
 
@@ -43,7 +43,7 @@ def test_negative_observed_can_have_small_raw_p_but_is_not_positive_economic_evi
             counts, vector(-2.0), vector(-3.0, -3.0),
             total_bootstrap_repetitions=19,
         )
-    adjusted = upper_tail_pvalues_and_rejections(counts, vector(-2.0),
+    adjusted = _unchecked_tail_pvalues_and_rejections(counts, vector(-2.0),
                                                    total_bootstrap_repetitions=19)
     assert adjusted[0] == (1, 20, True)
     # Economic eligibility is separately governed by base AND stress net means.
@@ -80,7 +80,7 @@ def test_invalid_observed_fails_closed(observed):
 @pytest.mark.parametrize('bad', [-1, True, 10001, 1.5])
 def test_invalid_count_fails_closed(bad):
     with pytest.raises(H001RepairCandidateError):
-        upper_tail_pvalues_and_rejections((bad,) + (0,) * (NINE - 1), vector(2.0))
+        _unchecked_tail_pvalues_and_rejections((bad,) + (0,) * (NINE - 1), vector(2.0))
 
 
 def test_invalid_vector_length_fails_closed():
@@ -175,3 +175,22 @@ def test_completed_run_rejects_invalid_draw_without_advancing():
     run.add_completed_replication(0, vector(0.5))
     run.add_completed_replication(1, vector(0.5))
     assert run.finalize(vector(2.0), ids)[0] == (1, 3, False)
+
+
+def test_public_finalizer_rejects_unsealed_counts_even_when_significant():
+    ids = tuple(f"variant-{i}" for i in range(NINE))
+    with pytest.raises(H001RepairCandidateError, match="UNSEALED_COUNTS_FORBIDDEN"):
+        upper_tail_pvalues_and_rejections((0,) * NINE, vector(2.0), ids)
+
+
+def test_public_finalizer_requires_complete_bound_run():
+    from quantbot.experiment.h001_signed_max_t_repair_candidate import CompletedBootstrapRun
+    ids = tuple(f"variant-{i}" for i in range(NINE))
+    run = CompletedBootstrapRun(vector(2.0), ids, total_bootstrap_repetitions=19)
+    with pytest.raises(H001RepairCandidateError, match="INCOMPLETE"):
+        upper_tail_pvalues_and_rejections(run, vector(2.0), ids)
+    for i in range(19):
+        run.add_completed_replication(i, vector(0.5))
+    assert upper_tail_pvalues_and_rejections(run, vector(2.0), ids)[0] == (1, 20, True)
+    with pytest.raises(H001RepairCandidateError, match="MISMATCH"):
+        upper_tail_pvalues_and_rejections(run, vector(-2.0), ids)
