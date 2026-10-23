@@ -197,3 +197,58 @@ class CompletedBootstrapRun:
         return _unchecked_tail_pvalues_and_rejections(
             self._counts, self._observed, total_bootstrap_repetitions=self._total,
         )
+
+class EngineBoundBootstrapRun(CompletedBootstrapRun):
+    """Synthetic-only engine-computed path; caller cannot submit t-star vectors.
+
+    The input is copied, made read-only, and hashed. This remains review-only,
+    not a cryptographic attestation or an effective scientific protocol.
+    """
+
+    __slots__ = ("_x", "_means", "_case", "_outer", "_digest")
+
+    def __init__(self, x: object, variant_ids: tuple[str, ...],
+                 dgp_or_case_id: str, outer_replication_index: int,
+                 *, total_bootstrap_repetitions: int = REGISTERED_BOOTSTRAP_REPETITIONS):
+        import hashlib
+        import numpy as np
+        from quantbot.experiment.h001_null_calibration_engine import (
+            BootstrapCoordinate, compute_observed_statistics, validate_input,
+        )
+        BootstrapCoordinate(dgp_or_case_id, outer_replication_index, 0)
+        checked = validate_input(x)
+        frozen = np.array(checked, dtype=np.float64, copy=True, order="C")
+        frozen.setflags(write=False)
+        means, _, observed = compute_observed_statistics(frozen)
+        super().__init__(observed, variant_ids,
+                         total_bootstrap_repetitions=total_bootstrap_repetitions)
+        self._x = frozen
+        self._means = means
+        self._case = dgp_or_case_id
+        self._outer = outer_replication_index
+        self._digest = hashlib.sha256(frozen.tobytes(order="C")).hexdigest()
+
+    @property
+    def input_sha256(self) -> str:
+        return self._digest
+
+    def add_completed_replication(self, replication_index: int,
+                                  bootstrap_tstar: tuple[float, ...]) -> None:
+        _failure("H001_CANDIDATE_EXTERNAL_BOOTSTRAP_VECTOR_FORBIDDEN")
+
+    def compute_next_replication(self) -> None:
+        from quantbot.experiment.h001_null_calibration_engine import (
+            BootstrapCoordinate, compute_one_bootstrap_replication,
+        )
+        if self._next >= self._total:
+            _failure("H001_CANDIDATE_REPLICATION_ORDER_OR_COMPLETENESS")
+        coordinate = BootstrapCoordinate(self._case, self._outer, self._next)
+        values = compute_one_bootstrap_replication(self._x, self._means, coordinate)
+        super().add_completed_replication(self._next, _vector(values, "BOOTSTRAP_TSTAR"))
+
+    def finalize(self, observed_t: tuple[float, ...], variant_ids: tuple[str, ...]
+                 ) -> tuple[tuple[int, int, bool], ...]:
+        import hashlib
+        if hashlib.sha256(self._x.tobytes(order="C")).hexdigest() != self._digest:
+            _failure("H001_CANDIDATE_INPUT_DRIFT")
+        return super().finalize(observed_t, variant_ids)
