@@ -72,7 +72,7 @@ def upper_tail_exceedance_update(
     )
 
 
-def upper_tail_pvalues_and_rejections(
+def _unchecked_tail_pvalues_and_rejections(
     counts: tuple[int, ...], observed_t: tuple[float, ...],
     *, total_bootstrap_repetitions: int = REGISTERED_BOOTSTRAP_REPETITIONS,
 ) -> tuple[tuple[int, int, bool], ...]:
@@ -93,6 +93,19 @@ def upper_tail_pvalues_and_rejections(
          (1 + count) * ALPHA_DENOMINATOR <= denominator * ALPHA_NUMERATOR)
         for count in counts
     )
+
+
+def upper_tail_pvalues_and_rejections(
+    completed_run: CompletedBootstrapRun, observed_t: tuple[float, ...],
+    variant_ids: tuple[str, ...],
+) -> tuple[tuple[int, int, bool], ...]:
+    """Public finalization only through a complete bound review accumulator.
+
+    This does not independently certify bootstrap RNG/path provenance.
+    """
+    if type(completed_run) is not CompletedBootstrapRun:
+        _failure("H001_CANDIDATE_UNSEALED_COUNTS_FORBIDDEN")
+    return completed_run.finalize(observed_t, variant_ids)
 
 
 def positive_net_means_gate(base_cost_net_mean: float, stress_1_net_mean: float) -> bool:
@@ -181,6 +194,6 @@ class CompletedBootstrapRun:
             _failure("H001_CANDIDATE_INCOMPLETE_BOOTSTRAP_RUN")
         if _vector(observed_t, "OBSERVED_T") != self._observed or variant_ids != self._variants:
             _failure("H001_CANDIDATE_OBSERVED_OR_VARIANT_MISMATCH")
-        return upper_tail_pvalues_and_rejections(
+        return _unchecked_tail_pvalues_and_rejections(
             self._counts, self._observed, total_bootstrap_repetitions=self._total,
         )
