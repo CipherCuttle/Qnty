@@ -117,10 +117,16 @@ def validate_closed_rng_draw(
     This does not modify the engine's public raw_word method: callers of that
     method directly retain the baseline gap until an authorized code repair.
     """
-    from quantbot.experiment.h001_null_calibration_engine import BootstrapCoordinate
+    from quantbot.experiment.h001_null_calibration_engine import BootstrapCoordinate, DGP_OR_CASE_IDS
 
     if type(coordinate) is not BootstrapCoordinate:
         _failure("H001_CANDIDATE_INVALID_COORDINATE_TYPE")
+    if type(coordinate.dgp_or_case_id) is not str or coordinate.dgp_or_case_id not in DGP_OR_CASE_IDS:
+        _failure("H001_CANDIDATE_INVALID_COORDINATE_DOMAIN")
+    if type(coordinate.outer_replication_index) is not int or not (0 <= coordinate.outer_replication_index < 2000):
+        _failure("H001_CANDIDATE_INVALID_COORDINATE_DOMAIN")
+    if type(coordinate.bootstrap_replication_index) is not int or not (0 <= coordinate.bootstrap_replication_index < REGISTERED_BOOTSTRAP_REPETITIONS):
+        _failure("H001_CANDIDATE_INVALID_COORDINATE_DOMAIN")
     if type(draw_purpose) is not str or draw_purpose not in _PURPOSES:
         _failure("H001_CANDIDATE_UNKNOWN_PURPOSE")
     if type(sample_position) is not int or not (0 <= sample_position < SAMPLE_LENGTH):
