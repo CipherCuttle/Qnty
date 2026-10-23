@@ -103,7 +103,7 @@ def upper_tail_pvalues_and_rejections(
 
     This does not independently certify bootstrap RNG/path provenance.
     """
-    if type(completed_run) not in (CompletedBootstrapRun, EngineBoundBootstrapRun):
+    if type(completed_run) is not EngineBoundBootstrapRun:
         _failure("H001_CANDIDATE_UNSEALED_COUNTS_FORBIDDEN")
     return completed_run.finalize(observed_t, variant_ids)
 
@@ -205,7 +205,7 @@ class EngineBoundBootstrapRun(CompletedBootstrapRun):
     not a cryptographic attestation or an effective scientific protocol.
     """
 
-    __slots__ = ("_x", "_means", "_case", "_outer", "_digest")
+    __slots__ = ("_x", "_means", "_case", "_outer", "_digest", "_sealed_state")
 
     def __init__(self, x: object, variant_ids: tuple[str, ...],
                  dgp_or_case_id: str, outer_replication_index: int,
@@ -227,6 +227,18 @@ class EngineBoundBootstrapRun(CompletedBootstrapRun):
         self._case = dgp_or_case_id
         self._outer = outer_replication_index
         self._digest = hashlib.sha256(frozen.tobytes(order="C")).hexdigest()
+        self._sealed_state = self._state_digest()
+
+    def _state_digest(self) -> str:
+        import hashlib
+        payload = repr((self._observed, self._variants, self._counts,
+                        self._next, self._total, self._case, self._outer,
+                        self._means, self._digest)).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def _check_state(self) -> None:
+        if self._state_digest() != self._sealed_state:
+            _failure("H001_CANDIDATE_ACCUMULATOR_STATE_DRIFT")
 
     @property
     def input_sha256(self) -> str:
@@ -240,15 +252,18 @@ class EngineBoundBootstrapRun(CompletedBootstrapRun):
         from quantbot.experiment.h001_null_calibration_engine import (
             BootstrapCoordinate, compute_one_bootstrap_replication,
         )
+        self._check_state()
         if self._next >= self._total:
             _failure("H001_CANDIDATE_REPLICATION_ORDER_OR_COMPLETENESS")
         coordinate = BootstrapCoordinate(self._case, self._outer, self._next)
         values = compute_one_bootstrap_replication(self._x, self._means, coordinate)
         super().add_completed_replication(self._next, _vector(values, "BOOTSTRAP_TSTAR"))
+        self._sealed_state = self._state_digest()
 
     def finalize(self, observed_t: tuple[float, ...], variant_ids: tuple[str, ...]
                  ) -> tuple[tuple[int, int, bool], ...]:
         import hashlib
+        self._check_state()
         if hashlib.sha256(self._x.tobytes(order="C")).hexdigest() != self._digest:
             _failure("H001_CANDIDATE_INPUT_DRIFT")
         return super().finalize(observed_t, variant_ids)
