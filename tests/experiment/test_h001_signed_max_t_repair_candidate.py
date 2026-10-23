@@ -96,7 +96,10 @@ def test_update_prevents_count_overflow():
 def test_rng_strict_types_and_purpose_position(monkeypatch):
     module = types.ModuleType('quantbot.experiment.h001_null_calibration_engine')
     class Coord:
-        pass
+        dgp_or_case_id = 'iid_gaussian'
+        outer_replication_index = 0
+        bootstrap_replication_index = 0
+    module.DGP_OR_CASE_IDS = frozenset({'iid_gaussian'})
     module.BootstrapCoordinate = Coord
     module.raw_word = lambda *args: 101
     root = types.ModuleType('quantbot')
@@ -121,3 +124,16 @@ def test_rng_strict_types_and_purpose_position(monkeypatch):
     for sample, attempt in [(True, 0), (2193, 0), (1, True), (1, 8), (1, -1)]:
         with pytest.raises(H001RepairCandidateError):
             validate_closed_rng_draw(coord, 'RESTART_DECISION', sample, attempt)
+
+def test_mutated_coordinate_fields_fail_closed(monkeypatch):
+    from quantbot.experiment.h001_null_calibration_engine import BootstrapCoordinate, DGP_OR_CASE_IDS
+    valid_id = sorted(DGP_OR_CASE_IDS)[0]
+    for field, invalid in [('dgp_or_case_id', 'unregistered'),
+                           ('outer_replication_index', True),
+                           ('outer_replication_index', 2000),
+                           ('bootstrap_replication_index', -1),
+                           ('bootstrap_replication_index', 10000)]:
+        coord = BootstrapCoordinate(valid_id, 0, 0)
+        object.__setattr__(coord, field, invalid)
+        with pytest.raises(H001RepairCandidateError, match='H001_CANDIDATE_INVALID_COORDINATE_DOMAIN'):
+            validate_closed_rng_draw(coord, 'INITIAL_INDEX', 0, 0)
