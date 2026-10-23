@@ -103,7 +103,7 @@ def upper_tail_pvalues_and_rejections(
 
     This does not independently certify bootstrap RNG/path provenance.
     """
-    if type(completed_run) is not CompletedBootstrapRun:
+    if type(completed_run) not in (CompletedBootstrapRun, EngineBoundBootstrapRun):
         _failure("H001_CANDIDATE_UNSEALED_COUNTS_FORBIDDEN")
     return completed_run.finalize(observed_t, variant_ids)
 
