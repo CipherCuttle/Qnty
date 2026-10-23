@@ -5,8 +5,9 @@ import types
 import pytest
 
 from quantbot.experiment.h001_signed_max_t_repair_candidate import (
-    H001RepairCandidateError, guarded_raw_word, positive_mean_pvalues_and_rejections,
-    upper_tail_exceedance_update, validate_closed_rng_draw,
+    H001RepairCandidateError, guarded_raw_word, positive_net_means_gate,
+    upper_tail_pvalues_and_rejections, upper_tail_exceedance_update,
+    validate_closed_rng_draw,
 )
 
 NINE = 9
@@ -22,7 +23,7 @@ def test_negative_t_never_becomes_profitable_signal():
     counts = (0,) * NINE
     for _ in range(19):
         counts = upper_tail_exceedance_update(counts, t, one, total_bootstrap_repetitions=19)
-    result = positive_mean_pvalues_and_rejections(counts, t, total_bootstrap_repetitions=19)
+    result = upper_tail_pvalues_and_rejections(counts, t, total_bootstrap_repetitions=19)
     assert result[0] == (20, 20, False)
 
 
@@ -30,19 +31,42 @@ def test_positive_t_strictly_exceeding_bootstrap_max_rejects_at_alpha():
     counts = (0,) * NINE
     for _ in range(19):
         counts = upper_tail_exceedance_update(counts, vector(2.0), vector(0.5), total_bootstrap_repetitions=19)
-    result = positive_mean_pvalues_and_rejections(counts, vector(2.0), total_bootstrap_repetitions=19)
+    result = upper_tail_pvalues_and_rejections(counts, vector(2.0), total_bootstrap_repetitions=19)
     assert result[0] == (1, 20, True)
 
 
-def test_observed_zero_or_negative_do_not_pass_even_with_pathological_bootstrap():
+def test_negative_observed_can_have_small_raw_p_but_is_not_positive_economic_evidence():
+    # Deliberately pathological synthetic bootstrap: 19 signed maxima < -2.
     counts = (0,) * NINE
-    result = positive_mean_pvalues_and_rejections(counts, vector(-3.0), total_bootstrap_repetitions=19)
-    assert result[0] == (1, 20, False)
-    result = positive_mean_pvalues_and_rejections(counts, vector(0.0), total_bootstrap_repetitions=19)
-    assert result[0] == (1, 20, False)
+    for _ in range(19):
+        counts = upper_tail_exceedance_update(
+            counts, vector(-2.0), vector(-3.0, -3.0),
+            total_bootstrap_repetitions=19,
+        )
+    adjusted = upper_tail_pvalues_and_rejections(counts, vector(-2.0),
+                                                   total_bootstrap_repetitions=19)
+    assert adjusted[0] == (1, 20, True)
+    # Economic eligibility is separately governed by base AND stress net means.
+    assert positive_net_means_gate(-0.01, 0.01) is False
 
 
-def test_tie_counts_and_sign_guard_independent():
+def test_zero_or_negative_means_do_not_pass_economic_gate():
+    assert positive_net_means_gate(0.0, 0.01) is False
+    assert positive_net_means_gate(0.01, 0.0) is False
+    assert positive_net_means_gate(-0.01, 0.01) is False
+    assert positive_net_means_gate(0.01, -0.01) is False
+    assert positive_net_means_gate(0.01, 0.02) is True
+
+
+@pytest.mark.parametrize('bad', [float('nan'), float('inf'), float('-inf'), True, 0, '0.1'])
+def test_invalid_economic_mean_fails_closed(bad):
+    with pytest.raises(H001RepairCandidateError, match='H001_CANDIDATE_INVALID_NET_MEAN'):
+        positive_net_means_gate(bad, 0.01)
+    with pytest.raises(H001RepairCandidateError, match='H001_CANDIDATE_INVALID_NET_MEAN'):
+        positive_net_means_gate(0.01, bad)
+
+
+def test_tie_counts_non_strict_exceedance():
     counts = upper_tail_exceedance_update((0,) * NINE, vector(1.0), vector(1.0), total_bootstrap_repetitions=19)
     assert counts[0] == 1
 
@@ -56,7 +80,7 @@ def test_invalid_observed_fails_closed(observed):
 @pytest.mark.parametrize('bad', [-1, True, 10001, 1.5])
 def test_invalid_count_fails_closed(bad):
     with pytest.raises(H001RepairCandidateError):
-        positive_mean_pvalues_and_rejections((bad,) + (0,) * (NINE - 1), vector(2.0))
+        upper_tail_pvalues_and_rejections((bad,) + (0,) * (NINE - 1), vector(2.0))
 
 
 def test_invalid_vector_length_fails_closed():
