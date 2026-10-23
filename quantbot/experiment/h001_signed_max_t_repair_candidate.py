@@ -142,3 +142,45 @@ def guarded_raw_word(coordinate: object, draw_purpose: object, sample_position: 
     validate_closed_rng_draw(coordinate, draw_purpose, sample_position, attempt_index)
     from quantbot.experiment.h001_null_calibration_engine import raw_word
     return raw_word(coordinate, draw_purpose, sample_position, attempt_index)
+
+class CompletedBootstrapRun:
+    """Review-only sequential accumulator; never accepts caller-provided counts.
+
+    Each replication is one completed, synchronized nine-series bootstrap draw.
+    Identical realized paths from distinct replication indices are permitted.
+    """
+
+    __slots__ = ("_observed", "_variants", "_counts", "_next", "_total")
+
+    def __init__(self, observed_t: tuple[float, ...], variant_ids: tuple[str, ...],
+                 *, total_bootstrap_repetitions: int = REGISTERED_BOOTSTRAP_REPETITIONS):
+        self._observed = _vector(observed_t, "OBSERVED_T")
+        if (type(variant_ids) is not tuple or len(variant_ids) != SERIES_COUNT
+                or any(type(v) is not str or not v for v in variant_ids)
+                or len(set(variant_ids)) != SERIES_COUNT):
+            _failure("H001_CANDIDATE_INVALID_VARIANT_IDS")
+        self._variants = variant_ids
+        self._total = _bootstrap_repetitions(total_bootstrap_repetitions)
+        self._counts = (0,) * SERIES_COUNT
+        self._next = 0
+
+    def add_completed_replication(self, replication_index: int,
+                                  bootstrap_tstar: tuple[float, ...]) -> None:
+        if type(replication_index) is not int or replication_index != self._next or self._next >= self._total:
+            _failure("H001_CANDIDATE_REPLICATION_ORDER_OR_COMPLETENESS")
+        values = _vector(bootstrap_tstar, "BOOTSTRAP_TSTAR")
+        self._counts = upper_tail_exceedance_update(
+            self._counts, self._observed, values,
+            total_bootstrap_repetitions=self._total,
+        )
+        self._next += 1
+
+    def finalize(self, observed_t: tuple[float, ...], variant_ids: tuple[str, ...]
+                 ) -> tuple[tuple[int, int, bool], ...]:
+        if self._next != self._total:
+            _failure("H001_CANDIDATE_INCOMPLETE_BOOTSTRAP_RUN")
+        if _vector(observed_t, "OBSERVED_T") != self._observed or variant_ids != self._variants:
+            _failure("H001_CANDIDATE_OBSERVED_OR_VARIANT_MISMATCH")
+        return upper_tail_pvalues_and_rejections(
+            self._counts, self._observed, total_bootstrap_repetitions=self._total,
+        )
