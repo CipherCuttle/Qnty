@@ -183,17 +183,14 @@ def test_public_finalizer_rejects_unsealed_counts_even_when_significant():
         upper_tail_pvalues_and_rejections((0,) * NINE, vector(2.0), ids)
 
 
-def test_public_finalizer_requires_complete_bound_run():
+def test_public_finalizer_rejects_legacy_accumulator_even_if_complete():
     from quantbot.experiment.h001_signed_max_t_repair_candidate import CompletedBootstrapRun
     ids = tuple(f"variant-{i}" for i in range(NINE))
     run = CompletedBootstrapRun(vector(2.0), ids, total_bootstrap_repetitions=19)
-    with pytest.raises(H001RepairCandidateError, match="INCOMPLETE"):
-        upper_tail_pvalues_and_rejections(run, vector(2.0), ids)
     for i in range(19):
         run.add_completed_replication(i, vector(0.5))
-    assert upper_tail_pvalues_and_rejections(run, vector(2.0), ids)[0] == (1, 20, True)
-    with pytest.raises(H001RepairCandidateError, match="MISMATCH"):
-        upper_tail_pvalues_and_rejections(run, vector(-2.0), ids)
+    with pytest.raises(H001RepairCandidateError, match="UNSEALED_COUNTS_FORBIDDEN"):
+        upper_tail_pvalues_and_rejections(run, vector(2.0), ids)
 
 
 def test_engine_bound_run_rejects_external_values_and_uses_coordinates(monkeypatch):
@@ -220,3 +217,28 @@ def test_engine_bound_run_rejects_external_values_and_uses_coordinates(monkeypat
     assert len(upper_tail_pvalues_and_rejections(run, run._observed, ids)) == 9
     with pytest.raises(H001RepairCandidateError, match="ORDER_OR_COMPLETENESS"):
         run.compute_next_replication()
+
+
+def test_engine_bound_run_detects_accumulator_tampering(monkeypatch):
+    import numpy as np
+    import quantbot.experiment.h001_null_calibration_engine as engine
+    from quantbot.experiment.h001_signed_max_t_repair_candidate import EngineBoundBootstrapRun
+    ids = tuple(f"variant-{i}" for i in range(NINE))
+    x = np.random.default_rng(18).normal(size=(9, 2193)).astype(np.float64)
+    monkeypatch.setattr(engine, "compute_one_bootstrap_replication", lambda *args: (0.5,) * 9)
+    run = EngineBoundBootstrapRun(x, ids, "iid_gaussian", 0, total_bootstrap_repetitions=2)
+    run.compute_next_replication()
+    run._counts = (0,) * 9
+    with pytest.raises(H001RepairCandidateError, match="STATE_DRIFT"):
+        run.compute_next_replication()
+
+
+def test_engine_bound_real_philox_shared_path_smoke():
+    import numpy as np
+    from quantbot.experiment.h001_signed_max_t_repair_candidate import EngineBoundBootstrapRun
+    ids = tuple(f"variant-{i}" for i in range(NINE))
+    rng = np.random.default_rng(19)
+    x = rng.normal(size=(9, 2193)).astype(np.float64)
+    run = EngineBoundBootstrapRun(x, ids, "iid_gaussian", 0, total_bootstrap_repetitions=1)
+    run.compute_next_replication()  # real Philox + one shared index path + nine studentized statistics
+    assert len(upper_tail_pvalues_and_rejections(run, run._observed, ids)) == 9
