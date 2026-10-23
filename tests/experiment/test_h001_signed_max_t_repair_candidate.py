@@ -194,3 +194,29 @@ def test_public_finalizer_requires_complete_bound_run():
     assert upper_tail_pvalues_and_rejections(run, vector(2.0), ids)[0] == (1, 20, True)
     with pytest.raises(H001RepairCandidateError, match="MISMATCH"):
         upper_tail_pvalues_and_rejections(run, vector(-2.0), ids)
+
+
+def test_engine_bound_run_rejects_external_values_and_uses_coordinates(monkeypatch):
+    import numpy as np
+    import quantbot.experiment.h001_null_calibration_engine as engine
+    from quantbot.experiment.h001_signed_max_t_repair_candidate import EngineBoundBootstrapRun
+    ids = tuple(f"variant-{i}" for i in range(NINE))
+    x = np.random.default_rng(17).normal(size=(9, 2193)).astype(np.float64)
+    seen = []
+    def synthetic_replication(data, means, coordinate):
+        seen.append((coordinate.dgp_or_case_id, coordinate.outer_replication_index,
+                     coordinate.bootstrap_replication_index))
+        return (0.5,) * 9
+    monkeypatch.setattr(engine, 'compute_one_bootstrap_replication', synthetic_replication)
+    run = EngineBoundBootstrapRun(x, ids, 'iid_gaussian', 2, total_bootstrap_repetitions=2)
+    with pytest.raises(H001RepairCandidateError, match="EXTERNAL_BOOTSTRAP_VECTOR_FORBIDDEN"):
+        run.add_completed_replication(0, (0.5,) * 9)
+    x[:] = 999.0
+    run.compute_next_replication()
+    with pytest.raises(H001RepairCandidateError, match="INCOMPLETE"):
+        upper_tail_pvalues_and_rejections(run, run._observed, ids)
+    run.compute_next_replication()
+    assert seen == [('iid_gaussian', 2, 0), ('iid_gaussian', 2, 1)]
+    assert len(upper_tail_pvalues_and_rejections(run, run._observed, ids)) == 9
+    with pytest.raises(H001RepairCandidateError, match="ORDER_OR_COMPLETENESS"):
+        run.compute_next_replication()
